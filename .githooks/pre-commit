@@ -1,0 +1,23 @@
+#!/bin/sh
+# Site identifiers remain local. Run the shared detector on exactly the staged bytes,
+# and preserve its exit status so a failed or unavailable scan always blocks the commit.
+set -eu
+
+# The behavior test measures this budget. Keep the hook cheap enough to run on every commit.
+HOOK_BUDGET_MS=1500
+
+cd "$(git rev-parse --show-toplevel)"
+
+if node scripts/hygiene-scan.mjs; then
+    :
+else
+    status=$?
+    echo "" >&2
+    if [ "$status" -eq 1 ]; then
+        echo "pre-commit: the anonymisation scan failed — commit blocked." >&2
+        echo "Anonymise the offending line. Never narrow the scan." >&2
+    else
+        echo "pre-commit: the scanner could not run (exit $status) — commit blocked." >&2
+    fi
+    exit 1
+fi

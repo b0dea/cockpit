@@ -1,0 +1,237 @@
+[[sibling]]
+slug = "worker"
+dir = "worker"
+mount = "profile:worker"
+acquire = "none"
+var = "WORKER_DIR"
+toolchain = "node"
+guides = ["AGENTS.md"]
+purpose = "Synthetic profile worker"
+
+[[sibling.environment_files]]
+template = ".env.example"
+instance = ".env.local"
+
+[sibling.derives]
+mcp_sources = [{ path = ".mcp.json", format = "mcp-json", provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic MCP source" } }]
+
+[sibling.derives.generated.service]
+role = "service"
+command = ["node", "worker.mjs"]
+dependencies = []
+
+[sibling.derives.generated.service.image]
+reference = "node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
+reason = "Pinned synthetic worker runtime"
+architectures = ["amd64", "arm64"]
+
+[sibling.derives.generated.service.image.manifest_probe]
+location = "in-stack"
+service = "worker"
+cwd = "."
+argv = ["node", "probe.mjs", "manifest"]
+timeout_seconds = 30
+
+[sibling.derives.generated.service.image.manifest_probe.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[sibling.derives.generated.service.image.registry_auth_probe]
+location = "in-stack"
+service = "worker"
+cwd = "."
+argv = ["node", "probe.mjs", "registry"]
+timeout_seconds = 30
+
+[sibling.derives.generated.service.image.registry_auth_probe.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[sibling.derives.generated.service.image.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[sibling.derives.generated.service.ports]]
+name = "http"
+host_variable = "WORKER_HOST_PORT"
+internal = 3200
+
+[sibling.derives.generated.service.health]
+property = "Synthetic worker route responds"
+interval_seconds = 5
+timeout_seconds = 3
+retries = 4
+start_period_seconds = 20
+
+[sibling.derives.generated.service.health.probe]
+location = "in-stack"
+service = "worker"
+cwd = "."
+argv = ["node", "probe.mjs", "route"]
+timeout_seconds = 30
+
+[sibling.derives.generated.service.health.probe.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[sibling.derives.generated.service.health.tool_probe]
+location = "in-stack"
+service = "worker"
+cwd = "."
+argv = ["node", "--version"]
+timeout_seconds = 30
+
+[sibling.derives.generated.service.health.tool_probe.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[sibling.derives.generated.service.health.measurement]
+duration_seconds = 15
+
+[sibling.derives.generated.service.health.measurement.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[sibling.derives.generated.service.toolchain_pins]]
+path = "worker/.node-version"
+pinned = "22.0.0"
+observed = "22.0.0"
+
+[sibling.derives.generated.service.toolchain_pins.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[sibling.derives.generated.service.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[sibling.derives.generated.checkout_mount]
+target = "/workspace/worker"
+source_type = "directory"
+
+[[sibling.derives.generated.additional_mounts]]
+kind = "volume"
+source = "worker-dependencies"
+target = "/workspace/node_modules"
+
+[[sibling.derives.generated.additional_mounts]]
+kind = "environment-file"
+source = "worker/.env.local"
+target = "/workspace/.env"
+source_type = "file"
+
+[sibling.derives.generated.port_defaults]
+WORKER_HOST_PORT = 4200
+
+[[sibling.derives.generated.entrypoints]]
+name = "worker-origin"
+kind = "origin"
+port = "WORKER_HOST_PORT"
+path = "/worker"
+
+[[sibling.derives.generated.volumes]]
+id = "worker-dependencies"
+purpose = "dependencies"
+install_policy = "worker-dependencies"
+target = "/workspace/node_modules"
+
+[sibling.derives.generated.volumes.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[sibling.derives.generated.install_policies]]
+toolchain = "node"
+volume = "worker-dependencies"
+lockfile = "worker/package-lock.json"
+install = ["npm", "ci"]
+load_probe = ["node", "probe.mjs", "load"]
+
+[[sibling.derives.generated.decisions]]
+id = "service-worker"
+subject = "service"
+subject_id = "worker"
+decided_on = "2026-10-12"
+decision = "Run the synthetic worker as a profile service"
+rejected = ["Implicit service discovery"]
+reason = "Keep the synthetic row reproducible"
+reviewer = "consumer-maintainer"
+provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic declaration" }
+
+[[sibling.derives.generated.decisions]]
+id = "volume-worker-dependencies"
+subject = "volume"
+subject_id = "worker-dependencies"
+decided_on = "2026-10-12"
+decision = "Use a dedicated dependency volume"
+rejected = ["Host dependency directory"]
+reason = "Keep dependency state isolated"
+reviewer = "consumer-maintainer"
+provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic declaration" }
+
+[[sibling.derives.generated.decisions]]
+id = "mount-worker-checkout"
+subject = "mount"
+subject_id = "worker:bind:worker:/workspace/worker"
+decided_on = "2026-10-12"
+decision = "Mount the worker checkout"
+rejected = ["Copied source tree"]
+reason = "Keep edits live"
+reviewer = "consumer-maintainer"
+provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic declaration" }
+
+[[sibling.derives.generated.decisions]]
+id = "mount-worker-dependencies"
+subject = "mount"
+subject_id = "worker:volume:worker-dependencies:/workspace/node_modules"
+decided_on = "2026-10-12"
+decision = "Mount the worker dependency volume"
+rejected = ["Install dependencies on the host"]
+reason = "Keep dependencies in the environment"
+reviewer = "consumer-maintainer"
+provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic declaration" }
+
+[[sibling.derives.generated.decisions]]
+id = "mount-worker-environment"
+subject = "mount"
+subject_id = "worker:environment-file:worker/.env.local:/workspace/.env"
+decided_on = "2026-10-12"
+decision = "Mount the worker environment instance"
+rejected = ["Embed environment values"]
+reason = "Keep credentials outside generated bytes"
+reviewer = "consumer-maintainer"
+provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic declaration" }
+
+[[sibling.derives.generated.decisions]]
+id = "port-worker-http"
+subject = "port"
+subject_id = "worker:http"
+decided_on = "2026-10-12"
+decision = "Publish the synthetic worker HTTP port"
+rejected = ["Implicit port selection"]
+reason = "Keep the route deterministic"
+reviewer = "consumer-maintainer"
+provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind = "declared", reason = "Synthetic declaration" }
+
+[sibling.derives.generated.provenance]
+source = "synthetic-row.toml"
+observed_on = "2026-10-12"
+kind = "declared"
+reason = "Synthetic declaration"

@@ -1,0 +1,681 @@
+import { resolve } from 'node:path'
+import { loadCockpitConfig } from '../config/load.js'
+import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import {
+    decodeLifecycleRecord,
+    revalidateService,
+    type DoctorCommandAdapters,
+    type HealthObservationProducers,
+    type PreflightCommandAdapters,
+    withLifecycleConfiguration,
+} from './application.js'
+import { observeClaimState } from './claims.js'
+import {
+    ENVIRONMENT_CODES,
+    type EnvironmentObservation,
+    type ExecutionStep,
+} from './contract.js'
+import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
+import {
+    observeExternalDependencies,
+    observeExternalDependency,
+    planExternalDependency,
+    verifyExternalDependency,
+} from './external-dependencies.js'
+import { createGitObservationStep, observeGit } from './git-observation.js'
+import { stackId } from './identity.js'
+import { observeDependencyLoad } from './installs.js'
+import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
+import { observeStateSeed, resolveLifecycleStage } from './lifecycle-stage.js'
+import { refreshObservationPostures, resolveObservationPostures, type PreflightContext } from './observations.js'
+import {
+    deriveEntrypoints,
+    observePortFamily,
+    observeRetainedPortFamily,
+    projectRetainedPortFamilyResult,
+} from './ports.js'
+import {
+    admitDependencyRuntime,
+    createDependencyRuntimePlan,
+} from './dependency-runtime.js'
+import {
+    observeDataMode,
+    planDataMode,
+    projectDataModeObservationSteps,
+    readDataModeOutcome,
+} from './data-plane.js'
+import {
+    generatedApplicationProjection,
+    projectGeneratedApplicationRuntimeAuthority,
+    resolveGeneratedApplicationOperation,
+    observeGeneratedApplication,
+    syncGeneratedEnvironment,
+} from './generated-application.js'
+import {
+    admitRuntimeMeasurement,
+    observeDockerRuntime,
+    observeRuntimeMeasurement,
+    projectDependencyRuntime,
+    type RuntimeServiceEvidence,
+} from './runtime.js'
+import {
+    consumeSetupCheckoutProjection,
+    observeSetupCheckout,
+    withSetupCheckoutProjection,
+    type ConsumedSetupCheckoutObservation,
+} from './setup-observation.js'
+import { observeConfiguration, readState, selectStateRoot } from './state.js'
+import {
+    externalDependencyTemplateFragments,
+    inspectEnvironmentKeys,
+    observeEnvironmentKeys,
+    observeSiblingPresence,
+} from './templates.js'
+
+export const mechanism = {
+    id: 'health-command-composition',
+    module: 'packages/cockpit/src/environment/health-composition.ts',
+    exports: ['createHealthCommandAdapters'],
+} as const
+
+export interface HealthCommandCompositionInput {
+    readonly configPath: string
+    readonly env: Readonly<Record<string, string | undefined>>
+    readonly timeoutMs: number
+}
+
+export type HealthCommandAdapterComposition = PreflightCommandAdapters & DoctorCommandAdapters
+
+interface CapturedInput {
+    readonly configPath: string
+    readonly env: Readonly<Record<string, string>>
+    readonly timeoutMs: number
+}
+
+function captureInput(value: HealthCommandCompositionInput): CapturedInput | undefined {
+    try {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+        const descriptors = Object.getOwnPropertyDescriptors(value)
+        const keys = ['configPath', 'env', 'timeoutMs']
+        if (Reflect.ownKeys(descriptors).length !== keys.length
+            || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))) return undefined
+        const configPath = descriptors.configPath!.value
+        const rawEnvironment = descriptors.env!.value
+        const timeoutMs = descriptors.timeoutMs!.value
+        if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
+            || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
+            || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
+        const env: Record<string, string> = {}
+        for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
+            if (entry === undefined) continue
+            if (name.length === 0 || name.includes('\0') || name.includes('=')
+                || typeof entry !== 'string' || entry.includes('\0')) return undefined
+            env[name] = entry
+        }
+        return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), timeoutMs })
+    } catch {
+        return undefined
+    }
+}
+
+function gitObservationEnvironment(env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(env)
+        .filter(([name]) => name === 'LANG' || name === 'LC_ALL' || name === 'TZ')))
+}
+
+function commandConfigPath(value: unknown): string | undefined {
+    try {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+        const descriptors = Object.getOwnPropertyDescriptors(value)
+        const descriptor = descriptors.configPath
+        return Reflect.ownKeys(descriptors).length === 1 && descriptor && 'value' in descriptor
+            && typeof descriptor.value === 'string'
+            ? descriptor.value
+            : undefined
+    } catch {
+        return undefined
+    }
+}
+
+function duplicateObservationCodes(values: readonly EnvironmentObservation[]): boolean {
+    const keys = values.map(({ owner, code, stackId: observedStack }) => `${observedStack}\0${owner}\0${code}`)
+    return new Set(keys).size !== keys.length
+}
+
+function producers(input: {
+    readonly checkout: ConsumedSetupCheckoutObservation
+    readonly config: Awaited<ReturnType<typeof loadCockpitConfig>> & { readonly kind: 'complete' }
+    readonly namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value']
+    readonly stack: ReturnType<typeof stackId>
+    readonly git: Extract<Awaited<ReturnType<typeof resolveGitExecutable>>, { readonly state: 'available' }>['value']
+    readonly env: Readonly<Record<string, string>>
+    readonly timeoutMs: number
+    readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+}): HealthObservationProducers {
+    const observedAt = () => new Date().toISOString()
+    const siblingRoot = resolve(input.checkout.mainCheckoutPath, input.config.result.config.cockpit.siblings_root)
+    const generated = input.config.result.config.environment.generated
+    const configuredRuntime = generated !== undefined
+        || input.config.result.config.environment.compose_files.length > 0
+        || input.config.result.config.environment.machine !== undefined
+        || input.config.result.config.sibling.some(({ mount }) => mount !== 'none')
+    const runtimeMeasurement = configuredRuntime ? (async () => {
+        const docker = await resolveDockerExecutable(input.env)
+        if (docker.state !== 'available') return undefined
+        const observed = await observeDockerRuntime({
+            executable: docker.value,
+            cwd: input.checkout.currentCheckoutPath,
+            env: Object.freeze(Object.fromEntries(Object.entries(input.env).filter(([name]) =>
+                ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(name),
+            ))),
+            timeoutMs: input.timeoutMs,
+        }, input.execute)
+        if (observed.kind !== 'complete') return undefined
+        return observeRuntimeMeasurement(
+            admitRuntimeMeasurement(observed, input.config.result.config.environment.runtime_measurements),
+            input.stack,
+        )
+    })() : undefined
+    const runtimeSession = generated !== undefined || input.config.result.config.environment.compose_files.length > 0 ? (async () => {
+        const adapters = createLifecycleCommandAdapters({
+            configPath: input.config.result.source.path,
+            env: input.env,
+            sessionId: 'cockpit-health-read-only',
+            timeoutMs: input.timeoutMs,
+        }, input.execute)
+        const loaded = await adapters.load({ configPath: input.config.result.source.path })
+        if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
+        let ports
+        let lifecycle
+        if (generated !== undefined) {
+            const stored = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
+            if (stored.kind !== 'complete') return undefined
+            lifecycle = decodeLifecycleRecord(stored.value, loaded.result)
+            if (!lifecycle?.value.generatedReplay
+                || lifecycle.value.generatedReplay.sourceSha256 !== loaded.result.source.sha256) return undefined
+            const retained = await observeRetainedPortFamily({
+                namespace: loaded.result.namespace,
+                stackId: loaded.result.stackId,
+                holderId: lifecycle.value.holderId,
+                checkoutId: loaded.result.checkoutId,
+                config: loaded.result.ports,
+            })
+            if (retained.kind !== 'complete') return undefined
+            const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: loaded.result.entrypointDerivatives })
+            if (entrypoints.kind !== 'complete') return undefined
+            ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
+            if (!ports) return undefined
+        }
+        const readiness = await adapters.withRuntimeReadiness(loaded.result, async (value) => value, ports)
+        return readiness ? Object.freeze({ adapters, context: loaded.result, readiness, lifecycle }) : undefined
+    })() : undefined
+    const machineFloor = generated === undefined && input.config.result.config.environment.machine
+        && input.config.result.config.environment.compose_files.length === 0 ? (async () => {
+            const adapters = createLifecycleCommandAdapters({
+                configPath: input.config.result.source.path,
+                env: input.env,
+                sessionId: 'cockpit-health-machine-floor',
+                timeoutMs: input.timeoutMs,
+            }, input.execute)
+            const loaded = await adapters.load({ configPath: input.config.result.source.path })
+            if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
+            return adapters.withMachineFloorReadiness(loaded.result, async (value) => value)
+        })() : undefined
+    const currentServices = generated === undefined ? undefined : (async () => {
+        const session = await runtimeSession
+        const completed = session?.lifecycle?.value.completedServices
+        if (!session || !completed
+            || completed.length !== session.readiness.topology.services.length
+            || JSON.stringify(completed.map(({ service }) => service).sort())
+                !== JSON.stringify(session.readiness.topology.services.map(({ id }) => id).sort())) return undefined
+        const values = new Map<string, RuntimeServiceEvidence>()
+        for (const service of completed) {
+            const admitted = await revalidateService(session.readiness.topology, service, { execute: input.execute })
+            if (admitted.kind !== 'complete') return undefined
+            values.set(service.service, admitted.evidence)
+        }
+        return values
+    })()
+    return Object.freeze({
+        generated: async () => {
+            if (generated === undefined) return Object.freeze([])
+            const session = await runtimeSession
+            if (!session) throw new TypeError('generated health needs authenticated runtime readiness')
+            const observation = await session.adapters.withGeneratedRuntime(
+                session.context,
+                session.readiness,
+                ({ application, runtime }) => observeGeneratedApplication(
+                    application,
+                    { topology: session.readiness.topology, runtime },
+                    input.execute,
+                ),
+            )
+            if (!observation) throw new TypeError('generated environment observation is unavailable')
+            return Object.freeze([observation])
+        },
+        data: async () => {
+            if (generated === undefined) return Object.freeze([])
+            const session = await runtimeSession
+            const lifecycle = session?.lifecycle
+            if (!session || !lifecycle) throw new TypeError('data health needs authenticated runtime readiness')
+            const observation = await session.adapters.withGeneratedRuntime(
+                session.context,
+                session.readiness,
+                async ({ application, runtime }) => {
+                    const projection = await readDataModeOutcome({
+                        namespace: session.context.namespace,
+                        stackId: session.context.stackId,
+                        configSha256: application.sourceSha256,
+                        generation: application.generation,
+                        mode: generated.data.default_mode,
+                    })
+                    if (!projection) return undefined
+                    const planned = await withLifecycleConfiguration(session.context, async (configuration) => planDataMode({
+                        environment: generated,
+                        mode: generated.data.default_mode,
+                        checkoutRoot: runtime.root,
+                        includeFixtureVolume: true,
+                        namespace: session.context.namespace,
+                        stackId: session.context.stackId,
+                        holderId: lifecycle.value.holderId,
+                        configuration,
+                        generation: application.generation,
+                        observedAt: observedAt(),
+                        resolve: (operation, context) => {
+                            const step = resolveGeneratedApplicationOperation(
+                                application,
+                                { topology: session.readiness.topology, runtime },
+                                operation,
+                                context,
+                            )
+                            if (!step) throw new TypeError('generated data probe authority is unavailable')
+                            return step
+                        },
+                    }))
+                    if (!planned || planned.kind !== 'preview') return undefined
+                    const probeSteps = projectDataModeObservationSteps({ plan: planned.plan, projection })
+                    if (!probeSteps) return undefined
+                    const outcomes = await Promise.all(probeSteps.map((step) => input.execute(step)))
+                    return observeDataMode({ plan: planned.plan, projection, outcomes: Object.freeze(outcomes) })
+                },
+            )
+            if (!observation) throw new TypeError('data health observation is unavailable')
+            return Object.freeze([observation])
+        },
+        external: async () => {
+            if (generated === undefined || generated.vendors.length === 0) return Object.freeze([])
+            const [session, services] = await Promise.all([runtimeSession, currentServices])
+            if (!session || !services) throw new TypeError('external dependency health needs current runtime services')
+            const observation = await session.adapters.withGeneratedRuntime(
+                session.context,
+                session.readiness,
+                async ({ application, runtime }) => {
+                    const observations = []
+                    for (const vendor of generated.vendors) {
+                        const service = vendor.egress_guard === undefined
+                            ? undefined : services.get(vendor.egress_guard.local_service)
+                        if (vendor.egress_guard !== undefined && !service) return undefined
+                        const vendorRuntime = service === undefined ? runtime : Object.freeze({
+                            ...runtime,
+                            serviceAuthority: Object.freeze({ topology: session.readiness.topology, evidence: service }),
+                        })
+                        const authority = projectGeneratedApplicationRuntimeAuthority(application, {
+                            topology: session.readiness.topology,
+                            runtime: vendorRuntime,
+                        })
+                        if (!authority) return undefined
+                        const fragments = externalDependencyTemplateFragments(vendor)
+                        if (fragments.kind !== 'complete') return undefined
+                        const presentShadowFiles = []
+                        for (const shadow of vendor.shadow_files ?? []) {
+                            const sibling = input.config.result.config.sibling.find(({ slug }) => slug === shadow.sibling)
+                            const declaration = sibling?.environment_files?.find(({ instance }) => instance === shadow.instance)
+                            if (!sibling || !declaration) continue
+                            const root = resolve(siblingRoot, sibling.dir)
+                            const inspection = await inspectEnvironmentKeys({
+                                siblingRoot: root,
+                                templatePath: resolve(root, declaration.template),
+                                instancePath: resolve(root, declaration.instance),
+                            })
+                            if (inspection.kind === 'fresh' || inspection.kind === 'stale') {
+                                presentShadowFiles.push(Object.freeze({ sibling: shadow.sibling, instance: shadow.instance }))
+                            }
+                        }
+                        const plan = planExternalDependency({
+                            authority,
+                            purpose: 'health',
+                            declaration: vendor,
+                            fragments,
+                            runtime: vendorRuntime,
+                            observedAt: observedAt(),
+                            presentShadowFiles: Object.freeze(presentShadowFiles),
+                        })
+                        if (plan.kind !== 'complete') return undefined
+                        const evidence = await verifyExternalDependency(plan, { execute: input.execute })
+                        const projected = observeExternalDependency({ evidence, authority })
+                        if (!projected) return undefined
+                        observations.push(projected)
+                    }
+                    const aggregateAuthority = projectGeneratedApplicationRuntimeAuthority(application, {
+                        topology: session.readiness.topology,
+                        runtime,
+                    })
+                    return aggregateAuthority && generated.vendors.length > 0
+                        ? observeExternalDependencies({
+                            authority: aggregateAuthority,
+                            observations: Object.freeze(observations),
+                            purpose: 'health',
+                        })
+                        : undefined
+                },
+            )
+            if (!observation) throw new TypeError('external dependency health observation is unavailable')
+            return Object.freeze([observation])
+        },
+        claims: async () => Object.freeze([await observeClaimState({
+            namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
+        })]),
+        git: async () => {
+            // Git status may refresh its index while runtime checkout authority is being authenticated.
+            await machineFloor
+            await runtimeSession
+            const step = createGitObservationStep({
+                executable: input.git,
+                checkoutRoot: input.checkout.currentCheckoutPath,
+                env: gitObservationEnvironment(input.env),
+                timeoutMs: input.timeoutMs,
+                stackId: input.stack,
+                source: input.config.result.source.path,
+                checkoutId: input.checkout.checkoutId,
+            })
+            if (!step) throw new TypeError('Git health observation could not be planned')
+            const result = observeGit(step, await input.execute(step), {
+                stackId: input.stack,
+                checkoutId: input.checkout.checkoutId,
+                source: input.config.result.source.path,
+            })
+            if (result.kind !== 'complete') throw new TypeError('Git health observation is unavailable')
+            return result.observations
+        },
+        host: async () => {
+            if (input.config.result.config.environment.machine) {
+                if (machineFloor) {
+                    const current = await machineFloor
+                    if (!current) throw new TypeError('configured host capacity needs authenticated machine-floor execution evidence')
+                    return current
+                }
+                const current = await runtimeSession
+                if (!current) throw new TypeError('configured host capacity needs authenticated machine-floor execution evidence')
+                return current.readiness.hostObservations
+            }
+            return Object.freeze([])
+        },
+        installs: async () => {
+            const dependencies = input.config.result.config.sibling.filter(({ toolchain }) => toolchain !== 'none')
+            if (dependencies.length === 0) return Object.freeze([])
+            const [session, services] = await Promise.all([runtimeSession, currentServices])
+            if (!generated || !session || !services) {
+                throw new TypeError('configured dependency health needs authenticated generated runtime services')
+            }
+            const observations: EnvironmentObservation[] = []
+            for (const sibling of dependencies) {
+                const generatedServices = generated.services.filter(({ sibling: owner }) => owner === sibling.slug)
+                if (generatedServices.length !== 1) throw new TypeError(`dependency service identity is ambiguous for ${sibling.slug}`)
+                const service = generatedServices[0]!
+                const policies = service.mounts.flatMap((mount) => {
+                    if (mount.kind !== 'volume') return []
+                    const volume = generated.volumes.find(({ id }) => id === mount.source)
+                    if (!volume || volume.purpose !== 'dependencies' || !volume.install_policy) return []
+                    const policy = input.config.result.config.environment.install_policies.find((candidate) =>
+                        candidate.volume === volume.install_policy && candidate.toolchain === sibling.toolchain)
+                    return policy ? [{ policy, volume: volume.id }] : []
+                })
+                const serviceEvidence = services.get(service.id)
+                if (policies.length !== 1 || !serviceEvidence) {
+                    throw new TypeError(`dependency runtime evidence is unavailable for ${sibling.slug}`)
+                }
+                const dependencyRuntime = projectDependencyRuntime({
+                    topology: session.readiness.topology,
+                    evidence: serviceEvidence,
+                    service: service.id,
+                    volume: policies[0]!.volume,
+                })
+                if (!dependencyRuntime) throw new TypeError(`dependency runtime authority is unavailable for ${sibling.slug}`)
+                const runtimePlan = createDependencyRuntimePlan({ runtime: dependencyRuntime })
+                if (runtimePlan.kind !== 'planned') throw new TypeError(runtimePlan.reason)
+                const admitted = admitDependencyRuntime({
+                    plan: runtimePlan,
+                    inspectOutcome: await input.execute(runtimePlan.inspect),
+                    architectureOutcome: await input.execute(runtimePlan.architecture),
+                    abiOutcome: await input.execute(runtimePlan.abi),
+                })
+                if (admitted.kind !== 'complete') throw new TypeError(admitted.reason)
+                const load = policies[0]!.policy.load_probe
+                if (load.length === 0) throw new TypeError(`dependency load probe is empty for ${sibling.slug}`)
+                const observation = await observeDependencyLoad({
+                    binding: admitted.binding,
+                    load: Object.freeze([...load]) as readonly [string, ...string[]],
+                    env: Object.freeze({}),
+                    timeoutMs: input.timeoutMs,
+                    stdoutLimitBytes: 1_048_576,
+                    stderrLimitBytes: 1_048_576,
+                }, { execute: input.execute })
+                if (!observation) throw new TypeError(`dependency load observation is unavailable for ${sibling.slug}`)
+                observations.push(observation)
+            }
+            return Object.freeze(observations)
+        },
+        lifecycle: async () => Object.freeze([await observeStateSeed({
+            namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
+        })]),
+        ports: async () => Object.freeze([await observePortFamily({
+            namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
+        })]),
+        runtime: async () => {
+            if (configuredRuntime) {
+                const measured = await runtimeMeasurement
+                if (!measured) throw new TypeError('configured runtime measurement needs authenticated runtime identity evidence')
+                if (measured.observed.state !== 'available') return Object.freeze([measured])
+                const current = await runtimeSession
+                if (!current) {
+                    if (generated === undefined && input.config.result.config.environment.compose_files.length === 0) return Object.freeze([measured])
+                    throw new TypeError('configured runtime health needs authenticated runtime execution evidence')
+                }
+                return current.readiness.runtimeObservations
+            }
+            return Object.freeze([])
+        },
+        state: async () => observeConfiguration({
+            path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
+        }),
+        templates: async () => {
+            const timestamp = observedAt()
+            const values: EnvironmentObservation[] = []
+            for (const sibling of input.config.result.config.sibling) {
+                values.push(await observeSiblingPresence({
+                    stackId: input.stack, observedAt: timestamp, siblingRoot, sibling,
+                }))
+                const checkoutRoot = resolve(siblingRoot, sibling.dir)
+                for (const declaration of sibling.environment_files ?? []) {
+                    values.push(...await observeEnvironmentKeys({
+                        stackId: input.stack, observedAt: timestamp, siblingRoot: checkoutRoot, declaration,
+                    }))
+                }
+            }
+            if (duplicateObservationCodes(values)) {
+                throw new TypeError('template health needs one aggregate observation per declared code')
+            }
+            return Object.freeze(values)
+        },
+    })
+}
+
+async function checkoutProjection(
+    input: CapturedInput,
+    loaded: Extract<Awaited<ReturnType<typeof loadCockpitConfig>>, { readonly kind: 'complete' }>,
+    git: Extract<Awaited<ReturnType<typeof resolveGitExecutable>>, { readonly state: 'available' }>['value'],
+): Promise<ConsumedSetupCheckoutObservation | undefined> {
+    const observedAt = new Date().toISOString()
+    const observed = await observeSetupCheckout({
+        source: loaded.result.source,
+        cockpitName: loaded.result.config.cockpit.name,
+        observedAt,
+        env: input.env,
+        gitExecutable: git,
+    })
+    return withSetupCheckoutProjection(observed, {
+        source: loaded.result.source,
+        cockpitName: loaded.result.config.cockpit.name,
+        evaluatedAt: Date.parse(observedAt),
+    }, consumeSetupCheckoutProjection)
+}
+
+export function createHealthCommandAdapters(
+    rawInput: HealthCommandCompositionInput,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): HealthCommandAdapterComposition {
+    const input = captureInput(rawInput)
+    const load: HealthCommandAdapterComposition['load'] = async (command, issue) => {
+        const requestedPath = commandConfigPath(command)
+        if (!input || typeof execute !== 'function' || typeof issue !== 'function'
+            || requestedPath !== input.configPath) return undefined
+        const loaded = await loadCockpitConfig(input.configPath)
+        if (loaded.kind !== 'complete') return undefined
+        const git = await resolveGitExecutable(input.env)
+        if (git.state !== 'available') return undefined
+        const checkout = await checkoutProjection(input, loaded, git.value)
+        if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
+        const namespace = await selectStateRoot({
+            platform: process.platform,
+            home: input.env.HOME,
+            xdgStateHome: input.env.XDG_STATE_HOME,
+            checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath],
+            cockpitId: checkout.cockpitId,
+        })
+        if (namespace.kind !== 'complete') return undefined
+        const currentStack = stackId({
+            cockpitId: checkout.cockpitId,
+            checkoutId: checkout.checkoutId,
+            variant: { kind: 'shared' },
+        })
+        const refreshPreflight = async (previous?: PreflightContext): Promise<PreflightContext | undefined> => {
+            const observedAt = new Date().toISOString()
+            const configuration = (await observeConfiguration({
+                path: loaded.result.source.path,
+                stackId: currentStack,
+                observedAt,
+            })).find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)
+            if (!configuration) return undefined
+            try {
+                const authorityInput = {
+                    configuration, cockpitId: checkout.cockpitId,
+                    checkoutPath: checkout.currentCheckoutPath, variant: { kind: 'shared' as const },
+                }
+                const authority = previous === undefined
+                    ? await resolveObservationPostures(authorityInput)
+                    : previous.authorities.length === 1
+                        ? await refreshObservationPostures({ ...authorityInput, previous: previous.authorities[0]! })
+                        : undefined
+                if (!authority) return undefined
+                const stage = await resolveLifecycleStage({
+                    namespace: namespace.value,
+                    stackId: currentStack,
+                    observedAt,
+                })
+                if (stage.kind !== 'complete' || stage.authority.stage !== 'steady') return undefined
+                return Object.freeze({
+                authorities: Object.freeze([authority]),
+                stages: Object.freeze([stage.authority]),
+            })
+            } catch {
+                return undefined
+            }
+        }
+        const preflight = await refreshPreflight()
+        if (!preflight) return undefined
+        const sourceProducers = producers({
+            checkout,
+            config: loaded,
+            namespace: namespace.value,
+            stack: currentStack,
+            git: git.value,
+            env: input.env,
+            timeoutMs: input.timeoutMs,
+            execute,
+        })
+        const secondObservedAt = new Date().toISOString()
+        const secondObservation = await observeSetupCheckout({
+            source: loaded.result.source,
+            cockpitName: loaded.result.config.cockpit.name,
+            observedAt: secondObservedAt,
+            env: input.env,
+            gitExecutable: git.value,
+        })
+        return withSetupCheckoutProjection(secondObservation, {
+            source: loaded.result.source,
+            cockpitName: loaded.result.config.cockpit.name,
+            evaluatedAt: Date.parse(secondObservedAt),
+        }, (projection) => issue({
+            checkout: projection,
+            configuration: loaded.result,
+            preflight,
+            env: input.env,
+            gitExecutable: git.value,
+            timeoutMs: input.timeoutMs,
+            producers: sourceProducers,
+            refreshPreflight,
+        }))
+    }
+    const inspectSurfaceOverrides: NonNullable<HealthCommandAdapterComposition['inspectSurfaceOverrides']> = async (configPath) => {
+        if (!input) {
+            return Object.freeze({
+                kind: 'unavailable',
+                code: 'SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE',
+                reason: 'surface override inspection needs valid command composition input',
+            })
+        }
+        if (configPath !== input.configPath) {
+            return Object.freeze({
+                kind: 'refusal',
+                code: 'SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH',
+                reason: 'surface override inspection is bound to the configured cockpit source',
+            })
+        }
+        try {
+            const outcome = await syncGeneratedEnvironment(
+                { configPath: input.configPath, dryRun: true },
+                { execute },
+            )
+            if (outcome.kind !== 'complete') {
+                const diagnostic = outcome.diagnostics[0]
+                return Object.freeze({
+                    kind: 'refusal',
+                    code: diagnostic?.code || 'SURFACE_OVERRIDE_INSPECTION_REFUSED',
+                    reason: diagnostic?.message || 'generated surface override inspection was refused',
+                })
+            }
+            const application = generatedApplicationProjection(outcome.result.application)
+            if (!application
+                || application.sourceSha256 !== outcome.result.sourceSha256
+                || application.generation !== outcome.result.generation) {
+                return Object.freeze({
+                    kind: 'refusal',
+                    code: 'SURFACE_OVERRIDE_INSPECTION_INVALID',
+                    reason: 'generated surface override inspection did not return an authenticated application projection',
+                })
+            }
+            return Object.freeze({
+                kind: 'complete',
+                activeOverrides: application.activeSurfaceOverrides,
+                changedOverrideOriginals: application.changedOverrideOriginals,
+            })
+        } catch {
+            return Object.freeze({
+                kind: 'unavailable',
+                code: 'SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE',
+                reason: 'authenticated generated surface override inspection is unavailable',
+            })
+        }
+    }
+    return Object.freeze({ load, inspectSurfaceOverrides, execute: (step: ExecutionStep) => execute(step) })
+}

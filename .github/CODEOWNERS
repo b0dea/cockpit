@@ -1,0 +1,11 @@
+# Review routing, not a permission boundary. CODEOWNERS decides who is requested on a pull
+# request, and GitHub honours an entry only for an account with write access; what is actually
+# enforced lives in branch protection and in the checks CI runs.
+#
+# One line, because there is one maintainer. Root policies and the public documentation tree are
+# enumerated by the ownership test. A set of per-path rules all naming the same person
+# is configuration that parses and does nothing, and it reads as a division of responsibility
+# that does not exist. It splits the day there is a second name to split it between, starting
+# with the two trees that have distinct audiences: the shipped surfaces and the docs.
+
+*   @b0dea

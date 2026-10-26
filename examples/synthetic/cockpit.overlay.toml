@@ -1,0 +1,7 @@
+# This public evidence file records where the example's declarations came from. It is not a
+# second configuration input: cockpit.toml is the complete configuration consumed by the CLI.
+[evidence]
+kind = "synthetic"
+source = "examples/synthetic"
+observed_on = "2026-10-25"
+reason = "Runnable public example with two local synthetic repositories"

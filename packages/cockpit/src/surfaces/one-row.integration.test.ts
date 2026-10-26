@@ -1,0 +1,308 @@
+import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+
+import { parse as parseToml } from 'smol-toml'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { checkGeneratedEnvironment, syncGeneratedEnvironment } from '../generated-environment/command.js'
+import { cockpitId } from '../environment/identity.js'
+import { deriveRegistry } from '../registry-derivation.js'
+import { observeSiblingGuides, planSiblingProjection } from './projection.js'
+
+const baselineFixture = resolve('fixtures/registries/generated-environment.toml')
+const rowFixture = resolve('packages/cockpit/src/surfaces/fixtures/one-row.toml')
+const roots: string[] = []
+const credentialCanary = 'synthetic-credential-canary'
+
+afterEach(async () => {
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+async function consumer(name: string, includeRow: boolean) {
+    const root = await realpath(await mkdtemp(join(tmpdir(), `cockpit-one-row-${name}-`)))
+    roots.push(root)
+    const baseline = (await readFile(baselineFixture, 'utf8')).replace(
+        'name = "generated-environment"',
+        'name = "generated-environment"\nsiblings_root = "."',
+    )
+    const row = await readFile(rowFixture, 'utf8')
+    const configPath = join(root, 'cockpit.toml')
+    await writeFile(configPath, includeRow ? `${baseline}\n${row}` : baseline)
+    await Promise.all([
+        mkdir(join(root, 'app'), { recursive: true }),
+        mkdir(join(root, 'fixtures'), { recursive: true }),
+        mkdir(join(root, 'worker'), { recursive: true }),
+    ])
+    await Promise.all([
+        writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n'),
+        writeFile(join(root, 'app/package-lock.json'), '{}\n'),
+        writeFile(join(root, 'worker/package-lock.json'), '{}\n'),
+        writeFile(join(root, 'worker/AGENTS.md'), 'Synthetic worker guide.\n'),
+        writeFile(join(root, 'worker/CONTROL.md'), 'Synthetic worker guide.\n'),
+        writeFile(join(root, 'worker/.env.example'), 'SYNTHETIC_TOKEN=\n'),
+        writeFile(join(root, 'worker/.env.local'), `SYNTHETIC_TOKEN=${credentialCanary}\n`),
+        writeFile(join(root, 'worker/.mcp.json'), `${JSON.stringify({
+            mcpServers: {
+                'row-server': {
+                    command: '/usr/bin/printenv',
+                    env: { SYNTHETIC_TOKEN: '${SYNTHETIC_TOKEN}' },
+                },
+            },
+        })}\n`),
+    ])
+    return { root, configPath, row }
+}
+
+async function capturedEntry(root: string, path: string): Promise<string> {
+    const absolute = join(root, path)
+    const state = await lstat(absolute)
+    return state.isSymbolicLink() ? `symlink:${await readlink(absolute)}` : `file:${await readFile(absolute, 'utf8')}`
+}
+
+async function capturedOutputs(root: string, paths: readonly string[]) {
+    return Object.fromEntries(await Promise.all(paths.map(async path => [path, await capturedEntry(root, path)])))
+}
+
+async function expectDrift(configPath: string, target: string) {
+    const checked = await checkGeneratedEnvironment({ configPath })
+    expect(checked).toMatchObject({
+        kind: 'refusal',
+        status: 2,
+        diagnostics: [expect.objectContaining({ target })],
+    })
+    if (checked.kind !== 'refusal') return
+    expect(checked.diagnostics[0]?.code).toMatch(/^(?:GENERATED_ARTIFACT_DRIFT|SURFACE_STATE_CONFLICT)$/)
+}
+
+describe('one-row generated surface integration', () => {
+    it('derives every accepted output and catches every serial drift control from one registry row', async () => {
+        const [baseline, added] = await Promise.all([consumer('baseline', false), consumer('added', true)])
+        for (const fixture of [baseline, added]) expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+        expect(added.row.match(/^\[\[sibling\]\]$/gm)).toHaveLength(1)
+        expect(added.row).not.toMatch(/^\[(?:cockpit|ports|environment|mcp|guards|surfaces|workorders)\]/m)
+
+        const declaration = parseToml(await readFile(added.configPath, 'utf8'))
+        const registry = deriveRegistry(declaration)
+        expect(registry.kind).toBe('complete')
+        if (registry.kind !== 'complete') throw new Error(registry.message)
+        const worker = registry.result.config.environment.generated?.services.find(service => service.id === 'worker')
+        expect(worker).toMatchObject({
+            sibling: 'worker',
+            profiles: ['worker'],
+            ports: [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3200 }],
+            mounts: [
+                { kind: 'bind', source: 'worker', target: '/workspace/worker', source_type: 'directory' },
+                { kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' },
+                { kind: 'environment-file', source: 'worker/.env.local', target: '/workspace/.env', source_type: 'file' },
+            ],
+        })
+        expect(registry.result.config.ports.bases.WORKER_HOST_PORT).toBe(4200)
+        expect(registry.result.config.environment.entrypoint_derivatives).toContainEqual({
+            name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/worker',
+        })
+        expect(registry.result.config.environment.install_policies).toContainEqual({
+            toolchain: 'node', volume: 'worker-dependencies', lockfile: 'worker/package-lock.json',
+            install: ['npm', 'ci'], load_probe: ['node', 'probe.mjs', 'load'],
+        })
+        expect(registry.result.mcpSources).toHaveLength(1)
+        expect(registry.result.secretPaths).toContainEqual({
+            slug: 'worker', siblingDir: 'worker', path: '.env.local', kind: 'instance',
+        })
+
+        const targets = ['claudecode', 'codexcli', 'opencode'] as const
+        const guideObservation = await observeSiblingGuides({
+            allowedRoots: [join(added.root, 'worker')],
+            requests: [{
+                slug: 'worker', root: join(added.root, 'worker'),
+                sourcePath: join(added.root, 'worker/AGENTS.md'),
+            }],
+        })
+        expect(guideObservation.kind).toBe('complete')
+        if (guideObservation.kind !== 'complete') throw new Error(guideObservation.diagnostic.message)
+        const projectionInput = {
+            canonicalMainCheckout: added.root,
+            siblingsRoot: '.',
+            activeProfiles: ['application', 'worker'],
+            guideCapLines: 4,
+            siblings: registry.result.config.sibling.map(sibling => ({
+                slug: sibling.slug, mount: sibling.mount, directoryAuthority: sibling.dir, guides: sibling.guides,
+            })),
+            mountedPaths: registry.result.config.sibling.map(sibling => ({
+                slug: sibling.slug, path: join(added.root, sibling.dir),
+            })),
+            directoryGrants: registry.result.config.sibling.flatMap(sibling => targets.map(target => ({
+                slug: sibling.slug, target, path: join(added.root, sibling.dir),
+            }))),
+            guideObservations: guideObservation.observations,
+            existingEntries: [],
+            priorOwnedLinks: [],
+            standingSources: targets.map(target => ({
+                target, path: `${target}.scoped`, content: 'scoped first\nscoped second\n', scope: 'scoped' as const,
+            })),
+            loadCharacterizations: {
+                claudecode: { measuredOn: '2026-09-26', provenance: 'paired synthetic probe', metric: 'lines' as const, scopeSemantics: 'conditional' as const },
+                codexcli: { measuredOn: '2026-09-26', provenance: 'paired synthetic probe', metric: 'lines' as const, scopeSemantics: 'full' as const },
+                opencode: { measuredOn: '2026-09-26', provenance: 'paired synthetic probe', metric: 'lines' as const, scopeSemantics: 'full' as const },
+            },
+        }
+        const projection = planSiblingProjection(projectionInput)
+        expect(projection).toMatchObject({
+            kind: 'complete',
+            links: [expect.objectContaining({ path: '.sibling-worker-AGENTS.md' })],
+            costs: [
+                { target: 'claudecode', status: 'within_cap', metric: 'lines', value: 1, conditionalValue: 2, cap: 4,
+                    measuredOn: '2026-09-26', provenance: 'paired synthetic probe', scopeSemantics: 'conditional' },
+                { target: 'codexcli', status: 'within_cap', metric: 'lines', value: 3, conditionalValue: 0, cap: 4,
+                    measuredOn: '2026-09-26', provenance: 'paired synthetic probe', scopeSemantics: 'full' },
+                { target: 'opencode', status: 'within_cap', metric: 'lines', value: 3, conditionalValue: 0, cap: 4,
+                    measuredOn: '2026-09-26', provenance: 'paired synthetic probe', scopeSemantics: 'full' },
+            ],
+        })
+        const wrongGrant = structuredClone(projectionInput)
+        wrongGrant.directoryGrants.find(grant => grant.slug === 'worker' && grant.target === 'codexcli')!.path = join(added.root, 'nested/worker')
+        expect(planSiblingProjection(wrongGrant)).toMatchObject({
+            kind: 'refusal', diagnostic: { code: 'PROJECTION_GRANT_MISMATCH', target: 'worker:codexcli' },
+        })
+
+        const [baselineSync, addedSync] = await Promise.all([
+            syncGeneratedEnvironment({ configPath: baseline.configPath }),
+            syncGeneratedEnvironment({ configPath: added.configPath }),
+        ])
+        expect(baselineSync, JSON.stringify(baselineSync.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(addedSync, JSON.stringify(addedSync.diagnostics)).toMatchObject({ kind: 'complete' })
+        if (baselineSync.kind !== 'complete' || addedSync.kind !== 'complete') return
+
+        const before = await capturedOutputs(baseline.root, baselineSync.result.paths)
+        const after = await capturedOutputs(added.root, addedSync.result.paths)
+        const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+            .filter(path => before[path] !== after[path])
+            .sort()
+        expect(changed).toEqual([
+            '.claude/settings.json',
+            '.cockpit/guards/bash-guard.sh',
+            '.cockpit/mcp/65dfe895cdc7ae8504fb9a4430d8a72d14b21aa8792a20d78ac1eecfa6113cc6.sh',
+            '.codex/config.toml',
+            '.codex/hooks.json',
+            '.mcp.json',
+            '.opencode/plugin/cockpit-guards.js',
+            '.sibling-worker-AGENTS.md',
+            'AGENTS.md',
+            'CLAUDE.local.md',
+            'CLAUDE.md',
+            'compose.generated.yml',
+            'docs/cockpit/environment-decisions.md',
+            'opencode.jsonc',
+        ])
+
+        expect(addedSync.result.application).toMatchObject({ profiles: expect.arrayContaining(['worker']) })
+        expect(addedSync.result.application.mounts).toEqual(expect.arrayContaining([
+            'worker:bind:worker:/workspace/worker',
+            'worker:volume:worker-dependencies:/workspace/node_modules',
+            'worker:environment-file:worker/.env.local:/workspace/.env',
+        ]))
+        expect(addedSync.result.application.surfaceSelftest.entries).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'symlink', path: '.sibling-worker-AGENTS.md' }),
+        ]))
+
+        const claudeMcp = JSON.parse(await readFile(join(added.root, '.mcp.json'), 'utf8')) as {
+            mcpServers: Record<string, unknown>
+        }
+        const claudeSettings = JSON.parse(await readFile(join(added.root, '.claude/settings.json'), 'utf8')) as {
+            enabledMcpjsonServers: string[]
+        }
+        const codex = parseToml(await readFile(join(added.root, '.codex/config.toml'), 'utf8')) as {
+            mcp_servers: Record<string, { enabled?: boolean }>
+        }
+        const openCodeBytes = await readFile(join(added.root, 'opencode.jsonc'), 'utf8')
+        const ownerPattern = /\/\* cockpit:owner:(cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}):(start|end) \*\//g
+        const ownerId = cockpitId({ name: 'generated-environment', mainCheckoutPath: added.root })
+        expect([...openCodeBytes.matchAll(ownerPattern)].map(match => [match[1], match[2]])).toEqual([
+            [ownerId, 'start'], [ownerId, 'end'],
+        ])
+        const openCodeJson = openCodeBytes.replace(ownerPattern, marker => ' '.repeat(marker.length))
+        expect(openCodeJson).not.toContain('cockpit:owner:')
+        const openCode = JSON.parse(openCodeJson) as {
+            mcp: Record<string, { enabled: boolean }>
+        }
+        expect(Object.keys(claudeMcp.mcpServers)).toEqual(['row-server'])
+        expect(claudeSettings.enabledMcpjsonServers).toEqual([])
+        expect(codex.mcp_servers['row-server']?.enabled).toBe(false)
+        expect(openCode.mcp['row-server']?.enabled).toBe(false)
+
+        const evidence = [
+            JSON.stringify(addedSync),
+            ...(await Promise.all(addedSync.result.paths.map(path => capturedEntry(added.root, path)))),
+            await readFile(join(added.root, '.cockpit/generated-environment-ownership.json'), 'utf8'),
+        ].join('\n')
+        expect(evidence).not.toContain(credentialCanary)
+        const generatedGuard = await readFile(join(added.root, '.cockpit/guards/bash-guard.sh'), 'utf8')
+        expect(generatedGuard).not.toContain(credentialCanary)
+        for (const [fixture, path, decision] of [
+            [baseline, '.env.local', 'allow'],
+            [added, '.env.local', 'deny'],
+            [added, '.env.example', 'allow'],
+        ] as const) {
+            const guarded = spawnSync('/bin/bash', [join(fixture.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+                cwd: fixture.root,
+                input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: fixture.root,
+                    tool_input: { file_path: join(fixture.root, 'worker', path), content: 'synthetic replacement' } }),
+                encoding: 'utf8', timeout: 5000, maxBuffer: 65_536,
+            })
+            expect(guarded.error).toBeUndefined()
+            expect(guarded.status, guarded.stderr).toBe(0)
+            if (decision === 'deny') expect(JSON.parse(guarded.stdout)).toEqual({ hookSpecificOutput: {
+                hookEventName: 'PreToolUse', permissionDecision: 'deny',
+                permissionDecisionReason: 'Refusing mutation or staging of a declared environment instance.',
+            } })
+            else expect(guarded.stdout).toBe('')
+            expect(guarded.stdout + guarded.stderr).not.toContain(credentialCanary)
+        }
+
+        const guideLink = '.sibling-worker-AGENTS.md'
+        await rm(join(added.root, guideLink))
+        await symlink('worker/CONTROL.md', join(added.root, guideLink))
+        await expectDrift(added.configPath, guideLink)
+        await rm(join(added.root, guideLink))
+        await symlink('worker/AGENTS.md', join(added.root, guideLink))
+        expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({ kind: 'complete' })
+
+        const fileControls = [
+            '.cockpit/guards/bash-guard.sh',
+            '.mcp.json',
+        ] as const
+        for (const target of fileControls) {
+            const original = await readFile(join(added.root, target), 'utf8')
+            if (target === '.mcp.json') await rm(join(added.root, target))
+            else await writeFile(join(added.root, target), `${original}\n# stale control\n`)
+            await expectDrift(added.configPath, target)
+            await writeFile(join(added.root, target), original)
+            expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({ kind: 'complete' })
+        }
+
+        const codexPath = join(added.root, '.codex/config.toml')
+        const codexBytes = await readFile(codexPath, 'utf8')
+        const workerRoot = join(added.root, 'worker')
+        expect(codexBytes).toContain(workerRoot)
+        await writeFile(codexPath, codexBytes.replaceAll(workerRoot, join(added.root, 'nested/worker')))
+        await expectDrift(added.configPath, '.codex/config.toml')
+        await writeFile(codexPath, codexBytes)
+        expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({ kind: 'complete' })
+
+        const nested = join(added.root, 'nested')
+        await mkdir(nested)
+        await rename(join(added.root, 'worker'), join(nested, 'worker'))
+        await symlink('nested/worker', join(added.root, 'worker'))
+        const wrongRoot = await checkGeneratedEnvironment({ configPath: added.configPath })
+        expect(wrongRoot).toMatchObject({ kind: 'refusal', status: 2 })
+        expect(JSON.stringify(wrongRoot)).not.toContain(credentialCanary)
+        await rm(join(added.root, 'worker'))
+        await rename(join(nested, 'worker'), join(added.root, 'worker'))
+        expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({ kind: 'complete' })
+
+        const wrapper = `.cockpit/mcp/${createHash('sha256').update('row-server').digest('hex')}.sh`
+        expect(addedSync.result.paths).toContain(wrapper)
+    }, 180_000)
+})

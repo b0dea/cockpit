@@ -1,0 +1,23 @@
+name: Cockpit generated-environment check
+description: Verify that cockpit-owned generated files match the declared environment
+
+inputs:
+  config:
+    description: Path to cockpit.toml, relative to the repository root
+    required: false
+    default: cockpit.toml
+
+runs:
+  using: composite
+  steps:
+    - name: Check generated environment
+      shell: bash
+      env:
+        COCKPIT_CONFIG: ${{ inputs.config }}
+      run: |
+        set -euo pipefail
+        if [[ ! -x ./node_modules/.bin/cockpit ]]; then
+          printf '%s\n' 'cockpit is not installed from the caller lockfile at ./node_modules/.bin/cockpit' >&2
+          exit 2
+        fi
+        ./node_modules/.bin/cockpit check --config "$COCKPIT_CONFIG"

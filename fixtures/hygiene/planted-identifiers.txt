@@ -1,0 +1,29 @@
+# Synthetic planted identifiers — the floor under the tree-hygiene scan.
+#
+# Every non-comment line below must match the UNIVERSAL needle classes in
+# packages/cockpit/src/tree-hygiene.test.ts, and that test asserts exactly that. Without
+# something known-bad in the same run, "no hits" and "not scanning" are indistinguishable,
+# and a broken scan reports green for months.
+#
+# The universal classes need no local configuration, so this proof holds in a clone that has
+# no site-specific list at all — which is the state every public clone starts in.
+#
+# Everything here is invented: no real credential, host, account or path. The shapes are the
+# point. This file is the one allow-listed hit in the tree, and the assertion above is what
+# keeps that allowance from becoming a hiding place — a real name pasted in here matches none
+# of the universal classes and fails the run.
+
+ghp_EXAMPLEexample01
+sk_live_000000000000000000EXAMPLE
+AKIAEXAMPLE01234
+/Users/synthetic-operator/Projects/example-app/.env
+/root/Projects/example-app/.env
+/var/root/Projects/example-app/.env
+~/dev/Repositories/Example/example-service
+/home/synthetic-operator/Projects/example-app/.env
+C:\Users\synthetic-operator\Projects\example-app\.env
+\\fileserver\Users\synthetic-operator\Projects\example-app\.env
+github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+npm_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA

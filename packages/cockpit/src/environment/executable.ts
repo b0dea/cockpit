@@ -1,0 +1,241 @@
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat, open, realpath } from 'node:fs/promises'
+import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
+
+export const mechanism = {
+    id: 'resolved-executable-identity',
+    module: 'packages/cockpit/src/environment/executable.ts',
+    exports: ['resolvedExecutable', 'resolvedDockerExecutable', 'resolvedGitExecutable', 'isResolvedExecutable', 'isResolvedDockerExecutable', 'isResolvedGitExecutable', 'resolveExecutable', 'resolveExecutablePath', 'resolveDiskCapacityExecutable', 'resolveDockerExecutable', 'resolveGitExecutable', 'resolvePathRemovalExecutable'],
+} as const
+
+export interface ResolvedExecutable {
+    readonly canonicalPath: string
+    readonly invocationPath: string
+    readonly sha256: string
+    readonly executionMode: 'staged' | 'verified-path'
+}
+
+const SHA256 = /^[a-f0-9]{64}$/
+
+function exactKeys(value: object, expected: readonly string[]): boolean {
+    const actual = Object.keys(value).sort()
+    const keys = [...expected].sort()
+    return actual.length === keys.length && actual.every((key, index) => key === keys[index])
+}
+
+export function resolvedExecutable(value: unknown): ResolvedExecutable | undefined {
+    try {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)
+            || !exactKeys(value, ['canonicalPath', 'invocationPath', 'sha256', 'executionMode'])) return undefined
+        const { canonicalPath, invocationPath, sha256, executionMode } = value as Partial<ResolvedExecutable>
+        return typeof canonicalPath === 'string' && isAbsolute(canonicalPath) && normalize(canonicalPath) === canonicalPath
+            && !canonicalPath.includes('\0') && typeof invocationPath === 'string' && isAbsolute(invocationPath)
+            && normalize(invocationPath) === invocationPath && !invocationPath.includes('\0')
+            && typeof sha256 === 'string' && SHA256.test(sha256)
+            && (executionMode === 'staged' || executionMode === 'verified-path')
+            ? Object.freeze({ canonicalPath, invocationPath, sha256, executionMode })
+            : undefined
+    } catch {
+        return undefined
+    }
+}
+
+export function isResolvedExecutable(value: unknown): boolean {
+    return resolvedExecutable(value) !== undefined
+}
+
+export function resolvedDockerExecutable(value: unknown): ResolvedExecutable | undefined {
+    const executable = resolvedExecutable(value)
+    return executable !== undefined && basename(executable.invocationPath) === 'docker' && executable.executionMode === 'staged'
+        ? executable : undefined
+}
+
+export function isResolvedDockerExecutable(value: unknown): boolean {
+    return resolvedDockerExecutable(value) !== undefined
+}
+
+export function resolvedGitExecutable(value: unknown): ResolvedExecutable | undefined {
+    const executable = resolvedExecutable(value)
+    return executable !== undefined && basename(executable.invocationPath) === 'git' ? executable : undefined
+}
+
+export function isResolvedGitExecutable(value: unknown): boolean {
+    return resolvedGitExecutable(value) !== undefined
+}
+
+export type ExecutableResolution = Readonly<{ state: 'available'; value: ResolvedExecutable }>
+    | Readonly<{ state: 'unavailable'; reason: string }>
+
+const EXECUTABLE_BYTE_LIMIT = 536_870_912
+const PATH_ENTRY_LIMIT = 256
+
+function unavailable(reason: string): ExecutableResolution {
+    return Object.freeze({ state: 'unavailable', reason })
+}
+
+async function digestRegularFile(path: string): Promise<string | undefined> {
+    let file: Awaited<ReturnType<typeof open>> | undefined
+    try {
+        const before = await lstat(path)
+        if (before.isSymbolicLink() || !before.isFile() || before.size > EXECUTABLE_BYTE_LIMIT || (before.mode & 0o111) === 0) return undefined
+        file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+        const opened = await file.stat()
+        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > EXECUTABLE_BYTE_LIMIT) return undefined
+        const hash = createHash('sha256')
+        const chunk = Buffer.allocUnsafe(1_048_576)
+        let total = 0
+        while (true) {
+            const { bytesRead } = await file.read(chunk, 0, Math.min(chunk.byteLength, EXECUTABLE_BYTE_LIMIT - total + 1), null)
+            if (bytesRead === 0) break
+            total += bytesRead
+            if (total > EXECUTABLE_BYTE_LIMIT) return undefined
+            hash.update(chunk.subarray(0, bytesRead))
+        }
+        const after = await file.stat()
+        const linked = await lstat(path)
+        const sha256 = total === opened.size && after.size === opened.size && after.mtimeMs === opened.mtimeMs
+            && linked.dev === opened.dev && linked.ino === opened.ino && linked.size === opened.size && linked.mtimeMs === opened.mtimeMs
+            ? hash.digest('hex')
+            : undefined
+        await file.close()
+        file = undefined
+        return sha256
+    } catch {
+        return undefined
+    } finally {
+        try { await file?.close() } catch { /* The caller receives unavailable; no descriptor authority survives. */ }
+    }
+}
+
+export async function resolveExecutablePath(path: string): Promise<ExecutableResolution> {
+    if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0')) {
+        return unavailable('Executable path must be an exact absolute path')
+    }
+    let invocation
+    try { invocation = await lstat(path) } catch { return unavailable(`Executable is unavailable: ${path}`) }
+    if (!(invocation.isFile() || invocation.isSymbolicLink()) || invocation.isFile() && (invocation.mode & 0o111) === 0) {
+        return unavailable(`Executable is unavailable: ${path}`)
+    }
+    let canonicalPath: string
+    try { canonicalPath = await realpath(path) } catch { return unavailable(`Executable is unavailable: ${path}`) }
+    const sha256 = await digestRegularFile(canonicalPath)
+    if (sha256 === undefined) return unavailable(`Executable identity is unavailable: ${path}`)
+    const value = resolvedExecutable({ canonicalPath, invocationPath: path, sha256, executionMode: 'verified-path' })
+    return value ? Object.freeze({ state: 'available', value }) : unavailable(`Executable identity is invalid: ${path}`)
+}
+
+export async function resolveExecutable(name: string, env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+    if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) return unavailable('Executable name is invalid')
+    if (isAbsolute(name)) return resolveExecutablePath(name)
+    if (basename(name) !== name) return unavailable('Executable name must be absolute or a PATH entry name')
+    let pathValue: unknown
+    try { pathValue = env.PATH } catch { return unavailable('Executable search path is not readable') }
+    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
+        return unavailable('Executable search path is missing or invalid')
+    }
+    const directories = pathValue.split(delimiter)
+    if (directories.length > PATH_ENTRY_LIMIT || directories.some(path => !isAbsolute(path) || normalize(path) !== path)) {
+        return unavailable('Executable search path must contain bounded absolute directories')
+    }
+    for (const directory of directories) {
+        const result = await resolveExecutablePath(join(directory, name))
+        if (result.state === 'available') return result
+    }
+    return unavailable(`Executable was not found in the supplied search path: ${name}`)
+}
+
+export async function resolveGitExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+    let pathValue: unknown
+    try { pathValue = env.PATH } catch { return unavailable('Git executable search path is not readable') }
+    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
+        return unavailable('Git executable search path is missing or invalid')
+    }
+    const directories = pathValue.split(delimiter)
+    if (directories.length > PATH_ENTRY_LIMIT || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) {
+        return unavailable('Git executable search path must contain bounded absolute directories')
+    }
+    for (const directory of directories) {
+        const invocationPath = join(directory, 'git')
+        let invocation
+        try { invocation = await lstat(invocationPath) } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+            continue
+        }
+        if (!(invocation.isFile() || invocation.isSymbolicLink()) || (invocation.isFile() && (invocation.mode & 0o111) === 0)) {
+            continue
+        }
+        let canonicalPath: string
+        try { canonicalPath = await realpath(invocationPath) } catch { continue }
+        const sha256 = await digestRegularFile(canonicalPath)
+        if (sha256 === undefined) continue
+        const value = Object.freeze({ canonicalPath, invocationPath, sha256, executionMode: 'verified-path' as const })
+        return isResolvedGitExecutable(value) ? Object.freeze({ state: 'available', value }) : unavailable('Git executable identity is invalid')
+    }
+    return unavailable('Git executable was not found in the supplied search path')
+}
+
+export async function resolveDiskCapacityExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+    let pathValue: unknown
+    try { pathValue = env.PATH } catch { return unavailable('Disk-capacity executable search path is not readable') }
+    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
+        return unavailable('Disk-capacity executable search path is missing or invalid')
+    }
+    const directories = pathValue.split(delimiter)
+    if (directories.length > PATH_ENTRY_LIMIT || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) {
+        return unavailable('Disk-capacity executable search path must contain bounded absolute directories')
+    }
+    for (const directory of directories) {
+        const invocationPath = join(directory, 'df')
+        let invocation
+        try { invocation = await lstat(invocationPath) } catch { continue }
+        if (!(invocation.isFile() || invocation.isSymbolicLink()) || (invocation.isFile() && (invocation.mode & 0o111) === 0)) continue
+        let canonicalPath: string
+        try { canonicalPath = await realpath(invocationPath) } catch { continue }
+        const sha256 = await digestRegularFile(canonicalPath)
+        if (sha256 === undefined) continue
+        const value = resolvedExecutable({ canonicalPath, invocationPath, sha256, executionMode: 'verified-path' })
+        if (value && basename(value.invocationPath) === 'df') return Object.freeze({ state: 'available', value })
+    }
+    return unavailable('Disk-capacity executable was not found in the supplied search path')
+}
+
+export async function resolveDockerExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+    let pathValue: unknown
+    try { pathValue = env.PATH } catch { return unavailable('Docker executable search path is not readable') }
+    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
+        return unavailable('Docker executable search path is missing or invalid')
+    }
+    const directories = pathValue.split(delimiter)
+    if (directories.length > PATH_ENTRY_LIMIT || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) {
+        return unavailable('Docker executable search path must contain bounded absolute directories')
+    }
+    for (const directory of directories) {
+        const invocationPath = join(directory, 'docker')
+        let invocation
+        try { invocation = await lstat(invocationPath) } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+            continue
+        }
+        if (!(invocation.isFile() || invocation.isSymbolicLink()) || (invocation.isFile() && (invocation.mode & 0o111) === 0)) {
+            continue
+        }
+        let canonicalPath: string
+        try { canonicalPath = await realpath(invocationPath) } catch { continue }
+        const sha256 = await digestRegularFile(canonicalPath)
+        if (sha256 === undefined) continue
+        const value = Object.freeze({ canonicalPath, invocationPath, sha256, executionMode: 'staged' as const })
+        return isResolvedDockerExecutable(value) ? Object.freeze({ state: 'available', value }) : unavailable('Docker executable identity is invalid')
+    }
+    return unavailable('Docker executable was not found in the supplied search path')
+}
+
+export async function resolvePathRemovalExecutable(): Promise<ExecutableResolution> {
+    const invocationPath = '/bin/rm'
+    let canonicalPath: string
+    try { canonicalPath = await realpath(invocationPath) } catch { return unavailable('Path removal executable is unavailable') }
+    const sha256 = await digestRegularFile(canonicalPath)
+    if (sha256 === undefined) return unavailable('Path removal executable cannot be authenticated')
+    const value = Object.freeze({ canonicalPath, invocationPath, sha256, executionMode: 'verified-path' as const })
+    return Object.freeze({ state: 'available', value })
+}

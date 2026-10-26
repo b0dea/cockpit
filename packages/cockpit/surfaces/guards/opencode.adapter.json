@@ -1,0 +1,25 @@
+{
+  "format": "cockpit-restriction-adapter/v1",
+  "target": "opencode",
+  "mechanism": "native",
+  "promptTier": false,
+  "measuredOn": "2026-08-24",
+  "measuredVersion": "1.18.15",
+  "provenance": "paired native tool.execute.before payload, apply_patch and thrown-refusal probe",
+  "registration": {
+    "kind": "opencode-plugin",
+    "path": ".opencode/plugin/cockpit-guards.js",
+    "event": "tool.execute.before",
+    "matcher": "bash|edit|write|apply_patch"
+  },
+  "payload": {
+    "kind": "opencode-before",
+    "bashTool": "bash",
+    "editTools": ["edit", "write", "apply_patch"]
+  },
+  "readonly": {
+    "kind": "agent-frontmatter",
+    "pathPattern": ".opencode/agents/{agent}.md",
+    "bytes": "permission:\n  edit: deny\n"
+  }
+}

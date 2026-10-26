@@ -1,0 +1,158 @@
+name: CI
+
+# Keep anonymisation mechanical. A written publication rule without this job would depend on
+# whether a human remembered to run the scanner before pushing.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only. Nothing here publishes, comments, or writes back to the repository, so nothing
+# here needs a token that can.
+permissions:
+  contents: read
+
+# A superseded push has nothing left to prove.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Its own job rather than a step inside the matrix, so a red build names which rule broke.
+  # "tests failed" and "the tree leaked" are different emergencies and must not look alike in
+  # the checks list.
+  #
+  # What this job can and cannot enforce, because a green tick here is read as more than it is:
+  # the scan has two classes, and a CI checkout holds only the material for one. Credential
+  # shapes and private absolute paths are universal and are enforced here on every push. The
+  # site-specific names live in an ignored file that exists only in the maintainer's checkout,
+  # so THIS JOB CANNOT CATCH A SITE-NAME LEAK. That class is enforced where commits originate,
+  # by running the suite locally, and the scan prints which classes it covered.
+  anonymisation:
+    name: anonymisation scan
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to a full-length commit SHA, never a tag: a tag is mutable and
+      # resolves to wherever its owner last moved it, so a tag reference is a dependency that
+      # updates itself without review. The trailing comment says which release the SHA is.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: nothing consumer-identifying reaches the tracked tree
+        # Fails closed. vitest exits non-zero when a path matches no test file, so a scan
+        # that has been renamed or deleted turns this job red rather than passing over
+        # nothing. The scan itself reports what it covered; read that line before trusting a
+        # green run from a clone that carries no site-specific list.
+        run: npm test -- packages/cockpit/src/tree-hygiene.test.ts
+
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform's failure must not hide the other's: a macOS-only path bug is exactly
+      # what this matrix exists to find.
+      fail-fast: false
+      matrix:
+        # Full behavior runs at the supported range edges on both platforms. The middle
+        # runtime keeps package, launcher and process compatibility without a fifth and
+        # sixth copy of the process-heavy suite.
+        include:
+          - { os: ubuntu-latest, node: '22.13.0', gate: full }
+          - { os: macos-latest, node: '22.13.0', gate: full }
+          - { os: ubuntu-latest, node: '24', gate: compatibility }
+          - { os: macos-latest, node: '24', gate: compatibility }
+          - { os: ubuntu-latest, node: '26', gate: full }
+          - { os: macos-latest, node: '26', gate: full }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # `ci`, not `install`: the lockfile decides, and a lockfile that no longer satisfies
+      # package.json fails here instead of being quietly rewritten.
+      - run: npm ci --ignore-scripts
+      # The rendered shell is sourced in both bash and zsh, because a resolved registry that
+      # only parses under one of them is a bug this suite exists to catch. zsh ships on the
+      # macOS image and not the Ubuntu one, so without this the Linux half of that pair
+      # measures the runner image rather than the rendered bytes.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
+      - run: npm run build
+      - if: matrix.gate == 'full'
+        timeout-minutes: 15
+        run: npm test
+      - if: matrix.gate == 'compatibility'
+        timeout-minutes: 15
+        run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.test.ts
+      - name: tests leave the committed schema unchanged
+        run: git diff --exit-code -- packages/cockpit/cockpit.schema.json
+      - run: npm run typecheck
+      - run: npm run lint:docs
+
+  example:
+    name: synthetic example (Linux container path)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test -- packages/cockpit/src/example-cockpit.test.ts
+
+  supply-chain:
+    name: package and supply-chain readiness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm run lint:supply-chain
+      - run: npm test -- packages/cockpit/src/supply-chain.test.ts packages/cockpit/src/packaging.test.ts
+      - run: node scripts/supply-chain-check.mjs --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
+
+  test-protection:
+    name: test protection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - if: github.event_name == 'pull_request'
+        run: node scripts/check-test-protection.mjs "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" merge-base
+      - if: github.event_name == 'push'
+        run: node scripts/check-test-protection.mjs "${{ github.event.before }}" "${{ github.sha }}" exact
+
+  runtime-floor-negative:
+    name: runtime floor negative control (node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: launcher refuses before importing compiled code
+        shell: bash
+        run: |
+          set +e
+          NODE_DEBUG=esm node packages/cockpit/bin/cockpit.mjs --help \
+            >"$RUNNER_TEMP/cockpit-node20.stdout" \
+            2>"$RUNNER_TEMP/cockpit-node20.stderr"
+          node20_status=$?
+          set -e
+          test "$node20_status" -ne 0
+          grep -Eq 'COCKPIT_NODE_VERSION_UNSUPPORTED.*22' "$RUNNER_TEMP/cockpit-node20.stderr"
+          ! grep -q 'packages/cockpit/dist/' "$RUNNER_TEMP/cockpit-node20.stderr"

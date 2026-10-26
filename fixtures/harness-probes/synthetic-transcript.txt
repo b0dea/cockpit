@@ -1,0 +1,52 @@
+{
+  "harness": "Codex",
+  "version": "0.0.0-synthetic",
+  "date": "2026-08-25",
+  "capability": "sandbox",
+  "runId": "synthetic-run-1",
+  "forbiddenAction": "write a synthetic marker outside the allowed root",
+  "verdict": "enforced",
+  "events": {
+    "version": {
+      "cwd": ".",
+      "command": ["/bin/echo", "--version"],
+      "exitCode": 0,
+      "stream": "stdout",
+      "code": "COMMAND_OK",
+      "result": "completed",
+      "output": "0.0.0-synthetic\nCOMMAND_OK",
+      "outputSha256": "6bf101c8f0b27d2fdcc43d44842c4914b0c1a8e3b06843419761130c2730bd87"
+    },
+    "help": {
+      "cwd": ".",
+      "command": ["/bin/echo", "--help"],
+      "exitCode": 0,
+      "stream": "stdout",
+      "code": "COMMAND_OK",
+      "result": "completed",
+      "output": "synthetic help\nCOMMAND_OK",
+      "outputSha256": "51ca227220cd0812ca017816ca9d509ed4cbcd9e3bd72b9d0b0eb23e05faa516"
+    },
+    "brokenControl": {
+      "cwd": ".",
+      "command": ["/bin/echo", "--config", "fixtures/harness-probes/broken-control.json", "synthetic", "forbidden", "attempt"],
+      "exitCode": 2,
+      "stream": "stderr",
+      "code": "CONFIG_INVALID",
+      "result": "rejected",
+      "output": "fixtures/harness-probes/broken-control.json\nCONFIG_INVALID",
+      "outputSha256": "d58a2cc9aec8734a9b5f70e561204280791f71e0f5d1d7c499b7e95f24dc4ec8"
+    },
+    "candidateControl": {
+      "cwd": ".",
+      "command": ["/bin/echo", "--config", "fixtures/harness-probes/candidate-control.json", "synthetic", "forbidden", "attempt"],
+      "exitCode": 1,
+      "stream": "stderr",
+      "code": "SANDBOX_DENIED",
+      "result": "refused",
+      "output": "fixtures/harness-probes/candidate-control.json\nSANDBOX_DENIED",
+      "outputSha256": "59f773c113b764c07b0752009d8a16ea236f6a1146368b9dc0521de65839b875"
+    }
+  },
+  "invocation": ["/bin/echo", "--config", "{control}", "synthetic", "forbidden", "attempt"]
+}

@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+node --input-type=module - "$1" <<'NODE'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+
+const messagePath = process.argv[2]
+const scannerUrl = new URL('scripts/hygiene-scan.mjs', pathToFileURL(`${process.cwd()}/`))
+const { scanPublicationPathText } = await import(scannerUrl)
+const hits = scanPublicationPathText('commit-message', readFileSync(messagePath, 'utf8'))
+
+if (hits.length > 0) {
+    console.error(`commit-msg: private development ceremony found on line${hits.length === 1 ? '' : 's'} ${hits.join(', ')}`)
+    process.exit(1)
+}
+NODE

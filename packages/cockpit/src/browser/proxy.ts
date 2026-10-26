@@ -1,0 +1,62 @@
+export interface BrowserProxyInput {
+    readonly serverPort: number
+    readonly proxyPort: number
+    readonly allowedHosts: readonly string[]
+    readonly bind?: '127.0.0.1' | '::1'
+    readonly directServerPublish?: boolean
+}
+
+function port(value: number): boolean {
+    return Number.isSafeInteger(value) && value > 0 && value <= 65535
+}
+
+export function browserProxyAuthorityMatches(value: string, expectedPort: number): boolean {
+    if (!port(expectedPort) || typeof value !== 'string' || value.length > 260 || !/^[a-z0-9.[\]:-]+$/.test(value)) return false
+    try {
+        const parsed = new URL(`http://${value}`)
+        return value === `${parsed.hostname}:${expectedPort}`
+            && parsed.hostname !== 'undefined' && parsed.hostname !== 'null'
+    } catch {
+        return false
+    }
+}
+
+export function resolveBrowserProxy(input: BrowserProxyInput) {
+    if (!input || typeof input !== 'object' || isProxy(input)
+        || Object.values(Object.getOwnPropertyDescriptors(input)).some((descriptor) => !('value' in descriptor))) {
+        throw new TypeError('browser proxy input must contain plain data')
+    }
+    if (!port(input.serverPort) || !port(input.proxyPort) || input.serverPort === input.proxyPort) {
+        throw new TypeError('browser proxy needs distinct valid server and proxy ports')
+    }
+    if (input.directServerPublish !== undefined && input.directServerPublish !== false) {
+        throw new TypeError('browser server direct publication is forbidden; publish the Host-checking proxy')
+    }
+    const bind = input.bind ?? '127.0.0.1'
+    if (bind !== '127.0.0.1' && bind !== '::1') throw new TypeError('browser proxy control publication must remain on loopback until authenticated transport is available')
+    if (!Array.isArray(input.allowedHosts) || input.allowedHosts.length === 0 || input.allowedHosts.length > 64
+        || isProxy(input.allowedHosts)
+        || Reflect.ownKeys(input.allowedHosts).length !== input.allowedHosts.length + 1
+        || Object.values(Object.getOwnPropertyDescriptors(input.allowedHosts)).some((descriptor) => !('value' in descriptor))
+        || new Set(input.allowedHosts).size !== input.allowedHosts.length
+        || !input.allowedHosts.every((host) => browserProxyAuthorityMatches(host, input.proxyPort))) {
+        throw new TypeError('browser proxy Host allowlist must contain exact hostname:port authorities')
+    }
+    return Object.freeze({
+        server: Object.freeze({ bind: '127.0.0.1' as const, port: input.serverPort, publish: false as const }),
+        proxy: Object.freeze({ bind, port: input.proxyPort, allowedHosts: Object.freeze([...input.allowedHosts]), checkHost: true as const }),
+    })
+}
+
+export type BrowserProxyProjection = ReturnType<typeof resolveBrowserProxy>
+
+export function browserHostAllowed(policy: BrowserProxyProjection, host: unknown): boolean {
+    return typeof host === 'string' && browserProxyAuthorityMatches(host, policy.proxy.port) && policy.proxy.allowedHosts.includes(host)
+}
+import { isProxy } from 'node:util/types'
+
+export const mechanism = {
+    id: 'browser-proxy',
+    module: 'packages/cockpit/src/browser/proxy.ts',
+    exports: ['browserHostAllowed', 'browserProxyAuthorityMatches', 'resolveBrowserProxy'],
+} as const

@@ -1,0 +1,57 @@
+{
+  "name": "@b0dea/cockpit",
+  "version": "0.0.0",
+  "cockpitSourceRevision": "development",
+  "private": true,
+  "type": "module",
+  "description": "One cockpit for your business's repos - boots the product your agent is editing, on any harness.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/b0dea/cockpit.git",
+    "directory": "packages/cockpit"
+  },
+  "homepage": "https://github.com/b0dea/cockpit#readme",
+  "bugs": {
+    "url": "https://github.com/b0dea/cockpit/issues"
+  },
+  "types": "./dist/cli.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "bin": {
+    "cockpit": "bin/cockpit.mjs"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json --declaration",
+    "bundle:rulesync": "node scripts/build-rulesync-generator.mjs",
+    "bundle:rulesync:check": "node scripts/build-rulesync-generator.mjs --check",
+    "schema": "node --input-type=module --eval \"import { writeFile } from 'node:fs/promises'; import { renderCockpitSchema } from './dist/schema-json.js'; await writeFile('./cockpit.schema.json', renderCockpitSchema())\"",
+    "schema:check": "node --input-type=module --eval \"import { readFile } from 'node:fs/promises'; import { renderCockpitSchema } from './dist/schema-json.js'; const artifact = process.argv[1] ?? './cockpit.schema.json'; if (await readFile(artifact, 'utf8') !== renderCockpitSchema()) { console.error('[COCKPIT_SCHEMA_STALE] cockpit.schema.json differs from the runtime schema; run npm run schema'); process.exitCode = 1 }\"",
+    "prepack": "npm run bundle:rulesync:check && npm run build && npm run schema:check"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "libexec",
+    "surfaces",
+    "cockpit.schema.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "rulesync": "40.2.0"
+  }
+}

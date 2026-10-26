@@ -1,0 +1,122 @@
+# ── Build and dependencies ───────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+*.tgz
+.turbo/
+.rollup.cache/
+.vite/
+
+# ── Logs and crash output ────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Editor and OS ────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore tool-produced patch debris; keep hand-authored backups visible for review.
+*.orig
+*.rej
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+# `.env*` alone is not enough: a cockpit materialises secrets into a directory, and
+# that is the shape someone commits by adding one file to it.
+.env
+.env.*
+!.env.example
+!.env.template
+env/.secrets/
+**/.secrets/
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.keystore
+!**/*.d.ts
+
+# ── Machine state ────────────────────────────────────────────────────────────
+*.local.json
+.cockpit/
+scratchpad/
+.scratch/
+tmp/
+.tmp*
+
+# ── Cockpit runtime ──────────────────────────────────────────────────────────
+# What a running cockpit produces on the host: which stack this checkout is bound to,
+# allocated port leases, seeded data, and the forensic log written beside a work-order.
+# `cockpit.toml` is deliberately absent — a registry is the consumer's committed config,
+# not machine state.
+env/.instance
+env/local.env
+.wo-runs/
+**/run.jsonl
+seed/.state/
+*.dump
+*.sql.gz
+
+# ── Generated harness surfaces ───────────────────────────────────────────────
+# Owned by `cockpit sync` in a consumer's cockpit. They are local output if a contributor
+# exercises generation against this source checkout.
+.mcp.json
+CLAUDE.local.md
+.sibling-*.md
+
+# ── Browser artifacts ────────────────────────────────────────────────────────
+# Every transport writes rendered page content to disk, so each is listed the day it is
+# adopted. Ignoring is necessary and NOT sufficient: the same paths belong in the reset
+# path list, because ignored-and-un-wiped is the worst of the two — invisible to git AND
+# surviving the wipe the docs say clears rendered content.
+.playwright-mcp/
+.playwright-cli/
+test-results/
+playwright-report/
+blob-report/
+*.har
+**/storage-state*.json
+**/*-auth.json
+
+# ── Test and analysis output ─────────────────────────────────────────────────
+.vitest-reports/
+junit.xml
+*.lcov
+.stryker-tmp/
+reports/mutation/
+
+# ── Python toolchain ─────────────────────────────────────────────────────────
+# A sibling repository may declare a Python toolchain; its virtualenv and bytecode are
+# host state even when the repository itself is not this one.
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Internal working material ────────────────────────────────────────────────
+# Names real deployments. Local only, never published.
+internal/
+prd.md
+
+# ── Generated consumer roots ─────────────────────────────────────────────────
+# This source repository ships templates from packages/cockpit/surfaces. Rendering those
+# templates at the repository root is local output rather than source.
+/.agents/
+/.claude/
+/.codex/
+/.opencode/

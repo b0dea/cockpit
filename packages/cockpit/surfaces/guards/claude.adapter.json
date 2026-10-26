@@ -1,0 +1,25 @@
+{
+  "format": "cockpit-restriction-adapter/v1",
+  "target": "claudecode",
+  "mechanism": "native",
+  "promptTier": true,
+  "measuredOn": "2026-08-25",
+  "measuredVersion": "2.1.220",
+  "provenance": "paired native PreToolUse payload and decision probe",
+  "registration": {
+    "kind": "hooks-json",
+    "path": ".claude/settings.json",
+    "event": "PreToolUse",
+    "matcher": "Bash|Edit|Write"
+  },
+  "payload": {
+    "kind": "pre-tool-use",
+    "bashTool": "Bash",
+    "editTools": ["Edit", "Write"]
+  },
+  "readonly": {
+    "kind": "agent-frontmatter",
+    "pathPattern": ".claude/agents/{agent}.md",
+    "bytes": "disallowedTools: Edit, Write, NotebookEdit\n"
+  }
+}

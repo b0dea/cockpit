@@ -1,0 +1,2501 @@
+import { execFileSync } from 'node:child_process'
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { posix, relative, resolve, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import ts from 'typescript'
+import {
+    checkRepositoryReferences,
+    diagnosticInventory,
+    diagnosticInventoryFromSources,
+    exported,
+    productionTypeScriptSources,
+    typeScriptSource,
+} from './diagnostic-inventory.mjs'
+
+export { diagnosticInventory } from './diagnostic-inventory.mjs'
+
+export const ROOT_URL = new URL('../', import.meta.url)
+export const ROOT = fileURLToPath(ROOT_URL)
+
+export const IMPLEMENTED_MECHANISMS = Object.freeze([
+    {
+        id: 'documentation-estate-classification',
+        exports: ['ROOT_URL', 'ROOT', 'classifyMarkdownPath', 'lintMarkdown', 'repositoryMarkdownPaths', 'walkMarkdownProse', 'inspectProseReferences',
+            'inspectInternalLinks', 'validateDocumentationIndexes', 'collectExternalLinks', 'requestExternalLink', 'buildExternalLinkReport', 'inspectMaintainedProse'],
+    },
+    { id: 'codeowners-effective-resolution', exports: ['resolveCodeOwners'] },
+    {
+        id: 'documentation-evidence',
+        exports: [
+            'diagnosticInventory',
+            'deriveDocumentationInventory',
+            'writeReviewManifest',
+            'validateReviewEvidence',
+            'validateReviewReports',
+            'validateRuntimeEvidence',
+            'validateEdgeCoverage',
+            'validateEdgeCoverageDocuments',
+            'validateAcceptanceEvidence',
+            'validateAcceptanceDocuments',
+            'validateImpactLedger',
+            'validateNavigationEvidence',
+            'validateNavigationEvidenceFromManifest',
+            'validateOperatorReviewEvidence',
+        ],
+    },
+])
+
+const EXECUTABLE_BASENAMES = new Set(['AGENTS.md', 'CLAUDE.md'])
+const EXECUTABLE_PREFIXES = [
+    '.agents/',
+    '.codex/',
+    '.claude/',
+    '.github/ISSUE_TEMPLATE/',
+    '.github/PULL_REQUEST_TEMPLATE/',
+    '.opencode/',
+    'packages/cockpit/surfaces/',
+]
+const EXECUTABLE_PATHS = new Set(['.github/PULL_REQUEST_TEMPLATE.md'])
+const HUMAN_PREFIXES = ['.changeset/', 'docs/', 'examples/']
+const HUMAN_PATHS = new Set(['packages/cockpit/README.md', 'packages/cockpit/libexec/rulesync-generator.NOTICE.md'])
+const HUMAN_ROOT = /^[^/]+\.md$/
+const ADMONITIONS = new Set(['CAUTION', 'IMPORTANT', 'NOTE', 'TIP', 'WARNING'])
+const EXTERNAL_LINK_LIMIT = 256
+const EXTERNAL_LINK_CONCURRENCY = 4
+
+function normalisePath(path) {
+    return path.replaceAll('\\', '/').replace(/^\.\//, '')
+}
+
+export function classifyMarkdownPath(path) {
+    const subject = normalisePath(path)
+    if (!subject.endsWith('.md')) return null
+    if (subject.startsWith('fixtures/docs/')) return 'fixture'
+    if (
+        EXECUTABLE_PATHS.has(subject) ||
+        EXECUTABLE_BASENAMES.has(subject) ||
+        EXECUTABLE_PREFIXES.some((prefix) => subject.startsWith(prefix)) ||
+        /\.(agent|skill|prompt)\.md$/.test(subject)
+    ) {
+        return 'executable'
+    }
+    if (HUMAN_PATHS.has(subject) || HUMAN_ROOT.test(subject) || HUMAN_PREFIXES.some((prefix) => subject.startsWith(prefix))) return 'human'
+    return null
+}
+
+function ownershipRefusal(code, message) {
+    return new Error(`[${code}] ${message}`)
+}
+
+function codeOwnersMatcher(pattern, lineNumber) {
+    if (pattern === '*') return () => true
+
+    const subject = pattern.startsWith('/') ? pattern.slice(1) : pattern
+    const literalPath = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/
+    if (literalPath.test(subject)) return (path) => path === subject
+
+    const recursive = /^(?<prefix>(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+)\/\*\*$/.exec(subject)
+    if (recursive?.groups) return (path) => path.startsWith(`${recursive.groups.prefix}/`)
+
+    throw ownershipRefusal(
+        'DOCOWN002_UNSUPPORTED_SYNTAX',
+        `CODEOWNERS line ${lineNumber} uses unsupported pattern syntax: ${pattern}`,
+    )
+}
+
+export function resolveCodeOwners(paths, source) {
+    if (paths.length === 0) {
+        throw ownershipRefusal('DOCOWN001_EMPTY_CORPUS', 'Git enumerated no documentation paths')
+    }
+
+    const rules = source
+        .split('\n')
+        .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
+        .filter(({ line }) => line !== '' && !line.startsWith('#'))
+        .map(({ line, lineNumber }) => {
+            const [pattern, ...owners] = line.split(/\s+/)
+            if (
+                owners.length === 0 ||
+                owners.some((owner) => !/^@[A-Za-z0-9][A-Za-z0-9-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)?$/.test(owner))
+            ) {
+                throw ownershipRefusal(
+                    'DOCOWN002_UNSUPPORTED_SYNTAX',
+                    `CODEOWNERS line ${lineNumber} must name supported @owner tokens`,
+                )
+            }
+            return { matches: codeOwnersMatcher(pattern, lineNumber), owners }
+        })
+
+    return paths.map((path) => {
+        const subject = normalisePath(path)
+        let owners = null
+        for (const rule of rules) {
+            if (rule.matches(subject)) owners = rule.owners
+        }
+        if (owners === null) {
+            throw ownershipRefusal('DOCOWN003_UNOWNED', `No CODEOWNERS rule names an owner for ${subject}`)
+        }
+        return { owners, path: subject }
+    })
+}
+
+function diagnostic(path, line, code, message) {
+    return { code, line, message, path }
+}
+
+function rulesEstate(path, estate) {
+    if (estate !== 'fixture') return estate
+    if (path.startsWith('fixtures/docs/human-')) return 'human'
+    if (path.startsWith('fixtures/docs/executable-')) return 'executable'
+    return null
+}
+
+function firstInlineCodeSpan(line) {
+    const runs = [...line.matchAll(/`+/g)]
+    for (let runIndex = 0; runIndex < runs.length; runIndex += 1) {
+        const opening = runs[runIndex]
+        const closingIndex = runs.findIndex(
+            (run, index) => index > runIndex && run[0].length === opening[0].length,
+        )
+        if (closingIndex !== -1) {
+            const start = opening.index ?? 0
+            const closing = runs[closingIndex]
+            return { end: (closing.index ?? 0) + closing[0].length, start }
+        }
+    }
+    return null
+}
+
+function unescapedRawElementOpening(line) {
+    const openings = line.matchAll(/<(script|style|template)(?=[\s/>])[^>]*>/gi)
+    for (const opening of openings) {
+        let backslashes = 0
+        for (let index = (opening.index ?? 0) - 1; index >= 0 && line[index] === '\\'; index -= 1) {
+            backslashes += 1
+        }
+        if (backslashes % 2 === 0) return opening
+    }
+    return null
+}
+
+function closeRawHtml(state) {
+    return state.depth === 1 ? null : { ...state, depth: state.depth - 1 }
+}
+
+function balancedQuoteClose(line, openingIndex, quote) {
+    let escaped = false
+    for (let index = openingIndex + 1; index < line.length; index += 1) {
+        if (escaped) {
+            escaped = false
+        } else if (line[index] === '\\') {
+            escaped = true
+        } else if (line[index] === quote) {
+            return index
+        }
+    }
+    return -1
+}
+
+function unescapedBacktick(line, index) {
+    let backslashes = 0
+    for (let cursor = index - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) backslashes += 1
+    return backslashes % 2 === 0
+}
+
+function multilineBacktickClosesBeforeRawTemplate(lines) {
+    let htmlComment = false
+    for (const line of lines) {
+        for (let index = 0; index < line.length; index += 1) {
+            const character = line[index]
+            if (character === '`' && unescapedBacktick(line, index)) return true
+
+            if (htmlComment) {
+                if (line.startsWith('-->', index)) {
+                    htmlComment = false
+                    index += 2
+                }
+                continue
+            }
+            if (character === "'" || character === '"') {
+                const closingIndex = balancedQuoteClose(line, index, character)
+                if (closingIndex !== -1) {
+                    for (let cursor = index + 1; cursor < closingIndex; cursor += 1) {
+                        if (line[cursor] === '`' && unescapedBacktick(line, cursor)) return true
+                    }
+                    index = closingIndex
+                    continue
+                }
+            }
+            if (line.startsWith('<!--', index)) {
+                htmlComment = true
+                index += 3
+                continue
+            }
+            if (/^<\/template\s*>/i.test(line.slice(index))) return false
+        }
+    }
+    return false
+}
+
+function nextRawTemplateToken(line, commentCloseAhead, openBacktick, backtickClosesAhead) {
+    let start = 0
+    if (openBacktick) {
+        const closingIndex = balancedQuoteClose(line, -1, '`')
+        if (closingIndex === -1) return { backtickOpen: true, token: null }
+        start = closingIndex + 1
+    }
+
+    for (let index = start; index < line.length; index += 1) {
+        const character = line[index]
+        if (character === "'" || character === '"' || character === '`') {
+            const closingIndex = balancedQuoteClose(line, index, character)
+            if (closingIndex !== -1) {
+                index = closingIndex
+                continue
+            }
+            if (character === '`' && backtickClosesAhead(line.slice(index + 1))) {
+                return { backtickOpen: true, token: null }
+            }
+        }
+        if (line.startsWith('<!--', index)) {
+            const commentBody = line.slice(index)
+            const wrappedClose = /^<!--\s*<\/template\s*>\s*-->/.exec(commentBody)
+            if (wrappedClose) {
+                return {
+                    backtickOpen: false,
+                    token: { index, kind: 'wrapped-closing', length: wrappedClose[0].length },
+                }
+            }
+            if (commentBody.slice(4).includes('-->') || commentCloseAhead) {
+                return { backtickOpen: false, token: { index, kind: 'comment', length: 4 } }
+            }
+            index += 3
+            continue
+        }
+        if (character === '<') {
+            const subject = line.slice(index)
+            const closing = /^<\/template\s*>/i.exec(subject)
+            if (closing) {
+                return { backtickOpen: false, token: { index, kind: 'closing', length: closing[0].length } }
+            }
+            const nested = /^<template(?=[\s/>])[^>]*>/i.exec(subject)
+            if (nested) {
+                return { backtickOpen: false, token: { index, kind: 'nested', length: nested[0].length } }
+            }
+        }
+    }
+    return { backtickOpen: false, token: null }
+}
+
+function withoutMarkdownInert(
+    line,
+    lineNumber,
+    openHtmlComment,
+    openRawHtml,
+    recogniseRawHtml,
+    templateCommentCloseAhead,
+    backtickClosesAhead,
+) {
+    let htmlComment = openHtmlComment
+    let rawHtml = openRawHtml
+    let remaining = line
+    let visible = ''
+    let referenceText = ''
+    const comments = []
+    while (remaining !== '') {
+        if (rawHtml !== null) {
+            if (rawHtml.element === 'template') {
+                if (rawHtml.mode === 'comment') {
+                    const commentClose = remaining.indexOf('-->')
+                    if (commentClose === -1) return { htmlComment, rawHtml, visible, referenceText, comments }
+                    remaining = remaining.slice(commentClose + 3)
+                    rawHtml = { ...rawHtml, mode: 'content' }
+                    continue
+                }
+
+                const scanned = nextRawTemplateToken(
+                    remaining,
+                    templateCommentCloseAhead,
+                    rawHtml.mode === 'backtick',
+                    backtickClosesAhead,
+                )
+                const token = scanned.token
+                rawHtml = { ...rawHtml, mode: scanned.backtickOpen ? 'backtick' : 'content' }
+                if (token === null) return { htmlComment, rawHtml, visible, referenceText, comments }
+
+                if (token.kind === 'comment') {
+                    remaining = remaining.slice(token.index + token.length)
+                    rawHtml = { ...rawHtml, mode: 'comment' }
+                } else if (token.kind === 'wrapped-closing') {
+                    remaining = remaining.slice(token.index + token.length)
+                    rawHtml = closeRawHtml(rawHtml)
+                } else if (token.kind === 'nested') {
+                    remaining = remaining.slice(token.index + token.length)
+                    rawHtml = { ...rawHtml, depth: rawHtml.depth + 1 }
+                } else {
+                    remaining = remaining.slice(token.index + token.length)
+                    rawHtml = closeRawHtml(rawHtml)
+                }
+                continue
+            }
+
+            const closing = new RegExp(`</${rawHtml.element}\\s*>`, 'i').exec(remaining)
+            if (!closing) return { htmlComment, rawHtml, visible, referenceText, comments }
+
+            let consumed = closing.index + closing[0].length
+            const beforeClosing = remaining.slice(0, closing.index)
+            const commentClose = /^\s*-->/.exec(remaining.slice(consumed))
+            if (commentClose && beforeClosing.lastIndexOf('<!--') > beforeClosing.lastIndexOf('-->')) {
+                consumed += commentClose[0].length
+            }
+            remaining = remaining.slice(consumed)
+            rawHtml = closeRawHtml(rawHtml)
+            continue
+        }
+
+        if (htmlComment) {
+            const closingIndex = remaining.indexOf('-->')
+            if (closingIndex === -1) {
+                htmlComment = { ...htmlComment, text: htmlComment.text + remaining + '\n' }
+                return { htmlComment, rawHtml, visible, referenceText, comments }
+            }
+            comments.push({ line: htmlComment.line, text: htmlComment.text + remaining.slice(0, closingIndex) })
+            remaining = remaining.slice(closingIndex + 3)
+            htmlComment = null
+            continue
+        }
+
+        const commentIndex = remaining.indexOf('<!--')
+        const inlineCode = firstInlineCodeSpan(remaining)
+        const rawOpening = recogniseRawHtml ? unescapedRawElementOpening(remaining) : null
+        const tokens = [
+            commentIndex === -1 ? null : { index: commentIndex, kind: 'comment' },
+            inlineCode === null ? null : { index: inlineCode.start, kind: 'inline-code' },
+            rawOpening === null ? null : { index: rawOpening.index ?? 0, kind: 'raw' },
+        ]
+            .filter((token) => token !== null)
+            .sort((left, right) => left.index - right.index)
+        const token = tokens[0]
+        if (token === undefined) return { htmlComment, rawHtml, visible: visible + remaining, referenceText: referenceText + remaining, comments }
+
+        visible += remaining.slice(0, token.index)
+        referenceText += remaining.slice(0, token.index)
+        if (token.kind === 'comment') {
+            remaining = remaining.slice(token.index + 4)
+            htmlComment = { line: lineNumber, text: '' }
+        } else if (token.kind === 'inline-code') {
+            visible += 'x'
+            referenceText += remaining.slice(token.index, inlineCode.end)
+            remaining = remaining.slice(inlineCode.end)
+        } else {
+            if (visible !== '' && !/\s$/.test(visible)) visible += ' '
+            if (referenceText !== '' && !/\s$/.test(referenceText)) referenceText += ' '
+            remaining = remaining.slice((rawOpening.index ?? 0) + rawOpening[0].length)
+            rawHtml = { depth: 1, element: rawOpening[1].toLowerCase(), mode: 'content' }
+        }
+    }
+    return { htmlComment, rawHtml, visible, referenceText, comments }
+}
+
+function markdownLinkSpans(path, rows) {
+    const definitions = new Map()
+    const definitionLines = new Set()
+    const diagnostics = []
+    for (const row of rows) {
+        const match = /^ {0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/.exec(row.prose)
+        if (match) {
+            definitions.set(match[1].trim().toLowerCase().replace(/\s+/g, ' '), match[2] ?? match[3])
+            definitionLines.add(row.line)
+        }
+    }
+    const links = []
+    for (const row of rows) {
+        if (definitionLines.has(row.line)) continue
+        const text = row.prose
+        for (let start = 0; start < text.length; start += 1) {
+            if (text[start] !== '[') continue
+            const close = text.indexOf(']', start + 1)
+            if (close === -1) break
+            const label = text.slice(start + 1, close)
+            let end = close + 1
+            let target
+            if (text[end] === '(') {
+                let depth = 1
+                let cursor = end + 1
+                for (; cursor < text.length && depth > 0; cursor += 1) {
+                    if (text[cursor] === '\\') cursor += 1
+                    else if (text[cursor] === '(') depth += 1
+                    else if (text[cursor] === ')') depth -= 1
+                }
+                if (depth !== 0) continue
+                const destination = text.slice(end + 1, cursor - 1).trim()
+                target = destination.startsWith('<') && destination.includes('>')
+                    ? destination.slice(1, destination.indexOf('>'))
+                    : destination.split(/\s+["']/)[0]
+                end = cursor
+            } else if (text[end] === '[') {
+                const referenceClose = text.indexOf(']', end + 1)
+                if (referenceClose === -1) continue
+                const id = text.slice(end + 1, referenceClose).trim() || label
+                target = definitions.get(id.toLowerCase().replace(/\s+/g, ' '))
+                end = referenceClose + 1
+                if (!target) diagnostics.push(diagnostic(path, row.line, 'DOC041_REFERENCE_UNRESOLVED', id))
+            } else {
+                target = definitions.get(label.toLowerCase().replace(/\s+/g, ' '))
+            }
+            if (target) links.push(Object.freeze({ line: row.line, start, end, label, target, image: text[start - 1] === '!' }))
+            start = end - 1
+        }
+    }
+    return { links, definitionLines: [...definitionLines], diagnostics }
+}
+
+export function walkMarkdownProse(path, body) {
+    const subject = normalisePath(path)
+    const appliesAs = rulesEstate(subject, classifyMarkdownPath(subject))
+    const lines = body.split('\n')
+    const htmlCommentCloseAfter = Array.from({ length: lines.length }, () => false)
+    let laterHtmlCommentClose = false
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        htmlCommentCloseAfter[index] = laterHtmlCommentClose
+        if (lines[index].includes('-->')) laterHtmlCommentClose = true
+    }
+    const diagnostics = []
+    const frontmatterOpening = lines[0]?.trim() === '---'
+    const frontmatterClosing = frontmatterOpening
+        ? lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+        : -1
+    if (frontmatterOpening && frontmatterClosing === -1) {
+        diagnostics.push(
+            diagnostic(subject, 1, 'DOC011_UNCLOSED_FRONTMATTER', 'Frontmatter opening delimiter is not closed'),
+        )
+    }
+    let fence = null
+    const fences = []
+    const visibleLines = []
+    const comments = []
+    let frontmatter = frontmatterClosing !== -1
+    let htmlComment = null
+    let rawHtmlState = null
+
+    for (const [index, line] of lines.entries()) {
+        const lineNumber = index + 1
+        if (frontmatter) {
+            if (index > 0 && line.trim() === '---') frontmatter = false
+            continue
+        }
+        const literalFenceMatch = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
+        if (fence !== null) {
+            if (
+                literalFenceMatch &&
+                literalFenceMatch[1][0] === fence.marker[0] &&
+                literalFenceMatch[1].length >= fence.marker.length &&
+                literalFenceMatch[2].trim() === ''
+            ) {
+                fence = null
+            }
+            continue
+        }
+        const inert = withoutMarkdownInert(
+            line,
+            lineNumber,
+            htmlComment,
+            rawHtmlState,
+            rawHtmlState !== null || !literalFenceMatch,
+            htmlCommentCloseAfter[index],
+            (suffix) => multilineBacktickClosesBeforeRawTemplate([suffix, ...lines.slice(index + 1)]),
+        )
+        htmlComment = inert.htmlComment
+        rawHtmlState = inert.rawHtml
+        comments.push(...inert.comments)
+        const markdownLine = inert.visible
+        const fenceMatch = /^\s*(`{3,}|~{3,})(.*)$/.exec(markdownLine)
+        if (fenceMatch) {
+            fence = { line: lineNumber, marker: fenceMatch[1] }
+            fences.push({ line: lineNumber, marker: fenceMatch[1], info: fenceMatch[2].trim() })
+            if (appliesAs === 'human' && fenceMatch[2].trim() === '') {
+                diagnostics.push(
+                    diagnostic(subject, lineNumber, 'DOC030_FENCE_LANGUAGE', 'Opening code fence has no language'),
+                )
+            }
+            continue
+        }
+
+        visibleLines.push({ line: lineNumber, prose: markdownLine, references: inert.referenceText })
+    }
+    if (fence !== null) diagnostics.push(diagnostic(subject, fence.line, 'DOC031_UNCLOSED_FENCE', 'Code fence is not closed'))
+    if (htmlComment !== null) {
+        comments.push(htmlComment)
+        if (/^cockpit:(?:ref|hazard|retired)(?:\s|$)/.test(htmlComment.text.trim())) {
+            diagnostics.push(diagnostic(subject, htmlComment.line, 'DOCEV050_NAMED_REFERENCE_MISSING', 'structured HTML comment is not closed'))
+        }
+    }
+    const commentsByLine = new Map()
+    for (const comment of comments) {
+        const row = commentsByLine.get(comment.line) ?? []
+        row.push(comment.text.trim().replace(/\s+/g, ' '))
+        commentsByLine.set(comment.line, row)
+    }
+    const proseLines = visibleLines.map(row => Object.freeze({ ...row, comments: Object.freeze(commentsByLine.get(row.line) ?? []) }))
+    const linkSpans = markdownLinkSpans(subject, proseLines)
+    diagnostics.push(...linkSpans.diagnostics)
+    return Object.freeze({
+        lines: Object.freeze(proseLines),
+        links: Object.freeze(linkSpans.links),
+        referenceDefinitionLines: Object.freeze(linkSpans.definitionLines),
+        fences: Object.freeze(fences.map(row => Object.freeze(row))),
+        diagnostics: Object.freeze(diagnostics),
+    })
+}
+
+export function lintMarkdown(path, body) {
+    const subject = normalisePath(path)
+    const estate = classifyMarkdownPath(subject)
+    if (estate === null) {
+        return [
+            diagnostic(
+                subject,
+                1,
+                'DOC001_UNCLASSIFIED',
+                'Markdown path belongs to no declared documentation estate',
+            ),
+        ]
+    }
+
+    const appliesAs = rulesEstate(subject, estate)
+    const walked = walkMarkdownProse(subject, body)
+    const diagnostics = [...walked.diagnostics]
+    let previousHeading = null
+    let openingHasProse = false
+    for (const { line: lineNumber, prose: markdownLine } of walked.lines) {
+        const heading = /^ {0,3}(#{1,6})(?:[ \t]+|$)/.exec(markdownLine)
+        const visibleText = markdownLine.replace(/<[^>]*>/g, '').trim()
+        if (heading) {
+            const level = heading[1].length
+            if (previousHeading !== null && level > previousHeading + 1) {
+                diagnostics.push(
+                    diagnostic(subject, lineNumber, 'DOC020_HEADING_ORDER', 'Heading level skips an intermediate level'),
+                )
+            }
+            previousHeading = level
+        } else if (
+            lineNumber <= 12 &&
+            visibleText !== '' &&
+            !/^\s*(?:[-*+] |\d+\. |> |\||-{3,}$)/.test(markdownLine) &&
+            !/^\s*[A-Za-z][A-Za-z0-9_-]*:\s+\S/.test(markdownLine)
+        ) {
+            openingHasProse = true
+        }
+
+        const links = [...markdownLine.matchAll(/\[([^\]]*)\]\(([^)]*)\)/g)]
+        if (links.some((match) => match[1].trim() === '' || match[2].trim() === '')) {
+            diagnostics.push(
+                diagnostic(subject, lineNumber, 'DOC040_MALFORMED_LINK', 'Markdown link has an empty label or target'),
+            )
+        } else {
+            const withoutCompleteLinks = markdownLine.replaceAll(/\[[^\]]*\]\([^)]*\)/g, '')
+            if (withoutCompleteLinks.includes('](')) {
+                diagnostics.push(
+                    diagnostic(subject, lineNumber, 'DOC040_MALFORMED_LINK', 'Markdown link is incomplete'),
+                )
+            }
+        }
+
+        const admonition = /^\s*>\s*\[!([^\]]+)\]/.exec(markdownLine)
+        if (admonition && !ADMONITIONS.has(admonition[1])) {
+            diagnostics.push(
+                diagnostic(subject, lineNumber, 'DOC050_UNKNOWN_ADMONITION', 'Admonition uses unknown vocabulary'),
+            )
+        }
+    }
+
+    diagnostics.sort((left, right) => left.code === 'DOC031_UNCLOSED_FENCE' ? 1
+        : right.code === 'DOC031_UNCLOSED_FENCE' ? -1 : left.line - right.line)
+    if (appliesAs === 'human' && !openingHasProse) {
+        diagnostics.unshift(
+            diagnostic(
+                subject,
+                1,
+                'DOC010_PURPOSE_AUDIENCE',
+                'Human documentation opening has no prose purpose or audience signal',
+            ),
+        )
+    }
+    return diagnostics
+}
+
+export function repositoryMarkdownPaths(root = ROOT) {
+    const output = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '*.md'], {
+        cwd: root,
+        encoding: 'utf8',
+    })
+    return output.split('\0').filter(Boolean)
+}
+
+function markdownLinks(walked) {
+    return walked.links
+}
+
+export function inspectInternalLinks({ path, body, readTarget }) {
+    const walked = walkMarkdownProse(path, body)
+    const errors = walked.diagnostics.filter(row => row.code === 'DOC041_REFERENCE_UNRESOLVED')
+    for (const { line, target } of markdownLinks(walked)) {
+        if (/^(?:https?:|mailto:)/i.test(target)) continue
+        const [linkedPath, fragment] = target.split('#', 2)
+        const normalized = linkedPath === '' ? path : posix.normalize(posix.join(posix.dirname(path), linkedPath))
+        if (normalized.startsWith('../') || normalized.startsWith('/')) {
+            errors.push(diagnostic(path, line, 'DOCEV026_LINK_MISSING', target))
+            continue
+        }
+        try {
+            const linked = readTarget(normalized)
+            if (normalized.endsWith('.md')) {
+                const retired = walkMarkdownProse(normalized, linked).lines
+                    .some(row => row.comments.some(comment => /^cockpit:retired(?: |$)/.test(comment)))
+                if (retired) errors.push(diagnostic(path, line, 'REFERENCE_RETIRED', target))
+                if (fragment && !headingAnchors(normalized, linked).has(fragment)) {
+                    errors.push(diagnostic(path, line, 'DOCEV027_LINK_ANCHOR_MISSING', target))
+                }
+            }
+        } catch {
+            errors.push(diagnostic(path, line, 'DOCEV026_LINK_MISSING', target))
+        }
+    }
+    return errors
+}
+
+export function validateDocumentationIndexes({ readDocument, documents = ['docs/README.md', 'docs/contributing/README.md'] }) {
+    const errors = []
+    for (const path of documents) {
+        let body
+        try {
+            body = readDocument(path)
+        } catch {
+            errors.push(diagnostic(path, 1, 'DOC060_ESTATE_INDEX_MISSING', 'documentation estate has no index'))
+            continue
+        }
+        const sourceEstate = path.startsWith('docs/contributing/') ? 'contributor' : 'consumer'
+        for (const { line, target } of markdownLinks(walkMarkdownProse(path, body))) {
+            if (/^(?:https?:|mailto:|#)/i.test(target)) continue
+            const linkedPath = target.split('#', 1)[0]
+            const normalized = posix.normalize(posix.join(posix.dirname(path), linkedPath))
+            if (!normalized.startsWith('docs/')) continue
+            const targetEstate = normalized.startsWith('docs/contributing/') ? 'contributor' : 'consumer'
+            if (sourceEstate !== targetEstate) {
+                errors.push(diagnostic(path, line, 'DOC061_ESTATE_CROSS_LINK', target))
+            }
+        }
+    }
+    return errors
+}
+
+export function collectExternalLinks(documents) {
+    const links = new Map()
+    for (const document of documents) {
+        for (const { line, target } of markdownLinks(walkMarkdownProse(document.path, document.body))) {
+            if (!/^https?:\/\//i.test(target)) continue
+            const sources = links.get(target) ?? []
+            sources.push({ path: document.path, line })
+            links.set(target, sources)
+        }
+    }
+    if (links.size > EXTERNAL_LINK_LIMIT) {
+        throw ownershipRefusal('DOC070_EXTERNAL_LINK_LIMIT', `repository has ${links.size} external links; maximum is ${EXTERNAL_LINK_LIMIT}`)
+    }
+    return [...links].sort(([left], [right]) => left.localeCompare(right)).map(([url, sources]) => ({ url, sources }))
+}
+
+export async function requestExternalLink(url) {
+    for (const method of ['HEAD', 'GET']) {
+        try {
+            const response = await fetch(url, {
+                method,
+                redirect: 'follow',
+                signal: AbortSignal.timeout(10_000),
+                headers: { 'user-agent': 'cockpit-external-link-report/1' },
+            })
+            if (method === 'HEAD' && [403, 405, 429, 501].includes(response.status)) continue
+            if (method === 'GET' && [403, 429].includes(response.status)) {
+                return { status: 'unavailable', httpStatus: response.status, detail: 'remote endpoint refused automated checking' }
+            }
+            return {
+                status: response.status >= 200 && response.status < 400 ? 'ok' : 'broken',
+                httpStatus: response.status,
+            }
+        } catch (error) {
+            if (method === 'HEAD') continue
+            return { status: 'unavailable', detail: error instanceof Error ? error.message : String(error) }
+        }
+    }
+    return { status: 'unavailable', detail: 'request methods exhausted' }
+}
+
+export async function buildExternalLinkReport({ documents, checkedAt = new Date().toISOString(), check = requestExternalLink }) {
+    const links = collectExternalLinks(documents)
+    const results = new Array(links.length)
+    let cursor = 0
+    async function worker() {
+        while (cursor < links.length) {
+            const index = cursor
+            cursor += 1
+            results[index] = { ...links[index], ...await check(links[index].url) }
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(EXTERNAL_LINK_CONCURRENCY, links.length) }, worker))
+    const summary = { checked: results.length, ok: 0, broken: 0, unavailable: 0 }
+    for (const result of results) summary[result.status] += 1
+    return { format: 1, checkedAt, summary, links: results }
+}
+
+function minorDistance(current, verified) {
+    const currentMatch = /^(\d+)\.(\d+)\./.exec(current)
+    const verifiedMatch = /^(\d+)\.(\d+)\./.exec(verified)
+    if (!currentMatch || !verifiedMatch) return null
+    if (currentMatch[1] !== verifiedMatch[1]) return Number.POSITIVE_INFINITY
+    return Number(currentMatch[2]) - Number(verifiedMatch[2])
+}
+
+function validPastDate(value, today) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value > today) return false
+    const parsed = new Date(`${value}T00:00:00.000Z`)
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
+function validNonFutureVersion(value, currentVersion) {
+    const valueMatch = /^(\d+)\.(\d+)\.(\d+)(?:[-+][^\s]+)?$/.exec(value)
+    const currentMatch = /^(\d+)\.(\d+)\.(\d+)(?:[-+][^\s]+)?$/.exec(currentVersion)
+    if (!valueMatch || !currentMatch) return false
+    for (let index = 1; index <= 3; index += 1) {
+        if (Number(valueMatch[index]) < Number(currentMatch[index])) return true
+        if (Number(valueMatch[index]) > Number(currentMatch[index])) return false
+    }
+    return true
+}
+
+function headingAnchor(value) {
+    return value.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
+}
+
+export function inspectMaintainedProse({ documents, currentVersion, staleMinorThreshold = 1, mechanismExists = () => false, today = new Date().toISOString().slice(0, 10) }) {
+    const diagnostics = []
+    const reports = []
+    const byPath = new Map(documents.map(document => [document.path, document.body]))
+    const conceptsBody = byPath.get('docs/concepts.md')
+    const conceptDefinitions = conceptsBody === undefined ? [] : walkMarkdownProse('docs/concepts.md', conceptsBody).lines
+        .flatMap(row => {
+            const heading = /^ {0,3}##\s+(.+?)\s*$/.exec(row.prose)
+            return heading ? [{ term: heading[1].replace(/[`*_]/g, ''), anchor: headingAnchor(heading[1]) }] : []
+        })
+    const duplicateTerms = duplicateValues(conceptDefinitions.map(concept => concept.term.toLowerCase()))
+    for (const term of duplicateTerms) diagnostics.push(diagnostic('docs/concepts.md', 1, 'DOC062_CONCEPT_DUPLICATE', term))
+    const concepts = [...new Map(conceptDefinitions.map(concept => [concept.term.toLowerCase(), concept])).values()]
+
+    for (const document of documents) {
+        const walked = walkMarkdownProse(document.path, document.body)
+        const verified = document.body.match(/<!--\s*cockpit:verified version=([^\s]+)\s*-->/)
+        if (verified) {
+            const distance = minorDistance(currentVersion, verified[1])
+            if (distance === null || !validNonFutureVersion(verified[1], currentVersion)) diagnostics.push(diagnostic(document.path, 1, 'DOC063_VERIFIED_VERSION_INVALID', verified[1]))
+            else if (distance > staleMinorThreshold) reports.push(diagnostic(document.path, 1, 'DOC064_VERIFIED_VERSION_STALE', verified[1]))
+        } else reports.push(diagnostic(document.path, 1, 'DOC069_VERIFIED_VERSION_MISSING', 'page has no verified version'))
+        const commentsAt = line => walked.lines.find(row => row.line === line)?.comments ?? []
+        const captureMetadata = line => [...commentsAt(line - 1), ...commentsAt(line)].filter(comment => comment.startsWith('cockpit:capture'))
+        const checkCapture = line => {
+            const markers = captureMetadata(line)
+            const match = markers.length === 1 ? /^cockpit:capture date=([^\s]+) version=([^\s]+)$/.exec(markers[0]) : null
+            if (!match || !validPastDate(match[1], today) || !validNonFutureVersion(match[2], currentVersion)) {
+                diagnostics.push(diagnostic(document.path, line, 'DOC065_CAPTURE_METADATA_MISSING', 'capture requires a valid non-future date and version'))
+            }
+        }
+        const declaredCaptureLines = new Set(walked.lines
+            .filter(row => row.comments.some(comment => comment.startsWith('cockpit:capture')))
+            .map(row => row.line))
+        const recognizedCaptureLines = new Set()
+        for (const fence of walked.fences) if (/^(?:console|shell-session)(?:\s|$)/.test(fence.info)) recognizedCaptureLines.add(fence.line)
+        for (const link of walked.links) if (link.image && /^(?:screenshot|terminal capture)(?::|$)/i.test(link.label)) recognizedCaptureLines.add(link.line)
+        const captureLines = new Set(recognizedCaptureLines)
+        for (const line of declaredCaptureLines) if (!recognizedCaptureLines.has(line) && !recognizedCaptureLines.has(line + 1)) captureLines.add(line)
+        for (const line of captureLines) checkCapture(line)
+        for (const row of walked.lines) {
+            const mechanisms = row.comments.flatMap(comment => {
+                    const match = /^cockpit:ref path=([^\s]+)$/.exec(comment)
+                    return match ? [match[1]] : []
+                })
+            for (const mechanism of mechanisms) {
+                const contained = typeof mechanism === 'string' && !mechanism.startsWith('/') && !mechanism.includes('\\')
+                    && !mechanism.split('/').some(part => part === '.' || part === '..')
+                if (!contained || !mechanismExists(mechanism)) {
+                    diagnostics.push(diagnostic(document.path, row.line, 'DOC066_ENFORCEMENT_MECHANISM_MISSING', mechanism))
+                }
+            }
+            if (document.path === 'docs/concepts.md') continue
+            if (walked.referenceDefinitionLines.includes(row.line)) continue
+            for (const concept of concepts) {
+                const escaped = concept.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                const expected = posix.relative(posix.dirname(document.path), 'docs/concepts.md') || 'concepts.md'
+                for (const occurrence of row.prose.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
+                    const containingLink = walked.links.find(link => link.line === row.line
+                        && occurrence.index >= link.start && occurrence.index + occurrence[0].length <= link.end)
+                    if (containingLink && occurrence.index > containingLink.start + containingLink.label.length) continue
+                    const linked = containingLink?.target === `${expected}#${concept.anchor}`
+                        && occurrence.index >= containingLink.start + 1
+                        && occurrence.index + occurrence[0].length <= containingLink.start + 1 + containingLink.label.length
+                    if (!linked) diagnostics.push(diagnostic(document.path, row.line, 'DOC067_CONCEPT_UNLINKED', concept.term))
+                }
+                if (new RegExp(`\\b${escaped}\\s+(?:is|means|refers to)\\b`, 'i').test(row.prose)) {
+                    diagnostics.push(diagnostic(document.path, row.line, 'DOC068_CONCEPT_REDEFINED', concept.term))
+                }
+            }
+        }
+    }
+    return { diagnostics, reports }
+}
+
+const EVIDENCE_FENCE = /```docs-evidence\s*\n([\s\S]*?)\n```/g
+const PRIVATE_EXECUTION_WORDS = ['ph' + 'ase', 'wa' + 've', 'pl' + 'an', 'ta' + 'sk'].join('|')
+const PRIVATE_CEREMONY = [
+    { label: 'private working-state path', pattern: /\.[a-z][a-z0-9_-]*\/(?:STATE|PLAN|REQUIREMENTS)\.md\b/i },
+    { label: 'private execution identifier', pattern: new RegExp(`\\b(?:${PRIVATE_EXECUTION_WORDS})[\\s_-]*\\d+(?:[-.]\\d+)*\\b`, 'i') },
+]
+
+function git(root, arguments_, options = {}) {
+    return execFileSync('git', arguments_, {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        ...options,
+    })
+}
+
+function evidenceRefusal(code, message) {
+    return `[${code}] ${message}`
+}
+
+function parseEvidence(path, root) {
+    let body
+    try {
+        body = readFileSync(resolve(root, path), 'utf8')
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { errors: [evidenceRefusal('DOCEV001_UNREADABLE', `${path}: ${message}`)] }
+    }
+    const matches = [...body.matchAll(EVIDENCE_FENCE)]
+    if (matches.length !== 1) {
+        return { errors: [evidenceRefusal('DOCEV002_BLOCK_COUNT', `${path} must contain exactly one docs-evidence JSON block`)] }
+    }
+    try {
+        const value = JSON.parse(matches[0][1])
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('root must be an object')
+        return { value }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { errors: [evidenceRefusal('DOCEV003_JSON_INVALID', `${path}: ${message}`)] }
+    }
+}
+
+function resolveCandidate(root, candidate) {
+    try {
+        return git(root, ['rev-parse', '--verify', `${candidate}^{commit}`]).trim()
+    } catch {
+        return null
+    }
+}
+
+function commitIsAncestor(root, ancestor, candidate) {
+    try {
+        execFileSync('git', ['merge-base', '--is-ancestor', ancestor, candidate], { cwd: root, stdio: 'ignore' })
+        return true
+    } catch {
+        return false
+    }
+}
+
+function validateFixedPoint(root, expectedFixedPoint, candidate) {
+    const errors = []
+    if (!expectedFixedPoint) {
+        return { errors: [evidenceRefusal('DOCEV010_FIXED_POINT_REQUIRED', '--expected-fixed-point is required')] }
+    }
+    const fixedPoint = resolveCandidate(root, expectedFixedPoint)
+    const resolvedCandidate = resolveCandidate(root, candidate)
+    if (fixedPoint === null) errors.push(evidenceRefusal('DOCEV011_FIXED_POINT_UNKNOWN', expectedFixedPoint))
+    if (resolvedCandidate === null) errors.push(evidenceRefusal('DOCEV012_CANDIDATE_UNKNOWN', candidate))
+    if (errors.length > 0) return { errors }
+    if (fixedPoint === resolvedCandidate) {
+        errors.push(evidenceRefusal('DOCEV013_FIXED_POINT_TOO_NEW', 'fixed point equals the candidate'))
+    } else {
+        try {
+            execFileSync('git', ['merge-base', '--is-ancestor', fixedPoint, resolvedCandidate], { cwd: root, stdio: 'ignore' })
+        } catch {
+            errors.push(evidenceRefusal('DOCEV014_FIXED_POINT_NOT_ANCESTOR', `${expectedFixedPoint} is not an ancestor of ${candidate}`))
+        }
+    }
+    return { errors, fixedPoint, candidate: resolvedCandidate }
+}
+
+function sourceAt(root, candidate, path) {
+    return git(root, ['show', `${candidate}:${path}`])
+}
+
+function runtimeUnavailableCodes(root, candidate) {
+    const source = sourceAt(root, candidate, 'packages/cockpit/src/environment/contract.ts')
+    const code = (name) => new RegExp(`\\b${name}:\\s*'([A-Z][A-Z0-9_]+)'`).exec(source)?.[1]
+    const unavailable = { RUNTIME_UNAVAILABLE: true, RUNTIME_PROBE_TIMEOUT: true }
+    return Object.keys(unavailable).map(code).filter(Boolean)
+}
+
+function commandInventory(sources) {
+    const path = 'packages/cockpit/src/command-table.ts'
+    const bytes = sources.get(path)
+    if (bytes === undefined) return []
+    const source = typeScriptSource(path, bytes)
+    const constants = new Map()
+    let commands
+    for (const statement of source.statements) {
+        if (!ts.isVariableStatement(statement) || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue
+        for (const declaration of statement.declarationList.declarations) {
+            if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) continue
+            if (constants.has(declaration.name.text)) throw new Error(`${path}: duplicate local constant ${declaration.name.text}`)
+            constants.set(declaration.name.text, declaration.initializer)
+            if (declaration.name.text === 'commands' && exported(statement)) {
+                if (commands !== undefined) throw new Error(`${path}: multiple exported commands declarations`)
+                commands = declaration.initializer
+            }
+        }
+    }
+    if (commands === undefined) throw new Error(`${path}: exported commands array is unavailable`)
+
+    const unwrap = (expression) => {
+        let current = expression
+        while (ts.isAsExpression(current) || ts.isSatisfiesExpression(current)
+            || ts.isParenthesizedExpression(current) || ts.isTypeAssertionExpression(current)) current = current.expression
+        return current
+    }
+    const propertyName = (name) => ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)
+        ? name.text
+        : undefined
+    const objectProperties = (expression, visiting = new Set()) => {
+        const current = unwrap(expression)
+        if (ts.isIdentifier(current)) {
+            if (visiting.has(current.text)) throw new Error(`${path}: cyclic option spread through ${current.text}`)
+            const initializer = constants.get(current.text)
+            if (initializer === undefined) throw new Error(`${path}: unresolved option spread ${current.text}`)
+            return objectProperties(initializer, new Set([...visiting, current.text]))
+        }
+        if (!ts.isObjectLiteralExpression(current)) throw new Error(`${path}: dynamic option expression is unsupported`)
+        if (current.properties.length > 128) throw new Error(`${path}: option object exceeds 128 properties`)
+        const names = new Set()
+        for (const property of current.properties) {
+            if (ts.isSpreadAssignment(property)) {
+                for (const name of objectProperties(property.expression, visiting)) names.add(name)
+                continue
+            }
+            if (!ts.isPropertyAssignment(property)) throw new Error(`${path}: non-data option property is unsupported`)
+            const name = propertyName(property.name)
+            if (name === undefined || !/^[a-z][a-z0-9-]*$/.test(name)) {
+                throw new Error(`${path}: computed or invalid option property is unsupported`)
+            }
+            names.add(name)
+        }
+        return names
+    }
+    const commandProperty = (row, expected) => {
+        let result
+        for (const property of row.properties) {
+            if (!ts.isPropertyAssignment(property)) throw new Error(`${path}: command rows must contain only data properties`)
+            const name = propertyName(property.name)
+            if (name === undefined) throw new Error(`${path}: computed command properties are unsupported`)
+            if (name === expected) {
+                if (result !== undefined) throw new Error(`${path}: duplicate command property ${expected}`)
+                result = property.initializer
+            }
+        }
+        if (result === undefined) throw new Error(`${path}: command row is missing ${expected}`)
+        return result
+    }
+    const array = unwrap(commands)
+    if (!ts.isArrayLiteralExpression(array) || array.elements.length > 128) {
+        throw new Error(`${path}: exported commands must be a bounded literal array`)
+    }
+    const items = []
+    const seen = new Set()
+    for (const element of array.elements) {
+        const row = unwrap(element)
+        if (!ts.isObjectLiteralExpression(row)) throw new Error(`${path}: command rows must be object literals`)
+        const name = unwrap(commandProperty(row, 'name'))
+        if (!ts.isStringLiteral(name) || !/^[a-z][a-z0-9-]*$/.test(name.text)) {
+            throw new Error(`${path}: command names must be literal kebab-case strings`)
+        }
+        const command = name.text
+        if (seen.has(command)) throw new Error(`${path}: duplicate command ${command}`)
+        seen.add(command)
+        items.push(`command:${command}`)
+        for (const option of objectProperties(commandProperty(row, 'options'))) items.push(`flag:${command}:--${option}`)
+    }
+    return items
+}
+
+function schemaInventory(root, candidate) {
+    if (!candidatePathExists(root, candidate, 'packages/cockpit/cockpit.schema.json')) return []
+    const schema = JSON.parse(sourceAt(root, candidate, 'packages/cockpit/cockpit.schema.json'))
+    const items = []
+    const visit = (node, prefix) => {
+        if (node === null || typeof node !== 'object') return
+        if (node.properties && typeof node.properties === 'object') {
+            for (const [key, child] of Object.entries(node.properties)) {
+                const path = prefix === '' ? key : `${prefix}.${key}`
+                items.push(`schema:${path}`)
+                visit(child, path)
+            }
+        }
+        if (node.items) visit(node.items, `${prefix}[]`)
+        for (const keyword of ['allOf', 'anyOf', 'oneOf']) {
+            if (Array.isArray(node[keyword])) for (const child of node[keyword]) visit(child, prefix)
+        }
+    }
+    visit(schema, '')
+    return items
+}
+
+function runtimeExports(root, candidate, path, source, sources, visiting = new Set()) {
+    if (visiting.has(path)) throw new Error(`${path}: runtime re-export cycle is unsupported`)
+    const ancestors = new Set([...visiting, path])
+    const names = new Set()
+    const bindings = new Map()
+    const moduleExports = (specifier) => {
+        if (!specifier.startsWith('.')) throw new Error(`${path}: external runtime re-exports are unsupported`)
+        const relative = posix.normalize(posix.join(posix.dirname(path), specifier))
+        const candidates = /\.[cm]?js$/.test(relative)
+            ? [relative.replace(/\.([cm]?)js$/, '.$1ts')]
+            : relative.endsWith('.ts') ? [relative] : [`${relative}.ts`, `${relative}/index.ts`]
+        let target
+        let targetSource
+        for (const item of candidates) {
+            if (item.startsWith('../')) continue
+            const cached = sources.get(item)
+            if (cached !== undefined) {
+                target = item
+                targetSource = cached
+                break
+            }
+            if (candidatePathExists(root, candidate, item)) {
+                target = item
+                targetSource = sourceAt(root, candidate, item)
+                sources.set(item, targetSource)
+                break
+            }
+        }
+        if (!target) throw new Error(`${path}: runtime re-export source is unavailable: ${specifier}`)
+        return new Set(runtimeExports(root, candidate, target, typeScriptSource(target, targetSource), sources, ancestors))
+    }
+    for (const statement of source.statements) {
+        const ambient = statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) === true
+        if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+            if (statement.name) bindings.set(statement.name.text, () => !ambient && (!ts.isFunctionDeclaration(statement) || statement.body !== undefined))
+        } else if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+                if (ts.isIdentifier(declaration.name)) bindings.set(declaration.name.text, () => !ambient)
+            }
+        } else if (ts.isImportDeclaration(statement) && statement.importClause && ts.isStringLiteral(statement.moduleSpecifier)) {
+            const clause = statement.importClause
+            const specifier = statement.moduleSpecifier.text
+            const imported = (name, typeOnly) => () => !typeOnly && moduleExports(specifier).has(name)
+            if (clause.name) bindings.set(clause.name.text, imported('default', clause.isTypeOnly))
+            if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+                for (const element of clause.namedBindings.elements) {
+                    bindings.set(element.name.text, imported((element.propertyName ?? element.name).text, clause.isTypeOnly || element.isTypeOnly))
+                }
+            } else if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+                bindings.set(clause.namedBindings.name.text, () => { if (clause.isTypeOnly) return false; moduleExports(specifier); return true })
+            }
+        }
+    }
+    for (const statement of source.statements) {
+        if (ts.isExportAssignment(statement)) throw new Error(`${path}: runtime export assignment is unsupported`)
+        if (ts.isExportDeclaration(statement)) {
+            if (statement.isTypeOnly) continue
+            if (!statement.exportClause) throw new Error(`${path}: runtime wildcard exports are unsupported`)
+            if (ts.isNamedExports(statement.exportClause) && statement.exportClause.elements.every((element) => element.isTypeOnly)) continue
+            const reExports = statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)
+                ? moduleExports(statement.moduleSpecifier.text) : null
+            if (ts.isNamespaceExport(statement.exportClause)) names.add(statement.exportClause.name.text)
+            else if (ts.isNamedExports(statement.exportClause)) {
+                for (const element of statement.exportClause.elements) {
+                    const original = (element.propertyName ?? element.name).text
+                    if (!element.isTypeOnly && (reExports ? reExports.has(original) : bindings.get(original)?.() === true)) names.add(element.name.text)
+                }
+            }
+            continue
+        }
+        if (!exported(statement) || statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) continue
+        if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+            if (ts.isFunctionDeclaration(statement) && statement.body === undefined) continue
+            if (statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)) names.add('default')
+            else if (statement.name) names.add(statement.name.text)
+        } else if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+                if (!ts.isIdentifier(declaration.name)) throw new Error(`${path}: runtime destructuring exports are unsupported`)
+                names.add(declaration.name.text)
+            }
+        }
+    }
+    names.delete('mechanism')
+    return [...names].sort()
+}
+
+function mechanismDescriptor(source, path) {
+    for (const statement of source.statements) {
+        if (!ts.isVariableStatement(statement) || !exported(statement)) continue
+        const declaration = statement.declarationList.declarations.find((item) => ts.isIdentifier(item.name) && item.name.text === 'mechanism')
+        if (!declaration?.initializer) continue
+        let initializer = declaration.initializer
+        while (ts.isAsExpression(initializer) || ts.isParenthesizedExpression(initializer)) initializer = initializer.expression
+        if (!ts.isObjectLiteralExpression(initializer)) throw new Error(`${path}: mechanism must be an object literal`)
+        const property = (name) => initializer.properties.find((item) => ts.isPropertyAssignment(item)
+            && ((ts.isIdentifier(item.name) && item.name.text === name) || (ts.isStringLiteral(item.name) && item.name.text === name)))
+        const moduleProperty = property('module')
+        const exportsProperty = property('exports')
+        if (!moduleProperty || !ts.isStringLiteral(moduleProperty.initializer)
+            || !exportsProperty || !ts.isArrayLiteralExpression(exportsProperty.initializer)
+            || exportsProperty.initializer.elements.some((item) => !ts.isStringLiteral(item))) {
+            throw new Error(`${path}: mechanism module and exports must be bounded literals`)
+        }
+        const declared = exportsProperty.initializer.elements.map((item) => item.text)
+        if (new Set(declared).size !== declared.length) throw new Error(`${path}: mechanism exports contain duplicates`)
+        return { module: moduleProperty.initializer.text, exports: [...declared].sort() }
+    }
+    return null
+}
+
+function extensionInventory(root, candidate, verifyParity, sourceInventory) {
+    const sources = new Map(sourceInventory)
+    const paths = [...sources.keys()]
+    const items = []
+    for (const path of paths) {
+        const source = typeScriptSource(path, sources.get(path))
+        const descriptor = mechanismDescriptor(source, path)
+        if (descriptor === null) continue
+        const actual = runtimeExports(root, candidate, path, source, sources)
+        if (verifyParity) {
+            const declaredOnly = setDifference(descriptor.exports, actual)
+            const actualOnly = setDifference(actual, descriptor.exports)
+            if (descriptor.module !== path || declaredOnly.length > 0 || actualOnly.length > 0) {
+                throw new Error(`${path}: mechanism runtime export parity failed: module=${descriptor.module === path ? 'exact' : descriptor.module} declared=${declaredOnly.join(',') || 'none'} undeclared=${actualOnly.join(',') || 'none'}`)
+            }
+        }
+        for (const name of actual) items.push(`extension:${descriptor.module}#${name}`)
+    }
+    return items
+}
+
+function adjacentTestPath(path) {
+    return path.replace(/\.ts$/, '.test.ts')
+}
+
+function navigationPathInventory(root, candidate, navigationItems, diagnosticOwners) {
+    const tracked = new Set(git(root, ['ls-tree', '-r', '--name-only', candidate]).split('\n'))
+    const paths = new Set()
+    const addTracked = (path) => {
+        if (tracked.has(path)) paths.add(path)
+    }
+    for (const item of navigationItems) {
+        if (item.startsWith('command:')) {
+            for (const path of ['packages/cockpit/src/command-table.ts', 'packages/cockpit/src/cli.ts']) {
+                addTracked(path)
+                addTracked(adjacentTestPath(path))
+            }
+        } else if (item.startsWith('extension:')) {
+            const ownerPath = item.slice('extension:'.length).split('#', 1)[0]
+            addTracked(ownerPath)
+            addTracked(adjacentTestPath(ownerPath))
+        } else if (item.startsWith('diagnostic:')) {
+            for (const path of diagnosticOwners.get(item.slice('diagnostic:'.length)) ?? []) {
+                addTracked(path)
+                addTracked(adjacentTestPath(path))
+            }
+        } else if (item.startsWith('schema:')) {
+            for (const path of [
+                'packages/cockpit/src/schema.ts',
+                'packages/cockpit/src/schema.test.ts',
+                'packages/cockpit/src/schema-json.ts',
+                'packages/cockpit/src/schema-json.test.ts',
+                'packages/cockpit/cockpit.schema.json',
+            ]) addTracked(path)
+        }
+    }
+    return [...paths].sort()
+}
+
+function changedDocumentInventory(root, fixedPoint, candidate) {
+    const paths = git(root, ['diff', '--name-only', '--diff-filter=ACMRD', `${fixedPoint}..${candidate}`, '--', '*.md'])
+        .split('\n')
+        .filter(Boolean)
+    return paths
+        .filter((path) => {
+            const estate = classifyMarkdownPath(path)
+            return estate === 'human' || estate === 'executable'
+        })
+        .map((path) => `document:${path}`)
+}
+
+function commentFragment(line) {
+    if (/^\s*\*/.test(line)) return line.trim()
+    let quote = null
+    let escaped = false
+    for (let index = 0; index < line.length; index += 1) {
+        const character = line[index]
+        if (quote !== null) {
+            if (escaped) escaped = false
+            else if (character === '\\') escaped = true
+            else if (character === quote) quote = null
+            continue
+        }
+        if (character === "'" || character === '"' || character === '`') {
+            quote = character
+            continue
+        }
+        if (line.startsWith('//', index) || line.startsWith('/*', index)) {
+            return line.slice(index).trim()
+        }
+    }
+    return null
+}
+
+function commentId(path, change, line, body) {
+    const digest = createHash('sha256').update(body).digest('hex').slice(0, 16)
+    return `comment:${path}:${change}:${line}:${digest}`
+}
+
+function changedComments(root, fixedPoint, candidate) {
+    const diff = git(root, [
+        'diff', '--unified=0', '--no-ext-diff', `${fixedPoint}..${candidate}`, '--',
+        '*.ts', '*.mts', '*.cts', '*.js', '*.mjs', '*.cjs', '*.sh',
+    ])
+    const items = []
+    let path = null
+    let oldLine = 0
+    let newLine = 0
+    for (const raw of diff.split('\n')) {
+        const removedFile = /^--- a\/(.+)$/.exec(raw)
+        if (removedFile) {
+            path = removedFile[1]
+            continue
+        }
+        const file = /^\+\+\+ b\/(.+)$/.exec(raw)
+        if (file) {
+            path = file[1]
+            continue
+        }
+        const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(raw)
+        if (hunk) {
+            oldLine = Number(hunk[1])
+            newLine = Number(hunk[2])
+            continue
+        }
+        if (raw.startsWith('+') && !raw.startsWith('+++')) {
+            const body = commentFragment(raw.slice(1))
+            if (body !== null && path !== null && path !== 'packages/cockpit/libexec/rulesync-generator.cjs') {
+                items.push({ body, id: commentId(path, 'added', newLine, body) })
+            }
+            newLine += 1
+        } else if (raw.startsWith('-') && !raw.startsWith('---')) {
+            const body = commentFragment(raw.slice(1))
+            if (body !== null && path !== null && path !== 'packages/cockpit/libexec/rulesync-generator.cjs') {
+                items.push({ body, id: commentId(path, 'removed', oldLine, body) })
+            }
+            oldLine += 1
+        } else {
+            oldLine += 1
+            newLine += 1
+        }
+    }
+    return items
+}
+
+function changedCommentInventory(root, fixedPoint, candidate) {
+    return changedComments(root, fixedPoint, candidate).map(({ id }) => id)
+}
+
+export function deriveDocumentationInventory({ root = ROOT, expectedFixedPoint, candidate = 'HEAD' }) {
+    const authority = validateFixedPoint(root, expectedFixedPoint, candidate)
+    if (authority.errors.length > 0) return { errors: authority.errors, items: [], navigationItems: [], navigationPaths: [], reviewItems: [] }
+    try {
+        const fixedPointSources = productionTypeScriptSources(root, authority.fixedPoint)
+        const candidateSources = productionTypeScriptSources(root, authority.candidate)
+        const candidateCommands = commandInventory(candidateSources)
+        const commands = [...commandInventory(fixedPointSources), ...candidateCommands]
+        const candidateSchemas = schemaInventory(root, authority.candidate)
+        const schemas = [...schemaInventory(root, authority.fixedPoint), ...candidateSchemas]
+        const candidateDiagnostics = diagnosticInventoryFromSources([...candidateSources.keys()], candidateSources)
+        const diagnostics = [...diagnosticInventoryFromSources([...fixedPointSources.keys()], fixedPointSources).items, ...candidateDiagnostics.items]
+        const candidateExtensions = extensionInventory(root, authority.candidate, true, candidateSources)
+        const extensions = [...extensionInventory(root, authority.fixedPoint, false, fixedPointSources), ...candidateExtensions]
+        const documents = changedDocumentInventory(root, authority.fixedPoint, authority.candidate)
+        const comments = changedCommentInventory(root, authority.fixedPoint, authority.candidate)
+        const items = [...new Set([
+            ...commands,
+            ...schemas,
+            ...diagnostics,
+            ...extensions,
+            ...documents,
+            ...comments,
+        ])].sort()
+        const navigationItems = [...new Set([
+            ...candidateCommands.filter((item) => item.startsWith('command:')),
+            ...candidateSchemas,
+            ...candidateDiagnostics.items,
+            ...candidateExtensions,
+        ])].sort()
+        return {
+            errors: [],
+            fixedPoint: authority.fixedPoint,
+            candidate: authority.candidate,
+            items,
+            navigationItems,
+            navigationPaths: navigationPathInventory(root, authority.candidate, navigationItems, candidateDiagnostics.owners),
+            reviewItems: [...new Set([...documents, ...comments])].sort(),
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { errors: [evidenceRefusal('DOCEV015_INVENTORY_FAILED', message)], items: [], navigationItems: [], navigationPaths: [], reviewItems: [] }
+    }
+}
+
+function setDifference(left, right) {
+    const rightSet = new Set(right)
+    return left.filter((item) => !rightSet.has(item))
+}
+
+function duplicateValues(values) {
+    const seen = new Set()
+    const duplicates = new Set()
+    for (const value of values) (seen.has(value) ? duplicates : seen).add(value)
+    return [...duplicates].sort()
+}
+
+function headingAnchors(path, body) {
+    const anchors = new Set()
+    for (const row of walkMarkdownProse(path, body).lines) {
+        const heading = /^#{1,6}\s+(.+)$/.exec(row.references)
+        if (!heading) continue
+        const slug = heading[1].trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
+        anchors.add(slug)
+    }
+    return anchors
+}
+
+function validateAnchor(root, candidate, anchor) {
+    if (typeof anchor !== 'string' || !anchor.includes('#')) return false
+    const [path, fragment] = anchor.split('#', 2)
+    if (!path || !fragment || path.startsWith('/') || path.includes('..')) return false
+    try {
+        return headingAnchors(path, sourceAt(root, candidate, path)).has(fragment)
+    } catch {
+        return false
+    }
+}
+
+function requirementIds(root) {
+    try {
+        const source = readFileSync(resolve(root, PRIVATE_STATE_DIRECTORY, 'REQUIREMENTS.md'), 'utf8')
+        return new Set([...source.matchAll(/\*\*(REQ-[A-Za-z0-9.]+)\*\*/g)].map((match) => match[1]))
+    } catch {
+        return null
+    }
+}
+
+function candidatePathExists(root, candidate, path) {
+    try {
+        execFileSync('git', ['cat-file', '-e', `${candidate}:${path}`], { cwd: root, stdio: 'ignore' })
+        return true
+    } catch {
+        return false
+    }
+}
+
+
+function sourceIdentifiers(root, candidate) {
+    const paths = git(root, ['ls-tree', '-r', '--name-only', candidate, '--', 'packages/cockpit/src'])
+        .split('\n')
+        .filter((path) => /\.[cm]?[jt]s$/.test(path) && !path.endsWith('.test.ts'))
+    const identifiers = new Set()
+    for (const sourcePath of paths) {
+        const source = sourceAt(root, candidate, sourcePath)
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/(^|[^:\\])\/\/.*$/gm, '$1')
+        for (const match of source.matchAll(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/g)) {
+            identifiers.add(match[0])
+        }
+    }
+    return identifiers
+}
+
+function consumerReferencePaths(root, candidate) {
+    const paths = new Set()
+    const schemaPath = 'packages/cockpit/cockpit.schema.json'
+    if (candidatePathExists(root, candidate, schemaPath)) {
+        const schema = JSON.parse(sourceAt(root, candidate, schemaPath))
+        const values = schema.properties?.environment?.properties?.generated?.properties?.decisions?.properties?.path?.enum
+        if (Array.isArray(values) && values.length === 1 && typeof values[0] === 'string') paths.add(values[0])
+    }
+    const owner = 'packages/cockpit/src/document/command.ts'
+    if (candidatePathExists(root, candidate, owner)) {
+        const visit = (node) => {
+            if (ts.isObjectLiteralExpression(node)) {
+                const strings = new Map(node.properties.filter(ts.isPropertyAssignment)
+                    .filter(property => ts.isStringLiteral(property.initializer))
+                    .map(property => [property.name.getText().replace(/^['"]|['"]$/g, ''), property.initializer.text]))
+                const target = strings.get('target')
+                if (strings.get('code') === 'DOCUMENT_STDOUT_TARGET' && target?.startsWith('<cockpit-root>/')) paths.add(target.slice('<cockpit-root>/'.length))
+            }
+            ts.forEachChild(node, visit)
+        }
+        visit(typeScriptSource(owner, sourceAt(root, candidate, owner)))
+    }
+    return paths
+}
+
+function namedReferenceAuthority(root, candidate, inventory) {
+    const commands = new Set(inventory.filter((item) => item.startsWith('command:')).map((item) => item.slice('command:'.length)))
+    const diagnostics = new Set(inventory.filter((item) => item.startsWith('diagnostic:')).map((item) => item.slice('diagnostic:'.length)))
+    const flags = new Set(inventory.filter((item) => item.startsWith('flag:')).map((item) => item.slice(item.lastIndexOf(':') + 1)))
+    if (candidatePathExists(root, candidate, 'packages/cockpit/src/cli.ts')) {
+        for (const match of sourceAt(root, candidate, 'packages/cockpit/src/cli.ts').matchAll(/['"](--[a-z][a-z0-9-]*)['"]/g)) {
+            flags.add(match[1])
+        }
+    }
+    return { commands, diagnostics, flags, identifiers: sourceIdentifiers(root, candidate),
+        schemaFields: new Set(schemaInventory(root, candidate).map(item => item.slice('schema:'.length))),
+        consumerPaths: consumerReferencePaths(root, candidate) }
+}
+
+export function inspectProseReferences({ path, body, authority, resolvePath, today }) {
+    return inspectWalkedProseReferences(walkMarkdownProse(path, body), { path, authority, resolvePath, today })
+}
+
+function inspectWalkedProseReferences(walked, { path, authority, resolvePath, today = new Date().toISOString().slice(0, 10) }) {
+    const errors = [...walked.diagnostics]
+    const missing = (line, value) => errors.push(diagnostic(path, line, 'DOCEV050_NAMED_REFERENCE_MISSING', value))
+    const checkPath = (line, reference) => {
+        const state = resolvePath(reference)
+        if (state === 'retired') errors.push(diagnostic(path, line, 'REFERENCE_RETIRED', reference))
+        else if (state === 'unavailable') errors.push(diagnostic(path, line, 'REFERENCE_UNAVAILABLE', reference))
+        else if (state !== 'present' && state !== 'declared-before-sync') missing(line, reference)
+    }
+    const check = (line, kind, value) => {
+        if (kind === 'path') checkPath(line, value)
+        else if (kind === 'schema') { if (!authority.schemaFields?.has(value)) missing(line, value) }
+        else if (kind === 'consumer') {
+            if (value.startsWith('/') || value.includes('\\') || value.split('/').some(part => part === '.' || part === '..') || !authority.consumerPaths?.has(value)) missing(line, value)
+        }
+        else if (kind === 'command' ? !authority.commands.has(value)
+            : kind === 'flag' ? !authority.flags.has(value)
+            : !authority.diagnostics.has(value) && !authority.identifiers.has(value)) missing(line, kind === 'command' ? `cockpit ${value}` : value)
+    }
+    for (const row of walked.lines) {
+        const typedReferences = new Set(row.comments.flatMap(comment => {
+            const match = /^cockpit:ref (?:schema|consumer)=([^\s]+)$/.exec(comment)
+            return match ? [match[1]] : []
+        }))
+        let remaining = row.references
+        while (remaining !== '') {
+            const span = firstInlineCodeSpan(remaining)
+            if (!span) break
+            const opening = /^`+/.exec(remaining.slice(span.start))[0]
+            const value = remaining.slice(span.start + opening.length, span.end - opening.length)
+            const prefix = remaining.slice(0, span.start).trimEnd()
+            if (/(?:^|\b)(?:run|use|execute|invoke|try|call|enter|type)\s*$/i.test(prefix) || /^\s*\$\s+/.test(value)) {
+                for (const match of value.matchAll(/\bcockpit\s+([a-z][a-z0-9-]*)\b/g)) check(row.line, 'command', match[1])
+            }
+            if (/^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(value)) check(row.line, 'code', value)
+            if (/^--[a-z][a-z0-9-]*$/.test(value)) check(row.line, 'flag', value)
+            if (!typedReferences.has(value) && /^(?:(?:[.a-zA-Z0-9_-]+\/)+[^\s`]+|[A-Za-z0-9_-]+(?:\.[A-Za-z_][A-Za-z0-9_-]*)+)(?:#[^\s`]*)?$/.test(value) && !value.includes('://')) {
+                checkPath(row.line, value.split('#', 1)[0].replace(/[.,;:]$/, ''))
+            }
+            remaining = remaining.slice(span.end)
+        }
+        for (const comment of row.comments) {
+            if (comment.startsWith('cockpit:ref')) {
+                const match = /^cockpit:ref (path|code|flag|command|schema|consumer)=([^\s]+)$/.exec(comment)
+                if (!match) missing(row.line, `malformed structured reference: ${comment}`)
+                else check(row.line, match[1], match[2])
+            }
+            if (comment.startsWith('cockpit:hazard')) {
+                const match = /^cockpit:hazard expires=([^\s]+)$/.exec(comment)
+                if (!match) missing(row.line, `malformed hazard: ${comment}`)
+                else if (/^\d{4}-\d{2}-\d{2}$/.test(match[1])) {
+                    const date = new Date(`${match[1]}T00:00:00.000Z`)
+                    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== match[1]) missing(row.line, `invalid hazard expiry: ${match[1]}`)
+                    else if (match[1] <= today) errors.push(diagnostic(path, row.line, 'REFERENCE_HAZARD_EXPIRED', match[1]))
+                }
+            }
+        }
+    }
+    return errors
+}
+
+function validateNamedReferences(root, candidate, path, walked, authority) {
+    return inspectWalkedProseReferences(walked, { path, authority, resolvePath: (reference) => {
+        if (reference.startsWith('/') || reference.split('/').some(part => part === '.' || part === '..') || !candidatePathExists(root, candidate, reference)) return 'missing'
+        if (reference.endsWith('.md')) {
+            const retired = walkMarkdownProse(reference, sourceAt(root, candidate, reference)).lines
+                .some(row => row.comments.some(comment => /^cockpit:retired(?: |$)/.test(comment)))
+            if (retired) return 'retired'
+        }
+        return 'present'
+    } }).map(row => evidenceRefusal(row.code, `${path}:${row.line}: ${row.message}`))
+}
+
+function validateChangedDocuments(root, fixedPoint, candidate, inventory) {
+    const errors = []
+    const referenceAuthority = namedReferenceAuthority(root, candidate, inventory)
+    for (const item of changedDocumentInventory(root, fixedPoint, candidate)) {
+        const path = item.slice('document:'.length)
+        if (!candidatePathExists(root, candidate, path)) continue
+        const body = sourceAt(root, candidate, path)
+        for (const term of PRIVATE_CEREMONY) {
+            if (term.pattern.test(body)) errors.push(evidenceRefusal('DOCEV025_PRIVATE_CEREMONY', `${path} contains ${term.label}`))
+        }
+        const walked = walkMarkdownProse(path, body)
+        errors.push(...validateNamedReferences(root, candidate, path, walked, referenceAuthority))
+        errors.push(...inspectInternalLinks({
+            path,
+            body,
+            readTarget: target => sourceAt(root, candidate, target),
+        }).filter(row => row.code !== 'DOC041_REFERENCE_UNRESOLVED')
+            .map(row => evidenceRefusal(row.code, `${row.path}:${row.line}: ${row.message}`)))
+    }
+    for (const { body, id } of changedComments(root, fixedPoint, candidate)) {
+        if (!id.includes(':added:')) continue
+        for (const term of PRIVATE_CEREMONY) {
+            if (term.pattern.test(body)) errors.push(evidenceRefusal('DOCEV025_PRIVATE_CEREMONY', `${id} contains ${term.label}`))
+        }
+        errors.push(...validateNamedReferences(root, candidate, id, walkMarkdownProse(id, body), referenceAuthority))
+    }
+    return errors
+}
+
+function loadEvidenceAndInventory(options) {
+    const parsed = parseEvidence(options.path, options.root ?? ROOT)
+    if (parsed.errors) return { errors: parsed.errors }
+    const inventory = deriveDocumentationInventory(options)
+    if (inventory.errors.length > 0) return { errors: inventory.errors }
+    if (parsed.value.fixedPoint !== options.expectedFixedPoint) {
+        return { errors: [evidenceRefusal('DOCEV016_FIXED_POINT_MISMATCH', `ledger has ${String(parsed.value.fixedPoint)}`)] }
+    }
+    return { evidence: parsed.value, inventory, errors: [] }
+}
+
+function navigationEvidencePaths(root, evidence, inventory) {
+    const paths = new Set(inventory.navigationPaths)
+    const navigationItems = new Set(inventory.navigationItems)
+    const rows = Array.isArray(evidence.rows) ? evidence.rows : []
+    for (const row of rows) {
+        if (!row || !navigationItems.has(row.id) || row.disposition !== 'updated'
+            || typeof row.anchor !== 'string' || !validateAnchor(root, inventory.candidate, row.anchor)) continue
+        const path = row.anchor.split('#', 1)[0]
+        if (candidatePathExists(root, inventory.candidate, path)) paths.add(path)
+    }
+    return [...paths].sort()
+}
+
+function impactLedgerErrors(root, loaded) {
+    const rows = Array.isArray(loaded.evidence.rows) ? loaded.evidence.rows : []
+    const ids = rows.map((row) => row?.id).filter((id) => typeof id === 'string')
+    const errors = []
+    const duplicates = duplicateValues(ids)
+    if (duplicates.length > 0) errors.push(evidenceRefusal('DOCEV020_DUPLICATE_ROW', duplicates.join(', ')))
+    const missing = setDifference(loaded.inventory.items, ids)
+    const extra = setDifference(ids, loaded.inventory.items)
+    if (missing.length > 0) errors.push(evidenceRefusal('DOCEV021_LEDGER_INCOMPLETE', missing.join(', ')))
+    if (extra.length > 0) errors.push(evidenceRefusal('DOCEV022_LEDGER_EXTRA', extra.join(', ')))
+    const requirements = requirementIds(root)
+    for (const row of rows) {
+        if (!row || typeof row.id !== 'string') {
+            errors.push(evidenceRefusal('DOCEV023_ROW_INVALID', 'every row needs an id'))
+            continue
+        }
+        if (row.disposition === 'updated') {
+            if (!validateAnchor(root, loaded.inventory.candidate, row.anchor)) {
+                errors.push(evidenceRefusal('DOCEV024_ANCHOR_STALE', `${row.id}: ${String(row.anchor)}`))
+            }
+        } else if (row.disposition === 'not_applicable') {
+            if (typeof row.reason !== 'string' || row.reason.trim() === '') {
+                errors.push(evidenceRefusal('DOCEV028_REASON_REQUIRED', row.id))
+            }
+        } else if (row.disposition === 'deferred') {
+            if (requirements === null || typeof row.requirement !== 'string' || !requirements.has(row.requirement)) {
+                errors.push(evidenceRefusal('DOCEV029_REQUIREMENT_UNKNOWN', `${row.id}: ${String(row.requirement)}`))
+            }
+        } else {
+            errors.push(evidenceRefusal('DOCEV023_ROW_INVALID', `${row.id}: ${String(row.disposition)}`))
+        }
+    }
+    errors.push(...validateChangedDocuments(
+        root,
+        loaded.inventory.fixedPoint,
+        loaded.inventory.candidate,
+        loaded.inventory.items,
+    ))
+    return errors
+}
+
+export function validateImpactLedger(options) {
+    const root = options.root ?? ROOT
+    const loaded = loadEvidenceAndInventory({ ...options, root })
+    return loaded.errors.length > 0 ? loaded.errors : impactLedgerErrors(root, loaded)
+}
+
+export function validateNavigationEvidence(options) {
+    const loaded = loadEvidenceAndInventory(options)
+    if (loaded.errors.length > 0) return loaded.errors
+    if (typeof options.impactLedgerPath !== 'string' || options.impactLedgerPath.trim() === '') {
+        return [evidenceRefusal('DOCEV048_NAVIGATION_IMPACT_REQUIRED', '--impact-ledger is required for navigation')]
+    }
+    const impact = parseEvidence(options.impactLedgerPath, options.root ?? ROOT)
+    if (impact.errors) return impact.errors
+    if (impact.value.fixedPoint !== loaded.inventory.fixedPoint) {
+        return [evidenceRefusal('DOCEV016_FIXED_POINT_MISMATCH', 'navigation impact ledger has a different fixed point')]
+    }
+    if (impact.value.candidate !== loaded.inventory.candidate) {
+        return [evidenceRefusal('DOCEV049_NAVIGATION_IMPACT_STALE', 'navigation impact ledger must identify the exact candidate')]
+    }
+    const impactErrors = impactLedgerErrors(options.root ?? ROOT, { evidence: impact.value, inventory: loaded.inventory })
+    if (impactErrors.length > 0) return impactErrors
+    if (typeof options.navigationPublicKeyPath !== 'string' || options.navigationPublicKeyPath.trim() === '') {
+        return [evidenceRefusal('DOCEV035_NAVIGATION_KEY_REQUIRED', '--navigation-public-key is required')]
+    }
+    let publicKey
+    try {
+        publicKey = createPublicKey(readFileSync(resolve(options.root ?? ROOT, options.navigationPublicKeyPath)))
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return [evidenceRefusal('DOCEV036_NAVIGATION_KEY_INVALID', message)]
+    }
+    const rows = Array.isArray(loaded.evidence.navigation) ? loaded.evidence.navigation : []
+    const errors = []
+    const expectedOpenedPaths = navigationEvidencePaths(options.root ?? ROOT, impact.value, loaded.inventory)
+    if (rows.length !== 2 || !exactJson(rows.map((row) => row?.harness).sort(), ['claude', 'codex'])) {
+        errors.push(evidenceRefusal('DOCEV046_NAVIGATION_ROWS_INVALID', 'exactly one codex and one claude row are required'))
+    }
+    for (const harness of ['codex', 'claude']) {
+        const row = rows.find((candidate) => candidate?.harness === harness)
+        if (!row) {
+            errors.push(evidenceRefusal('DOCEV030_HARNESS_MISSING', harness))
+            continue
+        }
+        const scope = Array.isArray(row.scope) ? row.scope.filter((item) => typeof item === 'string') : []
+        const missing = setDifference(loaded.inventory.navigationItems, scope)
+        const extra = setDifference(scope, loaded.inventory.navigationItems)
+        const duplicate = duplicateValues(scope)
+        if (!exactJson(scope, loaded.inventory.navigationItems)) {
+            errors.push(evidenceRefusal('DOCEV031_NAVIGATION_SCOPE_INVALID', `${harness}: missing=${missing.join(',')} extra=${extra.join(',')} duplicate=${duplicate.join(',')}`))
+        }
+        if (row.status === 'unavailable') {
+            if (typeof row.reason !== 'string' || row.reason.trim() === ''
+                || !exactJson(Object.keys(row).sort(), ['harness', 'reason', 'scope', 'status'])) {
+                errors.push(evidenceRefusal('DOCEV047_NAVIGATION_UNAVAILABLE_INVALID', harness))
+            }
+            continue
+        }
+        const signed = Buffer.from(JSON.stringify({ harness: row.harness, scope: row.scope, receipt: row.receipt }))
+        let authentic = false
+        try {
+            authentic = typeof row.signature === 'string'
+                && verifySignature(null, signed, publicKey, Buffer.from(row.signature, 'base64'))
+        } catch {
+            authentic = false
+        }
+        if (!authentic) {
+            errors.push(evidenceRefusal('DOCEV037_NAVIGATION_RECEIPT_INVALID', harness))
+            continue
+        }
+        if (row.receipt?.candidateCommit !== loaded.inventory.candidate
+            || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(row.receipt?.issuedAt ?? '')) {
+            errors.push(evidenceRefusal('DOCEV038_NAVIGATION_RECEIPT_STALE', harness))
+            continue
+        }
+        const scopeSha256 = sha256(`${scope.join('\n')}\n`)
+        if (row.receipt.scopeSha256 !== scopeSha256
+            || !Number.isFinite(row.receipt.bounds?.maxSeconds) || row.receipt.bounds.maxSeconds <= 0
+            || !Number.isFinite(row.receipt.bounds?.maxOutputBytes) || row.receipt.bounds.maxOutputBytes <= 0
+            || !exactStringArray(row.receipt.openedPaths) || row.receipt.openedPaths.length === 0
+            || !exactJson(row.receipt.openedPaths, expectedOpenedPaths)
+            || typeof row.receipt.differential !== 'string' || row.receipt.differential.trim() === ''
+            || row.receipt.cleanup?.before !== row.receipt.cleanup?.after
+            || !/^[a-f0-9]{64}$/.test(row.receipt.cleanup?.before ?? '')) {
+            errors.push(evidenceRefusal('DOCEV039_NAVIGATION_BOUNDS_INVALID', harness))
+        }
+        for (const [kind, expectedDetected] of [['candidate', false], ['brokenControl', true]]) {
+            const execution = row.receipt[kind]
+            if (!execution || typeof execution.command !== 'string' || execution.command.trim() === ''
+                || !Number.isInteger(execution.exitStatus) || !/^[a-f0-9]{64}$/.test(execution.transcriptSha256 ?? '')) {
+                errors.push(evidenceRefusal('DOCEV032_EXECUTION_EVIDENCE_INVALID', `${harness}:${kind}`))
+            } else if (expectedDetected && (typeof execution.detectorCode !== 'string' || execution.detectorCode.trim() === '')) {
+                errors.push(evidenceRefusal('DOCEV033_CONTROL_UNDETECTED', harness))
+            } else if ((!expectedDetected && execution.exitStatus !== 0) || (expectedDetected && execution.exitStatus === 0)) {
+                errors.push(evidenceRefusal('DOCEV034_EXIT_STATUS_INVALID', `${harness}:${kind}:${execution.exitStatus}`))
+            }
+        }
+    }
+    return errors
+}
+
+export function validateOperatorReviewEvidence(options) {
+    const loaded = loadEvidenceAndInventory(options)
+    if (loaded.errors.length > 0) return loaded.errors
+    const review = loaded.evidence.operatorReview
+    if (!review || typeof review !== 'object') return [evidenceRefusal('DOCEV040_REVIEW_MISSING', 'operatorReview')]
+    const exactScope = (scope) => {
+        const values = Array.isArray(scope) ? scope.filter((item) => typeof item === 'string') : []
+        return loaded.inventory.reviewItems.length > 0
+            && setDifference(loaded.inventory.reviewItems, values).length === 0
+            && setDifference(values, loaded.inventory.reviewItems).length === 0
+            && duplicateValues(values).length === 0
+    }
+    if (review.status === 'complete') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(review.date ?? '')) return [evidenceRefusal('DOCEV041_REVIEW_DATE_REQUIRED', String(review.date))]
+        const rows = Array.isArray(review.rows) ? review.rows : []
+        if (!exactScope(rows.map((row) => row?.id))) return [evidenceRefusal('DOCEV042_REVIEW_SCOPE_PARTIAL', 'complete review')]
+        if (rows.some((row) => typeof row.disposition !== 'string' || row.disposition.trim() === '' || typeof row.evidence !== 'string' || row.evidence.trim() === '')) {
+            return [evidenceRefusal('DOCEV043_REVIEW_ROW_INVALID', 'complete review rows need disposition and evidence')]
+        }
+        return []
+    }
+    if (review.status === 'human_needed') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(review.date ?? '')) return [evidenceRefusal('DOCEV041_REVIEW_DATE_REQUIRED', String(review.date))]
+        if (!exactScope(review.scope)) return [evidenceRefusal('DOCEV042_REVIEW_SCOPE_PARTIAL', 'human_needed')]
+        if (typeof review.action !== 'string' || review.action.trim() === '' || typeof review.completionEvidence !== 'string' || review.completionEvidence.trim() === '') {
+            return [evidenceRefusal('DOCEV044_HUMAN_NEEDED_EMPTY', 'action and completionEvidence are required')]
+        }
+        return []
+    }
+    return [evidenceRefusal('DOCEV045_REVIEW_STATUS_INVALID', String(review.status))]
+}
+
+function readJson(path, root = ROOT) {
+    try {
+        const value = JSON.parse(readFileSync(resolve(root, path), 'utf8'))
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+            return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: root must be an object`)] }
+        }
+        return { value }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: ${message}`)] }
+    }
+}
+
+function readStructuredJson(path, root, fenceLabel) {
+    try {
+        const body = readFileSync(resolve(root, path), 'utf8')
+        try {
+            const value = JSON.parse(body)
+            if (value !== null && typeof value === 'object' && !Array.isArray(value)) return { value }
+        } catch {
+            // Markdown evidence is parsed below.
+        }
+        const expression = new RegExp('```' + fenceLabel + '\\s*\\n([\\s\\S]*?)\\n```', 'g')
+        const matches = [...body.matchAll(expression)]
+        if (matches.length !== 1) {
+            return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: expected one ${fenceLabel} JSON block`)] }
+        }
+        const value = JSON.parse(matches[0][1])
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('root must be an object')
+        return { value }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { errors: [evidenceRefusal('DOCEV060_JSON_INVALID', `${path}: ${message}`)] }
+    }
+}
+
+function sha256(body) {
+    return createHash('sha256').update(body).digest('hex')
+}
+
+function changedTrackedPaths(root, base, head) {
+    const tokens = git(root, ['diff', '--name-status', '--no-renames', '-z', `${base}..${head}`]).split('\0')
+    if (tokens.pop() !== '') throw new TypeError('changedTrackedPaths: Git output is not NUL-terminated')
+    const rows = []
+    for (let cursor = 0; cursor < tokens.length; cursor += 2) {
+        const status = tokens[cursor]
+        const path = tokens[cursor + 1]
+        if (!/^[ADMT]$/.test(status) || !path) {
+            throw new TypeError('changedTrackedPaths: malformed Git status/path pair')
+        }
+        rows.push({ path, state: status === 'D' ? 'deleted' : 'present' })
+    }
+    return rows.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function computeReviewManifest(root, expectedFixedPoint, candidate = 'HEAD', requireClean = true) {
+    const authority = validateFixedPoint(root, expectedFixedPoint, candidate)
+    if (authority.errors.length > 0) return { errors: authority.errors }
+    if (requireClean && git(root, ['status', '--porcelain', '--untracked-files=no']).trim() !== '') {
+        return { errors: [evidenceRefusal('DOCEV061_TRACKED_DIRTY', 'tracked working state must be clean')] }
+    }
+    const files = changedTrackedPaths(root, authority.fixedPoint, authority.candidate).map(({ path, state }) => ({
+        path,
+        state,
+        sha256: state === 'deleted' ? null : sha256(git(root, ['show', `${authority.candidate}:${path}`], { encoding: null })),
+    }))
+    if (files.length === 0) return { errors: [evidenceRefusal('DOCEV062_MANIFEST_EMPTY', 'fixed-point diff is empty')] }
+    const inventory = deriveDocumentationInventory({ root, expectedFixedPoint: authority.fixedPoint, candidate: authority.candidate })
+    if (inventory.errors.length > 0) return { errors: inventory.errors }
+    const paths = files.map(({ path }) => path)
+    return {
+        errors: [],
+        manifest: {
+            base: authority.fixedPoint,
+            head: authority.candidate,
+            navigationScope: inventory.navigationItems,
+            pathSetSha256: sha256(`${paths.join('\n')}\n`),
+            files,
+        },
+    }
+}
+
+export function writeReviewManifest({ root = ROOT, path, expectedFixedPoint, candidate = 'HEAD' }) {
+    const computed = computeReviewManifest(root, expectedFixedPoint, candidate)
+    if (computed.errors.length > 0) return computed.errors
+    try {
+        writeFileSync(resolve(root, path), `${JSON.stringify(computed.manifest, null, 2)}\n`, { flag: 'wx' })
+        return []
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return [evidenceRefusal('DOCEV063_MANIFEST_WRITE_FAILED', `${path}: ${message}`)]
+    }
+}
+
+function exactJson(left, right) {
+    return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function exactStringArray(value) {
+    return Array.isArray(value)
+        && value.every((item) => typeof item === 'string' && item.trim() !== '')
+        && duplicateValues(value).length === 0
+        && exactJson(value, [...value].sort())
+}
+
+function uniqueStringArray(value) {
+    return Array.isArray(value)
+        && value.every((item) => typeof item === 'string' && item.trim() !== '')
+        && duplicateValues(value).length === 0
+}
+
+function validateManifestIdentity(actual, expected) {
+    if (!actual || !exactJson(actual, expected)) {
+        return [evidenceRefusal('DOCEV064_MANIFEST_MISMATCH', 'review manifest does not match the committed fixed-point diff')]
+    }
+    return []
+}
+
+function validateReviewDocument(root, value, computed) {
+    const errors = validateManifestIdentity(value.manifest, computed.manifest)
+    if (typeof value.subjectOwner !== 'string' || value.subjectOwner.trim() === '') {
+        errors.push(evidenceRefusal('DOCEV066_REVIEWER_INVALID', 'subject owner is required'))
+    }
+    const lanes = Array.isArray(value.lanes) ? value.lanes : []
+    const reviewers = lanes.map((lane) => lane?.reviewer).filter((reviewer) => typeof reviewer === 'string')
+    const requiredLanes = ['asvs-l1-security', 'code-spec', 'documentation-comments', 'simplification']
+    if (!exactJson(lanes.map((lane) => lane?.id).sort(), requiredLanes)) {
+        errors.push(evidenceRefusal('DOCEV065_REVIEW_LANES_INVALID', 'simplification, code/spec, ASVS L1 security and documentation/comment reviews are required'))
+    }
+    if (reviewers.length !== lanes.length || duplicateValues(reviewers).length > 0) {
+        errors.push(evidenceRefusal('DOCEV066_REVIEWER_INVALID', 'reviewers must be distinct'))
+    }
+    const manifestPaths = computed.manifest.files.map(({ path: filePath }) => filePath)
+    for (const lane of lanes) {
+        if (!lane || typeof lane.id !== 'string' || typeof lane.reviewer !== 'string' || lane.reviewer.trim() === ''
+            || lane.reviewer === value.subjectOwner) {
+            errors.push(evidenceRefusal('DOCEV066_REVIEWER_INVALID', String(lane?.id)))
+            continue
+        }
+        if (!exactJson(lane.paths, manifestPaths)) {
+            errors.push(evidenceRefusal('DOCEV067_REVIEW_ACCOUNTING_INVALID', lane.id))
+        }
+        const findings = Array.isArray(lane.findings) ? lane.findings : []
+        if (duplicateValues(findings.map((finding) => finding?.id).filter((id) => typeof id === 'string')).length > 0) {
+            errors.push(evidenceRefusal('DOCEV068_FINDING_INVALID', `${lane.id}: duplicate finding`))
+        }
+        for (const finding of findings) {
+            const material = finding?.severity === 'major' || finding?.severity === 'critical'
+            if (!finding || typeof finding.id !== 'string' || !manifestPaths.includes(finding.path)
+                || !['minor', 'major', 'critical'].includes(finding.severity)
+                || !['closed', 'dismissed'].includes(finding.disposition)) {
+                errors.push(evidenceRefusal('DOCEV068_FINDING_INVALID', `${lane.id}:${String(finding?.id)}`))
+            } else if (material && (finding.disposition !== 'closed'
+                || typeof finding.owner !== 'string' || finding.owner.trim() === ''
+                || typeof finding.fixer !== 'string' || finding.fixer.trim() === ''
+                || typeof finding.fixCommit !== 'string' || !/^[a-f0-9]{40}$/.test(finding.fixCommit)
+                || resolveCandidate(root, finding.fixCommit) === null
+                || finding.fixCommit === computed.manifest.base
+                || !commitIsAncestor(root, computed.manifest.base, finding.fixCommit)
+                || !commitIsAncestor(root, finding.fixCommit, computed.manifest.head)
+                || typeof finding.reReviewer !== 'string' || finding.reReviewer.trim() === ''
+                || finding.fixer === lane.reviewer
+                || finding.reReviewer === finding.fixer || finding.reReviewer === lane.reviewer
+                || !executionIsBounded(finding.regression) || finding.regression.exitStatus === 0
+                || !executionIsBounded(finding.retest) || finding.retest.exitStatus !== 0)) {
+                errors.push(evidenceRefusal('DOCEV069_MATERIAL_FINDING_INCOMPLETE', `${lane.id}:${finding.id}`))
+            }
+        }
+    }
+    return errors
+}
+
+export function validateReviewEvidence({ root = ROOT, path, expectedFixedPoint, candidate = 'HEAD' }) {
+    const computed = computeReviewManifest(root, expectedFixedPoint, candidate)
+    if (computed.errors.length > 0) return computed.errors
+    const parsed = readJson(path, root)
+    if (parsed.errors) return parsed.errors
+    return validateReviewDocument(root, parsed.value, computed)
+}
+
+export function validateReviewReports({ root = ROOT, manifestPath, reviewPaths, expectedFixedPoint, candidate = 'HEAD' }) {
+    const computed = computeReviewManifest(root, expectedFixedPoint, candidate)
+    if (computed.errors.length > 0) return computed.errors
+    const manifest = readJson(manifestPath, root)
+    if (manifest.errors) return manifest.errors
+    const errors = validateManifestIdentity(manifest.value, computed.manifest)
+    const reports = []
+    for (const reviewPath of reviewPaths) {
+        const report = readStructuredJson(reviewPath, root, 'review-evidence')
+        if (report.errors) errors.push(...report.errors)
+        else reports.push(report.value)
+    }
+    if (reports.length !== 4 || reports.some((report) => !report.lane || Array.isArray(report.lane))) {
+        errors.push(evidenceRefusal('DOCEV065_REVIEW_LANES_INVALID', 'exactly four review reports are required'))
+        return errors
+    }
+    const owners = [...new Set(reports.map((report) => report.subjectOwner))]
+    if (owners.length !== 1) errors.push(evidenceRefusal('DOCEV066_REVIEWER_INVALID', 'review reports disagree on subject owner'))
+    for (const report of reports) errors.push(...validateManifestIdentity(report.manifest, computed.manifest))
+    errors.push(...validateReviewDocument(root, {
+        manifest: manifest.value,
+        subjectOwner: owners[0],
+        lanes: reports.map((report) => report.lane),
+    }, computed))
+    return errors
+}
+
+export function validateNavigationEvidenceFromManifest({
+    root = ROOT,
+    path,
+    manifestPath,
+    navigationPublicKeyPath,
+    impactLedgerPath,
+}) {
+    const manifest = readJson(manifestPath, root)
+    if (manifest.errors) return manifest.errors
+    const computed = computeReviewManifest(root, manifest.value.base, manifest.value.head)
+    if (computed.errors.length > 0) return computed.errors
+    const errors = validateManifestIdentity(manifest.value, computed.manifest)
+    errors.push(...validateNavigationEvidence({
+        root,
+        path,
+        expectedFixedPoint: manifest.value.base,
+        candidate: manifest.value.head,
+        navigationPublicKeyPath,
+        impactLedgerPath,
+    }))
+    return errors
+}
+
+function executionIsBounded(value) {
+    return value && typeof value.command === 'string' && value.command.trim() !== ''
+        && Number.isInteger(value.exitStatus) && /^[a-f0-9]{64}$/.test(value.transcriptSha256 ?? '')
+        && Number.isFinite(value.durationMs) && value.durationMs >= 0
+        && Number.isFinite(value.timeoutMs) && value.timeoutMs > 0 && value.durationMs <= value.timeoutMs
+}
+
+export function validateRuntimeEvidence({ root = ROOT, path, expectedFixedPoint, candidate = 'HEAD' }) {
+    const computed = computeReviewManifest(root, expectedFixedPoint, candidate)
+    if (computed.errors.length > 0) return computed.errors
+    const parsed = readJson(path, root)
+    if (parsed.errors) return parsed.errors
+    const evidence = parsed.value
+    const errors = []
+    const hasFields = (value, names) => value !== null && typeof value === 'object' && !Array.isArray(value)
+        && exactJson(Object.keys(value).sort(), [...names].sort())
+    const fields = ['schema_version', 'source_head', 'package_sha256', 'installed_module', 'installed_module_sha256',
+        'runtime_path', 'runtime_sha256', 'runtime_version', 'compose_version', 'candidate', 'broken_control',
+        'started_at', 'finished_at', 'expires_at', 'batch_id', 'project_name', 'operating_system', 'architecture',
+        'cleanup', 'disposition']
+    const expectedFields = evidence.disposition === 'unavailable'
+        ? [...fields, 'unavailable_code', 'unavailable_reason'] : fields
+    if (evidence.schema_version !== 1 || !exactJson(Object.keys(evidence).sort(), expectedFields.sort())) {
+        return [evidenceRefusal('DOCEV070_RUNTIME_EXECUTION_INVALID', 'expected the complete installed runtime producer record')]
+    }
+    if (evidence.source_head !== computed.manifest.head) {
+        errors.push(evidenceRefusal('DOCEV064_MANIFEST_MISMATCH', 'runtime source head differs from the committed candidate'))
+    }
+    const digest = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+    const timestamp = (value) => typeof value === 'string'
+        && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+        && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+    if (!digest(evidence.package_sha256) || !digest(evidence.installed_module_sha256)
+        || typeof evidence.installed_module !== 'string' || !posix.isAbsolute(evidence.installed_module)
+        || !timestamp(evidence.started_at) || !timestamp(evidence.finished_at)
+        || Date.parse(evidence.started_at) > Date.parse(evidence.finished_at)) {
+        errors.push(evidenceRefusal('DOCEV070_RUNTIME_EXECUTION_INVALID', 'package/module identity or observation timestamps are invalid'))
+    }
+    const unavailable = evidence.disposition === 'unavailable'
+    if (!(hasFields(evidence.candidate, ['outcome', 'sha256', 'checks'])
+            || unavailable && hasFields(evidence.candidate, ['outcome']))
+        || !(hasFields(evidence.broken_control, ['outcome', 'sha256'])
+            || unavailable && hasFields(evidence.broken_control, ['outcome']))
+        || !hasFields(evidence.cleanup, ['ownedSurvivors', 'resourcesEqual', 'claimsEqual', 'leasesEqual'])) {
+        errors.push(evidenceRefusal('DOCEV070_RUNTIME_EXECUTION_INVALID', 'candidate/control/cleanup fields differ from the producer record'))
+    }
+    if (!['passed', 'failed'].includes(evidence.candidate?.outcome)
+        || !['rejected', 'accepted', 'inconclusive'].includes(evidence.broken_control?.outcome)) {
+        errors.push(evidenceRefusal('DOCEV070_RUNTIME_EXECUTION_INVALID', 'candidate/control outcomes are invalid'))
+    }
+    const cleanup = evidence.cleanup
+    if (!cleanup || !uniqueStringArray(cleanup.ownedSurvivors)
+        || ['resourcesEqual', 'claimsEqual', 'leasesEqual'].some((key) => typeof cleanup[key] !== 'boolean')) {
+        errors.push(evidenceRefusal('DOCEV073_RUNTIME_CLEANUP_MISMATCH', 'runtime cleanup accounting is malformed'))
+    }
+    if (evidence.disposition === 'supported') {
+        const checks = ['localRuntime', 'imagePreexisting', 'profile', 'topology', 'applicationUp',
+            'mountHostToContainer', 'mountContainerToHost', 'ownership', 'health', 'recovery', 'logs',
+            'resetPreview', 'configuredHostPathTeardown', 'teardown'].sort()
+        const candidateChecks = evidence.candidate?.checks
+        if (evidence.candidate?.outcome !== 'passed' || !candidateChecks
+            || !exactJson(Object.keys(candidateChecks).sort(), checks)
+            || Object.values(candidateChecks).some((value) => value !== true)
+            || !digest(evidence.candidate.sha256) || !digest(evidence.broken_control?.sha256)
+            || evidence.candidate.sha256 === evidence.broken_control.sha256
+            || !digest(evidence.runtime_sha256) || typeof evidence.runtime_path !== 'string' || !posix.isAbsolute(evidence.runtime_path)
+            || !/^\d+\.\d+\.\d+$/.test(evidence.runtime_version ?? '') || !/^\d+\.\d+\.\d+$/.test(evidence.compose_version ?? '')
+            || !/^[a-f0-9]{32}$/.test(evidence.batch_id ?? '') || typeof evidence.project_name !== 'string'
+            || evidence.project_name !== `cockpit-probe-${evidence.batch_id}`
+            || typeof evidence.operating_system !== 'string' || evidence.operating_system === ''
+            || typeof evidence.architecture !== 'string' || evidence.architecture === '') {
+            errors.push(evidenceRefusal('DOCEV074_RUNTIME_PROMOTION_UNSUPPORTED', 'supported runtime needs the complete named cell and its shared identity'))
+        }
+        if (evidence.broken_control?.outcome !== 'rejected') {
+            errors.push(evidenceRefusal('DOCEV072_RUNTIME_CONTROL_ACCEPTED', 'broken runtime control was not rejected'))
+        }
+        if (!timestamp(evidence.expires_at) || Date.parse(evidence.expires_at) - Date.parse(evidence.started_at) > 300_000
+            || Date.parse(evidence.expires_at) <= Date.parse(evidence.started_at)
+            || Date.parse(evidence.finished_at) > Date.parse(evidence.expires_at)) {
+            errors.push(evidenceRefusal('DOCEV071_RUNTIME_NOT_ADJACENT', 'runtime candidate/control exceeded their bounded observation window'))
+        }
+        if (!cleanup || cleanup.ownedSurvivors?.length !== 0
+            || cleanup.resourcesEqual !== true || cleanup.claimsEqual !== true || cleanup.leasesEqual !== true) {
+            errors.push(evidenceRefusal('DOCEV073_RUNTIME_CLEANUP_MISMATCH', 'supported runtime needs zero survivors and exact resource/claim/lease equality'))
+        }
+    } else if (evidence.disposition === 'unavailable') {
+        const producerCodes = runtimeUnavailableCodes(root, computed.manifest.head)
+        if (typeof evidence.unavailable_code !== 'string'
+            || !producerCodes.includes(evidence.unavailable_code)
+            || typeof evidence.unavailable_reason !== 'string' || evidence.unavailable_reason.trim() === '') {
+            errors.push(evidenceRefusal('DOCEV075_RUNTIME_UNAVAILABLE_INVALID', 'unavailable runtime needs its producer code and reason'))
+        }
+    } else {
+        errors.push(evidenceRefusal('DOCEV076_RUNTIME_VERDICT_INVALID', String(evidence.disposition)))
+    }
+    return errors
+}
+
+function loadContractAndInput(root, contractPath, inputPath) {
+    const contract = readJson(contractPath, root)
+    if (contract.errors) return { errors: contract.errors }
+    const input = readJson(inputPath, root)
+    if (input.errors) return { errors: input.errors }
+    return { contract: contract.value, input: input.value, errors: [] }
+}
+
+export function validateEdgeCoverage({ root = ROOT, contractPath, inputPath }) {
+    const loaded = loadContractAndInput(root, contractPath, inputPath)
+    if (loaded.errors.length > 0) return loaded.errors
+    const expected = Array.isArray(loaded.contract.edges) ? loaded.contract.edges : []
+    const actual = Array.isArray(loaded.input.edges) ? loaded.input.edges : []
+    const errors = []
+    const expectedIds = expected.map((row) => row?.id)
+    const actualIds = actual.map((row) => row?.id)
+    const validRows = expected.every((row) => row && typeof row.id === 'string'
+        && ['classified', 'unclassified'].includes(row.classification)
+        && uniqueStringArray(row.sources) && uniqueStringArray(row.tests) && uniqueStringArray(row.anchors))
+    if (!validRows || !exactStringArray(expectedIds)
+        || expected.length !== loaded.contract.counts?.total
+        || expected.filter((row) => row.classification === 'classified').length !== loaded.contract.counts?.classified
+        || expected.filter((row) => row.classification === 'unclassified').length !== loaded.contract.counts?.unclassified) {
+        errors.push(evidenceRefusal('DOCEV080_EDGE_CONTRACT_INVALID', 'edge contract counts, ordering, or rows are invalid'))
+    }
+    const contractHasDependencies = Object.prototype.hasOwnProperty.call(loaded.contract, 'dependencyEdges')
+    const inputHasDependencies = Object.prototype.hasOwnProperty.call(loaded.input, 'dependencyEdges')
+    let dependencyEdges = []
+    if (!contractHasDependencies && !inputHasDependencies) {
+        if (loaded.contract.counts?.dependencyEdges !== undefined
+            && (!Number.isInteger(loaded.contract.counts.dependencyEdges) || loaded.contract.counts.dependencyEdges !== 0)) {
+            errors.push(evidenceRefusal('DOCEV084_EDGE_DEPENDENCY_SET_INVALID', 'dependency edge count is invalid'))
+        }
+    } else {
+        const dependencySetValid = contractHasDependencies
+            && inputHasDependencies
+            && exactStringArray(loaded.contract.dependencyEdges)
+            && exactStringArray(loaded.input.dependencyEdges)
+            && exactJson(loaded.input.dependencyEdges, loaded.contract.dependencyEdges)
+            && loaded.contract.dependencyEdges.every((id) => expectedIds.includes(id))
+            && Number.isInteger(loaded.contract.counts?.dependencyEdges)
+            && loaded.contract.counts.dependencyEdges === loaded.contract.dependencyEdges.length
+        if (dependencySetValid) dependencyEdges = loaded.contract.dependencyEdges
+        else errors.push(evidenceRefusal('DOCEV084_EDGE_DEPENDENCY_SET_INVALID', 'dependency edge set is invalid'))
+    }
+    if (!exactJson(actualIds, expectedIds) || duplicateValues(actualIds).length > 0) {
+        errors.push(evidenceRefusal('DOCEV081_EDGE_SET_INVALID', 'edge evidence must exactly match contract order'))
+    }
+    for (let index = 0; index < Math.min(expected.length, actual.length); index += 1) {
+        const expectedRow = expected[index]
+        const actualRow = actual[index]
+        if (!exactJson(
+            { id: actualRow?.id, classification: actualRow?.classification, sources: actualRow?.sources, tests: actualRow?.tests, anchors: actualRow?.anchors },
+            expectedRow,
+        ) || actualRow?.status !== (dependencyEdges.includes(expectedRow?.id) ? 'dependency_needed' : 'covered')) {
+            errors.push(evidenceRefusal('DOCEV082_EDGE_TUPLE_INVALID', String(expectedRow?.id)))
+        }
+    }
+    return errors
+}
+
+export function validateEdgeCoverageDocuments({ root = ROOT, contractPath, coveragePath, sourceInputPath }) {
+    const errors = validateEdgeCoverage({ root, contractPath, inputPath: coveragePath })
+    const contract = readJson(contractPath, root)
+    const coverage = readJson(coveragePath, root)
+    if (contract.errors) return [...errors, ...contract.errors]
+    if (coverage.errors) return [...errors, ...coverage.errors]
+    try {
+        const source = readFileSync(resolve(root, sourceInputPath))
+        const rows = JSON.parse(source.toString('utf8'))
+        const ids = Array.isArray(rows) ? rows.map((row) => row?.id) : []
+        if (!uniqueStringArray(ids) || !exactJson(contract.value.inputIds, ids)
+            || coverage.value.inputSha256 !== sha256(source)) {
+            errors.push(evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', 'edge coverage does not match its supplied source input'))
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        errors.push(evidenceRefusal('DOCEV083_EDGE_INPUT_MISMATCH', message))
+    }
+    return errors
+}
+
+export function validateAcceptanceEvidence({ root = ROOT, contractPath, inputPath }) {
+    const contractDocument = readJson(contractPath, root)
+    if (contractDocument.errors) return contractDocument.errors
+    const inputDocument = readStructuredJson(inputPath, root, 'acceptance-evidence')
+    if (inputDocument.errors) return inputDocument.errors
+    const contract = contractDocument.value
+    const input = inputDocument.value
+    const errors = []
+    for (const key of ['ids', 'exits', 'prerequisites', 'operatorCategories', 'deferredIds']) {
+        if (!exactStringArray(contract[key]) || !exactJson(input[key], contract[key])
+            || !Number.isInteger(contract.counts?.[key]) || contract.counts[key] !== contract[key].length) {
+            errors.push(evidenceRefusal('DOCEV090_ACCEPTANCE_CONTRACT_MISMATCH', key))
+        }
+    }
+    const contractHasDependencies = Object.prototype.hasOwnProperty.call(contract, 'deferredDependencies')
+    const inputHasDependencies = Object.prototype.hasOwnProperty.call(input, 'deferredDependencies')
+    let deferredDependencies = []
+    if (!contractHasDependencies && !inputHasDependencies) {
+        if (contract.counts?.deferredDependencies !== undefined
+            && (!Number.isInteger(contract.counts.deferredDependencies) || contract.counts.deferredDependencies !== 0)) {
+            errors.push(evidenceRefusal('DOCEV098_DEPENDENCY_SET_INVALID', 'deferred dependency count is invalid'))
+        }
+    } else {
+        const dependencySetValid = contractHasDependencies
+            && inputHasDependencies
+            && exactStringArray(contract.deferredDependencies)
+            && exactStringArray(input.deferredDependencies)
+            && exactJson(input.deferredDependencies, contract.deferredDependencies)
+            && Array.isArray(contract.ids)
+            && contract.deferredDependencies.every((id) => contract.ids.includes(id))
+            && Array.isArray(contract.deferredIds)
+            && contract.deferredDependencies.every((id) => !contract.deferredIds.includes(id))
+            && Number.isInteger(contract.counts?.deferredDependencies)
+            && contract.counts.deferredDependencies === contract.deferredDependencies.length
+        if (dependencySetValid) deferredDependencies = contract.deferredDependencies
+        else errors.push(evidenceRefusal('DOCEV098_DEPENDENCY_SET_INVALID', 'deferred dependency set is invalid'))
+    }
+    if (!Number.isFinite(input.feedbackLatencyMs) || input.feedbackLatencyMs < 0
+        || !Number.isFinite(contract.maxFeedbackLatencyMs) || input.feedbackLatencyMs > contract.maxFeedbackLatencyMs) {
+        errors.push(evidenceRefusal('DOCEV091_FEEDBACK_LATENCY_INVALID', String(input.feedbackLatencyMs)))
+    }
+    const commands = Array.isArray(input.commands) ? input.commands : []
+    if (commands.length === 0 || commands.some((command) => !executionIsBounded(command) || command.exitStatus !== 0)) {
+        errors.push(evidenceRefusal('DOCEV092_ACCEPTANCE_COMMAND_INVALID', 'bounded passing command evidence is required'))
+    }
+    const rows = Array.isArray(input.operatorRows) ? input.operatorRows : []
+    if (!exactJson(rows.map((row) => row?.category), contract.operatorCategories)
+        || rows.some((row) => !['complete', 'human_needed', 'unavailable'].includes(row?.status)
+            || !exactStringArray(row.ids ?? [])
+            || (row.ids ?? []).some((id) => !contract.ids.includes(id)))) {
+        errors.push(evidenceRefusal('DOCEV093_OPERATOR_ROWS_INVALID', 'operator rows must exactly match the supplied categories'))
+    }
+    const open = rows.some((row) => row.status !== 'complete')
+    const expectedVerdict = open ? 'human_needed' : deferredDependencies.length > 0 ? 'dependency_needed' : 'passed'
+    if (input.verdict !== expectedVerdict) {
+        errors.push(evidenceRefusal('DOCEV094_ACCEPTANCE_VERDICT_INVALID', String(input.verdict)))
+    }
+    const deferred = rows.filter((row) => row.status !== 'complete').flatMap((row) => row.ids ?? []).sort()
+    if (!exactJson(deferred, contract.deferredIds)) {
+        errors.push(evidenceRefusal('DOCEV095_DEFERRED_SET_INVALID', deferred.join(', ')))
+    }
+    const statusIds = input.statuses && typeof input.statuses === 'object' ? Object.keys(input.statuses).sort() : []
+    if (!input.statuses || !exactJson(statusIds, contract.ids)
+        || contract.ids.some((id) => input.statuses[id] !== (deferredDependencies.includes(id)
+            ? 'dependency_needed' : contract.deferredIds.includes(id) ? 'human_needed' : 'passed'))) {
+        errors.push(evidenceRefusal('DOCEV096_ACCEPTANCE_STATUS_INVALID', 'every contracted id needs an accepted status'))
+    }
+    return errors
+}
+
+export function validateAcceptanceDocuments({ root = ROOT, contractPath, inputPath, artifacts }) {
+    const errors = validateAcceptanceEvidence({ root, contractPath, inputPath })
+    const input = readStructuredJson(inputPath, root, 'acceptance-evidence')
+    if (input.errors) return [...errors, ...input.errors]
+    if (!artifacts || Object.values(artifacts).some((path) => typeof path !== 'string' || path.trim() === '')) {
+        errors.push(evidenceRefusal('DOCEV097_ACCEPTANCE_ARTIFACT_MISMATCH', 'every acceptance document path is required'))
+        return errors
+    }
+    let expected
+    try {
+        expected = Object.entries(artifacts)
+            .map(([role, path]) => ({ role, path, sha256: sha256(readFileSync(resolve(root, path))) }))
+            .sort((left, right) => left.role.localeCompare(right.role))
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        errors.push(evidenceRefusal('DOCEV097_ACCEPTANCE_ARTIFACT_MISMATCH', message))
+        return errors
+    }
+    if (!exactJson(input.value.artifacts, expected)) {
+        errors.push(evidenceRefusal('DOCEV097_ACCEPTANCE_ARTIFACT_MISMATCH', 'supplied acceptance documents do not match their recorded identities'))
+    }
+    return errors
+}
+
+function subjectPath(argument) {
+    const absolute = resolve(ROOT, argument)
+    const path = relative(ROOT, absolute)
+    if (path === '..' || path.startsWith(`..${sep}`)) {
+        return { absolute, path: normalisePath(argument) }
+    }
+    return { absolute, path: normalisePath(path) }
+}
+
+async function run() {
+    const arguments_ = process.argv.slice(2)
+    const valueAfter = (flag) => {
+        const index = arguments_.indexOf(flag)
+        return index === -1 ? undefined : arguments_[index + 1]
+    }
+    const valuesAfter = (flag) => arguments_.flatMap((argument, index) => argument === flag ? [arguments_[index + 1]] : []).filter(Boolean)
+    const candidate = valueAfter('--candidate') ?? valueAfter('--head') ?? 'HEAD'
+    const expectedFixedPoint = valueAfter('--expected-fixed-point') ?? valueAfter('--base')
+    const navigationPublicKeyPath = valueAfter('--navigation-public-key')
+    const operatorPath = valueAfter('--operator-review-evidence')
+    const navigationPath = valueAfter('--navigation-evidence')
+    const impactPath = valueAfter('--impact-ledger')
+    const writeManifestPath = valueAfter('--write-review-manifest')
+    const reviewManifestPath = valueAfter('--review-manifest')
+    const reviewPaths = valuesAfter('--review')
+    const runtimePath = valueAfter('--runtime-evidence')
+    const edgeContractPath = valueAfter('--edge-contract')
+    const edgeCoveragePath = valueAfter('--edge-coverage')
+    const edgeSourceInputPath = valueAfter('--edge-input')
+    const acceptanceContractPath = valueAfter('--acceptance-contract')
+    const acceptanceInputPath = valueAfter('--acceptance-evidence')
+    const externalReportPath = valueAfter('--external-report')
+    if (externalReportPath) {
+        const documents = repositoryMarkdownPaths()
+            .filter(path => ['human', 'executable'].includes(classifyMarkdownPath(path)))
+            .map(path => ({ path, body: readFileSync(resolve(ROOT, path), 'utf8') }))
+        const report = await buildExternalLinkReport({ documents })
+        writeFileSync(externalReportPath, `${JSON.stringify(report, null, 2)}\n`)
+        console.log(`docs-lint: checked ${report.summary.checked} external links; ${report.summary.broken} broken and ${report.summary.unavailable} unavailable (reported, not gated)`)
+        return
+    }
+    if (writeManifestPath) {
+        const errors = writeReviewManifest({ path: writeManifestPath, expectedFixedPoint, candidate })
+        for (const error of errors) console.error(`docs-lint: ${error}`)
+        if (errors.length > 0) process.exitCode = 1
+        return
+    }
+    const structuredMode = reviewPaths.length > 0 || reviewManifestPath && !navigationPath ? 'review'
+        : runtimePath ? 'runtime'
+            : edgeContractPath || edgeCoveragePath || edgeSourceInputPath ? 'edge'
+                : acceptanceContractPath || acceptanceInputPath ? 'acceptance'
+                    : null
+    if (structuredMode !== null) {
+        const errors = structuredMode === 'review'
+            ? reviewManifestPath && reviewPaths.length > 0
+                ? validateReviewReports({ manifestPath: reviewManifestPath, reviewPaths, expectedFixedPoint, candidate })
+                : [evidenceRefusal('DOCEV004_ARGUMENT_INVALID', '--review-manifest and four --review paths are required')]
+            : structuredMode === 'runtime'
+                ? validateRuntimeEvidence({ path: runtimePath, expectedFixedPoint, candidate })
+                : structuredMode === 'edge'
+                    ? edgeContractPath && edgeCoveragePath && edgeSourceInputPath
+                        ? validateEdgeCoverageDocuments({ contractPath: edgeContractPath, coveragePath: edgeCoveragePath, sourceInputPath: edgeSourceInputPath })
+                        : [evidenceRefusal('DOCEV004_ARGUMENT_INVALID', '--edge-contract, --edge-coverage, and --edge-input are required')]
+                    : acceptanceContractPath && acceptanceInputPath
+                        ? validateAcceptanceDocuments({
+                            contractPath: acceptanceContractPath,
+                            inputPath: acceptanceInputPath,
+                            artifacts: {
+                                acceptanceChecklist: valueAfter('--acceptance-checklist'),
+                                operatorReviewEvidence: operatorPath,
+                                requirements: valueAfter('--requirements'),
+                                roadmap: valueAfter('--roadmap'),
+                                verification: valueAfter('--verification'),
+                            },
+                        })
+                        : [evidenceRefusal('DOCEV004_ARGUMENT_INVALID', '--acceptance-contract and --acceptance-evidence are both required')]
+        for (const error of errors) console.error(`docs-lint: ${error}`)
+        if (errors.length > 0) process.exitCode = 1
+        return
+    }
+    if (arguments_.includes('--inventory')) {
+        const inventory = deriveDocumentationInventory({ expectedFixedPoint, candidate })
+        if (inventory.errors.length > 0) {
+            for (const error of inventory.errors) console.error(`docs-lint: ${error}`)
+            process.exitCode = 1
+        } else {
+            console.log(JSON.stringify({
+                candidate: inventory.candidate,
+                fixedPoint: expectedFixedPoint,
+                items: inventory.items,
+                navigationItems: inventory.navigationItems,
+                reviewItems: inventory.reviewItems,
+            }, null, 2))
+        }
+        return
+    }
+    if (navigationPath && reviewManifestPath) {
+        const errors = validateNavigationEvidenceFromManifest({
+            path: navigationPath,
+            manifestPath: reviewManifestPath,
+            impactLedgerPath: impactPath,
+            navigationPublicKeyPath: navigationPublicKeyPath ?? `${navigationPath}.public.pem`,
+        })
+        for (const error of errors) console.error(`docs-lint: ${error}`)
+        if (errors.length > 0) process.exitCode = 1
+        return
+    }
+    const evidenceMode = operatorPath ? 'operator' : navigationPath ? 'navigation' : impactPath ? 'impact' : null
+    if (evidenceMode !== null) {
+        const path = operatorPath ?? navigationPath ?? impactPath
+        const options = { path, expectedFixedPoint, candidate, navigationPublicKeyPath, impactLedgerPath: impactPath }
+        const errors = evidenceMode === 'operator'
+            ? validateOperatorReviewEvidence(options)
+            : evidenceMode === 'navigation'
+                ? validateNavigationEvidence(options)
+                : validateImpactLedger(options)
+        for (const error of errors) console.error(`docs-lint: ${error}`)
+        if (errors.length > 0) process.exitCode = 1
+        return
+    }
+    if (arguments_.some((argument) => argument.startsWith('--'))) {
+        console.error('docs-lint: [DOCEV004_ARGUMENT_INVALID] unknown or incomplete evidence mode')
+        process.exitCode = 1
+        return
+    }
+    const repositoryScan = arguments_.length === 0
+    const subjects = arguments_.length === 0 ? repositoryMarkdownPaths().map(subjectPath) : arguments_.map(subjectPath)
+    if (subjects.length === 0) {
+        console.error('docs-lint: [DOC002_EMPTY_CORPUS] Git enumerated no Markdown paths')
+        process.exitCode = 1
+        return
+    }
+
+    let failed = false
+    for (const subject of subjects) {
+        let body
+        try {
+            body = readFileSync(subject.absolute, 'utf8')
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            console.error(`docs-lint: ${subject.path}:1 [DOC003_UNREADABLE] ${message}`)
+            failed = true
+            continue
+        }
+        const diagnostics =
+            repositoryScan && classifyMarkdownPath(subject.path) === 'fixture' ? [] : lintMarkdown(subject.path, body)
+        for (const diagnostic of diagnostics) {
+            console.error(
+                `docs-lint: ${diagnostic.path}:${diagnostic.line} [${diagnostic.code}] ${diagnostic.message}`,
+            )
+            failed = true
+        }
+    }
+    if (repositoryScan) {
+        const readDocument = path => readFileSync(resolve(ROOT, path), 'utf8')
+        const documentationPaths = subjects.map(subject => subject.path).filter(path => path.startsWith('docs/'))
+        for (const error of validateDocumentationIndexes({ readDocument, documents: documentationPaths })) {
+            console.error(`docs-lint: ${error.path}:${error.line} [${error.code}] ${error.message}`)
+            failed = true
+        }
+        for (const subject of subjects.filter(subject => classifyMarkdownPath(subject.path) !== 'fixture')) {
+            let body
+            try {
+                body = readFileSync(subject.absolute, 'utf8')
+            } catch {
+                continue
+            }
+            for (const error of inspectInternalLinks({ path: subject.path, body, readTarget: readDocument })) {
+                if (error.code === 'DOC041_REFERENCE_UNRESOLVED') continue
+                console.error(`docs-lint: ${error.path}:${error.line} [${error.code}] ${error.message}`)
+                failed = true
+            }
+        }
+        const trackedPaths = new Set(git(ROOT, ['ls-files', '-z']).split('\0').filter(Boolean))
+        const maintained = inspectMaintainedProse({
+            currentVersion: JSON.parse(readDocument('packages/cockpit/package.json')).version,
+            mechanismExists: path => !path.startsWith('/') && !path.includes('\\')
+                && !path.split('/').some(part => part === '.' || part === '..') && trackedPaths.has(path),
+            documents: subjects
+                .filter(subject => ['human', 'executable'].includes(classifyMarkdownPath(subject.path)))
+                .map(subject => ({ path: subject.path, body: readDocument(subject.path) })),
+        })
+        for (const error of maintained.diagnostics) {
+            console.error(`docs-lint: ${error.path}:${error.line} [${error.code}] ${error.message}`)
+            failed = true
+        }
+        for (const report of maintained.reports) {
+            console.log(`docs-lint: ${report.path}:${report.line} [${report.code}] ${report.message} (reported, not gated)`)
+        }
+        try {
+            const references = await checkRepositoryReferences(ROOT, candidate)
+            if (!references || typeof references !== 'object' || !Array.isArray(references.diagnostics)) {
+                console.error('docs-lint: [REFERENCE_OWNER_UNAVAILABLE] canonical reference check returned no authenticated result')
+                failed = true
+            } else {
+                for (const item of references.diagnostics) {
+                    const target = typeof item.target === 'string' ? `${item.target}:1 ` : ''
+                    console.error(`docs-lint: ${target}[${item.code}] ${item.message}`)
+                    failed = true
+                }
+                if ((references.kind !== 'complete' || references.ok !== true) && references.diagnostics.length === 0) {
+                    console.error('docs-lint: [REFERENCE_OWNER_UNAVAILABLE] canonical reference check refused without a diagnostic')
+                    failed = true
+                }
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            console.error(`docs-lint: ${message.startsWith('[') ? message : `[REFERENCE_OWNER_UNAVAILABLE] ${message}`}`)
+            failed = true
+        }
+    }
+    if (failed) process.exitCode = 1
+}
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+    run().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`docs-lint: [DOC000_INTERNAL] ${message}`)
+        process.exitCode = 1
+    })
+}

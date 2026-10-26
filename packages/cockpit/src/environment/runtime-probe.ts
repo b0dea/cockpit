@@ -1,0 +1,662 @@
+import { createHash, randomBytes } from 'node:crypto'
+import { open, readFile, readdir, realpath, rm, mkdir, writeFile } from 'node:fs/promises'
+import { arch, platform } from 'node:os'
+import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
+import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { runDown, runLogs, runReset, runSleep, runUp } from './application.js'
+import { createDestructiveCommandAdapters } from './destructive-composition.js'
+import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
+import { createReadCommandAdapters } from './read-composition.js'
+import { readActiveStackInventory } from './claims.js'
+import { readState } from './state.js'
+import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
+
+export const mechanism = {
+    id: 'runtime-capability-probe',
+    module: 'packages/cockpit/src/environment/runtime-probe.ts',
+    exports: ['probeRuntimeSupport'],
+} as const
+
+export interface RuntimeProbeRequest {
+    readonly executable: ResolvedExecutable
+    readonly gitExecutable: ResolvedExecutable
+    readonly cwd: string
+    readonly env: Readonly<Record<string, string>>
+    readonly composeFloor: string
+    readonly measuredOn: string
+    readonly timeoutMs: number
+    readonly image: { readonly reference: string; readonly id: string }
+    readonly installedModule: { readonly canonicalPath: string; readonly sha256: string }
+}
+
+export interface RuntimeProbeEvidence {
+    readonly batchId: string
+    readonly installedModuleSha256: string
+    readonly runtimeExecutableSha256: string
+    readonly candidateSha256: string
+    readonly brokenControlSha256: string
+    readonly projectName: string
+    readonly runtimePath: string
+    readonly runtimeVersion: string | null
+    readonly composeVersion: string | null
+    readonly operatingSystem: string
+    readonly architecture: string
+    readonly startedAt: string
+    readonly finishedAt: string
+    readonly expiresAt: string
+    readonly candidateChecks: Readonly<Record<string, boolean>>
+    readonly brokenControlRejected: boolean
+    readonly cleanup: {
+        readonly ownedSurvivors: readonly string[]
+        readonly resourcesEqual: boolean
+        readonly claimsEqual: boolean
+        readonly leasesEqual: boolean
+    }
+}
+
+export interface RuntimeProbeVerdict {
+    readonly status: 'supported' | 'unavailable'
+    readonly runtime: { readonly name: string; readonly version: string } | null
+    readonly composeVersion: string | null
+    readonly composeFloor: string
+    readonly measuredOn: string
+    readonly candidate: 'passed' | 'failed'
+    readonly brokenControl: 'rejected' | 'accepted' | 'inconclusive'
+    readonly evidence: RuntimeProbeEvidence | null
+    readonly operatorAction: null | {
+        readonly required: true
+        readonly code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE | typeof ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT
+        readonly reason: string
+    }
+}
+
+const SHA256 = /^[a-f0-9]{64}$/
+const VERSION = /^v?(\d+\.\d+\.\d+)$/
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
+const SAFE_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DOCKER_HOST'])
+const MAX_TIMEOUT_MS = 120_000
+const OUTPUT_LIMIT = 1_048_576
+const PROBE_WINDOW_MS = 300_000
+const CLEANUP_RESERVE_MS = 90_000
+
+function exactKeys(value: object, expected: readonly string[]): boolean {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const actual = Reflect.ownKeys(descriptors)
+    if (actual.some((key) => typeof key !== 'string')) return false
+    if (actual.some((key) => !('value' in descriptors[key as string]!))) return false
+    actual.sort()
+    const keys = [...expected].sort()
+    return actual.length === keys.length && actual.every((key, index) => key === keys[index])
+}
+
+function validDate(value: string): boolean {
+    const match = DATE.exec(value)
+    if (match === null) return false
+    const date = new Date(`${value}T00:00:00.000Z`)
+    return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value
+}
+
+function versionAtLeast(actual: string, floor: string): boolean {
+    const left = actual.match(VERSION)?.[1].split('.').map(Number)
+    const right = floor.match(VERSION)?.[1].split('.').map(Number)
+    if (!left || !right) return false
+    for (let index = 0; index < 3; index += 1) {
+        if (left[index] !== right[index]) return left[index]! > right[index]!
+    }
+    return true
+}
+
+function unavailable(
+    input: Partial<RuntimeProbeRequest>,
+    reason: string,
+    timedOut = false,
+    evidence: RuntimeProbeEvidence | null = null,
+    brokenControl: RuntimeProbeVerdict['brokenControl'] = 'inconclusive',
+): RuntimeProbeVerdict {
+    return Object.freeze({
+        status: 'unavailable', runtime: null, composeVersion: null,
+        composeFloor: typeof input.composeFloor === 'string' ? input.composeFloor : '',
+        measuredOn: typeof input.measuredOn === 'string' ? input.measuredOn : '',
+        candidate: 'failed', brokenControl, evidence,
+        operatorAction: Object.freeze({
+            required: true,
+            code: timedOut ? ENVIRONMENT_CODES.RUNTIME_PROBE_TIMEOUT : ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+            reason,
+        }),
+    })
+}
+
+class RuntimeProbeFailure extends Error {}
+
+function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
+    try {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)
+            || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
+        const input = value as Partial<RuntimeProbeRequest>
+        if (!isResolvedDockerExecutable(input.executable)
+            || !isResolvedGitExecutable(input.gitExecutable)
+            || typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd || input.cwd.includes('\0')
+            || input.env === null || typeof input.env !== 'object' || Array.isArray(input.env)
+            || Object.entries(input.env).some(([name, item]) => !SAFE_ENV.has(name) || typeof item !== 'string' || item.includes('\0'))
+            || typeof input.composeFloor !== 'string' || VERSION.exec(input.composeFloor) === null
+            || typeof input.measuredOn !== 'string' || !validDate(input.measuredOn)
+            || input.measuredOn !== new Date().toISOString().slice(0, 10)
+            || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs! < 1 || input.timeoutMs! > MAX_TIMEOUT_MS
+            || input.image === null || typeof input.image !== 'object' || Array.isArray(input.image)
+            || !exactKeys(input.image, ['reference', 'id']) || typeof input.image.reference !== 'string'
+            || typeof input.image.id !== 'string' || !IMAGE_ID.test(input.image.id)
+            || input.image.reference !== input.image.id
+            || input.installedModule === null || typeof input.installedModule !== 'object' || Array.isArray(input.installedModule)
+            || !exactKeys(input.installedModule, ['canonicalPath', 'sha256'])
+            || typeof input.installedModule.canonicalPath !== 'string' || !isAbsolute(input.installedModule.canonicalPath)
+            || normalize(input.installedModule.canonicalPath) !== input.installedModule.canonicalPath
+            || typeof input.installedModule.sha256 !== 'string' || !SHA256.test(input.installedModule.sha256)) return undefined
+        const captured = input as RuntimeProbeRequest
+        return Object.freeze({
+            ...captured,
+            executable: Object.freeze({ ...captured.executable }),
+            gitExecutable: Object.freeze({ ...captured.gitExecutable }),
+            env: Object.freeze({ ...captured.env }),
+            image: Object.freeze({ ...captured.image }),
+            installedModule: Object.freeze({ ...captured.installedModule }),
+        })
+    } catch { return undefined }
+}
+
+function hash(value: string | Buffer): string {
+    return createHash('sha256').update(value).digest('hex')
+}
+
+function confined(root: string, target: string): boolean {
+    const path = relative(root, target)
+    return path !== '' && !path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path)
+}
+
+function decode(outcome: ExecuteProbeOutcome): string | undefined {
+    if (outcome.kind !== 'complete') return undefined
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).trim() } catch { return undefined }
+}
+
+function refusalCategory(outcome: ExecuteProbeOutcome): string {
+    if (outcome.kind !== 'refusal') return 'unreadable-output'
+    let stderr = ''
+    try { stderr = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr) } catch { return outcome.code }
+    if (/unknown flag/i.test(stderr)) return `${outcome.code}:unknown-flag`
+    if (/cannot|incompatible|conflict/i.test(stderr)) return `${outcome.code}:incompatible-options`
+    if (/services\.probe\.labels/i.test(stderr)) return `${outcome.code}:service-labels`
+    if (/volumes\..*labels/i.test(stderr)) return `${outcome.code}:volume-labels`
+    if (/networks\..*labels/i.test(stderr)) return `${outcome.code}:network-labels`
+    if (/services\.probe\.command/i.test(stderr)) return `${outcome.code}:service-command`
+    if (/services\.probe\.volumes/i.test(stderr)) return `${outcome.code}:service-volumes`
+    if (/services\.probe\.healthcheck/i.test(stderr)) return `${outcome.code}:service-healthcheck`
+    if (/no such file|cannot.*file|failed to read/i.test(stderr)) return `${outcome.code}:unreadable-artifact`
+    if (/additional propert/i.test(stderr)) return `${outcome.code}:unsupported-field`
+    if (/yaml|validat|invalid|parse|decode/i.test(stderr)) return `${outcome.code}:invalid-config`
+    if (/no such image|not found/i.test(stderr)) return `${outcome.code}:missing-image`
+    return outcome.code
+}
+
+function generatedArtifactDetail(outcome: ExecuteProbeOutcome): string {
+    if (outcome.kind !== 'refusal') return 'unreadable output'
+    try {
+        const first = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr).split('\n', 1)[0] ?? ''
+        return first.replaceAll(/[a-f0-9]{32,}/g, '<identity>').replaceAll(/\/[\w./-]+/g, '<path>').slice(0, 256)
+    } catch { return refusalCategory(outcome) }
+}
+
+interface ProbeRunner {
+    readonly run: (
+        id: string,
+        args: readonly string[],
+        artifact?: { path: string; sha256: string },
+        executable?: ResolvedExecutable,
+    ) => Promise<ExecuteProbeOutcome>
+    readonly timedOut: () => boolean
+}
+
+function runner(input: RuntimeProbeRequest, batchId: string, deadline: number): ProbeRunner {
+    let sawTimeout = false
+    return {
+        timedOut: () => sawTimeout,
+        run: async (id, args, artifact, selectedExecutable = input.executable) => {
+            const remainingMs = deadline - Date.now()
+            if (remainingMs <= 0) {
+                sawTimeout = true
+                throw new RuntimeProbeFailure('the absolute runtime observation window expired before command spawn')
+            }
+            const argv = [selectedExecutable.canonicalPath, ...args] as [string, ...string[]]
+            const artifactIndexes = artifact === undefined ? [] : argv.flatMap((part, index) => part === artifact.path ? [index] : [])
+            const step: ExecutionStep = Object.freeze({
+                id: `runtime:capability:${id}`,
+                argv: Object.freeze(argv), argv0: selectedExecutable.invocationPath,
+                cwd: input.cwd, env: input.env, timeoutMs: Math.min(input.timeoutMs, remainingMs),
+                stdoutLimitBytes: OUTPUT_LIMIT, stderrLimitBytes: OUTPUT_LIMIT,
+                paths: Object.freeze(artifact === undefined ? [] : [artifact.path]), ports: Object.freeze([]),
+                labels: Object.freeze({ batchId, subject: id }),
+                expected: Object.freeze([]),
+                consumedFiles: Object.freeze([
+                    Object.freeze({
+                        path: selectedExecutable.canonicalPath, sha256: selectedExecutable.sha256,
+                        maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true,
+                        executionMode: selectedExecutable.executionMode,
+                    }),
+                    ...(artifact === undefined ? [] : [Object.freeze({
+                        path: artifact.path, sha256: artifact.sha256, maxBytes: 1_048_576,
+                        argvIndexes: Object.freeze(artifactIndexes), executable: false,
+                    })]),
+                ]),
+                filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
+            })
+            const outcome = await executeProbe(step)
+            if (!executionOutcomeMatches(outcome, step)) throw new TypeError('runtime probe execution outcome is unauthenticated')
+            if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) sawTimeout = true
+            return outcome
+        },
+    }
+}
+
+const composeArgs = (input: RuntimeProbeRequest, projectName: string, file: string): string[] => [
+    'compose', '--project-directory', input.cwd, '--file', file, '--project-name', projectName,
+]
+
+async function inventory(run: ProbeRunner['run'], scope: string, label?: string): Promise<Readonly<Record<string, readonly string[]>> | undefined> {
+    const filter = label === undefined ? [] : ['--filter', `label=${label}`]
+    const commands = [
+        ['containers', ['ps', '-aq', ...filter]],
+        ['volumes', ['volume', 'ls', '-q', ...filter]],
+        ['networks', ['network', 'ls', '-q', ...filter]],
+        ['images', ['image', 'ls', '--no-trunc', '--quiet']],
+    ] as const
+    const result: Record<string, readonly string[]> = {}
+    const outcomes = await Promise.all(commands.map(async ([kind, args]) => [kind, await run(`${scope}:${kind}`, args)] as const))
+    for (const [kind, outcome] of outcomes) {
+        const text = decode(outcome)
+        if (text === undefined) return undefined
+        result[kind] = Object.freeze([...new Set(text === '' ? [] : text.split('\n').filter(Boolean))].sort())
+    }
+    return Object.freeze(result)
+}
+
+async function exactCleanup(run: ProbeRunner['run'], owned: Readonly<Record<string, readonly string[]>>): Promise<boolean> {
+    let complete = true
+    for (const id of owned.containers) complete = (await run(`fallback:container:${id.slice(0, 12)}`, ['container', 'rm', '--force', id])).kind === 'complete' && complete
+    const detached = await Promise.all([
+        ...owned.networks.map(async (id) => (await run(`fallback:network:${id.slice(0, 12)}`, ['network', 'rm', id])).kind === 'complete'),
+        ...owned.volumes.map(async (id) => (await run(`fallback:volume:${id.slice(0, 12)}`, ['volume', 'rm', id])).kind === 'complete'),
+    ])
+    complete = detached.every(Boolean) && complete
+    return complete
+}
+
+function stateSnapshot(value: unknown): string {
+    return JSON.stringify(value)
+}
+
+function inventoriesEqual(left: Readonly<Record<string, readonly string[]>>, right: Readonly<Record<string, readonly string[]>>): boolean {
+    return ['containers', 'volumes', 'networks', 'images'].every((kind) => JSON.stringify(left[kind]) === JSON.stringify(right[kind]))
+}
+
+function inventoryDifferences(left: Readonly<Record<string, readonly string[]>>, right: Readonly<Record<string, readonly string[]>>): readonly string[] {
+    return Object.freeze(['containers', 'volumes', 'networks', 'images']
+        .filter((kind) => JSON.stringify(left[kind]) !== JSON.stringify(right[kind])))
+}
+
+async function emptyDirectory(path: string): Promise<boolean> {
+    try {
+        const canonical = await realpath(path)
+        return canonical === path && (await readdir(path)).length === 0
+    } catch { return false }
+}
+
+async function writeExclusive(path: string, contents: string): Promise<void> {
+    const handle = await open(path, 'wx', 0o600)
+    try { await handle.writeFile(contents); await handle.sync() } finally { await handle.close() }
+}
+
+export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promise<RuntimeProbeVerdict> {
+    const input = captureRequest(rawInput)
+    if (input === undefined) return unavailable({}, 'runtime probe input is malformed or contains an unsafe environment')
+    const modulePath = fileURLToPath(import.meta.url)
+    try {
+        const [canonicalModule, moduleBytes] = await Promise.all([realpath(modulePath), readFile(modulePath)])
+        const installedSuffix = join('node_modules', '@b0dea', 'cockpit', 'dist', 'environment', 'runtime-probe.js')
+        if (!canonicalModule.endsWith(installedSuffix)
+            || canonicalModule !== input.installedModule.canonicalPath || hash(moduleBytes) !== input.installedModule.sha256
+            || !await emptyDirectory(input.cwd)) {
+            return unavailable(input, 'the installed module identity or disposable probe directory could not be authenticated')
+        }
+    } catch { return unavailable(input, 'the installed module identity could not be read') }
+
+    const startedAt = new Date().toISOString()
+    const deadline = Date.parse(startedAt) + PROBE_WINDOW_MS
+    const mutationDeadline = deadline - CLEANUP_RESERVE_MS
+    const expiresAt = new Date(deadline).toISOString()
+    const batchId = randomBytes(16).toString('hex')
+    const projectName = `cockpit-probe-${batchId}`
+    const ownerLabel = `dev.b0dea.cockpit.probe=${batchId}`
+    const ownerLabelName = 'dev.b0dea.cockpit.probe'
+    const siblingsRoot = join(input.cwd, 'siblings')
+    const siblingPath = join(siblingsRoot, 'probe')
+    const homePath = join(dirname(input.cwd), `runtime-home-${batchId}`)
+    const generatedName = `generated-${batchId}`
+    const generatedPath = join(input.cwd, generatedName)
+    const configPath = join(input.cwd, 'cockpit.toml')
+    const inputMarkerPath = join(siblingPath, 'input')
+    const outputMarkerPath = join(siblingPath, 'output')
+    const candidatePath = join(input.cwd, `candidate-${batchId}.yml`)
+    const controlPath = join(input.cwd, `broken-${batchId}.yml`)
+    const volumeName = `${projectName}-data`
+    if (![siblingsRoot, siblingPath, generatedPath, configPath, inputMarkerPath, outputMarkerPath, candidatePath, controlPath]
+        .every((path) => confined(input.cwd, path))) return unavailable(input, 'the disposable probe paths escaped their authenticated root')
+
+    const marker = `cockpit-runtime-${randomBytes(16).toString('hex')}`
+    const brokenSource = 'services:\n  probe: [\n'
+    let candidateSource = 'services: {}\n'
+    let candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
+    const controlArtifact = { path: controlPath, sha256: hash(brokenSource) }
+    const execute = runner(input, batchId, mutationDeadline)
+    const cleanupExecute = runner(input, batchId, deadline)
+    const checks: Record<string, boolean> = {
+        localRuntime: false, imagePreexisting: false, profile: false, topology: false,
+        applicationUp: false, mountHostToContainer: false, mountContainerToHost: false,
+        ownership: false, health: false, recovery: false, logs: false,
+        resetPreview: false, configuredHostPathTeardown: false, teardown: false,
+    }
+    let pre: Readonly<Record<string, readonly string[]>> | undefined
+    let collisionFree = false
+    let runtimeVersion: string | undefined
+    let composeVersion: string | undefined
+    let profileProjected = false
+    let brokenControl: RuntimeProbeVerdict['brokenControl'] = 'inconclusive'
+    let resourcesEqual = false
+    let claimsEqual = false
+    let leasesEqual = false
+    let changedResourceKinds: readonly string[] = Object.freeze([])
+    let ownedSurvivors: readonly string[] = Object.freeze([])
+    let failureReason: string | undefined
+    let preClaims = ''
+    let preLease = ''
+    let lifecycleEnvironment: Readonly<Record<string, string>> | undefined
+    let dockerContext = ''
+    let ownerCleanup: (() => Promise<void>) | undefined
+    let ownerCleanupAttempted = false
+    let ownerTimedOut = false
+    const ownerStages: Record<string, string> = {}
+    const executeOwnerStep = async (step: ExecutionStep, stepDeadline: number): Promise<ExecuteProbeOutcome> => {
+        if (Date.now() + step.timeoutMs > stepDeadline) {
+            ownerTimedOut = true
+            throw new RuntimeProbeFailure('the absolute runtime observation window cannot fit the next authenticated owner step')
+        }
+        const outcome = await executeProbe(step)
+        if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) ownerTimedOut = true
+        if (step.id.startsWith('runtime:docker-compose:') || step.id.startsWith('runtime:docker-container:')) {
+            ownerStages[step.id] = outcome.kind === 'complete'
+                ? `complete:stderr=${outcome.stderr.byteLength}` : `${outcome.kind}:${outcome.code}`
+        }
+        return outcome
+    }
+    const ownerExecute = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => executeOwnerStep(step, mutationDeadline)
+    const cleanupOwnerExecute = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => executeOwnerStep(step, deadline)
+    const fail = (reason: string): never => { throw new RuntimeProbeFailure(reason) }
+    const fresh = (): void => { if (Date.now() >= mutationDeadline) fail('the runtime mutation window closed to reserve authenticated cleanup') }
+    try {
+        await Promise.all([
+            mkdir(siblingPath, { recursive: true, mode: 0o700 }),
+            mkdir(homePath, { mode: 0o700 }),
+            mkdir(generatedPath, { mode: 0o700 }),
+        ])
+        await writeFile(inputMarkerPath, `${marker}\n`, { flag: 'wx', mode: 0o600 })
+        await writeExclusive(candidatePath, candidateSource)
+        await writeExclusive(controlPath, brokenSource)
+        const git = await execute.run('git-init', ['init', '--quiet', '.'], undefined, input.gitExecutable)
+        if (git.kind !== 'complete') fail('the disposable installed-child checkout could not be initialized')
+
+        const runtimeEnvironment = Object.freeze(Object.fromEntries(Object.entries(input.env).filter(([name]) =>
+            ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT'].includes(name),
+        )))
+        const runtime = await observeDockerRuntime({
+            executable: input.executable, cwd: input.cwd, env: runtimeEnvironment,
+            timeoutMs: Math.min(input.timeoutMs, 30_000),
+        }, ownerExecute)
+        if (runtime.kind !== 'complete') throw new RuntimeProbeFailure('the local Docker runtime is unavailable')
+        if (!versionAtLeast(runtime.composeVersion, input.composeFloor)) throw new RuntimeProbeFailure('the required Compose version is unavailable')
+        runtimeVersion = runtime.runtime.version
+        composeVersion = runtime.composeVersion
+        if (input.env.DOCKER_HOST !== undefined) fail('an explicit Docker endpoint cannot establish local runtime support')
+        dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
+        const endpoint = dockerContext === '' ? undefined
+            : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
+        checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && endpoint?.startsWith('unix://') === true
+        if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
+
+        pre = await inventory(execute.run, 'pre')
+        const preOwned = await inventory(execute.run, 'pre-owned', ownerLabel)
+        const preProject = decode(await execute.run('pre-project', ['ps', '-aq', '--filter', `label=com.docker.compose.project=${projectName}`]))
+        if (!pre || !preOwned || ['containers', 'volumes', 'networks'].some((kind) => preOwned[kind]!.length > 0)
+            || preProject === undefined || preProject !== '') fail('the disposable namespace collided with pre-existing runtime state')
+        collisionFree = true
+        const image = decode(await execute.run('image-precondition', ['image', 'inspect', input.image.reference, '--format', '{{.Id}}']))
+        checks.imagePreexisting = image === input.image.id
+        if (!checks.imagePreexisting) fail('the exact pre-existing probe image is unavailable; the probe does not pull or build')
+
+        const portBase = 40_000 + Number.parseInt(batchId.slice(0, 4), 16) % 20_000
+        const configSource = [
+            '[cockpit]', `name = ${JSON.stringify(projectName)}`, 'siblings_root = "siblings"', '',
+            '[[sibling]]', 'slug = "probe"', 'dir = "probe"', 'mount = "always"', 'acquire = "none"',
+            'var = "PROBE_DIR"', 'toolchain = "none"', 'purpose = "Synthetic runtime probe"', '',
+            '[ports]', 'step = 1', 'count = 1', `bases = { PROBE_PORT = ${portBase} }`, '',
+            '[environment]', `compose_files = [${JSON.stringify(basename(candidatePath))}]`,
+            'addressing = "port"', 'authentication = "bypassed"',
+            'posture_requirements = [{ requirement = "local-runtime-endpoint", addressing = "port" }, { requirement = "local-runtime-access", authentication = "bypassed" }]',
+            `resettable_volumes = [${JSON.stringify(volumeName)}]`, `generated_host_paths = [${JSON.stringify(generatedName)}]`, '',
+            '[environment.machine]', 'runtime_memory_mb = 1', 'runtime_cpus = 1', 'free_disk_mb = 1', 'cold_start_seconds = 30', '',
+        ].join('\n')
+        await writeExclusive(configPath, configSource)
+        lifecycleEnvironment = Object.freeze({ PATH: input.env.PATH ?? '', HOME: homePath })
+        const operationEnvironment = lifecycleEnvironment
+        const freshLifecycle = () => createLifecycleCommandAdapters({
+            configPath, env: operationEnvironment, sessionId: `runtime-probe-${batchId}`, timeoutMs: Math.min(input.timeoutMs, 30_000),
+            activeProfiles: ['runtime_probe'],
+            runtimeMeasurementProbeAuthority: issueRuntimeMeasurementProbeAuthority(runtime),
+        }, ownerExecute)
+        const lifecycle = freshLifecycle()
+        const loadedContext = await lifecycle.load({ configPath })
+        if (loadedContext.kind !== 'complete' || loadedContext.result === null) {
+            const diagnostic = loadedContext.diagnostics[0]
+            throw new RuntimeProbeFailure(diagnostic
+                ? `the production lifecycle owner refused the disposable checkout (${diagnostic.code}: ${diagnostic.message})`
+                : 'the production lifecycle owner could not authenticate the disposable checkout')
+        }
+        const context = loadedContext.result
+        preClaims = stateSnapshot(await readActiveStackInventory(context.namespace))
+        preLease = stateSnapshot(await readState(context.namespace.paths.lease(context.stackId)))
+        const labels = {
+            'dev.b0dea.cockpit.stack-id': context.stackId,
+            'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+            [ownerLabelName]: batchId,
+        }
+        ownerCleanup = async () => {
+            ownerCleanupAttempted = true
+            const destructive = createDestructiveCommandAdapters({
+                configPath, env: lifecycleEnvironment!, sessionId: `runtime-probe-${batchId}`,
+                timeoutMs: Math.min(input.timeoutMs, 10_000), dockerContext,
+                activeProfiles: ['runtime_probe'],
+                runtimeMeasurementProbeAuthority: () => issueRuntimeMeasurementProbeAuthority(runtime),
+            }, cleanupOwnerExecute)
+            const down = await runDown({ configPath }, destructive)
+            checks.teardown = down.kind === 'complete'
+            const [postClaims, postLease] = await Promise.all([
+                readActiveStackInventory(context.namespace),
+                readState(context.namespace.paths.lease(context.stackId)),
+            ])
+            claimsEqual = preClaims === stateSnapshot(postClaims)
+            leasesEqual = preLease === stateSnapshot(postLease)
+        }
+        const labelLines = Object.entries(labels).map(([name, value]) => `      ${JSON.stringify(name)}: ${JSON.stringify(value)}`)
+        candidateSource = [
+            'services:', '  probe:', `    image: ${JSON.stringify(input.image.reference)}`,
+            `    command: ["sh", "-c", ${JSON.stringify(`printf '%s\\n' '${marker}'; printf '%s\\n' '${marker}' > /generated/owned; while :; do sleep 3600; done`)}]`,
+            '    labels:', ...labelLines,
+            '    healthcheck:', '      test: ["CMD", "sh", "-c", "test -f /probe/input"]', '      interval: 1s', '      timeout: 1s', '      retries: 10',
+            '    volumes:',
+            `      - type: bind`, `        source: ${JSON.stringify(siblingPath)}`, '        target: /probe',
+            `      - type: bind`, `        source: ${JSON.stringify(generatedPath)}`, '        target: /generated',
+            '      - type: volume', '        source: probe_data', '        target: /data',
+            '    networks: [probe_net]',
+            '  profile_control:', `    image: ${JSON.stringify(input.image.reference)}`, '    command: ["sh", "-c", "while :; do sleep 3600; done"]',
+            '    profiles: ["runtime_probe"]', '    labels:', ...labelLines,
+            '    healthcheck:', '      test: ["CMD", "sh", "-c", "kill -0 1"]', '      interval: 1s', '      timeout: 1s', '      retries: 10',
+            'volumes:', '  probe_data:', `    name: ${JSON.stringify(volumeName)}`, '    labels:', ...labelLines,
+            'networks:', '  probe_net:', `    name: ${JSON.stringify(`${projectName}-network`)}`, '    labels:', ...labelLines, '',
+        ].join('\n')
+        candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
+        await writeFile(candidatePath, candidateSource, { mode: 0o600 })
+        fresh()
+
+        const control = await execute.run('broken-control', [...composeArgs(input, projectName, controlPath), 'config', '--quiet'], controlArtifact)
+        if (control.kind === 'complete') brokenControl = 'accepted'
+        else if (control.execution.started && control.execution.signal === null && control.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) brokenControl = 'rejected'
+        if (brokenControl !== 'rejected') fail('the deliberately broken adjacent control was accepted or inconclusive')
+        const topology = await execute.run('profile-topology', [
+            ...composeArgs(input, projectName, candidatePath), '--profile', 'runtime_probe',
+            'config', '--format', 'json', '--no-interpolate', '--no-env-resolution',
+        ], candidateArtifact)
+        const topologyText = decode(topology)
+        if (topologyText === undefined) throw new RuntimeProbeFailure(`the exact topology projection failed (${refusalCategory(topology)}: ${generatedArtifactDetail(topology)})`)
+        try {
+            const parsed = JSON.parse(topologyText) as { services?: Record<string, { profiles?: unknown; volumes?: unknown; healthcheck?: unknown; labels?: unknown }> }
+            profileProjected = Array.isArray(parsed.services?.profile_control?.profiles)
+                && parsed.services.profile_control.profiles.includes('runtime_probe')
+            const probe = parsed.services?.probe
+            checks.topology = probe !== undefined && Array.isArray(probe.volumes) && probe.volumes.length === 3
+                && probe.healthcheck !== undefined && probe.labels !== undefined
+        } catch { fail('the topology projection was not readable JSON') }
+        if (!profileProjected || !checks.topology) fail('the candidate did not project its profile, mounts, labels, and healthcheck')
+
+        fresh()
+        const up = await runUp({ configPath }, lifecycle)
+        checks.applicationUp = up.kind === 'complete'
+        if (!checks.applicationUp) {
+            const diagnostics = up.diagnostics.map(({ code, message }) => `${code}: ${message}`).join('; ')
+            const stages = Object.entries(ownerStages).map(([id, outcome]) => `${id}=${outcome}`).join(',')
+            fail(diagnostics.length > 0
+                ? `the application lifecycle owner refused the live candidate (${diagnostics}; stages=${stages})`
+                : 'the application lifecycle owner did not start the live candidate')
+        }
+        const owned = await inventory(execute.run, 'created', ownerLabel)
+        checks.ownership = owned !== undefined && owned.containers.length === 2 && owned.volumes.length === 1 && owned.networks.length === 1
+        if (!checks.ownership) fail('created identities did not carry the complete ownership label')
+        const containerId = decode(await execute.run('probe-container', [
+            'ps', '-aq', '--filter', `label=${ownerLabel}`, '--filter', 'label=com.docker.compose.service=probe',
+        ]))
+        if (!containerId || !owned!.containers.includes(containerId)) throw new RuntimeProbeFailure('the live probe container identity was not uniquely authenticated')
+        const inspected = decode(await execute.run('inspect', ['container', 'inspect', containerId, '--format', '{{json .}}']))
+        if (inspected === undefined) throw new RuntimeProbeFailure('the created container identity could not be inspected')
+        const profileContainerId = decode(await execute.run('profile-container', [
+            'ps', '-aq', '--filter', `label=${ownerLabel}`, '--filter', 'label=com.docker.compose.service=profile_control',
+        ]))
+        if (!profileContainerId || !owned!.containers.includes(profileContainerId)) throw new RuntimeProbeFailure('the activated profile container identity was not uniquely authenticated')
+        const profileInspected = decode(await execute.run('profile-inspect', ['container', 'inspect', profileContainerId, '--format', '{{json .}}']))
+        if (profileInspected === undefined) throw new RuntimeProbeFailure('the activated profile container identity could not be inspected')
+        try {
+            const data = JSON.parse(inspected) as { Config?: { Labels?: Record<string, string> }; State?: { Health?: { Status?: string } }; Mounts?: { Source?: string }[] }
+            const profileData = JSON.parse(profileInspected) as { Config?: { Labels?: Record<string, string> }; State?: { Status?: string } }
+            checks.health = data.State?.Health?.Status === 'healthy'
+            checks.profile = profileProjected && profileData.State?.Status === 'running'
+                && Object.entries(labels).every(([name, value]) => profileData.Config?.Labels?.[name] === value)
+            checks.ownership = checks.ownership && Object.entries(labels).every(([name, value]) => data.Config?.Labels?.[name] === value)
+                && [siblingPath, generatedPath].every((source) => data.Mounts?.some((mount) => mount.Source === source) === true)
+        } catch { fail('the container inspection was malformed') }
+        if (!checks.profile || !checks.health || !checks.ownership) fail('profile activation, health, mounts, or canonical ownership labels were not closed')
+
+        const readMarker = decode(await execute.run('mount-read', [...composeArgs(input, projectName, candidatePath), 'exec', '-T', 'probe', 'cat', '/probe/input'], candidateArtifact))
+        checks.mountHostToContainer = readMarker === marker
+        const writeMarker = await execute.run('mount-write', [
+            ...composeArgs(input, projectName, candidatePath), 'exec', '-T', 'probe', 'sh', '-c', `printf '%s\\n' '${marker}' > /probe/output`,
+        ], candidateArtifact)
+        checks.mountContainerToHost = writeMarker.kind === 'complete' && (await readFile(outputMarkerPath, 'utf8').catch(() => '')) === `${marker}\n`
+        if (!checks.mountHostToContainer || !checks.mountContainerToHost) fail('live bind-mount byte movement was not proven in both directions')
+
+        const read = createReadCommandAdapters({
+            configPath, env: lifecycleEnvironment, sessionId: `runtime-probe-${batchId}`,
+            timeoutMs: Math.min(input.timeoutMs, 30_000),
+            runtimeMeasurementProbeAuthority: issueRuntimeMeasurementProbeAuthority(runtime),
+        }, ownerExecute)
+        const logResult = await runLogs({ configPath, service: 'probe', since: '10m', tail: 20, follow: false, json: false }, read.logs)
+        checks.logs = logResult.kind === 'complete' && logResult.result.records.some(({ message }) => message.includes(marker))
+        if (!checks.logs) fail('bounded non-follow logs did not carry the live marker')
+        const slept = await runSleep({ configPath }, freshLifecycle())
+        const resumed = slept.kind === 'complete' ? await runUp({ configPath }, freshLifecycle()) : slept
+        checks.recovery = slept.kind === 'complete' && resumed.kind === 'complete'
+        if (!checks.recovery) fail('the application lifecycle owner did not close interrupted recovery')
+
+        const destructive = createDestructiveCommandAdapters({
+            configPath, env: lifecycleEnvironment, sessionId: `runtime-probe-${batchId}`,
+            timeoutMs: Math.min(input.timeoutMs, 30_000), dockerContext,
+            activeProfiles: ['runtime_probe'],
+            runtimeMeasurementProbeAuthority: () => issueRuntimeMeasurementProbeAuthority(runtime),
+        }, ownerExecute)
+        const reset = await runReset({ configPath }, destructive)
+        checks.resetPreview = reset.kind === 'preview' && !reset.result.noop
+        await ownerCleanup()
+        checks.configuredHostPathTeardown = await readFile(join(generatedPath, 'owned')).then(() => false, () => true)
+    } catch (error) {
+        failureReason = error instanceof RuntimeProbeFailure ? error.message : 'the installed runtime cell threw before it could close'
+    } finally {
+        if (collisionFree) {
+            try {
+                if (ownerCleanup && !ownerCleanupAttempted) {
+                    try { await ownerCleanup() } catch { checks.teardown = false }
+                }
+                let survivors = await inventory(cleanupExecute.run, 'post-owned', ownerLabel)
+                for (let attempt = 0; attempt < 2 && survivors
+                    && ['containers', 'volumes', 'networks'].some((kind) => survivors![kind]!.length > 0); attempt += 1) {
+                    checks.teardown = false
+                    await exactCleanup(cleanupExecute.run, survivors)
+                    survivors = await inventory(cleanupExecute.run, `post-fallback-${attempt + 1}`, ownerLabel)
+                }
+                ownedSurvivors = Object.freeze(survivors === undefined ? ['inventory-unavailable']
+                    : Object.entries(survivors).flatMap(([kind, ids]) => kind === 'images' ? [] : ids.map((id) => `${kind}:${id}`)).sort())
+                const post = pre === undefined ? undefined : await inventory(cleanupExecute.run, 'post')
+                resourcesEqual = pre !== undefined && post !== undefined && inventoriesEqual(pre, post)
+                changedResourceKinds = pre !== undefined && post !== undefined ? inventoryDifferences(pre, post) : Object.freeze(['inventory-unavailable'])
+            } catch {
+                checks.teardown = false
+                ownedSurvivors = Object.freeze(['cleanup-unavailable'])
+            }
+        }
+        for (const path of [configPath, candidatePath, controlPath, generatedPath, siblingsRoot, homePath, join(input.cwd, '.git')]) {
+            try { await rm(path, { recursive: true, force: true }) } catch { checks.teardown = false }
+        }
+    }
+
+    const finishedAt = new Date().toISOString()
+    const evidence: RuntimeProbeEvidence = Object.freeze({
+        batchId,
+        installedModuleSha256: input.installedModule.sha256, runtimeExecutableSha256: input.executable.sha256,
+        candidateSha256: candidateArtifact.sha256, brokenControlSha256: controlArtifact.sha256,
+        projectName, runtimePath: input.executable.canonicalPath, runtimeVersion: runtimeVersion ?? null, composeVersion: composeVersion ?? null,
+        operatingSystem: platform(), architecture: arch(), startedAt, finishedAt, expiresAt,
+        candidateChecks: Object.freeze({ ...checks }), brokenControlRejected: brokenControl === 'rejected',
+        cleanup: Object.freeze({ ownedSurvivors, resourcesEqual, claimsEqual, leasesEqual }),
+    })
+    const complete = runtimeVersion !== undefined && composeVersion !== undefined && brokenControl === 'rejected'
+        && failureReason === undefined && Date.parse(finishedAt) <= Date.parse(expiresAt) && Object.values(checks).every(Boolean)
+        && ownedSurvivors.length === 0 && resourcesEqual && claimsEqual && leasesEqual
+    if (!complete) {
+        const missing = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name).join(',') || 'none'
+        const reason = failureReason ?? `the installed runtime cell remained incomplete (checks=${missing}; survivors=${ownedSurvivors.length}; changedResources=${changedResourceKinds.join(',') || 'none'})`
+        return unavailable(input, reason, execute.timedOut() || cleanupExecute.timedOut() || ownerTimedOut, evidence, brokenControl)
+    }
+    const supportedRuntimeVersion = runtimeVersion
+    const supportedComposeVersion = composeVersion
+    if (supportedRuntimeVersion === undefined || supportedComposeVersion === undefined) return unavailable(input, 'runtime identity was not retained', execute.timedOut() || cleanupExecute.timedOut() || ownerTimedOut, evidence, brokenControl)
+    return Object.freeze({
+        status: 'supported', runtime: Object.freeze({ name: 'Docker Engine', version: supportedRuntimeVersion }), composeVersion: supportedComposeVersion,
+        composeFloor: input.composeFloor, measuredOn: input.measuredOn, candidate: 'passed', brokenControl: 'rejected', evidence, operatorAction: null,
+    })
+}

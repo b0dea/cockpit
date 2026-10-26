@@ -1,0 +1,88 @@
+{
+  "format": "cockpit-comparison/v1",
+  "fixtureId": "synthetic-parity",
+  "subject": {
+    "revisions": {
+      "legacy": "1111111111111111111111111111111111111111",
+      "cockpit": "2222222222222222222222222222222222222222"
+    },
+    "packageIntegrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "inputs": [
+      {
+        "path": "fixtures/registry.toml",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "path": "fixtures/environment.json",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ]
+  },
+  "adoption": [
+    { "layer": "registry", "state": "migrated" },
+    { "layer": "environment", "state": "migrated" },
+    { "layer": "surfaces", "state": "documented-only" },
+    { "layer": "guards", "state": "documented-only" },
+    { "layer": "grading", "state": "documented-only" }
+  ],
+  "commands": {
+    "shared": ["preflight", "up", "down", "reset", "doctor", "logs", "seed"],
+    "extras": ["snapshot"]
+  },
+  "implementations": [
+    {
+      "id": "legacy",
+      "revision": "1111111111111111111111111111111111111111",
+      "bindings": [
+        { "command": "preflight", "executable": "make", "argv": ["preflight"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "up", "executable": "make", "argv": ["up"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "down", "executable": "make", "argv": ["down"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "reset", "executable": "make", "argv": ["reset"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "doctor", "executable": "make", "argv": ["doctor"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "logs", "executable": "make", "argv": ["logs"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "seed", "executable": "make", "argv": ["seed"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "snapshot", "executable": "make", "argv": ["snapshot"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] }
+      ],
+      "postStates": [
+        { "command": "preflight", "observationSha256": "0101010101010101010101010101010101010101010101010101010101010101" },
+        { "command": "up", "observationSha256": "0202020202020202020202020202020202020202020202020202020202020202" },
+        { "command": "down", "observationSha256": "0303030303030303030303030303030303030303030303030303030303030303" },
+        { "command": "reset", "observationSha256": "0404040404040404040404040404040404040404040404040404040404040404" },
+        { "command": "doctor", "observationSha256": "0505050505050505050505050505050505050505050505050505050505050505" },
+        { "command": "logs", "observationSha256": "0606060606060606060606060606060606060606060606060606060606060606" },
+        { "command": "seed", "observationSha256": "0707070707070707070707070707070707070707070707070707070707070707" },
+        { "command": "snapshot", "observationSha256": "0808080808080808080808080808080808080808080808080808080808080808" }
+      ]
+    },
+    {
+      "id": "cockpit",
+      "revision": "2222222222222222222222222222222222222222",
+      "bindings": [
+        { "command": "preflight", "executable": "cockpit", "argv": ["check"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "up", "executable": "cockpit", "argv": ["up"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "down", "executable": "cockpit", "argv": ["down"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "reset", "executable": "cockpit", "argv": ["reset"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "doctor", "executable": "cockpit", "argv": ["doctor"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "logs", "executable": "cockpit", "argv": ["logs"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "seed", "executable": "cockpit", "argv": ["seed"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] },
+        { "command": "snapshot", "executable": "cockpit", "argv": ["snapshot"], "inputSha256s": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"] }
+      ],
+      "postStates": [
+        { "command": "preflight", "observationSha256": "1111111111111111111111111111111111111111111111111111111111111111" },
+        { "command": "up", "observationSha256": "1212121212121212121212121212121212121212121212121212121212121212" },
+        { "command": "down", "observationSha256": "1313131313131313131313131313131313131313131313131313131313131313" },
+        { "command": "reset", "observationSha256": "1414141414141414141414141414141414141414141414141414141414141414" },
+        { "command": "doctor", "observationSha256": "1515151515151515151515151515151515151515151515151515151515151515" },
+        { "command": "logs", "observationSha256": "1616161616161616161616161616161616161616161616161616161616161616" },
+        { "command": "seed", "observationSha256": "1717171717171717171717171717171717171717171717171717171717171717" },
+        { "command": "snapshot", "observationSha256": "1818181818181818181818181818181818181818181818181818181818181818" }
+      ]
+    }
+  ],
+  "normalization": [
+    { "kind": "timestamp", "candidate": "2026-01-02T03:04:05.000Z" },
+    { "kind": "absolute-path", "candidate": "/workspace/synthetic/app" },
+    { "kind": "port", "candidate": "43123" },
+    { "kind": "duration-ms", "candidate": "18.50ms" }
+  ]
+}

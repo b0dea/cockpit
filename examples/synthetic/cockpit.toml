@@ -1,0 +1,909 @@
+[cockpit]
+name = "synthetic-example"
+siblings_root = "repositories"
+
+[guards]
+vendor_endpoint_hosts = [ "api.vendor.example.test" ]
+
+[[sibling]]
+slug = "app"
+dir = "app"
+mount = "always"
+acquire = "none"
+var = "APP_DIR"
+toolchain = "node"
+purpose = "Synthetic application"
+
+[[sibling.environment_files]]
+template = ".env.example"
+instance = ".env"
+
+[[sibling]]
+slug = "web"
+dir = "web"
+mount = "none"
+acquire = "auto"
+remote = "synthetic-web.git"
+var = "WEB_DIR"
+purpose = "Synthetic web repository"
+
+[ports.bases]
+APP_HOST_PORT = 4100
+
+[[environment.install_policies]]
+toolchain = "node"
+volume = "dependencies"
+lockfile = "package-lock.json"
+install = [ "npm", "ci" ]
+load_probe = [ "node", "probe.mjs", "load" ]
+build = [ "npm", "run", "build" ]
+test = [ "npm", "test", "--", "unit.test.ts" ]
+
+[environment.generated]
+compose_file = "compose.generated.yml"
+
+[[environment.generated.services]]
+id = "app"
+sibling = "app"
+role = "service"
+profiles = [ "application" ]
+command = [ "node", "server.mjs" ]
+dependencies = []
+
+[environment.generated.services.image]
+reference = "node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5"
+reason = "Pinned synthetic runtime"
+architectures = [ "amd64", "arm64" ]
+
+[environment.generated.services.image.manifest_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "probe.mjs", "manifest" ]
+timeout_seconds = 30
+
+[environment.generated.services.image.manifest_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.services.image.registry_auth_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "probe.mjs", "registry" ]
+timeout_seconds = 30
+
+[environment.generated.services.image.registry_auth_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.services.image.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.services.ports]]
+name = "http"
+host_variable = "APP_HOST_PORT"
+internal = 3000
+
+[[environment.generated.services.mounts]]
+kind = "volume"
+source = "dependencies"
+target = "/workspace/node_modules"
+
+[[environment.generated.services.mounts]]
+kind = "volume"
+source = "product-data"
+target = "/workspace/data"
+
+[[environment.generated.services.mounts]]
+kind = "bind"
+source = "."
+target = "/workspace/source"
+source_type = "directory"
+
+[[environment.generated.services.mounts]]
+kind = "environment-file"
+source = "app/.env"
+target = "/workspace/.env"
+source_type = "file"
+
+[environment.generated.services.health]
+property = "Application route returns its expected document"
+interval_seconds = 5
+timeout_seconds = 3
+retries = 4
+start_period_seconds = 20
+
+[environment.generated.services.health.probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "-e", "process.exit(0)" ]
+timeout_seconds = 30
+
+[environment.generated.services.health.probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.services.health.tool_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "--version" ]
+timeout_seconds = 30
+
+[environment.generated.services.health.tool_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.services.health.measurement]
+duration_seconds = 15
+
+[environment.generated.services.health.measurement.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.services.toolchain_pins]]
+path = "app/.node-version"
+pinned = "22.0.0"
+observed = "22.0.0"
+
+[environment.generated.services.toolchain_pins.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.services.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.volumes]]
+id = "dependencies"
+purpose = "dependencies"
+install_policy = "dependencies"
+target = "/workspace/node_modules"
+
+[environment.generated.volumes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.volumes]]
+id = "product-data"
+purpose = "product-data"
+target = "/workspace/data"
+
+[environment.generated.volumes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data]
+volume = "product-data"
+default_mode = "seeded"
+
+[[environment.generated.data.modes]]
+mode = "empty"
+constraints_and_indexes = true
+
+[[environment.generated.data.modes.operations]]
+id = "empty-schema"
+kind = "schema"
+prerequisites = []
+after = []
+fresh_volume_only = false
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "schema" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.probes]]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "probe-empty" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.probes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes]]
+mode = "seeded"
+constraints_and_indexes = true
+
+[[environment.generated.data.modes.operations]]
+id = "seeded-schema"
+kind = "schema"
+prerequisites = []
+after = []
+fresh_volume_only = false
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "schema" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.operations]]
+id = "seeded-sweep"
+kind = "sweep"
+prerequisites = []
+after = [ "seeded-schema" ]
+fresh_volume_only = false
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "sweep" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.operations]]
+id = "seeded-fixtures"
+kind = "fixtures"
+prerequisites = []
+after = [ "seeded-schema", "seeded-sweep" ]
+fresh_volume_only = false
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "fixtures" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.probes]]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "probe-seeded" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.probes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes]]
+mode = "restored"
+constraints_and_indexes = true
+
+[[environment.generated.data.modes.operations]]
+id = "restored-schema"
+kind = "schema"
+after = []
+fresh_volume_only = false
+
+[[environment.generated.data.modes.operations.prerequisites]]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "fresh-volume" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.prerequisites.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "schema" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.operations]]
+id = "restored-restore"
+kind = "restore"
+prerequisites = []
+after = [ "restored-schema" ]
+fresh_volume_only = true
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "restore" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.operations]]
+id = "restored-rewrite"
+kind = "rewrite"
+prerequisites = []
+after = [ "restored-schema", "restored-restore" ]
+fresh_volume_only = false
+
+[environment.generated.data.modes.operations.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "rewrite" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.operations.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.modes.probes]]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "probe-restored" ]
+timeout_seconds = 30
+
+[environment.generated.data.modes.probes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.modes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.fixtures]
+writer = "product-models"
+stable_key = "synthetic-stable-key"
+random_seed = "synthetic-seed"
+sweep_scope = "synthetic fixture rows"
+persona_source = "fixtures/personas.json"
+identity_owner = "product"
+volume_tag = "synthetic-data"
+default_small = true
+pagination_warning = "Small defaults do not exercise pagination"
+
+[[environment.generated.data.fixtures.persona_outputs]]
+path = "fixtures/personas.generated.ts"
+format = "typescript"
+reason = "Synthetic typed consumer"
+
+[[environment.generated.data.fixtures.volume_operations]]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "tag" ]
+timeout_seconds = 30
+
+[environment.generated.data.fixtures.volume_operations.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.data.fixtures.volume_probes]]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "verify-tag" ]
+timeout_seconds = 30
+
+[environment.generated.data.fixtures.volume_probes.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.fixtures.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.restore]
+untouched = [ "identities", "external identifiers", "personal data", "timer state" ]
+
+[[environment.generated.data.restore.rewrites]]
+category = "object-store"
+reason = "Route restored objects to local storage"
+
+[environment.generated.data.restore.rewrites.operation]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "data.mjs", "rewrite-object-store" ]
+timeout_seconds = 30
+
+[environment.generated.data.restore.rewrites.operation.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.data.restore.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.vendors]]
+id = "messages"
+posture = "stubbed"
+reason = "Use a local protocol stub"
+nonempty_variables = [ "MESSAGES_TOKEN" ]
+normalize_empty = true
+placeholder = "cockpit:absent:messages"
+
+[environment.generated.vendors.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.vendors.endpoints]]
+variable = "MESSAGES_URL"
+sink = "https://app:3000/messages"
+runtime_service = "app"
+
+[environment.generated.vendors.endpoints.supplier]
+sibling = "app"
+template = ".env.example"
+
+[environment.generated.vendors.egress_guard]
+flag = "ALLOW_MESSAGES_EGRESS"
+enabled_value = "1"
+local_service = "app"
+
+[environment.generated.vendors.loader_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "loader" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.loader_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.route_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "route" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.route_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.egress_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "egress" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.egress_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.callback_reachability]
+reachable = false
+alternative = "Use replayed callback fixtures"
+reason = "The synthetic sender cannot dial the local stack"
+
+[environment.generated.vendors.tls]
+verification = "required"
+
+[environment.generated.vendors.tls.generate_at_start]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "tls-generate" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.tls.generate_at_start.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.tls.append_trust_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "tls-trust" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.tls.append_trust_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.tls.hostname_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "tls-hostname" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.tls.hostname_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.stub]
+validates = [ "request envelope and rejection semantics" ]
+
+[environment.generated.vendors.stub.rejection_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "reject" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.stub.rejection_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.vendors.stub.outage_probe]
+location = "in-stack"
+service = "app"
+cwd = "."
+argv = [ "node", "vendor.mjs", "outage" ]
+timeout_seconds = 30
+
+[environment.generated.vendors.stub.outage_probe.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[environment.generated.decisions]
+path = "docs/cockpit/environment-decisions.md"
+ownership = "whole-file"
+
+[[environment.generated.decisions.entries]]
+id = "service-app"
+subject = "service"
+subject_id = "app"
+decided_on = "2026-09-26"
+decision = "Use declared service"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "volume-dependencies"
+subject = "volume"
+subject_id = "dependencies"
+decided_on = "2026-09-26"
+decision = "Use declared volume"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "volume-product-data"
+subject = "volume"
+subject_id = "product-data"
+decided_on = "2026-09-26"
+decision = "Use declared volume"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "data-default"
+subject = "data-default"
+subject_id = "seeded"
+decided_on = "2026-09-26"
+decision = "Use declared data-default"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "data-empty"
+subject = "data-mode"
+subject_id = "empty"
+decided_on = "2026-09-26"
+decision = "Use declared data-mode"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "data-seeded"
+subject = "data-mode"
+subject_id = "seeded"
+decided_on = "2026-09-26"
+decision = "Use declared data-mode"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "data-restored"
+subject = "data-mode"
+subject_id = "restored"
+decided_on = "2026-09-26"
+decision = "Use declared data-mode"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "restore-policy"
+subject = "restore"
+subject_id = "policy"
+decided_on = "2026-09-26"
+decision = "Use declared restore"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "mount-dependencies"
+subject = "mount"
+subject_id = "app:volume:dependencies:/workspace/node_modules"
+decided_on = "2026-09-26"
+decision = "Use declared mount"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "mount-data"
+subject = "mount"
+subject_id = "app:volume:product-data:/workspace/data"
+decided_on = "2026-09-26"
+decision = "Use declared mount"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "mount-source"
+subject = "mount"
+subject_id = "app:bind:.:/workspace/source"
+decided_on = "2026-09-26"
+decision = "Use declared mount"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "mount-environment"
+subject = "mount"
+subject_id = "app:environment-file:app/.env:/workspace/.env"
+decided_on = "2026-09-26"
+decision = "Use declared mount"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "port-http"
+subject = "port"
+subject_id = "app:http"
+decided_on = "2026-09-26"
+decision = "Use declared port"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"
+
+[[environment.generated.decisions.entries]]
+id = "vendor-messages"
+subject = "vendor"
+subject_id = "messages"
+decided_on = "2026-09-26"
+decision = "Use declared vendor"
+rejected = [ "Implicit environment behavior" ]
+reason = "Keep the synthetic environment reproducible"
+reviewer = "consumer-maintainer"
+
+[environment.generated.decisions.entries.provenance]
+source = "cockpit.overlay.toml"
+observed_on = "2026-09-26"
+kind = "declared"
+reason = "Synthetic declaration"

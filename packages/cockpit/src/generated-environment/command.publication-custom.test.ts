@@ -1,0 +1,565 @@
+import { createHash } from 'node:crypto'
+import type { BigIntStats, PathLike, StatOptions, Stats } from 'node:fs'
+import fsPromises from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
+import { readFile, readdir, rm, symlink, writeFile, mkdir, rename, realpath, lstat, readlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { mkdtemp } from 'node:fs/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
+
+import { CockpitConfig } from '../schema.js'
+import { executeProbe } from '../environment-exec/execute.js'
+import { cockpitId } from '../environment/identity.js'
+import {
+    generatedApplicationProjection,
+    type GeneratedStaleRemovalApprovalRequest,
+} from '../environment/generated-application.js'
+import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
+import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
+import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
+
+const { roots, cleanup, publicationGroups, consumer, customHarness, enforcedCustomHarness,
+    unavailableCustomHarness, surfaceConsumer, digest, writeCustomModule, ownership, bytes } = createGeneratedCommandFixture()
+afterEach(cleanup)
+
+describe('generated environment command', () => {
+describe('public surface publication transaction', () => {
+        it('confines custom check writes to scratch for a self-contained module', async () => {
+            const fixture = await surfaceConsumer('custom-read-only', { custom: customHarness('adapters/synthetic.mjs') })
+            const output = [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nscratch verified\n' }]
+            const modulePath = join(fixture.root, await writeCustomModule(fixture.root, output))
+            const original = await readFile(modulePath, 'utf8')
+            await writeFile(modulePath, `import { writeFile, readFile } from 'node:fs/promises'
+const marker = "scratch verified"
+${original.replace('  return {', `  await writeFile('scratch-proof', marker)
+  if (await readFile('scratch-proof', 'utf8') !== marker) throw new Error('scratch readback')
+  return {`)}`)
+            const steps: Parameters<typeof executeProbe>[0][] = []
+            const adapters = { execute: async (step: Parameters<typeof executeProbe>[0]) => {
+                if (step.id.startsWith('custom-surface-')) steps.push(step)
+                return executeProbe(step)
+            } }
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)).toMatchObject({ kind: 'complete' })
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true }, adapters)).toMatchObject({ kind: 'complete' })
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            expect(steps).toHaveLength(2)
+            for (const step of steps) {
+                expect(step.cwd).not.toBe(fixture.root)
+                expect(step.argv).toContain(`--allow-fs-write=${step.cwd}`)
+                expect(step.argv.filter(argument => argument.startsWith('--allow-fs-write='))).toHaveLength(1)
+                expect(step.argv.some(argument => argument === '--permission' || argument === '--experimental-permission')).toBe(true)
+                expect(step.argv).not.toEqual(expect.arrayContaining(['--allow-child-process', '--allow-worker', '--allow-addons']))
+                for (const grant of ['--allow-child-process', '--allow-worker', '--allow-addons']) expect(step.argv).not.toContain(grant)
+                await expect(lstat(step.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+            }
+            await expect(lstat(join(fixture.root, 'scratch-proof'))).rejects.toMatchObject({ code: 'ENOENT' })
+            const before = await readFile(join(fixture.root, 'unmanaged.txt'), 'utf8')
+            for (const target of ['unmanaged.txt', 'attempted-output.txt']) {
+                await writeFile(modulePath, `import { writeFile } from 'node:fs/promises'
+${original.replace('  return {', `  await writeFile(${JSON.stringify(join(fixture.root, target))}, 'attempted consumer write')
+  return {`)}`)
+                expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+                    kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
+                })
+                expect(await readFile(join(fixture.root, 'unmanaged.txt'), 'utf8')).toBe(before)
+                await expect(lstat(join(fixture.root, 'attempted-output.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+            }
+        }, 240_000)
+
+        it('refuses a custom module with an adjacent dependency', async () => {
+            const fixture = await surfaceConsumer('custom-adjacent-dependency', { custom: customHarness('adapters/synthetic.mjs') })
+            const modulePath = join(fixture.root, await writeCustomModule(fixture.root, [{ path: 'custom/seed.md', bytes: 'custom/rules.md\n' }]))
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
+            const original = await readFile(modulePath, 'utf8')
+            await writeFile(join(fixture.root, 'adapters/dependency.mjs'), 'export const marker = "dependency loaded"\n')
+            await writeFile(modulePath, `import { marker } from './dependency.mjs'\n${original.replace('  return {', `  if (marker !== 'dependency loaded') throw new Error('dependency')\n  return {`)}`)
+
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
+            })
+            await expect(lstat(join(fixture.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+        }, 120_000)
+
+        it('refuses custom dispatch when filesystem permission flags are unsupported', async () => {
+            const fixture = await surfaceConsumer('custom-permission-unavailable', { custom: customHarness('adapters/synthetic.mjs') })
+            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
+            let invocations = 0
+            const descriptor = Object.getOwnPropertyDescriptor(process, 'allowedNodeEnvironmentFlags')!
+            const adapters = { execute: async (step: Parameters<typeof executeProbe>[0]) => {
+                if (step.id.startsWith('custom-surface-')) invocations += 1
+                return executeProbe(step)
+            } }
+            try {
+                Object.defineProperty(process, 'allowedNodeEnvironmentFlags', { configurable: true, value: new Set() })
+                expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true }, adapters)).toMatchObject({
+                    kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
+                })
+                expect(invocations).toBe(0)
+            } finally {
+                Object.defineProperty(process, 'allowedNodeEnvironmentFlags', descriptor)
+            }
+        }, 120_000)
+
+        it.each([false, true])('issues active surface overrides and changed originals only from the authenticated merge (additional skill: %s)', async additionalSkill => {
+            const fixture = await surfaceConsumer('surface-override-projection')
+            const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/bootstrap.skill.md'), 'utf8')
+            const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/onboarding.md'), 'utf8')
+            const originalSha256 = surfaceDeclarationSha256({
+                name: 'bootstrap',
+                feature: 'skills',
+                source: 'skills/bootstrap.skill.md',
+                sources: [
+                    { path: 'skills/bootstrap/SKILL.md', bytes: entryPoint },
+                    { path: 'skills/bootstrap/procedures/onboarding.md', bytes: procedure },
+                ],
+            })
+            const recordedSha256 = 'a'.repeat(64)
+            const replacementSources = [
+                { path: 'skills/bootstrap/SKILL.md', bytes: entryPoint.replace('Bootstrap this cockpit', 'Bootstrap this synthetic cockpit') },
+                { path: 'skills/bootstrap/procedures/onboarding.md', bytes: procedure },
+                ...(additionalSkill ? [
+                    { path: 'skills/inspect/SKILL.md', bytes: entryPoint.replace('name: bootstrap', 'name: inspect') },
+                    { path: 'skills/inspect/procedures/onboarding.md', bytes: procedure },
+                ] : []),
+            ]
+            const declaration = await readFile(fixture.configPath, 'utf8')
+            await writeFile(fixture.configPath, `${declaration}
+[[surfaces.overlays]]
+name = "bootstrap"
+feature = "skills"
+source = "surfaces/bootstrap-override.json"
+replaces = { name = "bootstrap", sha256 = "${recordedSha256}" }
+sources = [
+${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, bytes = ${JSON.stringify(source.bytes)} },`).join('\n')}
+]
+`)
+
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+            if (synced.kind !== 'complete') return
+            if (additionalSkill) expect(synced.result.paths).toContain('.agents/skills/inspect/SKILL.md')
+            const application = generatedApplicationProjection(synced.result.application)
+            expect(application?.activeSurfaceOverrides).toEqual([{
+                name: 'bootstrap', feature: 'skills', originalSha256, recordedSha256,
+                overlaySource: 'surfaces/bootstrap-override.json',
+            }])
+            expect(application?.changedOverrideOriginals).toEqual([{
+                code: 'OVERRIDDEN_CORE_CHANGED', name: 'bootstrap', recordedSha256,
+                currentSha256: originalSha256, overlaySource: 'surfaces/bootstrap-override.json',
+            }])
+            expect(Object.isFrozen(application?.activeSurfaceOverrides)).toBe(true)
+            expect(Object.isFrozen(application?.changedOverrideOriginals)).toBe(true)
+            expect(generatedApplicationProjection({ ...synced.result.application })).toBeUndefined()
+        }, 120_000)
+
+        it('authenticates enforced custom evidence before invoking its declared module', async () => {
+            const module = 'adapters/synthetic.mjs'
+            const evidenceReference = 'evidence/rules.json'
+            const evidenceBytes = '{"harness":"synthetic-harness","feature":"rules","measuredOn":"2026-09-26"}\n'
+            const evidenceSha256 = digest(evidenceBytes)
+            const fixture = await surfaceConsumer('custom-enforced-evidence', {
+                custom: enforcedCustomHarness(module, evidenceSha256, evidenceReference),
+            })
+            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nenforced\n' }])
+            let invocations = 0
+            const adapters = {
+                execute: async (step: Parameters<typeof executeProbe>[0]) => {
+                    if (step.id.startsWith('custom-surface-')) invocations += 1
+                    return executeProbe(step)
+                },
+            }
+
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
+            })
+            expect(invocations).toBe(0)
+            await mkdir(join(fixture.root, 'evidence'))
+            await writeFile(join(fixture.root, evidenceReference), 'mismatched evidence\n')
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })],
+            })
+            expect(invocations).toBe(0)
+
+            await writeFile(join(fixture.root, evidenceReference), evidenceBytes)
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)
+            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(invocations).toBe(1)
+            if (synced.kind !== 'complete') return
+            expect(synced.result.application.surfaceSelftest.custom).toContainEqual(expect.objectContaining({
+                harness: 'synthetic-harness', feature: 'rules', state: 'enforced', measuredOn: '2026-09-26',
+                evidence: { reference: evidenceReference, sha256: evidenceSha256 },
+            }))
+        }, 240_000)
+
+        it('publishes an opted-in Claude plugin bundle without claiming unmanaged bundle files', async () => {
+            const fixture = await surfaceConsumer('claude-plugin-bundle', { bundles: true })
+            const bundleRoot = '.cockpit/bundles/claudecode-plugin'
+            const manifest = `${bundleRoot}/.claude-plugin/plugin.json`
+            const skill = `${bundleRoot}/skills/bootstrap/SKILL.md`
+            const unmanaged = `${bundleRoot}/consumer-note.txt`
+
+            const preview = await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true })
+            expect(preview, JSON.stringify(preview.diagnostics)).toMatchObject({ kind: 'complete', result: { dryRun: true } })
+            if (preview.kind !== 'complete') return
+            expect(preview.result.changes).toEqual(expect.arrayContaining([
+                { operation: 'write', path: manifest },
+                { operation: 'write', path: skill },
+            ]))
+            await expect(lstat(join(fixture.root, manifest))).rejects.toMatchObject({ code: 'ENOENT' })
+
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synced).toMatchObject({ kind: 'complete' })
+            expect(JSON.parse(await readFile(join(fixture.root, manifest), 'utf8'))).toEqual({
+                name: 'cockpit-surfaces',
+                description: 'Generated cockpit agent surfaces.',
+            })
+            await writeFile(join(fixture.root, unmanaged), 'consumer owned\n')
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(fixture.root, unmanaged), 'utf8')).toBe('consumer owned\n')
+
+            await writeFile(join(fixture.root, skill), 'changed\n')
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ target: skill })],
+            })
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ target: skill })],
+            })
+            expect(await readFile(join(fixture.root, skill), 'utf8')).toBe('changed\n')
+            expect(await readFile(join(fixture.root, unmanaged), 'utf8')).toBe('consumer owned\n')
+        }, 360_000)
+
+        it('projects authenticated selftest inputs without issuing cloned authority', async () => {
+            const fixture = await surfaceConsumer('selftest-projection', {
+                rules: true, custom: customHarness('adapters/synthetic.mjs'),
+            })
+            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'synthetic custom rules\n' }])
+            const unavailable = await surfaceConsumer('selftest-unavailable', { custom: unavailableCustomHarness() })
+            const [synced, absent] = await Promise.all([
+                syncGeneratedEnvironment({ configPath: fixture.configPath }),
+                syncGeneratedEnvironment({ configPath: unavailable.configPath }),
+            ])
+            expect(synced.kind).toBe('complete')
+            expect(absent.kind).toBe('complete')
+            if (synced.kind !== 'complete' || absent.kind !== 'complete') throw new Error('selftest projection producer refused')
+            const application = generatedApplicationProjection(synced.result.application)
+            expect(application).toBe(synced.result.application)
+            expect(generatedApplicationProjection({ ...application })).toBeUndefined()
+            const projection = application!.surfaceSelftest
+            const { schema, configuredHarnesses, declarations, entries, custom } = projection
+            expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
+                schema, configuredHarnesses, declarations, entries, custom,
+            })).digest('hex'))
+            expect(configuredHarnesses).toEqual(['claudecode', 'codexcli', 'opencode', 'synthetic-harness'])
+            expect(declarations).toHaveLength(1)
+            expect(declarations[0]?.capabilities).toHaveLength(6)
+            expect(custom).toHaveLength(1)
+            expect(custom[0]).toMatchObject({
+                harness: 'synthetic-harness', feature: 'rules', state: 'instructed',
+                module: 'adapters/synthetic.mjs', export: 'renderRules', measuredOn: '2026-09-26',
+                sourceSha256: createHash('sha256').update(await readFile(join(fixture.root, 'adapters/synthetic.mjs'))).digest('hex'),
+                sources: [{ path: 'rules/synthetic.md', bytes: 'Read the synthetic sibling guide before editing.\n' }],
+            })
+            expect(entries).toContainEqual(expect.objectContaining({ path: 'custom/rules.md', bytes: 'synthetic custom rules\n' }))
+            const immutable = (value: unknown): boolean => value === null || typeof value !== 'object'
+                || Object.isFrozen(value) && Object.values(value).every(immutable)
+            expect(immutable(projection)).toBe(true)
+            const checked = await checkGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(checked.kind).toBe('complete')
+            if (checked.kind !== 'complete') throw new Error('selftest projection check refused')
+            expect(checked.result.application.surfaceSelftest).toEqual(projection)
+            const unavailableProjection = absent.result.application.surfaceSelftest
+            expect(unavailableProjection.custom).toEqual([])
+            expect(unavailableProjection.declarations[0]?.capabilities.every(row => row.state === 'unavailable')).toBe(true)
+            expect(unavailableProjection.entries.some(row => row.harnesses.includes('synthetic-harness'))).toBe(false)
+        }, 180_000)
+
+        it('reconciles generated whole files and sibling symlinks and removes exact stale ownership', async () => {
+            const module = 'adapters/synthetic.mjs'
+            const first = await surfaceConsumer('surface-reconcile', { rules: true, custom: customHarness(module) })
+            await writeCustomModule(first.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nfirst\n' }])
+
+            const synced = await syncGeneratedEnvironment({ configPath: first.configPath })
+            expect(synced).toMatchObject({ kind: 'complete' })
+            if (synced.kind !== 'complete') return
+            expect(synced.result.paths).toEqual(expect.arrayContaining(['custom/rules.md', '.sibling-app-AGENTS.md']))
+            const customRules = await readFile(join(first.root, 'custom/rules.md'))
+            expect((await lstat(join(first.root, '.sibling-app-AGENTS.md'))).isSymbolicLink()).toBe(true)
+            expect(await readlink(join(first.root, '.sibling-app-AGENTS.md'))).toBe('app/AGENTS.md')
+            const ledger = await ownership(first.root)
+            const reconciledPaths = new Set(['custom/rules.md', '.sibling-app-AGENTS.md'])
+            const reconciledOwnership = (ledger.entries as readonly { path: string }[])
+                .filter(({ path }) => reconciledPaths.has(path))
+            expect(ledger).toMatchObject({ format: 'cockpit-generated-ownership/v3' })
+            expect(JSON.stringify(ledger)).toContain('custom/rules.md')
+            expect(JSON.stringify(ledger)).toContain('.sibling-app-AGENTS.md')
+            expect((await readdir(join(first.root, '.cockpit'))).filter((path) => path.includes('ownership'))).toEqual([
+                'generated-environment-ownership.json',
+            ])
+
+            await Promise.all([
+                rm(join(first.root, 'custom/rules.md')),
+                rm(join(first.root, '.sibling-app-AGENTS.md')),
+            ])
+            await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await expect(lstat(join(first.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            const repaired = await syncGeneratedEnvironment({ configPath: first.configPath })
+            expect(repaired, JSON.stringify(repaired.diagnostics)).toMatchObject({ kind: 'complete' })
+            await expect(readFile(join(first.root, 'custom/rules.md'))).resolves.toEqual(customRules)
+            expect((await lstat(join(first.root, '.sibling-app-AGENTS.md'))).isSymbolicLink()).toBe(true)
+            expect(await readlink(join(first.root, '.sibling-app-AGENTS.md'))).toBe('app/AGENTS.md')
+            const repairedLedger = await ownership(first.root)
+            expect((repairedLedger.entries as readonly { path: string }[]).filter(({ path }) => reconciledPaths.has(path)))
+                .toEqual(reconciledOwnership)
+
+            const active = await readFile(first.configPath, 'utf8')
+            const withoutSurfaces = active
+                .slice(0, active.indexOf('[[surfaces.harnesses]]'))
+                .replace('guides = ["AGENTS.md"]', 'guides = []')
+            await writeFile(first.configPath, withoutSurfaces)
+            const staleCustom = await readFile(join(first.root, 'custom/rules.md'))
+            const staleClaudeLocal = await readFile(join(first.root, 'CLAUDE.local.md'))
+            let staleApprovalRequest: GeneratedStaleRemovalApprovalRequest | undefined
+            const removed = await syncGeneratedEnvironment({ configPath: first.configPath }, {
+                authorizeStaleRemoval: async request => {
+                    staleApprovalRequest = request
+                    return Object.freeze({ format: 'cockpit-stale-removal-approval/v1', digest: request.digest })
+                },
+            })
+            expect(removed, JSON.stringify(removed.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(staleApprovalRequest).toMatchObject({
+                entries: [
+                    { path: '.sibling-app-AGENTS.md', current: { kind: 'symlink', target: 'app/AGENTS.md' } },
+                    {
+                        path: 'CLAUDE.local.md',
+                        operation: 'write-file',
+                        current: { kind: 'file', sha256: digest(staleClaudeLocal) },
+                        resultSha256: digest('\n'),
+                    },
+                    { path: 'custom/rules.md', current: { kind: 'file', sha256: digest(staleCustom) } },
+                ],
+            })
+            await expect(lstat(join(first.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await expect(lstat(join(first.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+
+        })
+
+        it('refuses changed stale ownership and preserves consumer bytes', async () => {
+            const module = 'adapters/synthetic.mjs'
+            const changed = await surfaceConsumer('surface-stale-changed', { custom: customHarness(module) })
+            await writeCustomModule(changed.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nowned\n' }])
+            expect(await syncGeneratedEnvironment({ configPath: changed.configPath })).toMatchObject({ kind: 'complete' })
+            const changedConfig = await readFile(changed.configPath, 'utf8')
+            await writeFile(changed.configPath, changedConfig.slice(0, changedConfig.indexOf('[[surfaces.harnesses]]')))
+            await writeFile(join(changed.root, 'custom/rules.md'), 'consumer bytes\n')
+            expect(await syncGeneratedEnvironment({ configPath: changed.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ target: 'custom/rules.md' })],
+            })
+            expect(await readFile(join(changed.root, 'custom/rules.md'), 'utf8')).toBe('consumer bytes\n')
+        })
+
+        it('strictly migrates v1 whole-file ownership without changing source identities', async () => {
+            const { root, configPath } = await consumer('ownership-v1-migration')
+            const declaration = await readFile(configPath, 'utf8')
+            await writeFile(configPath, declaration
+                .replace('compose.generated.yml', 'fixtures/a.yml')
+                .replace('fixtures/personas.generated.ts', 'fixtures/Z.ts'))
+            const first = await syncGeneratedEnvironment({ configPath })
+            expect(first).toMatchObject({ kind: 'complete' })
+            if (first.kind !== 'complete') return
+            const current = await ownership(root)
+            expect(current.format).toBe('cockpit-generated-ownership/v3')
+            const files = await Promise.all(first.result.paths.map(async (path) => ({
+                path, ownership: 'whole-file' as const, sha256: digest(await readFile(join(root, path))),
+            })))
+            const payload = {
+                format: 'cockpit-generated-ownership/v1',
+                cockpitId: cockpitId({ name: 'generated-environment', mainCheckoutPath: root }),
+                generation: first.result.generation,
+                source: { path: 'cockpit.toml', sha256: first.result.sourceSha256 },
+                personaSource: { path: 'fixtures/personas.json', sha256: digest(await readFile(join(root, 'fixtures/personas.json'))) },
+                files: files.sort((left, right) => left.path.localeCompare(right.path)),
+            }
+            expect(payload.files.map(file => file.path).filter(path => path.startsWith('fixtures/'))).toEqual(['fixtures/a.yml', 'fixtures/Z.ts'])
+            const mismatched = { ...payload, source: { ...payload.source, path: 'other.toml' } }
+            await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), `${JSON.stringify({
+                ...mismatched, integrity: digest(JSON.stringify(mismatched)),
+            }, null, 2)}\n`)
+            expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal' })
+            await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), `${JSON.stringify({
+                ...payload, integrity: digest(JSON.stringify(payload)),
+            }, null, 2)}\n`)
+
+            expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+            const migrated = await ownership(root)
+            expect(migrated).toMatchObject({
+                format: 'cockpit-generated-ownership/v3', source: current.source, personaSource: current.personaSource,
+            })
+            expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        })
+
+        it('preserves shared outside bytes and refuses ambiguous OpenCode ownership', async () => {
+            const accepted = await surfaceConsumer('shared-preservation', { rules: true })
+            const markdown = 'consumer heading\n\nconsumer tail\n'
+            const openCode = '{\n  "theme": "dark"\n}\n'
+            await writeFile(join(accepted.root, 'CLAUDE.md'), markdown)
+            await writeFile(join(accepted.root, 'opencode.jsonc'), openCode)
+
+            expect(await syncGeneratedEnvironment({ configPath: accepted.configPath })).toMatchObject({ kind: 'complete' })
+            const publishedMarkdown = await readFile(join(accepted.root, 'CLAUDE.md'), 'utf8')
+            const publishedOpenCode = await readFile(join(accepted.root, 'opencode.jsonc'), 'utf8')
+            expect(publishedMarkdown.slice(0, publishedMarkdown.indexOf('<!-- cockpit:instructions:start -->'))).toBe(markdown)
+            expect(publishedOpenCode.startsWith('{')).toBe(true)
+            expect(publishedOpenCode.endsWith(openCode.slice(1))).toBe(true)
+            expect(await checkGeneratedEnvironment({ configPath: accepted.configPath })).toMatchObject({ kind: 'complete' })
+
+            const controls = await Promise.all([
+                surfaceConsumer('opencode-duplicate', { rules: true }),
+                surfaceConsumer('opencode-unowned', { rules: true }),
+                surfaceConsumer('opencode-alternate', { rules: true }),
+            ])
+            const candidates = [
+                ['opencode.jsonc', '{"theme":"dark","theme":"light"}\n'],
+                ['opencode.jsonc', '{"instructions":[]}\n'],
+                ['opencode.json', '{}\n'],
+            ] as const
+            await Promise.all(controls.map((control, index) =>
+                writeFile(join(control.root, candidates[index]![0]), candidates[index]![1])))
+            const refused = await Promise.all(controls.map((control) => syncGeneratedEnvironment({ configPath: control.configPath })))
+            expect(refused).toEqual(refused.map(() => expect.objectContaining({ kind: 'refusal' })))
+            await Promise.all(controls.map(async (control, index) => {
+                expect(await readFile(join(control.root, candidates[index]![0]), 'utf8')).toBe(candidates[index]![1])
+                await expect(lstat(join(control.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+            }))
+        })
+
+        it('refuses a replaced guide after every publication group is prepared', async () => {
+            const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-generated-guide-estate-')))
+            roots.push(estate)
+            const siblingRoot = join(estate, 'external')
+            const fixture = await surfaceConsumer('guide-pre-publish-freshness', {
+                rules: true, siblingDirectory: siblingRoot, parentDirectory: estate,
+            })
+            expect(dirname(fixture.root)).toBe(estate)
+            expect(dirname(siblingRoot)).toBe(estate)
+            const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            declaration.cockpit.siblings_root = estate
+            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = join(fixture.root, 'app')
+            declaration.environment.generated!.vendors = []
+            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
+                .filter(entry => entry.subject !== 'vendor')
+            await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
+            await writeFile(join(siblingRoot, 'sentinel.txt'), 'outside bytes\n')
+            const initial = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(initial, JSON.stringify(initial.diagnostics)).toMatchObject({ kind: 'complete' })
+            if (initial.kind !== 'complete') return
+            const authored = await bytes(fixture.root, initial.result.paths)
+            const ledgerPath = join(fixture.root, '.cockpit/generated-environment-ownership.json')
+            const ledger = await readFile(ledgerPath, 'utf8')
+            await writeFile(join(fixture.root, 'fixtures/personas.json'), '[{"id":"second"}]\n')
+            const guidePath = join(siblingRoot, 'AGENTS.md')
+            const heldGuidePath = join(siblingRoot, 'AGENTS-held.md')
+            let replaced = false
+            let publishAttempts = 0
+            const preparedParents: string[] = []
+
+            const refused = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
+                execute: async (step) => {
+                    const outcome = await executeProbe(step)
+                    publishAttempts += publicationGroups(step, 'publish').length
+                    if (step.labels.action === 'prepare') {
+                        preparedParents.push(step.labels.parent)
+                        if (!replaced && step.labels.parent === '.cockpit') {
+                            replaced = true
+                            const guide = await readFile(guidePath)
+                            await rename(guidePath, heldGuidePath)
+                            await writeFile(guidePath, guide)
+                        }
+                    }
+                    return outcome
+                },
+            })
+
+            expect(replaced).toBe(true)
+            expect(preparedParents.length).toBeGreaterThan(1)
+            expect(preparedParents.at(-1)).toBe('.cockpit')
+            expect(publishAttempts).toBe(0)
+            expect(refused).toMatchObject({
+                kind: 'refusal',
+                diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED', target: 'generated-environment' })],
+            })
+            expect(await bytes(fixture.root, initial.result.paths)).toEqual(authored)
+            expect(await readFile(ledgerPath, 'utf8')).toBe(ledger)
+            expect(await readFile(guidePath, 'utf8')).toBe('Synthetic sibling guide.\n')
+            expect(await readFile(heldGuidePath, 'utf8')).toBe('Synthetic sibling guide.\n')
+            expect(await readFile(join(siblingRoot, 'sentinel.txt'), 'utf8')).toBe('outside bytes\n')
+            expect((await readdir(siblingRoot)).sort()).toEqual(['AGENTS-held.md', 'AGENTS.md', 'sentinel.txt'])
+        })
+
+        it('refuses a sibling-root ancestor redirected between configuration and surface authentication', async () => {
+            const declaredRoot = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-generated-sibling-authority-')))
+            const outsideRoot = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-generated-sibling-escape-')))
+            roots.push(declaredRoot, outsideRoot)
+            const appRoot = join(declaredRoot, 'app')
+            const siblingRoot = join(declaredRoot, 'external')
+            await mkdir(appRoot)
+            await writeFile(join(appRoot, 'AGENTS.md'), 'Synthetic application guide.\n')
+            const fixture = await surfaceConsumer('sibling-ancestor-pre-publish-freshness', {
+                rules: true, siblingDirectory: siblingRoot,
+            })
+            const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            declaration.cockpit.siblings_root = declaredRoot
+            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = appRoot
+            declaration.environment.generated!.vendors = []
+            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
+                .filter(entry => entry.subject !== 'vendor')
+            await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
+
+            const initial = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(initial, JSON.stringify(initial.diagnostics)).toMatchObject({ kind: 'complete' })
+            if (initial.kind !== 'complete') return
+            const authored = await bytes(fixture.root, initial.result.paths)
+            await writeFile(join(fixture.root, 'fixtures/personas.json'), '[{"id":"second"}]\n')
+            const escapedRoot = join(outsideRoot, 'escaped')
+            let replaced = false
+            let publishAttempts = 0
+            const originalLstat = fsPromises.lstat
+            function swappingLstat(path: PathLike, options?: StatOptions & { bigint?: false }): Promise<Stats>
+            function swappingLstat(path: PathLike, options: StatOptions & { bigint: true }): Promise<BigIntStats>
+            function swappingLstat(path: PathLike, options?: StatOptions): Promise<Stats | BigIntStats>
+            async function swappingLstat(path: PathLike, options?: StatOptions): Promise<Stats | BigIntStats> {
+                const observed = await originalLstat(path, options)
+                if (!replaced && path === siblingRoot) {
+                    replaced = true
+                    await rename(declaredRoot, escapedRoot)
+                    await symlink(escapedRoot, declaredRoot, 'dir')
+                }
+                return observed
+            }
+            const spy = vi.spyOn(fsPromises, 'lstat').mockImplementation(swappingLstat)
+            syncBuiltinESMExports()
+            try {
+                const refused = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
+                    execute: async (step) => {
+                        const outcome = await executeProbe(step)
+                        publishAttempts += publicationGroups(step, 'publish').length
+                        return outcome
+                    },
+                })
+
+                expect(replaced).toBe(true)
+                expect(publishAttempts).toBe(0)
+                expect(refused).toMatchObject({
+                    kind: 'refusal',
+                    diagnostics: [expect.objectContaining({ code: 'GENERATED_SIBLING_ROOT_INVALID', target: 'sibling' })],
+                })
+                expect(await bytes(fixture.root, initial.result.paths)).toEqual(authored)
+            } finally {
+                spy.mockRestore()
+                syncBuiltinESMExports()
+            }
+        })
+})
+})

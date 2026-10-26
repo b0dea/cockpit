@@ -1,0 +1,64 @@
+name: Feature request
+description: Something cockpit should be able to do and cannot.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful requests describe a failure, not a feature. What goes wrong today is
+        the part that can be evaluated; a proposed solution without it can only be agreed or
+        disagreed with.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What goes wrong today, concretely, and how often you hit it.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: The workaround, however ugly. Its shape usually says more about the right fix than a proposal does.
+    validations:
+      required: true
+  - type: dropdown
+    id: estate
+    attributes:
+      label: Which side of the split is this on?
+      description: >
+        cockpit serves two audiences and they are never served by the same file. This decides
+        where the change can live.
+      options:
+        - Using cockpit on my own repositories
+        - Working on cockpit itself
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What you have in mind
+      description: Optional. A sketch of the command, the configuration key or the generated file.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How would we know it works?
+      description: >
+        A check that can go red, ideally. Where a claim cannot be checked mechanically, say so
+        here rather than leaving it to be discovered in review.
+    validations:
+      required: true
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: This request contains nothing identifying a private deployment.
+          required: true
+        - label: The acceptance check does not treat an operator gate as automated evidence.
+          required: true

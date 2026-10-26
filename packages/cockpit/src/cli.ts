@@ -1,0 +1,1299 @@
+import { randomUUID } from 'node:crypto'
+import { installedPackageMetadata } from './package-metadata.js'
+import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
+import { realpath, writeFile } from 'node:fs/promises'
+import { basename, dirname, resolve } from 'node:path'
+import { createInterface } from 'node:readline/promises'
+import { pathToFileURL } from 'node:url'
+import { parseArgs } from 'node:util'
+import { createInvocationRecord, EXIT_CODES } from './invocation.js'
+import { commands, internalCommands, isWorkHandler, resolveOrdinaryInvocation, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
+import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
+import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
+import type { FixContext } from './fix-catalogue.js'
+import { type Diagnostic, renderHumanDiagnostics, renderJsonResponse } from './diagnostics.js'
+import { classifyEstateObservation, documentCommand, documentObservedCommand, observePublicEstate, type DocumentCommandInput } from './document/command.js'
+import { runInitOperatorCommand } from './init/command.js'
+import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
+import { nodeAuthority, readAnchoredBatches } from './generated-environment/transaction.js'
+import { comparisonCommand, type ComparisonCommandInput, type ComparisonCommandAdapters } from './comparison/command.js'
+import {
+    registryResolveCommand,
+    type RegistryResolveCommandInput,
+} from './registry-resolve/command.js'
+import { setupCommand, type SetupCommandInput } from './setup/command.js'
+import {
+    type DoctorCommandInput,
+    type DownCommandInput,
+    type PreflightCommandInput,
+    type ResetCommandInput,
+    type SleepCommandInput,
+    type UpCommandInput,
+    beginOperatorReset as beginOperatorResetApplication,
+    beginOperatorBaselineRecord as beginOperatorBaselineRecordApplication,
+    runDoctor as runDoctorApplication,
+    runDown as runDownApplication,
+    runLogs as runLogsApplication,
+    runPreflight as runPreflightApplication,
+    runReset as runResetApplication,
+    runSession as runSessionApplication,
+    runSleep as runSleepApplication,
+    runUp as runUpApplication,
+    runGuardEvaluationApplication,
+} from './environment/application.js'
+import { executeForegroundProcess, executePlan, executeProbe } from './environment-exec/execute.js'
+import { createDestructiveCommandAdapters } from './environment/destructive-composition.js'
+import { createHealthCommandAdapters } from './environment/health-composition.js'
+import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
+import { createReadCommandAdapters } from './environment/read-composition.js'
+import {
+    issueSetupRunContext,
+    setupEnvironment,
+    type SetupCommandAdapters,
+    type SetupRunContext,
+} from './environment/application.js'
+import {
+    consumeSetupCheckoutProjection,
+    observeEnvironmentIgnore,
+    observeSetupCheckout,
+    observeSetupPath,
+    withSetupCheckoutProjection,
+} from './environment/setup-observation.js'
+import {
+    ENVIRONMENT_CODES,
+    type EnvironmentCommandOutcome,
+    type EnvironmentDiagnostic,
+    type SetupRefusalEvidence,
+} from './environment/contract.js'
+import { loadCockpitConfig, observeConfigSource } from './config/load.js'
+import { gitEnvironment, planSetup } from './environment/setup.js'
+import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
+import { checkoutId, holderId, stackId } from './environment/identity.js'
+import { selectStateRoot } from './environment/state.js'
+import { recordLifecycleStarted } from './environment/lifecycle-stage.js'
+import { planEnvironmentSeed, seedEnvironmentInstanceSync } from './environment/templates.js'
+import {
+    observeInstallPolicyLockfiles,
+    withInstallPolicyProjection,
+} from './environment/install-policy-observation.js'
+import { resolveInstallPolicies } from './environment/install-policy.js'
+import {
+    prepareSelectedBootstrapSurface, resumeSelectedBootstrapSurface, applySelectedBootstrapSurface,
+    checkGeneratedEnvironment,
+    syncGeneratedEnvironment,
+    runSyncOperatorCommand,
+    type GeneratedEnvironmentCommandInput,
+} from './generated-environment/command.js'
+import type {
+    GeneratedStaleRemovalApproval,
+    GeneratedStaleRemovalApprovalRequest,
+} from './environment/generated-application.js'
+import { runConfiguredUpgradeCommand } from './upgrade/command.js'
+import { createReleaseEvidenceDiscovery } from './upgrade/release-evidence.js'
+import {
+    runConfiguredSurfaceSelftestOutcome,
+    runSelftestOperatorCommand,
+    type SurfaceSelftestExecutableCandidate,
+    type SurfaceSelftestProbeSpecificationsCandidate,
+} from './selftest/command.js'
+import {
+    runBaselineOperatorApplication,
+    runResetOperatorApplication,
+} from './environment/operator-application.js'
+
+import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
+
+export const mechanism = {
+    id: 'command-dispatch',
+    module: 'packages/cockpit/src/cli.ts',
+    exports: ['runCli'],
+} as const
+
+export interface CliIo {
+    stdout: Pick<NodeJS.WriteStream, 'write'>
+    stderr: Pick<NodeJS.WriteStream, 'write'>
+    stdin?: NodeJS.ReadStream
+    confirmInit?: (preview: InitResult) => Promise<string | undefined>
+    answerInitQuestion?: (question: NonNullable<InitResult['question']>) => Promise<string | undefined>
+    confirmReset?: (preview: CommandOutcome) => Promise<boolean>
+    confirmBaseline?: (preview: CommandOutcome) => Promise<boolean>
+    confirmWorkOrder?: (candidate: Readonly<{ digest: string; prompt: string }>) => Promise<string | undefined>
+    confirmSelftestExecutable?: (candidate: SurfaceSelftestExecutableCandidate) => Promise<string | undefined>
+    confirmSelftestProbeSpecifications?: (
+        candidate: SurfaceSelftestProbeSpecificationsCandidate,
+    ) => Promise<string | undefined>
+    confirmStaleRemoval?: (request: GeneratedStaleRemovalApprovalRequest) => Promise<string | undefined>
+}
+
+export interface CliRuntime {
+    readonly env?: Readonly<Record<string, string | undefined>>
+    readonly signal?: AbortSignal
+    readonly createReleaseMetadataTransport?: () => ReleaseMetadataTransport
+}
+
+export interface CommandOutcome {
+    artifact?: string | null
+    destination?: string | null
+    diagnostics: readonly Diagnostic[]
+    evidence?: SetupRefusalEvidence
+    result: unknown
+    status: number
+    fixContext?: FixContext
+}
+
+interface WorkCommandInput { readonly configPath: string; readonly request: WorkApplicationRequest }
+
+interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
+    'baseline-record': Readonly<{ configPath: string; confirmation: string; recordedAt: string }>
+    check: GeneratedEnvironmentCommandInput
+    compare: ComparisonCommandInput & Readonly<{ decideReset?: ComparisonCommandAdapters['decideReset'] }>
+    init: InitApplicationInput
+    doctor: DoctorCommandInput
+    document: DocumentCommandInput
+    down: DownCommandInput
+    logs: Readonly<{
+        configPath: string
+        service: string
+        since: string
+        tail: number
+        follow: boolean
+        json: boolean
+    }>
+    preflight: PreflightCommandInput
+    'registry-resolve': RegistryResolveCommandInput
+    reset: ResetCommandInput
+    setup: SetupCommandInput
+    selftest: Readonly<{
+        configPath: string
+        probeSpecificationsPath: string
+        env: Readonly<Record<string, string | undefined>>
+        requestExecutableApproval?: (candidate: SurfaceSelftestExecutableCandidate) => Promise<string | undefined>
+        requestProbeSpecificationsApproval?: (
+            candidate: SurfaceSelftestProbeSpecificationsCandidate,
+        ) => Promise<string | undefined>
+    }>
+    session: Readonly<{ configPath: string; argv: readonly [string, ...string[]]; sessionId: string }>
+    sleep: SleepCommandInput
+    sync: GeneratedEnvironmentCommandInput & Readonly<{
+        dryRun?: boolean
+        authorizeStaleRemoval?: (
+            request: GeneratedStaleRemovalApprovalRequest,
+        ) => Promise<GeneratedStaleRemovalApproval | undefined>
+    }>
+    up: UpCommandInput
+    upgrade: Readonly<{
+        configPath: string
+        releaseEvidencePath?: string
+        releaseEvidenceSha256?: string
+    }>
+}
+
+export type CommandHandlers = {
+    [Identifier in HandlerIdentifier]: (
+        input: HandlerInputById[Identifier],
+    ) => Promise<Identifier extends 'init' ? InitApplicationOutcome : CommandOutcome>
+}
+
+interface OperatorResetBinding {
+    readonly preview: CommandOutcome
+    decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
+}
+
+interface OperatorBaselineBinding {
+    readonly preview: CommandOutcome
+    decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
+}
+
+interface OperatorWorkBinding { readonly digest: string; readonly prompt: string; decide(answer: string): Promise<CommandOutcome> }
+
+export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
+    beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
+    beginOperatorReset?: (input: ResetCommandInput) => Promise<OperatorResetBinding | CommandOutcome>
+    beginOperatorBaselineRecord?: (input: { readonly configPath: string }) => Promise<OperatorBaselineBinding | CommandOutcome>
+}>
+
+type OperatorHandlers = Pick<CliHandlerOverrides, 'beginOperatorReset' | 'beginOperatorBaselineRecord' | 'beginOperatorWorkApplication'>
+
+type HandlerRequest = {
+    [Identifier in Exclude<HandlerIdentifier, 'baseline-record'>]: {
+        handler: Identifier
+        input: HandlerInputById[Identifier]
+    }
+}[Exclude<HandlerIdentifier, 'baseline-record'>] | Readonly<{
+    handler: 'baseline-record'
+    input: Readonly<{ configPath: string }>
+}>
+
+interface ParsedCommandArguments {
+    values: Record<string, string | boolean | (string | boolean)[] | undefined>
+    positionals: string[]
+}
+
+function setupDiagnostic(code: EnvironmentDiagnostic['code'], message: string, target: string): EnvironmentDiagnostic {
+    return { severity: 'error', code, message, target }
+}
+
+function setupRefusal(
+    code: EnvironmentDiagnostic['code'],
+    message: string,
+    target: string,
+): EnvironmentCommandOutcome<SetupRunContext> {
+    return { kind: 'refusal', status: 2, diagnostics: [setupDiagnostic(code, message, target)], result: null }
+}
+
+async function loadSetupContext(input: SetupCommandInput): Promise<EnvironmentCommandOutcome<SetupRunContext>> {
+    let configPath: string
+    let suppliedEnvironment: Readonly<Record<string, string>> | undefined
+    let suppliedExecutable: unknown
+    try {
+        configPath = input.configPath
+        suppliedEnvironment = input.env
+        suppliedExecutable = input.gitExecutable
+    } catch {
+        return setupRefusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, 'setup input is not readable', 'setup')
+    }
+    const ambient = setupEnvironment(suppliedEnvironment)
+    if (!ambient) {
+        return setupRefusal(
+            ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
+            'setup environment is not valid bounded data',
+            'setup-environment',
+        )
+    }
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind === 'refusal') return loaded
+    const supplied = suppliedExecutable === undefined ? undefined : resolvedGitExecutable(suppliedExecutable)
+    const executable = suppliedExecutable === undefined
+        ? await resolveGitExecutable(ambient)
+        : supplied
+            ? { state: 'available' as const, value: supplied }
+            : { state: 'unavailable' as const, reason: 'Git executable identity is invalid' }
+    if (executable.state === 'unavailable') {
+        return setupRefusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, executable.reason, loaded.result.source.path)
+    }
+
+    const observedAt = new Date().toISOString()
+    const setupCheckout = await observeSetupCheckout({
+        source: loaded.result.source,
+        cockpitName: loaded.result.config.cockpit.name,
+        observedAt,
+        env: ambient,
+        gitExecutable: executable.value,
+    })
+    const checkout = await withSetupCheckoutProjection(
+        setupCheckout,
+        {
+            source: loaded.result.source,
+            cockpitName: loaded.result.config.cockpit.name,
+            evaluatedAt: Date.parse(observedAt),
+        },
+        consumeSetupCheckoutProjection,
+    )
+    if (!checkout) {
+        const reason = setupCheckout.state === 'failed'
+            ? setupCheckout.reason
+            : 'setup checkout evidence is unavailable'
+        return setupRefusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, reason, loaded.result.source.path)
+    }
+    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+        return setupRefusal(
+            ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+            'state root is unavailable on this platform',
+            process.platform,
+        )
+    }
+    const selected = await selectStateRoot({
+        platform: process.platform,
+        home: ambient.HOME,
+        xdgStateHome: ambient.XDG_STATE_HOME,
+        checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath],
+        cockpitId: checkout.cockpitId,
+    })
+    if (selected.kind !== 'complete') {
+        return setupRefusal(
+            selected.kind === 'refusal' ? selected.code : ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+            selected.kind === 'refusal' ? selected.message : 'state root is unavailable',
+            selected.kind === 'refusal' ? selected.target : loaded.result.source.path,
+        )
+    }
+    const currentStackId = stackId({
+        cockpitId: checkout.cockpitId,
+        checkoutId: checkout.checkoutId,
+        variant: { kind: 'shared' },
+    })
+    const sessionId = randomUUID()
+    const confirmedSetupCheckout = await observeSetupCheckout({
+        source: loaded.result.source,
+        cockpitName: loaded.result.config.cockpit.name,
+        observedAt,
+        env: ambient,
+        gitExecutable: executable.value,
+    })
+    const issued = await withSetupCheckoutProjection(
+        confirmedSetupCheckout,
+        {
+            source: loaded.result.source,
+            cockpitName: loaded.result.config.cockpit.name,
+            evaluatedAt: Date.parse(observedAt),
+        },
+        (projection) => issueSetupRunContext({
+            checkout: projection,
+            configuration: loaded.result,
+            env: gitEnvironment(ambient),
+            gitExecutable: executable.value,
+            namespace: selected.value,
+            observedAt,
+            currentCheckoutPath: checkout.currentCheckoutPath,
+            mainCheckoutPath: checkout.mainCheckoutPath,
+            cockpitId: checkout.cockpitId,
+            checkoutId: checkout.checkoutId,
+            stackId: currentStackId,
+            holderId: holderId({ stackId: currentStackId, checkoutId: checkout.checkoutId, sessionId }),
+            sessionId,
+        }),
+    )
+    if (!issued) {
+        const reason = confirmedSetupCheckout.state === 'failed'
+            ? confirmedSetupCheckout.reason
+            : 'confirmed setup checkout evidence is unavailable'
+        return setupRefusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, reason, loaded.result.source.path)
+    }
+    return issued.kind === 'complete' ? { ...issued, diagnostics: loaded.diagnostics } : issued
+}
+
+const defaultSetupAdapters: SetupCommandAdapters = {
+    load: loadSetupContext,
+    observedAt: () => new Date().toISOString(),
+    observeGit: ({ context, sibling }) => observeSetupPath(
+        resolve(context.siblingsRoot, sibling.dir),
+        context.siblingsRoot,
+        context.env,
+        context.gitExecutable,
+    ),
+    planGit: ({ context, sibling, observation }) => planSetup({
+        siblingsRoot: context.siblingsRoot,
+        sibling,
+        observation,
+        env: context.env,
+        gitExecutable: context.gitExecutable,
+    }),
+    execute: executePlan,
+    observeSource: observeConfigSource,
+    recordStarted: recordLifecycleStarted,
+    withIgnore: async ({ context, siblingIndex, sibling, environmentFileIndex, environmentFile, observedAt }, use) => {
+        const siblingRoot = resolve(context.siblingsRoot, sibling.dir)
+        const siblingCheckoutId = checkoutId({ checkoutPath: siblingRoot })
+        return observeEnvironmentIgnore({
+            source: context.source,
+            siblingIndex,
+            siblingSlug: sibling.slug,
+            mainCheckoutPath: context.mainCheckoutPath,
+            siblingsRoot: context.siblingsRoot,
+            siblingRoot,
+            checkoutId: siblingCheckoutId,
+            environmentFileIndex,
+            environmentFile,
+            observedAt,
+            env: context.env,
+            gitExecutable: context.gitExecutable,
+        }, use)
+    },
+    planSeed: ({ context, sibling, environmentFile }) => planEnvironmentSeed({
+        siblingRoot: resolve(context.siblingsRoot, sibling.dir),
+        environmentFile,
+    }),
+    seed: seedEnvironmentInstanceSync,
+    observePolicy: ({ context, siblingIndex, sibling, checkoutRoot, checkoutId, observedAt }) => observeInstallPolicyLockfiles({
+        source: context.source,
+        policies: context.policyCatalog,
+        siblingIndex,
+        siblingSlug: sibling.slug,
+        checkoutRoot,
+        checkoutId,
+        observedAt,
+    }),
+    withPolicy: (observation, { context, siblingIndex, sibling, checkoutRoot, checkoutId, observedAt }, use) =>
+        withInstallPolicyProjection(observation, {
+            source: context.source,
+            policies: context.policyCatalog,
+            siblingIndex,
+            siblingSlug: sibling.slug,
+            checkoutRoot,
+            checkoutId,
+            evaluatedAt: Date.parse(observedAt),
+        }, use),
+    resolvePolicy: ({ context, siblingIndex, sibling, checkoutRoot, checkoutId, projection }) =>
+        resolveInstallPolicies({
+            source: context.source,
+            policies: context.policyCatalog,
+            siblingIndex,
+            sibling,
+            checkoutRoot,
+            checkoutId,
+            projection,
+        }),
+}
+
+function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId: string) {
+    const env = runtime.env ?? process.env
+    return createDestructiveCommandAdapters({
+        configPath,
+        env,
+        sessionId,
+        timeoutMs: 10_000,
+        dockerContext: env.DOCKER_CONTEXT ?? '',
+    }, executeProbe)
+}
+
+function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string) {
+    return createReadCommandAdapters({
+        configPath,
+        env: runtime.env ?? process.env,
+        sessionId,
+        timeoutMs: 10_000,
+        ...(runtime.signal ? { signal: runtime.signal } : {}),
+    }, executeProbe)
+}
+
+function workCommandOutcome(outcome: WorkApplicationOutcome): CommandOutcome {
+    return outcome.kind === 'complete' ? { status: 0, result: outcome.value, diagnostics: [] }
+        : usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'Work-order acceptance requires an interactive operator continuation')
+}
+
+async function configuredWorkApplication(input: WorkCommandInput, runtime: CliRuntime): Promise<WorkApplicationOutcome> {
+    const { createConfiguredWorkApplicationComposition } = await import('./work-orders/composition.js')
+    const { runWorkApplication } = await import('./work-orders/application.js')
+    const configured = await createConfiguredWorkApplicationComposition({ configPath: resolve(input.configPath), env: runtime.env ?? process.env })
+    return configured.kind === 'refusal' ? { kind: 'refusal', operation: input.request.operation, reason: configured.reason }
+        : runWorkApplication(input.request, configured.composition)
+}
+
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+function inheritedSessionId(env: Readonly<Record<string, string | undefined>>): string | null | undefined {
+    const value = env.COCKPIT_SESSION_ID
+    return value === undefined ? undefined : SESSION_ID.test(value) ? value : null
+}
+
+function concreteEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)))
+}
+
+function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
+    const env = runtime.env ?? process.env
+    const inherited = inheritedSessionId(env)
+    const ordinarySessionId = inherited === undefined ? 'cockpit-cli' : inherited
+    const lifecycleAdapters = (configPath: string, sessionId: string) => createLifecycleCommandAdapters({
+        configPath,
+        env,
+        sessionId,
+        timeoutMs: 10_000,
+    }, executeProbe)
+    const healthAdapters = (configPath: string) => createHealthCommandAdapters({
+        configPath,
+        env,
+        timeoutMs: 10_000,
+    }, executeProbe)
+    const workHandlers: Partial<Pick<CommandHandlers, WorkHandlerIdentifier>> = {}
+    for (const command of commands) if (isWorkHandler(command.handler)) {
+        workHandlers[command.handler] = async input => workCommandOutcome(await configuredWorkApplication(input, runtime))
+    }
+    return {
+        ...workHandlers,
+        document: documentCommand,
+        init: input => runInitApplication(input, {
+            now: () => new Date().toISOString(),
+            prepareBootstrap: prepareSelectedBootstrapSurface,
+            resumeBootstrap: resumeSelectedBootstrapSurface,
+            applyBootstrap: applySelectedBootstrapSurface,
+            document: documentObservedCommand,
+            classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+            observeDestination: async ({ path, byteLimit }) => {
+                const node = await nodeAuthority()
+                const read = node ? await readAnchoredBatches(dirname(path), [
+                    { path: basename(path), action: 'read-entry', maxBytes: byteLimit },
+                ], node, { execute: executeProbe }) : undefined
+                const entry = read?.kind === 'complete' ? read.results[0] : undefined
+                if (entry?.kind === 'missing') return { kind: 'absent' }
+                if (entry?.kind === 'file') return { kind: 'available', sha256: entry.sha256 }
+                return { kind: 'refusal', diagnostics: [{ severity: 'error', code: 'INIT_DESTINATION_UNAVAILABLE',
+                    message: 'cockpit.toml could not be authenticated as an absent or bounded regular file', target: path }] }
+            },
+            validateConfig: loadCockpitConfig,
+            synchronize: syncGeneratedEnvironment,
+            check: checkGeneratedEnvironment,
+            preflight: ({ configPath }) => runPreflightApplication({ configPath }, healthAdapters(configPath)),
+        }),
+        compare: ({ decideReset, ...input }) => comparisonCommand(input, { env, ...(decideReset ? { decideReset } : {}) }),
+        'registry-resolve': registryResolveCommand,
+        setup: (input) => setupCommand(input, defaultSetupAdapters),
+        sync: ({ authorizeStaleRemoval, ...input }) => syncGeneratedEnvironment(
+            input,
+            authorizeStaleRemoval ? { authorizeStaleRemoval } : {},
+        ),
+        check: async input => {
+            const outcome = await checkGeneratedEnvironment(input)
+            return { ...outcome, result: outcome.report
+                ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
+                : outcome.result }
+        },
+        selftest: runConfiguredSurfaceSelftestOutcome,
+        upgrade: (input) => runConfiguredUpgradeCommand(input, {
+            createReleaseEvidenceDiscovery,
+            installed: { package: installedPackageMetadata.name, version: installedPackageMetadata.version },
+        }),
+        up: (input) => {
+            const sessionId = ordinarySessionId
+            if (sessionId === null) return Promise.resolve(usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const configPath = resolve(input.configPath)
+            return runUpApplication({ configPath }, lifecycleAdapters(configPath, sessionId))
+        },
+        sleep: (input) => {
+            const sessionId = ordinarySessionId
+            if (sessionId === null) return Promise.resolve(usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const configPath = resolve(input.configPath)
+            return runSleepApplication({ configPath }, lifecycleAdapters(configPath, sessionId))
+        },
+        session: (input) => {
+            if (inherited === null) return Promise.resolve(usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const configPath = resolve(input.configPath)
+            const sessionId = input.sessionId
+            const childEnv = Object.freeze({ ...concreteEnvironment(env), COCKPIT_SESSION_ID: sessionId })
+            const adapters = createLifecycleCommandAdapters({
+                configPath,
+                env: childEnv,
+                sessionId,
+                timeoutMs: 10_000,
+            }, executeProbe)
+            return runSessionApplication({ ...input, configPath, cwd: process.cwd(), env: childEnv }, {
+                up: (request) => runUpApplication(request, adapters),
+                sleep: (request) => runSleepApplication(request, adapters),
+                resolveExecutable,
+                executeForeground: executeForegroundProcess,
+                ...(runtime.signal ? { signal: runtime.signal } : {}),
+            })
+        },
+        down: (input) => {
+            if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const configPath = resolve(input.configPath)
+            return runDownApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
+        },
+        reset: (input) => {
+            if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const configPath = resolve(input.configPath)
+            return runResetApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
+        },
+        preflight: (input) => {
+            const configPath = resolve(input.configPath)
+            return runPreflightApplication({ configPath }, healthAdapters(configPath))
+        },
+        doctor: (input) => {
+            const configPath = resolve(input.configPath)
+            return runDoctorApplication({ configPath }, {
+                ...healthAdapters(configPath),
+                discoverReleaseFreshness: () => discoverReleaseFreshness({ verb: 'doctor', env,
+                    ...(runtime.createReleaseMetadataTransport ? { createTransport: runtime.createReleaseMetadataTransport } : {}) }),
+            })
+        },
+        logs: (input) => {
+            if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const configPath = resolve(input.configPath)
+            return runLogsApplication({ ...input, configPath }, readAdapters(configPath, runtime, ordinarySessionId).logs)
+        },
+    }
+}
+
+
+function renderHelp(): string {
+    const commandWidth = Math.max(...commands.map((command) => command.name.length))
+    const commandLines = commands.map(
+        (command) => `  ${command.name.padEnd(commandWidth)}  ${command.summary}`,
+    )
+    return ['Usage: cockpit <command> [options]', '', 'Commands:', ...commandLines, ''].join('\n')
+}
+
+function renderVersion(): string {
+    return `${installedPackageMetadata.name} ${installedPackageMetadata.version} (Node ${installedPackageMetadata.engines.node}; source ${installedPackageMetadata.cockpitSourceRevision})\n`
+}
+
+function usageOutcome(code: string, message: string, target?: string): CommandOutcome {
+    return {
+        artifact: null,
+        destination: null,
+        diagnostics: [{ severity: 'error', code, message, target }],
+        result: null,
+        status: 2,
+    }
+}
+
+async function executeOutcome(outcome: CommandOutcome): Promise<CommandOutcome> {
+    if (!outcome.artifact || !outcome.destination) return outcome
+    try {
+        await writeFile(outcome.destination, outcome.artifact, { encoding: 'utf8', flag: 'wx' })
+        return outcome
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        const diagnostic: Diagnostic = code === 'EEXIST'
+            ? {
+                severity: 'error',
+                code: 'OUTPUT_EXISTS',
+                message: 'the output path already exists and was not changed',
+                target: outcome.destination,
+                fix: 'choose a new path; replacement requires a future explicit option',
+            }
+            : {
+                severity: 'error',
+                code: 'OUTPUT_WRITE_FAILED',
+                message: `the resolved output could not be created (${code ?? 'unknown I/O error'})`,
+                target: outcome.destination,
+            }
+        return {
+            artifact: null,
+            destination: null,
+            diagnostics: [...outcome.diagnostics, diagnostic],
+            result: null,
+            status: 2,
+        }
+    }
+}
+
+function optionCount(args: readonly string[], name: string): number {
+    const option = `--${name}`
+    return args.filter((arg) => arg === option || arg.startsWith(`${option}=`)).length
+}
+
+async function decodeRequest(
+    handler: HandlerIdentifier,
+    parsed: ParsedCommandArguments,
+    runtimeEnv: Readonly<Record<string, string | undefined>>,
+): Promise<HandlerRequest | CommandOutcome> {
+    if (isWorkHandler(handler)) {
+        const values = parsed.values
+        if (parsed.positionals.length || typeof values.config !== 'string' || !values.config) {
+            return usageOutcome('CLI_USAGE_INVALID', 'work, browser and testing commands require --config and named selectors only')
+        }
+        const text = (key: string): string | undefined => typeof values[key] === 'string' ? values[key] as string : undefined
+        const workOrderId = text('work-order')
+        let request: WorkApplicationRequest
+        if (['work-accept', 'work-renew', 'work-grade', 'work-review', 'work-record', 'work-reverse', 'work-execute'].includes(handler) && !workOrderId) {
+            return usageOutcome('CLI_USAGE_INVALID', 'provide --work-order <id>', '--work-order')
+        }
+        if (handler === 'work-intake') {
+            const intent = text('intent'), candidate = text('candidate')
+            if (values.intent !== undefined) {
+                if (!intent || values['work-order'] !== undefined || values.candidate !== undefined && !candidate) {
+                    return usageOutcome('CLI_USAGE_INVALID', '--intent requires a relative path, excludes --work-order and permits one relative --candidate')
+                }
+                request = { operation: handler, intent, ...(candidate ? { candidate } : {}) }
+            } else {
+                if (!workOrderId || values.candidate !== undefined) return usageOutcome('CLI_USAGE_INVALID', 'provide --work-order <id> or --intent <relative-file> [--candidate <relative-file>]')
+                request = { operation: handler, workOrderId }
+            }
+        } else if (handler === 'work-record') {
+            const eventFile = text('event-file')
+            if (!eventFile) return usageOutcome('CLI_USAGE_INVALID', 'provide --event-file <relative-file>', '--event-file')
+            request = { operation: handler, workOrderId: workOrderId!, eventFile }
+        } else if (handler === 'work-accept' || handler === 'work-renew' || handler === 'work-grade' || handler === 'work-review' || handler === 'work-reverse') {
+            request = { operation: handler, workOrderId: workOrderId! }
+        } else if (handler === 'work-status') {
+            if (values['work-order'] !== undefined && !workOrderId) return usageOutcome('CLI_USAGE_INVALID', '--work-order requires a bounded identifier')
+            request = { operation: handler, ...(workOrderId ? { workOrderId } : {}) }
+        } else if (handler === 'work-resume' || handler === 'work-metrics') request = { operation: handler }
+        else if (handler === 'work-recover') {
+            const lockId = text('lock')
+            if (!lockId) return usageOutcome('CLI_USAGE_INVALID', 'provide --lock <lock-id>', '--lock')
+            request = { operation: handler, lockId, apply: values.apply === true }
+        }
+        else if (handler === 'work-execute') {
+            const approach = text('approach')
+            if (!approach) return usageOutcome('CLI_USAGE_INVALID', 'provide --approach <description>', '--approach')
+            request = { operation: handler, workOrderId: workOrderId!, approach }
+        } else if (handler === 'work-sweep') request = { operation: handler, apply: values.apply === true }
+        else if (handler === 'work-programme-mint') {
+            const programmeId = text('programme'), itemKey = text('item')
+            const candidate = text('candidate')
+            if (!programmeId || values.item !== undefined && !itemKey || values.candidate !== undefined && !candidate) {
+                return usageOutcome('CLI_USAGE_INVALID', 'provide --programme <id>, an optional --item <key> and an optional relative --candidate')
+            }
+            request = { operation: handler, programmeId, ...(itemKey ? { itemKey } : {}), ...(candidate ? { candidate } : {}) }
+        } else if (handler === 'test-run') {
+            const gate = text('gate'), mode = values.mode
+            if (!gate || mode !== 'canonical' && mode !== 'full' && mode !== 'staged') return usageOutcome('CLI_USAGE_INVALID', 'provide --gate and --mode canonical|full|staged')
+            let select: Extract<WorkApplicationRequest, { operation: 'test-run' }>['select']
+            if (values.select !== undefined) {
+                const selector = text('select'), separator = selector?.indexOf(':') ?? -1
+                const kind = selector?.slice(0, separator), value = selector?.slice(separator + 1)
+                if (!value || kind !== 'spec' && kind !== 'file' && kind !== 'test' && kind !== 'route') return usageOutcome('CLI_USAGE_INVALID', '--select requires spec|file|test|route:<value>')
+                select = { kind, value }
+            }
+            request = { operation: handler, gate, mode, ...(select ? { select } : {}) }
+        } else {
+            const role = text('role')
+            if (values.role !== undefined && !role) return usageOutcome('CLI_USAGE_INVALID', '--role requires a bounded identifier')
+            request = { operation: handler, ...(role ? { role } : {}) }
+        }
+        const { captureWorkApplicationRequest } = await import('./work-orders/application.js')
+        const captured = captureWorkApplicationRequest(request)
+        if (!captured) return usageOutcome('CLI_USAGE_INVALID', 'work, browser and testing commands require bounded selectors of the declared kind')
+        return { handler, input: { configPath: values.config, request: captured } }
+    }
+    if (handler === 'init') {
+        const [root, ...extraRoots] = parsed.positionals
+        const target = parsed.values.target, registry = parsed.values.registry
+        if (!root || extraRoots.length || !SURFACE_TARGETS.some(value => value === target)
+            || registry !== undefined && (typeof registry !== 'string' || registry.length === 0)) {
+            return usageOutcome('CLI_USAGE_INVALID', 'init requires one explicit root and --target claudecode|codexcli|opencode')
+        }
+        const absoluteRoot = resolve(root)
+        try {
+            if (await realpath(absoluteRoot) !== absoluteRoot) return usageOutcome('CLI_USAGE_INVALID', 'init root must name its canonical directory')
+        } catch { return usageOutcome('CLI_USAGE_INVALID', 'init root must be an existing canonical directory') }
+        if (process.platform !== 'darwin' && process.platform !== 'linux') {
+            return usageOutcome('CLI_USAGE_INVALID', 'init supports macOS and Linux state ownership')
+        }
+        return { handler, input: { root: absoluteRoot, target: target as SurfaceTarget,
+            ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
+            accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
+            ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}) } }
+    }
+    if (handler === 'compare') {
+        const [operation, ...extra] = parsed.positionals
+        const fixturePath = parsed.values.fixture, configPath = parsed.values.config, ledgerPath = parsed.values.ledger
+        if (extra.length || operation !== 'validate' && operation !== 'run' && operation !== 'status'
+            || typeof fixturePath !== 'string' || !fixturePath
+            || operation === 'run' && (typeof configPath !== 'string' || !configPath)
+            || operation === 'status' && (typeof ledgerPath !== 'string' || !ledgerPath)) {
+            return usageOutcome('CLI_USAGE_INVALID', 'compare requires validate, run or status and its named inputs')
+        }
+        return { handler, input: { root: process.cwd(), operation, fixturePath,
+            ...(typeof configPath === 'string' ? { configPath } : {}),
+            ...(typeof ledgerPath === 'string' ? { ledgerPath } : {}) } }
+    }
+    if (handler === 'document') {
+        const values = parsed.values as { registry?: string; output?: string; json?: boolean }
+        const [root, ...extraRoots] = parsed.positionals
+        if (extraRoots.length > 0) {
+            return usageOutcome('DOCUMENT_ROOT_COUNT', 'document accepts at most one cockpit root')
+        }
+        if (root && values.registry) {
+            return usageOutcome('DOCUMENT_SOURCE_CONFLICT', 'a cockpit root and --registry are mutually exclusive')
+        }
+        if (!root && !values.registry) {
+            return usageOutcome('DOCUMENT_SOURCE_REQUIRED', 'provide one cockpit root or --registry <file>')
+        }
+        if (values.output !== undefined && values.output.length === 0) {
+            return usageOutcome('CLI_USAGE_INVALID', '--output requires a non-empty path', '--output')
+        }
+        return { handler, input: { root, registry: values.registry, output: values.output } }
+    }
+
+    if (handler === 'setup') {
+        const values = parsed.values as { config?: string; json?: boolean }
+        if (parsed.positionals.length > 0) {
+            return usageOutcome(ENVIRONMENT_CODES.SETUP_POSITIONAL_UNSUPPORTED, 'setup accepts named inputs only')
+        }
+        if (!values.config) return usageOutcome(ENVIRONMENT_CODES.SETUP_CONFIG_REQUIRED, 'provide --config <file>', '--config')
+        return { handler, input: { configPath: values.config } }
+    }
+
+    if (handler === 'sync') {
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean }
+        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'sync accepts named inputs only')
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (values['dry-run'] && values.interactive) {
+            return usageOutcome('CLI_USAGE_INVALID', 'sync --dry-run and --interactive are mutually exclusive', '--interactive')
+        }
+        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}) } }
+    }
+
+    if (handler === 'selftest') {
+        const values = parsed.values as { config?: string; 'probe-specifications'?: string }
+        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID', 'provide --probe-specifications <file>', '--probe-specifications')
+        return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env: { PATH: runtimeEnv.PATH } } }
+    }
+
+    if (handler === 'upgrade') {
+        const values = parsed.values as {
+            config?: string
+            'release-evidence'?: string
+            'release-evidence-sha256'?: string
+        }
+        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'upgrade accepts named inputs only')
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        const evidencePath = values['release-evidence']
+        const evidenceSha256 = values['release-evidence-sha256']
+        if ((evidencePath === undefined) !== (evidenceSha256 === undefined)) {
+            return usageOutcome(
+                'CLI_USAGE_INVALID',
+                '--release-evidence and --release-evidence-sha256 must be supplied together',
+                '--release-evidence',
+            )
+        }
+        if (evidencePath !== undefined && evidencePath.length === 0) {
+            return usageOutcome('CLI_USAGE_INVALID', '--release-evidence requires a non-empty path', '--release-evidence')
+        }
+        if (evidenceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(evidenceSha256)) {
+            return usageOutcome(
+                'CLI_USAGE_INVALID',
+                '--release-evidence-sha256 requires one lowercase SHA-256 digest',
+                '--release-evidence-sha256',
+            )
+        }
+        return {
+            handler,
+            input: {
+                configPath: values.config,
+                ...(evidencePath && evidenceSha256
+                    ? { releaseEvidencePath: evidencePath, releaseEvidenceSha256: evidenceSha256 }
+                    : {}),
+            },
+        }
+    }
+
+    if (handler === 'session') {
+        const values = parsed.values as { config?: string }
+        const [command, ...argv] = parsed.positionals
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!command) return usageOutcome('CLI_USAGE_INVALID', 'session requires a command after --', 'session')
+        const inherited = inheritedSessionId(runtimeEnv)
+        if (inherited === null) return usageOutcome(
+            'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
+        if (inherited !== undefined) return usageOutcome(
+            'CLI_USAGE_INVALID', 'session cannot be nested inside another supervised session', 'session')
+        return { handler, input: { configPath: values.config, argv: [command, ...argv], sessionId: randomUUID() } }
+    }
+
+    if (handler === 'check' || handler === 'up' || handler === 'sleep' || handler === 'down' || handler === 'reset'
+        || handler === 'preflight' || handler === 'doctor') {
+        const values = parsed.values as { config?: string; json?: boolean }
+        if (parsed.positionals.length > 0) {
+            return usageOutcome('CLI_USAGE_INVALID', `${handler} accepts named inputs only`)
+        }
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        return { handler, input: { configPath: values.config } } as HandlerRequest
+    }
+
+    if (handler === 'logs') {
+        const values = parsed.values as {
+            config?: string
+            service?: string
+            tail?: string
+            since?: string
+            follow?: boolean
+            json?: boolean
+        }
+        if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'logs accepts named inputs only')
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.service) return usageOutcome('CLI_USAGE_INVALID', 'provide --service <name>', '--service')
+        const tail = Number(values.tail)
+        if (!Number.isSafeInteger(tail) || tail < 1 || tail > 10_000) {
+            return usageOutcome('CLI_USAGE_INVALID', '--tail must be an integer from 1 through 10000', '--tail')
+        }
+        if (!values.since) return usageOutcome('CLI_USAGE_INVALID', '--since requires a non-empty value', '--since')
+        return {
+            handler,
+            input: {
+                configPath: values.config,
+                service: values.service,
+                tail,
+                since: values.since,
+                follow: values.follow === true,
+                json: values.json === true,
+            },
+        }
+    }
+
+    if (handler === 'baseline-record') {
+        const values = parsed.values as { config?: string; interactive?: boolean; json?: boolean }
+        if (parsed.positionals.length > 0) {
+            return usageOutcome('CLI_USAGE_INVALID', 'baseline-record accepts named inputs only')
+        }
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.interactive) {
+            return usageOutcome('CLI_USAGE_INVALID', 'baseline-record requires --interactive', '--interactive')
+        }
+        return { handler, input: { configPath: values.config } }
+    }
+
+    const values = parsed.values as {
+        registry?: string
+        'siblings-root'?: string
+        adoption?: string
+        json?: boolean
+    }
+    if (parsed.positionals.length > 0) {
+        return usageOutcome('REGISTRY_POSITIONAL_UNSUPPORTED', 'registry-resolve accepts named inputs only')
+    }
+    if (!values.registry) {
+        return usageOutcome('REGISTRY_SOURCE_REQUIRED', 'provide --registry <file>', '--registry')
+    }
+    if (!values['siblings-root']) {
+        return usageOutcome('REGISTRY_SIBLINGS_ROOT_REQUIRED', 'provide --siblings-root <path>', '--siblings-root')
+    }
+    if (!values.adoption) {
+        return usageOutcome('REGISTRY_ADOPTION_REQUIRED', 'provide --adoption <file>', '--adoption')
+    }
+    return {
+        handler,
+        input: {
+            registry: values.registry,
+            siblingsRoot: values['siblings-root'],
+            adoption: values.adoption,
+        },
+    }
+}
+
+async function invokeHandler(
+    request: HandlerRequest,
+    handlers: Partial<CommandHandlers>,
+    operators: OperatorHandlers,
+    options: { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined },
+    io: CliIo,
+): Promise<CommandOutcome> {
+    const unavailable = (): CommandOutcome => usageOutcome(
+        'CLI_INTERNAL_ERROR',
+        `the "${request.handler}" command is unavailable`,
+        request.handler,
+    )
+    if (isWorkHandler(request.handler) && 'request' in request.input) {
+        if (request.handler === 'work-accept' || request.handler === 'work-renew') {
+            const terminal = io.confirmWorkOrder !== undefined || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true
+            if (!options.interactive || options.json || options.ci && options.ci.length > 0 || !terminal) {
+                return usageOutcome('WORK_OPERATOR_REQUIRED', 'Acceptance requires --interactive in a human terminal outside CI and JSON modes')
+            }
+            const opened = await operators.beginOperatorWorkApplication?.(request.input)
+            if (!opened) return unavailable()
+            if (!('decide' in opened)) return opened
+            let answer: string | undefined
+            if (io.confirmWorkOrder) answer = await io.confirmWorkOrder({ digest: opened.digest, prompt: opened.prompt })
+            else if (io.stdin) {
+                const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+                try { answer = await prompt.question(`${opened.prompt}\n`) } finally { prompt.close() }
+            }
+            return opened.decide(answer ?? '')
+        }
+        const handler = handlers[request.handler]
+        return handler?.(request.input) ?? unavailable()
+    }
+    if (request.handler === 'init') return runInitOperatorCommand(request.input, options, {
+        terminal: io.confirmInit !== undefined || io.answerInitQuestion !== undefined
+            || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true,
+        confirm: async preview => {
+            if (io.confirmInit) return io.confirmInit(preview)
+            if (!io.stdin) return undefined
+            io.stderr.write(`${JSON.stringify(preview)}\n`)
+            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+            try { return await prompt.question('Type the exact bootstrap preview digest to accept: ') } finally { prompt.close() }
+        },
+        writeArtifact: (destination, artifact) => writeFile(destination, artifact, { flag: 'wx', mode: 0o600 }),
+        answerQuestion: async question => {
+            if (io.answerInitQuestion) return io.answerInitQuestion(question)
+            if (!io.stdin) return undefined
+            io.stderr.write(`${JSON.stringify(question)}\n`)
+            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+            try { return await prompt.question(`Enter the JSON answer for ${question.field}: `) } finally { prompt.close() }
+        },
+    }, handlers.init ?? (async () => ({ kind: 'refusal', status: 2, artifact: null, destination: null,
+        diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))
+    if (request.handler === 'compare') return handlers.compare?.({ ...request.input,
+        ...(!options.json && (io.confirmReset !== undefined || io.stdin?.isTTY === true)
+            ? { decideReset: async (preview: unknown) => await confirmOperatorReset(io, preview as CommandOutcome) ? 'approve' as const : 'decline' as const } : {}) }) ?? unavailable()
+    if (request.handler === 'document') return handlers.document?.(request.input) ?? unavailable()
+    if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
+    if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
+    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, io, handlers.sync ?? (async () => unavailable()))
+    if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
+    if (request.handler === 'selftest') return runSelftestOperatorCommand(request.input, options, io, handlers.selftest ?? (async () => unavailable()))
+    if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
+    if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
+    if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
+    if (request.handler === 'session') return handlers.session?.(request.input) ?? unavailable()
+    if (request.handler === 'down') return handlers.down?.(request.input) ?? unavailable()
+    if (request.handler === 'reset') return runResetOperatorApplication(request.input, {
+        ...options,
+        terminal: io.confirmReset !== undefined || io.stdin?.isTTY === true,
+    }, {
+        preview: handlers.reset ?? (async () => unavailable()),
+        begin: operators.beginOperatorReset ?? (async () => operatorRefusal('interactive reset is unavailable')),
+        confirm: (preview) => confirmOperatorReset(io, preview),
+    })
+    if (request.handler === 'preflight') return handlers.preflight?.(request.input) ?? unavailable()
+    if (request.handler === 'doctor') return handlers.doctor?.(request.input) ?? unavailable()
+    if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
+    if (request.handler === 'baseline-record') return runBaselineOperatorApplication(request.input, {
+        ...options,
+        terminal: io.confirmBaseline !== undefined || io.stdin?.isTTY === true,
+    }, {
+        begin: operators.beginOperatorBaselineRecord
+            ?? (async () => baselineOperatorRefusal('interactive baseline recording is unavailable')),
+        confirm: (preview) => confirmOperatorBaseline(io, preview),
+    })
+    return unavailable()
+}
+
+function operatorRefusal(message: string): CommandOutcome {
+    return usageOutcome(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, message, 'reset')
+}
+
+async function confirmOperatorReset(io: CliIo, preview: CommandOutcome): Promise<boolean> {
+    if (io.confirmReset) return io.confirmReset(preview)
+    if (!io.stdin) return false
+    io.stderr.write(`${JSON.stringify(preview.result)}\n`)
+    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+    try {
+        return (await prompt.question('Approve this exact reset? [y/N] ')).trim().toLowerCase() === 'y'
+    } finally {
+        prompt.close()
+    }
+}
+
+function baselineOperatorRefusal(message: string): CommandOutcome {
+    return usageOutcome(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, message, 'environment-baseline')
+}
+
+async function confirmOperatorBaseline(io: CliIo, preview: CommandOutcome): Promise<boolean> {
+    if (io.confirmBaseline) return io.confirmBaseline(preview)
+    if (!io.stdin) return false
+    io.stderr.write(`${JSON.stringify(preview.result)}\n`)
+    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+    try {
+        return (await prompt.question('Record this exact environment baseline? [y/N] ')).trim().toLowerCase() === 'y'
+    } finally {
+        prompt.close()
+    }
+}
+
+function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
+    const inherited = inheritedSessionId(runtime.env ?? process.env)
+    const sessionId = inherited === undefined ? 'cockpit-cli' : inherited
+    return {
+        beginOperatorWorkApplication: async input => {
+            const outcome = await configuredWorkApplication(input, runtime)
+            if (outcome.kind !== 'human-needed') return workCommandOutcome(outcome)
+            return { digest: outcome.continuation.digest, prompt: outcome.continuation.prompt,
+                decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer)) }
+        },
+        beginOperatorReset: (input) => {
+            if (sessionId === null) return Promise.resolve(operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID'))
+            const configPath = resolve(input.configPath)
+            return beginOperatorResetApplication(
+                { configPath },
+                destructiveAdapters(configPath, runtime, sessionId),
+            )
+        },
+        beginOperatorBaselineRecord: (input) => {
+            if (sessionId === null) return Promise.resolve(baselineOperatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID'))
+            const configPath = resolve(input.configPath)
+            return beginOperatorBaselineRecordApplication(
+                { configPath },
+                readAdapters(configPath, runtime, sessionId).baseline,
+            )
+        },
+    }
+}
+
+function admitComparisonArguments(args: readonly string[]): boolean {
+    const root = process.cwd()
+    const configIndex = args.indexOf('--config')
+    const suppliedConfig = configIndex < 0 ? args.find(arg => arg.startsWith('--config='))?.slice('--config='.length) : args[configIndex + 1]
+    const authority = { executable: process.execPath, canonicalRoot: root, allowedRoots: [root],
+        configPath: resolve(root, suppliedConfig ?? 'cockpit.toml'), services: [] }
+    return resolveOrdinaryInvocation({ executable: authority.executable, cwd: root, argv: args }, authority, () => true) !== undefined
+}
+
+export async function runCli(
+    args: readonly string[],
+    io: CliIo = process,
+    handlerOverrides: CliHandlerOverrides = {},
+    runtime: CliRuntime = {},
+): Promise<number> {
+    const startedAt = performance.now()
+    const [commandName, ...commandArgs] = args
+    const internal = internalCommands.find(command => command.name === commandName)
+    const definition = commands.find(command => command.name === commandName)
+    const verb = internal?.name ?? definition?.name
+        ?? (commandArgs.length === 0 && commandName === '--help' ? 'help'
+            : commandArgs.length === 0 && commandName === '--version' ? 'version' : 'unknown')
+    let resolvedConfigPath: string | null = null
+    const finish = (status: number, outcome?: CommandOutcome): number => {
+        const exitCode = status === EXIT_CODES.success ? EXIT_CODES.success
+            : status === EXIT_CODES.cancelled ? EXIT_CODES.cancelled : EXIT_CODES.failure
+        const invocation = createInvocationRecord({ verb, durationMs: Math.floor(performance.now() - startedAt),
+            exitCode, resolvedConfigPath })
+        if (outcome) io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
+        else io.stderr.write(renderJsonResponse({ result: null, diagnostics: [], invocation }))
+        return exitCode
+    }
+    if (internal) {
+        let harness: SurfaceTarget | undefined
+        let response: Awaited<ReturnType<typeof runGuardEvaluationApplication>>
+        try {
+            if (commandArgs.length !== 2 || commandArgs[0] !== '--harness'
+                || !['claudecode', 'codexcli', 'opencode'].includes(commandArgs[1]!)) throw new Error('Invalid private guard arguments.')
+            harness = commandArgs[1] as SurfaceTarget
+            if (!io.stdin) throw new Error('Guard input stream is missing.')
+            const chunks: Buffer[] = []
+            let bytes = 0
+            for await (const chunk of io.stdin) {
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+                bytes += buffer.length
+                if (bytes > GUARD_INPUT_LIMITS.inputBytes) throw new Error('Guard input exceeds its byte bound.')
+                chunks.push(buffer)
+            }
+            const raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes))
+            const reply = (runtime.env ?? process.env).COCKPIT_GUARD_TRANSPORT !== '1'
+            let payload: unknown = raw
+            if (reply) {
+                const native = JSON.parse(raw)
+                payload = harness === 'opencode' && native?.tool !== undefined
+                    ? normalizeOpenCodeInput(native)
+                    : { hook_event_name: native?.hook_event_name, tool_name: native?.tool_name,
+                        tool_input: native?.tool_input, cwd: native?.cwd ?? process.cwd() }
+            }
+            const identityBytes = (runtime.env ?? process.env).COCKPIT_GUARD_IDENTITY
+            if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new Error('Installed guard identity is missing or oversized.')
+            response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), payload, harness, cwd: process.cwd(), transport: !reply,
+                askIsDeny: (runtime.env ?? process.env).COCKPIT_ASK_IS_DENY === '1' }, {
+                loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+                resolveGit: () => resolveGitExecutable({ PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin' }),
+                execute: executeProbe,
+            })
+        } catch {
+            response = { decision: { decision: 'unavailable', reason: 'Guard input, arguments or installed identity are unavailable or malformed.' },
+                diagnostics: [{ severity: 'error', code: 'GUARD_INPUT_UNAVAILABLE', message: 'Guard input, arguments or installed identity are unavailable or malformed.', target: 'guard' }] }
+        }
+        // Project once at the publication boundary; adapters only spell the closed decision.
+        const projected = JSON.parse(renderJsonResponse({ result: response.decision, diagnostics: response.diagnostics }, response.fixContext)) as { result: typeof response.decision }
+        const decision = projected.result.decision === 'ask' && (runtime.env ?? process.env).COCKPIT_ASK_IS_DENY === '1'
+            ? { ...projected.result, decision: 'deny' as const } : projected.result
+        if ((runtime.env ?? process.env).COCKPIT_GUARD_TRANSPORT !== '1') {
+            io.stdout.write(JSON.stringify(decision) + '\n')
+            return finish(EXIT_CODES.success)
+        }
+        const output = response.native ?? adaptGuardDecision(harness, decision)
+        io.stdout.write(output.stdout)
+        io.stderr.write(output.stderr)
+        return finish(output.exitCode)
+    }
+    if (commandName === '--help' && commandArgs.length === 0) {
+        io.stdout.write(renderHelp())
+        return finish(EXIT_CODES.success)
+    }
+    if (commandName === '--version' && commandArgs.length === 0) {
+        io.stdout.write(renderVersion())
+        return finish(EXIT_CODES.success)
+    }
+
+    const handlers: Partial<CommandHandlers> = { ...defaultHandlers(runtime), ...handlerOverrides }
+    const operators: OperatorHandlers = { ...defaultOperatorHandlers(runtime), ...handlerOverrides }
+    const optionTerminator = commandArgs.indexOf('--')
+    const optionArgs = commandArgs.slice(0, optionTerminator === -1 ? commandArgs.length : optionTerminator)
+    let jsonRequested = optionArgs.includes('--json')
+    let outcome: CommandOutcome
+
+    if (!commandName) {
+        outcome = usageOutcome('CLI_COMMAND_REQUIRED', 'a command is required')
+    } else if (!definition) {
+        outcome = usageOutcome('CLI_UNKNOWN_COMMAND', `unknown command "${commandName}"`)
+    } else if (definition.handler === 'init' && Object.keys(definition.options).some(name => optionCount(optionArgs, name) > 1)) {
+        outcome = usageOutcome('CLI_USAGE_INVALID', 'each init option may be supplied only once')
+    } else if (definition.handler === 'compare' && !admitComparisonArguments(args)) {
+        outcome = usageOutcome('CLI_USAGE_INVALID', 'comparison arguments do not match the admitted operation')
+    } else if (
+        definition.handler === 'document' &&
+        ['registry', 'output'].some((name) => optionCount(optionArgs, name) > 1)
+    ) {
+        outcome = usageOutcome('DOCUMENT_OPTION_DUPLICATE', 'each document input or output may be supplied only once')
+    } else if (definition.handler === 'registry-resolve' && optionCount(optionArgs, 'output') > 0) {
+        outcome = usageOutcome('REGISTRY_OUTPUT_UNSUPPORTED', 'registry-resolve writes artifact bytes to stdout', '--output')
+    } else if (
+        definition.handler === 'registry-resolve' &&
+        ['registry', 'siblings-root', 'adoption'].some((name) => optionCount(optionArgs, name) > 1)
+    ) {
+        outcome = usageOutcome('REGISTRY_OPTION_DUPLICATE', 'each registry-resolve input may be supplied only once')
+    } else if (definition.handler === 'setup' && optionCount(optionArgs, 'config') > 1) {
+        outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, 'the setup config may be supplied only once', '--config')
+    } else if (
+        definition.handler !== 'document' && definition.handler !== 'registry-resolve' && definition.handler !== 'setup'
+        && Object.keys(definition.options).some((name) => name !== 'json' && optionCount(optionArgs, name) > 1)
+    ) {
+        outcome = usageOutcome('CLI_USAGE_INVALID', `each ${definition.name} option may be supplied only once`)
+    } else {
+        let parsed: ParsedCommandArguments | undefined
+        try {
+            parsed = parseArgs({
+                args: commandArgs,
+                strict: true,
+                allowPositionals: true,
+                options: definition.options,
+            }) as ParsedCommandArguments
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'invalid command arguments'
+            outcome = usageOutcome('CLI_USAGE_INVALID', message)
+        }
+
+        if (parsed) {
+            jsonRequested = parsed.values.json === true
+            let decoded = await decodeRequest(definition.handler, parsed, runtime.env ?? process.env)
+            if ('handler' in decoded && 'configPath' in decoded.input && typeof decoded.input.configPath === 'string') {
+                try {
+                    resolvedConfigPath = createInvocationRecord({ verb, durationMs: 0, exitCode: EXIT_CODES.success,
+                        resolvedConfigPath: resolve(decoded.input.configPath) }).resolvedConfigPath
+                } catch {
+                    decoded = usageOutcome('CLI_USAGE_INVALID', 'config path must be recordable without control characters', '--config')
+                }
+            }
+            if (!('handler' in decoded)) {
+                outcome = decoded
+            } else if (decoded.handler === 'logs' && decoded.input.follow && !runtime.signal) {
+                outcome = usageOutcome('CLI_USAGE_INVALID', '--follow requires a cancellation signal', '--follow')
+            } else {
+                try {
+                    outcome = await invokeHandler(decoded, handlers, operators, {
+                        interactive: parsed.values.interactive === true,
+                        json: parsed.values.json === true,
+                        ci: (runtime.env ?? process.env).CI,
+                    }, io)
+                } catch {
+                    outcome = usageOutcome(
+                        'CLI_INTERNAL_ERROR',
+                        `the "${definition.handler}" command failed unexpectedly`,
+                        definition.handler,
+                    )
+                }
+            }
+            if (!parsed.values.json) {
+                try {
+                    outcome = await executeOutcome(outcome)
+                } catch {
+                    outcome = usageOutcome(
+                        'CLI_INTERNAL_ERROR',
+                        `the "${definition.handler}:output" operation failed unexpectedly`,
+                        `${definition.handler}:output`,
+                    )
+                }
+            }
+        }
+    }
+
+    if (jsonRequested) {
+        return finish(outcome!.status, outcome!)
+    }
+    if (outcome!.artifact && !outcome!.destination) io.stdout.write(outcome!.artifact)
+    io.stdout.write(renderHumanDiagnostics([], { command: commandName, outcome: outcome! }))
+    io.stderr.write(renderHumanDiagnostics(outcome!.diagnostics, undefined, outcome!.fixContext))
+    return finish(outcome!.status)
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+    process.exitCode = await runCli(process.argv.slice(2))
+}

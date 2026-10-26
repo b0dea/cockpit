@@ -1,0 +1,431 @@
+import { execFile } from 'node:child_process'
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { runReset } from './application.js'
+import * as application from './application.js'
+import * as claims from './claims.js'
+import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
+import * as lifecycleComposition from './lifecycle-composition.js'
+import * as ports from './ports.js'
+import { consumeComparisonPostState, createDestructiveCommandAdapters, withBoundedComparisonLifecycle } from './destructive-composition.js'
+import { consumeRuntimeLifecycleProjection } from './runtime.js'
+
+const roots: string[] = []
+const run = promisify(execFile)
+
+afterEach(async () => {
+    vi.restoreAllMocks()
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+describe('destructive command composition', () => {
+    it('refuses an unavailable bounded comparison authority without invoking the runner', async () => {
+        const use = vi.fn()
+        await expect(withBoundedComparisonLifecycle({
+            configPath: '', env: {}, sessionId: 'comparison', timeoutMs: 5_000, dockerContext: 'default',
+        }, vi.fn() as never, use)).resolves.toMatchObject({ kind: 'refusal' })
+        expect(use).not.toHaveBeenCalled()
+    })
+
+    it('uses canonical sleep when the runner retains an uncertain legacy checkout', async () => {
+        const raw = {
+            configPath: '/tmp/comparison/cockpit.toml', env: { PATH: '/usr/bin:/bin' },
+            sessionId: 'comparison', timeoutMs: 5_000, dockerContext: 'default',
+        }
+        const context = Object.freeze({
+            configPath: raw.configPath, source: Object.freeze({ path: raw.configPath, byteLength: 1, sha256: 'a'.repeat(64) }),
+            namespace: Object.freeze({}), cockpitId: 'cockpit', checkoutId: 'checkout', stackId: 'stack', holderId: 'holder',
+            ports: Object.freeze({}), entrypointDerivatives: Object.freeze([]),
+        })
+        const lifecycle = Object.freeze({
+            load: vi.fn(async () => {
+                raw.env.PATH = '/mutated-after-capture'
+                return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })
+            }),
+            withAcquiredPorts: vi.fn(async (_context, use) => use(Object.freeze({
+                leaseResult: Object.freeze({ kind: 'complete', change: 'acquired', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }) }),
+                projection: Object.freeze({ entrypoints: Object.freeze([]) }),
+            }))),
+        })
+        const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters').mockReturnValue(lifecycle as never)
+        const release = vi.spyOn(ports, 'releasePortFamily')
+        const sleep = vi.spyOn(application, 'runSleep').mockResolvedValue(Object.freeze({
+            kind: 'complete', status: 0, diagnostics: Object.freeze([]),
+            result: Object.freeze({ stackId: 'stack', change: 'stopped' }),
+        }) as never)
+        const result = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => {
+            bounded.retainInspection()
+            return 'retained'
+        })
+        expect(result).toEqual({ kind: 'complete', result: 'retained' })
+        expect(sleep).toHaveBeenCalledWith({ configPath: raw.configPath }, lifecycle)
+        expect(release).not.toHaveBeenCalled()
+        expect(lifecycleFactory).toHaveBeenCalledTimes(2)
+        expect(lifecycleFactory.mock.calls.map(call => call[0].env.PATH)).toEqual(['/usr/bin:/bin', '/usr/bin:/bin'])
+
+        const callbackFailure = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => {
+            bounded.retainInspection()
+            throw new Error('synthetic comparison callback')
+        })
+        expect(callbackFailure).toEqual({
+            kind: 'refusal', reason: 'comparison callback failed: synthetic comparison callback',
+        })
+
+        sleep.mockResolvedValueOnce(Object.freeze({
+            kind: 'refusal', status: 2, diagnostics: Object.freeze([]), result: null,
+        }) as never)
+        const cleanupFailure = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => {
+            bounded.retainInspection()
+            return { reason: 'original comparison failure' }
+        })
+        expect(cleanupFailure).toEqual({
+            kind: 'refusal', reason: 'comparison lifecycle cleanup failed after original comparison failure',
+        })
+    })
+
+    it('refuses a co-holder introduced during execution or left behind after down', async () => {
+        const raw = {
+            configPath: '/tmp/comparison/cockpit.toml', env: { PATH: '/usr/bin:/bin' },
+            sessionId: 'comparison', timeoutMs: 5_000, dockerContext: 'default',
+        }
+        const context = Object.freeze({
+            configPath: raw.configPath, source: Object.freeze({ path: raw.configPath, byteLength: 1, sha256: 'a'.repeat(64) }),
+            namespace: Object.freeze({}), cockpitId: 'cockpit', checkoutId: 'checkout', stackId: 'stack', holderId: 'holder',
+            ports: Object.freeze({}), entrypointDerivatives: Object.freeze([]),
+        })
+        vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters').mockReturnValue(Object.freeze({
+            load: vi.fn(async () => Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })),
+            withAcquiredPorts: vi.fn(async (_context, use) => use(Object.freeze({
+                leaseResult: Object.freeze({ kind: 'complete', change: 'acquired', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }) }),
+                projection: Object.freeze({ entrypoints: Object.freeze([]) }),
+            }))),
+        }) as never)
+        vi.spyOn(ports, 'observeRetainedPortFamily').mockResolvedValue(Object.freeze({
+            kind: 'complete', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }),
+        }) as never)
+        const holder = Object.freeze({ holderId: 'holder', checkoutId: 'checkout' })
+        const other = Object.freeze({ holderId: 'other', checkoutId: 'other-checkout' })
+        const record = (holders: readonly Readonly<{ holderId: string; checkoutId: string }>[]) => Object.freeze({
+            holders, lease: Object.freeze({ ports: Object.freeze({ api: 43123 }), released: false }),
+        })
+        const inventory = vi.spyOn(claims, 'readActiveStackInventory')
+            .mockResolvedValue(Object.freeze({ kind: 'complete', value: Object.freeze([
+                Object.freeze({ stackId: 'stack', record: record([holder, other]) }),
+            ]) }) as never)
+        vi.spyOn(application, 'runUp').mockResolvedValue(Object.freeze({
+            kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: Object.freeze({ stackId: 'stack', change: 'started', entrypoints: Object.freeze([]) }),
+        }) as never)
+        const added = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => bounded.up())
+        expect(added).toMatchObject({ kind: 'refusal', reason: expect.stringContaining('callback failed') })
+
+        inventory.mockResolvedValue(Object.freeze({ kind: 'complete', value: Object.freeze([
+            Object.freeze({ stackId: 'stack', record: record([other]) }),
+        ]) }) as never)
+        vi.spyOn(application, 'runDown').mockResolvedValue(Object.freeze({
+            kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: Object.freeze({ stackId: 'stack', change: 'removed' }),
+        }) as never)
+        const residual = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => bounded.down())
+        expect(residual).toMatchObject({ kind: 'refusal', reason: 'comparison lifecycle cleanup failed' })
+    })
+    it('forwards the opaque controlled-runtime authority and selected profiles to the lifecycle owner', () => {
+        const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
+        const profiles = ['runtime_probe']
+        const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
+        createDestructiveCommandAdapters({
+            configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp' },
+            sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
+            activeProfiles: profiles, runtimeMeasurementProbeAuthority: authority,
+        }, vi.fn() as never)
+        profiles.push('later_profile')
+        expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
+            activeProfiles: ['runtime_probe'], runtimeMeasurementProbeAuthority: authority,
+        }), expect.any(Function))
+    })
+
+    it('rejects accessor-backed controlled-runtime authority without invoking it', async () => {
+        const getter = vi.fn(() => Object.freeze({ kind: 'runtime-measurement-probe-authority' as const }))
+        const execute = vi.fn()
+        const adapters = createDestructiveCommandAdapters({
+            configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp' },
+            sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
+            get runtimeMeasurementProbeAuthority() { return getter() },
+        }, execute as never)
+        await expect(adapters.load({ configPath: '/tmp/cockpit.toml' })).resolves.toMatchObject({ kind: 'refusal' })
+        expect(getter).not.toHaveBeenCalled()
+        expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('exposes only load, observe, and execute and cannot mint an operator reset session', async () => {
+        const adapters = createDestructiveCommandAdapters({
+            configPath: '/tmp/cockpit.toml',
+            env: { PATH: '/usr/bin:/bin', HOME: '/tmp' },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+            dockerContext: 'default',
+        }, vi.fn() as never)
+
+        expect(Object.keys(adapters).sort()).toEqual(['execute', 'load', 'observe'])
+        expect(adapters).not.toHaveProperty('beginOperatorReset')
+        expect(adapters).not.toHaveProperty('decide')
+        expect(JSON.stringify(adapters)).not.toContain('continuation')
+    })
+
+    it('refuses Docker daemon overrides that can diverge from the explicit context', async () => {
+        const execute = vi.fn<(_step: never) => Promise<ExecuteProbeOutcome>>()
+        const adapters = createDestructiveCommandAdapters({
+            configPath: '/tmp/cockpit.toml',
+            env: {
+                PATH: '/usr/bin:/bin',
+                HOME: '/tmp',
+                DOCKER_HOST: 'unix:///tmp/other.sock',
+            },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+            dockerContext: 'default',
+        }, execute as never)
+
+        await expect(adapters.load({ configPath: '/tmp/cockpit.toml' })).resolves.toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
+        })
+        expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('observes real checkout, state, runtime, ports, and bounded reclaim evidence through owner APIs', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-destructive-observe-')))
+        const stateHome = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-destructive-home-')))
+        roots.push(root, stateHome)
+        await run('git', ['init', '--quiet', root])
+        const configPath = join(root, 'cockpit.toml')
+        await writeFile(configPath, [
+            '[cockpit]',
+            'name = "synthetic-cockpit"',
+            'siblings_root = "siblings"',
+            '',
+            '[[sibling]]',
+            'slug = "api"',
+            'dir = "api"',
+            'mount = "always"',
+            'acquire = "none"',
+            'var = "API_DIR"',
+            'toolchain = "none"',
+            'purpose = "Synthetic API"',
+            '',
+            '[ports]',
+            'step = 10',
+            'count = 1',
+            'bases = { WEB_PORT = 61340 }',
+            '',
+            '[environment]',
+            'compose_files = ["compose.yml"]',
+            'resettable_volumes = []',
+            'generated_host_paths = []',
+            'install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]',
+            'runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-26", candidate = "passed", broken_control = "rejected", status = "supported" }]',
+            '',
+            '[environment.machine]',
+            'runtime_memory_mb = 1024',
+            'runtime_cpus = 1',
+            'free_disk_mb = 1024',
+            'cold_start_seconds = 30',
+            '',
+        ].join('\n'))
+        const siblingPath = join(root, 'siblings', 'api')
+        await writeFile(join(root, 'compose.yml'), [
+            'services:',
+            '  api:',
+            '    image: synthetic.invalid/api',
+            '    volumes:',
+            '      - type: bind',
+            `        source: ${JSON.stringify(siblingPath)}`,
+            '        target: /api',
+            '',
+        ].join('\n'))
+        const dockerPath = join(root, 'docker')
+        await writeFile(dockerPath, [
+            '#!/bin/sh',
+            'if [ "$1" = "--host" ]; then shift 2; fi',
+            'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
+            'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
+            'if [ "$1" = "info" ] && [ "$3" = "{{.OperatingSystem}}" ]; then printf "Docker Desktop\\n"; exit 0; fi',
+            'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
+            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " config "; then /bin/cat "$PWD/topology.json"; exit 0; fi',
+            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " up "; then /usr/bin/touch "$PWD/runtime-up"; exit 0; fi',
+            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " stop"; then /bin/rm -f "$PWD/runtime-up"; exit 0; fi',
+            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " ps --format json"; then if [ -f "$PWD/runtime-up" ]; then /bin/cat "$PWD/runtime.json"; fi; exit 0; fi',
+            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " ps --quiet"; then if [ -f "$PWD/runtime-up" ]; then printf "%s\\n" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; fi; exit 0; fi',
+            'if [ "$1" = "compose" ]; then exit 0; fi',
+            'if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then /bin/cat "$PWD/volume-discovery.jsonl"; exit 0; fi',
+            'if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then for argument in "$@"; do volume_name="$argument"; done; printf "{\\"name\\":\\"%s\\",\\"generation\\":\\"\\"}\\n" "$volume_name"; exit 0; fi',
+            'if [ "$1" = "container" ] && [ "$2" = "inspect" ]; then /bin/cat "$PWD/inspect.json"; exit 0; fi',
+            'if [ "$1" = "context" ]; then /bin/cat "$PWD/selection.json"; exit 0; fi',
+            'exit 0',
+            '',
+        ].join('\n'), { mode: 0o700 })
+        await chmod(dockerPath, 0o700)
+        await writeFile(join(root, 'selection.json'), '{"context":"default","endpoint":"unix:///tmp/synthetic.sock"}\n')
+        await writeFile(join(root, 'volume-discovery.jsonl'), Array.from({ length: 12 }, (_, index) => JSON.stringify({
+            id: `synthetic-volume-${index.toString().padStart(2, '0')}`,
+            name: `synthetic-volume-${index.toString().padStart(2, '0')}`,
+            labels: {}, referenced: false, bytes: '1B',
+        })).join('\n') + '\n')
+        await writeFile(join(root, 'runtime-up'), '')
+        const input = Object.freeze({
+            configPath,
+            env: Object.freeze({ PATH: `${root}:/usr/bin:/bin`, HOME: stateHome }),
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+            dockerContext: 'default',
+        })
+        const lifecycle = createLifecycleCommandAdapters({
+            configPath, env: input.env, sessionId: input.sessionId, timeoutMs: input.timeoutMs,
+        }, executeProbe)
+        const loaded = await lifecycle.load({ configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        await writeFile(join(root, 'topology.json'), JSON.stringify({ services: { api: {
+            labels: {
+                'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
+                'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+            },
+            volumes: [{ type: 'bind', source: siblingPath, target: '/api' }],
+        } } }))
+        await writeFile(join(root, 'runtime.json'), JSON.stringify({ ID: 'a'.repeat(12), Name: 'synthetic-api-1',
+            Project: 'synthetic-cockpit', Service: 'api', State: 'running', Health: '', ExitCode: 0,
+            Labels: `com.docker.compose.project=synthetic-cockpit,com.docker.compose.service=api,dev.b0dea.cockpit.config-sha256=${loaded.result.source.sha256},dev.b0dea.cockpit.stack-id=${loaded.result.stackId}`,
+        }))
+        await writeFile(join(root, 'inspect.json'), JSON.stringify({ ID: 'a'.repeat(64), State: 'running', Health: '', Labels: {
+            'com.docker.compose.project': 'synthetic-cockpit', 'com.docker.compose.service': 'api',
+            'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+            'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
+        } }))
+        const acquired = await lifecycle.withAcquiredPorts(loaded.result, async (value) => value)
+        expect(acquired).toBeDefined()
+
+        let activeInspections = 0
+        let maximumActiveInspections = 0
+        let inspectionCalls = 0
+        let rejectOneInspection = false
+        const trackedExecute = async (step: Parameters<typeof executeProbe>[0]) => {
+            if (!step.labels.resourceKind?.endsWith('-inspection')) return executeProbe(step)
+            inspectionCalls += 1
+            const inspectionCall = inspectionCalls
+            activeInspections += 1
+            maximumActiveInspections = Math.max(maximumActiveInspections, activeInspections)
+            try {
+                await new Promise(resolveDelay => setTimeout(resolveDelay, 10))
+                if (rejectOneInspection && inspectionCall === 1) throw new Error('synthetic inspection failure')
+                return await executeProbe(step)
+            } finally {
+                activeInspections -= 1
+            }
+        }
+        const adapters = createDestructiveCommandAdapters(input, trackedExecute)
+        const destructive = await adapters.load({ configPath })
+        expect(destructive).toMatchObject({
+            kind: 'complete',
+            result: {
+                stackId: loaded.result.stackId,
+                checkoutId: loaded.result.checkoutId,
+                instance: {
+                    launcher: { stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId },
+                    claimInventory: [{ stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId }],
+                },
+            },
+        })
+        if (destructive.kind !== 'complete') return
+        await expect(adapters.load({ configPath: join(root, 'other.toml') })).resolves.toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
+        })
+
+        const observation = await adapters.observe(destructive.result)
+        const runtime = observation && consumeRuntimeLifecycleProjection(observation.runtime)
+
+        expect(observation).toMatchObject({
+            instance: { launcher: { stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId } },
+            down: {
+                stackId: loaded.result.stackId,
+                coordinationAddress: loaded.result.namespace.paths.coordination(loaded.result.stackId),
+                declaredCacheIds: [],
+                dependencyCaches: [],
+                discovery: { resources: expect.arrayContaining([
+                    expect.objectContaining({ id: 'synthetic-volume-00', kind: 'volume' }),
+                    expect.objectContaining({ id: 'synthetic-volume-11', kind: 'volume' }),
+                ]) },
+            },
+            reset: {
+                stackId: loaded.result.stackId,
+                coordinationAddress: loaded.result.namespace.paths.coordination(loaded.result.stackId),
+                requesterHolderId: loaded.result.holderId,
+                resettableVolumes: [],
+                generatedHostPaths: [],
+            },
+        })
+        expect(runtime?.semantics.topology.services).toContainEqual(expect.objectContaining({
+            id: 'api', bindMountSources: [siblingPath],
+        }))
+        expect(inspectionCalls).toBe(12)
+        expect(maximumActiveInspections).toBeLessThanOrEqual(4)
+
+        rejectOneInspection = true
+        activeInspections = 0
+        maximumActiveInspections = 0
+        inspectionCalls = 0
+        await expect(adapters.observe(destructive.result)).resolves.toBeUndefined()
+        expect(inspectionCalls).toBe(12)
+        expect(activeInspections).toBe(0)
+        expect(maximumActiveInspections).toBeLessThanOrEqual(4)
+
+        const preview = await runReset({ configPath }, adapters)
+        expect(preview).toMatchObject({
+            kind: 'preview',
+            result: { stackId: loaded.result.stackId, targets: [], noop: true },
+        })
+        expect(JSON.stringify(preview)).not.toContain('continuation')
+        expect(JSON.stringify(preview)).not.toContain('authority')
+
+        if (!acquired || acquired.leaseResult.kind !== 'complete') throw new Error('port acquisition unavailable')
+        const released = await ports.compensateAcquiredPortHolder({
+            namespace: loaded.result.namespace, leaseResult: acquired.leaseResult,
+            now: new Date().toISOString(),
+        })
+        expect(released.kind).toBe('complete')
+        await rm(join(root, 'runtime-up'), { force: true })
+        const bounded = await withBoundedComparisonLifecycle(input, executeProbe, async lifecycleOwner => {
+            const git = await lifecycleOwner.resolveExecutable('git')
+            if (git.state !== 'available') throw new Error(git.reason)
+            expect(await lifecycleOwner.observeReleasedGit(git.value)).toBeUndefined()
+            const up = await lifecycleOwner.up()
+            if (up.kind !== 'complete') throw new Error(JSON.stringify(up))
+            const reset = await lifecycleOwner.beginReset()
+            if (!('preview' in reset)) throw new Error(JSON.stringify(reset))
+            const resetOutcome = await reset.decide('approve')
+            if (resetOutcome.kind !== 'complete') throw new Error(JSON.stringify(resetOutcome))
+            const resetProjection = await lifecycleOwner.observePostState('cockpit', 'reset')
+            expect(consumeComparisonPostState(resetProjection, {
+                stackId: lifecycleOwner.stack, checkoutId: lifecycleOwner.checkout.id,
+                implementation: 'cockpit', command: 'reset',
+            })).toMatch(/^[a-f0-9]{64}$/)
+            const down = await lifecycleOwner.down()
+            if (down.kind !== 'complete') throw new Error(JSON.stringify(down))
+            expect(await lifecycleOwner.observeReleasedGit(git.value)).toMatchObject({
+                step: { id: 'git-health' }, outcome: { kind: 'complete' },
+            })
+            const downProjection = await lifecycleOwner.observePostState('cockpit', 'down')
+            expect(consumeComparisonPostState(downProjection, {
+                stackId: lifecycleOwner.stack, checkoutId: lifecycleOwner.checkout.id,
+                implementation: 'cockpit', command: 'down',
+            })).toMatch(/^[a-f0-9]{64}$/)
+            return 'complete'
+        })
+        expect(bounded).toEqual({ kind: 'complete', result: 'complete' })
+
+        const afterRelease = createDestructiveCommandAdapters(input, executeProbe)
+        await expect(afterRelease.load({ configPath })).resolves.toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
+        })
+    })
+})

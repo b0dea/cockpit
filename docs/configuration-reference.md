@@ -1,0 +1,10277 @@
+# Configuration reference
+
+<!-- cockpit:verified version=0.0.0 -->
+
+The runtime schema and defaults are the configuration authorities.
+
+## Defaults
+
+```json
+{
+  "cockpit": {
+    "scope": "estate",
+    "siblings_root": "..",
+    "guide": "AGENTS.md",
+    "guide_cap": 200
+  },
+  "sibling": {
+    "toolchain": "none",
+    "guides": [
+      "CLAUDE.md",
+      "AGENTS.md"
+    ]
+  },
+  "ports": {
+    "step": 100,
+    "count": 27
+  },
+  "guards": {
+    "hosted_db_hosts": [],
+    "vendor_endpoint_hosts": [],
+    "protected_branches": [
+      "main",
+      "master"
+    ],
+    "ask_is_deny_on": [
+      "codex"
+    ]
+  },
+  "mcp": {
+    "approved": []
+  },
+  "workorders": {
+    "attempt_cap": 2,
+    "wip_cap": 3,
+    "programme_wip_cap": 1
+  },
+  "environment": {
+    "resettable_volumes": [],
+    "generated_host_paths": [],
+    "compose_files": [],
+    "entrypoint_derivatives": [],
+    "install_policies": [],
+    "runtime_measurements": []
+  },
+  "surfaces": {
+    "overlays": [],
+    "harnesses": [],
+    "bundles": []
+  }
+}
+```
+
+## Governed standing cost
+
+Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `64ca4dc9589f6c81802f2c09a81422876c233c1f5820ee77973df32fe153be76`.
+
+| Target | Metric | Cap | Displacement |
+| --- | --- | --- | --- |
+| claudecode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| codexcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| opencode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+
+| Entrypoint | Metric | Cap | Displacement |
+| --- | --- | --- | --- |
+| `packages/cockpit/surfaces/skills/bootstrap.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+
+Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `76ce0d6fea1531dfeda9dfff4c5a49b48b46e60b1f2174a77b5740898179a017`.
+
+<!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` derives from the registry schema (default 200 lines); measured guide costs are instance-specific and come from the sibling projection owner.
+
+
+## JSON Schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "type": "object",
+  "properties": {
+    "cockpit": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "scope": {
+          "default": "estate",
+          "type": "string",
+          "enum": [
+            "estate",
+            "stack"
+          ]
+        },
+        "siblings_root": {
+          "default": "..",
+          "type": "string"
+        },
+        "guide": {
+          "default": "AGENTS.md",
+          "type": "string"
+        },
+        "guide_cap": {
+          "default": 200,
+          "type": "integer",
+          "minimum": 0,
+          "exclusiveMinimum": true,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "sibling": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "dir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remote": {
+            "type": "string",
+            "minLength": 1
+          },
+          "branch": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mount": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "always",
+                  "host",
+                  "none"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^profile:[a-z0-9-]+$"
+              }
+            ]
+          },
+          "acquire": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "manual",
+              "none"
+            ]
+          },
+          "var": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "toolchain": {
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "node",
+              "python",
+              "ruby",
+              "go",
+              "rust",
+              "dotnet",
+              "none"
+            ]
+          },
+          "gate": {
+            "type": "string",
+            "enum": [
+              "operator"
+            ]
+          },
+          "host_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "guides": {
+            "default": [
+              "CLAUDE.md",
+              "AGENTS.md"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "environment_files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "template": {
+                  "type": "string",
+                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                },
+                "instance": {
+                  "type": "string",
+                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                }
+              },
+              "required": [
+                "template",
+                "instance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "derives": {
+            "type": "object",
+            "properties": {
+              "generated": {
+                "type": "object",
+                "properties": {
+                  "service": {
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "service",
+                          "one-shot"
+                        ]
+                      },
+                      "one_shot_failure": {
+                        "type": "string",
+                        "enum": [
+                          "park"
+                        ]
+                      },
+                      "resources": {
+                        "type": "object",
+                        "properties": {
+                          "memory_mb": {
+                            "type": "integer",
+                            "minimum": 6,
+                            "maximum": 8589934591
+                          },
+                          "cpus": {
+                            "type": "number",
+                            "minimum": 0.01,
+                            "maximum": 92233
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "memory_mb",
+                          "cpus",
+                          "provenance"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "command": {
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192,
+                          "pattern": "^[^\\x00]+$"
+                        }
+                      },
+                      "image": {
+                        "type": "object",
+                        "properties": {
+                          "reference": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^[^\\s@]+@sha256:[a-f0-9]{64}$"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "architectures": {
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "amd64",
+                                "arm64"
+                              ]
+                            }
+                          },
+                          "manifest_probe": {
+                            "type": "object",
+                            "properties": {
+                              "location": {
+                                "type": "string",
+                                "enum": [
+                                  "host",
+                                  "in-stack"
+                                ]
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$"
+                              },
+                              "cwd": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "."
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  }
+                                ]
+                              },
+                              "argv": {
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192,
+                                  "pattern": "^[^\\x00]+$"
+                                }
+                              },
+                              "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 3600
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  },
+                                  "observed_on": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared",
+                                      "measured",
+                                      "inferred"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "\\S"
+                                  },
+                                  "confirmed": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "observed_on",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "additionalProperties": false,
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "declared",
+                                          "measured"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "inferred"
+                                        ]
+                                      },
+                                      "confirmed": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "confirmed"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "location",
+                              "cwd",
+                              "argv",
+                              "timeout_seconds",
+                              "provenance"
+                            ],
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "host"
+                                    ]
+                                  }
+                                },
+                                "not": {
+                                  "required": [
+                                    "service"
+                                  ]
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "in-stack"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            ]
+                          },
+                          "registry_auth_probe": {
+                            "type": "object",
+                            "properties": {
+                              "location": {
+                                "type": "string",
+                                "enum": [
+                                  "host",
+                                  "in-stack"
+                                ]
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$"
+                              },
+                              "cwd": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "."
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  }
+                                ]
+                              },
+                              "argv": {
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192,
+                                  "pattern": "^[^\\x00]+$"
+                                }
+                              },
+                              "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 3600
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  },
+                                  "observed_on": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared",
+                                      "measured",
+                                      "inferred"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "\\S"
+                                  },
+                                  "confirmed": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "observed_on",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "additionalProperties": false,
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "declared",
+                                          "measured"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "inferred"
+                                        ]
+                                      },
+                                      "confirmed": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "confirmed"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "location",
+                              "cwd",
+                              "argv",
+                              "timeout_seconds",
+                              "provenance"
+                            ],
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "host"
+                                    ]
+                                  }
+                                },
+                                "not": {
+                                  "required": [
+                                    "service"
+                                  ]
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "in-stack"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            ]
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "reference",
+                          "reason",
+                          "architectures",
+                          "manifest_probe",
+                          "provenance"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "ports": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$"
+                            },
+                            "host_variable": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Z][A-Z0-9_]*$"
+                            },
+                            "internal": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 65535
+                            },
+                            "host_ip": {
+                              "type": "string",
+                              "enum": [
+                                "127.0.0.1",
+                                "::1",
+                                "0.0.0.0",
+                                "::"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "host_variable",
+                            "internal"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "host_aliases": {
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "hostname": {
+                              "type": "string",
+                              "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z][a-z0-9-]*$"
+                            },
+                            "address": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "ipv4",
+                                  "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+                                },
+                                {
+                                  "type": "string",
+                                  "format": "ipv6",
+                                  "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "hostname",
+                            "address"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "dependencies": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "service": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$"
+                            },
+                            "condition": {
+                              "type": "string",
+                              "enum": [
+                                "service_started",
+                                "service_healthy",
+                                "service_completed_successfully"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096,
+                              "pattern": "\\S"
+                            }
+                          },
+                          "required": [
+                            "service",
+                            "condition",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "health": {
+                        "type": "object",
+                        "properties": {
+                          "property": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "probe": {
+                            "type": "object",
+                            "properties": {
+                              "location": {
+                                "type": "string",
+                                "enum": [
+                                  "host",
+                                  "in-stack"
+                                ]
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$"
+                              },
+                              "cwd": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "."
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  }
+                                ]
+                              },
+                              "argv": {
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192,
+                                  "pattern": "^[^\\x00]+$"
+                                }
+                              },
+                              "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 3600
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  },
+                                  "observed_on": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared",
+                                      "measured",
+                                      "inferred"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "\\S"
+                                  },
+                                  "confirmed": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "observed_on",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "additionalProperties": false,
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "declared",
+                                          "measured"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "inferred"
+                                        ]
+                                      },
+                                      "confirmed": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "confirmed"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "location",
+                              "cwd",
+                              "argv",
+                              "timeout_seconds",
+                              "provenance"
+                            ],
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "host"
+                                    ]
+                                  }
+                                },
+                                "not": {
+                                  "required": [
+                                    "service"
+                                  ]
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "in-stack"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            ]
+                          },
+                          "tool_probe": {
+                            "type": "object",
+                            "properties": {
+                              "location": {
+                                "type": "string",
+                                "enum": [
+                                  "host",
+                                  "in-stack"
+                                ]
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$"
+                              },
+                              "cwd": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "."
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  }
+                                ]
+                              },
+                              "argv": {
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192,
+                                  "pattern": "^[^\\x00]+$"
+                                }
+                              },
+                              "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 3600
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  },
+                                  "observed_on": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared",
+                                      "measured",
+                                      "inferred"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "\\S"
+                                  },
+                                  "confirmed": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "observed_on",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "additionalProperties": false,
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "declared",
+                                          "measured"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "inferred"
+                                        ]
+                                      },
+                                      "confirmed": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "confirmed"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "location",
+                              "cwd",
+                              "argv",
+                              "timeout_seconds",
+                              "provenance"
+                            ],
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "host"
+                                    ]
+                                  }
+                                },
+                                "not": {
+                                  "required": [
+                                    "service"
+                                  ]
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "in-stack"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            ]
+                          },
+                          "interval_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "retries": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "start_period_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "measurement": {
+                            "type": "object",
+                            "properties": {
+                              "duration_seconds": {
+                                "type": "number",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 3600
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  },
+                                  "observed_on": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared",
+                                      "measured",
+                                      "inferred"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "\\S"
+                                  },
+                                  "confirmed": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "observed_on",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "additionalProperties": false,
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "declared",
+                                          "measured"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "inferred"
+                                        ]
+                                      },
+                                      "confirmed": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "confirmed"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "duration_seconds",
+                              "provenance"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "property",
+                          "probe",
+                          "tool_probe",
+                          "interval_seconds",
+                          "timeout_seconds",
+                          "retries",
+                          "start_period_seconds",
+                          "measurement"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "toolchain_pins": {
+                        "maxItems": 32,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            "pinned": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "observed": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                "observed_on": {
+                                  "type": "string",
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "declared",
+                                    "measured",
+                                    "inferred"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "pattern": "\\S"
+                                },
+                                "confirmed": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "observed_on",
+                                "kind",
+                                "reason"
+                              ],
+                              "additionalProperties": false,
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "declared",
+                                        "measured"
+                                      ]
+                                    }
+                                  }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "inferred"
+                                      ]
+                                    },
+                                    "confirmed": {
+                                      "enum": [
+                                        true
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "confirmed"
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "pinned",
+                            "observed",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "command",
+                      "image",
+                      "ports",
+                      "dependencies",
+                      "health",
+                      "toolchain_pins",
+                      "provenance"
+                    ],
+                    "additionalProperties": false,
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "role": {
+                            "enum": [
+                              "one-shot"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "one_shot_failure"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "role": {
+                            "enum": [
+                              "service"
+                            ]
+                          }
+                        },
+                        "not": {
+                          "required": [
+                            "one_shot_failure"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "checkout_mount": {
+                    "type": "object",
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
+                      },
+                      "source_type": {
+                        "type": "string",
+                        "enum": [
+                          "directory"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "target",
+                      "source_type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "additional_mounts": {
+                    "default": [],
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "bind",
+                            "volume",
+                            "environment-file"
+                          ]
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "."
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            }
+                          ]
+                        },
+                        "target": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
+                        },
+                        "source_type": {
+                          "type": "string",
+                          "enum": [
+                            "file",
+                            "directory"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "source",
+                        "target"
+                      ],
+                      "additionalProperties": false,
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "volume"
+                              ]
+                            },
+                            "source": {
+                              "not": {
+                                "enum": [
+                                  "."
+                                ]
+                              }
+                            }
+                          },
+                          "not": {
+                            "required": [
+                              "source_type"
+                            ]
+                          }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "bind"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source_type"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "environment-file"
+                              ]
+                            },
+                            "source_type": {
+                              "enum": [
+                                "file"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source_type"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "port_defaults": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    }
+                  },
+                  "entrypoints": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "entrypoint",
+                            "origin",
+                            "callback_url",
+                            "advertised_listener",
+                            "cors_origin",
+                            "public_base_url"
+                          ]
+                        },
+                        "port": {
+                          "type": "string",
+                          "pattern": "^[A-Z][A-Z0-9_]*$"
+                        },
+                        "path": {
+                          "type": "string",
+                          "pattern": "^\\/(?!\\/)(?!\\.{1,2}(?:\\/|$))(?!.*\\/\\.{1,2}(?:\\/|$))(?!.*[%\\\\?#\\x00-\\x20\\x7f]).*$"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "kind",
+                        "port",
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "volumes": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "purpose": {
+                          "type": "string",
+                          "enum": [
+                            "dependencies",
+                            "product-data"
+                          ]
+                        },
+                        "install_policy": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+                        },
+                        "target": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
+                        },
+                        "provenance": {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            "observed_on": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "declared",
+                                "measured",
+                                "inferred"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096,
+                              "pattern": "\\S"
+                            },
+                            "confirmed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "observed_on",
+                            "kind",
+                            "reason"
+                          ],
+                          "additionalProperties": false,
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "declared",
+                                    "measured"
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "inferred"
+                                  ]
+                                },
+                                "confirmed": {
+                                  "enum": [
+                                    true
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "confirmed"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "purpose",
+                        "target",
+                        "provenance"
+                      ],
+                      "additionalProperties": false,
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "purpose": {
+                              "enum": [
+                                "dependencies"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "install_policy"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "purpose": {
+                              "enum": [
+                                "product-data"
+                              ]
+                            }
+                          },
+                          "not": {
+                            "required": [
+                              "install_policy"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "install_policies": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "toolchain": {
+                          "type": "string",
+                          "enum": [
+                            "node",
+                            "python",
+                            "ruby",
+                            "go",
+                            "rust",
+                            "dotnet"
+                          ]
+                        },
+                        "volume": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+                        },
+                        "lockfile": {
+                          "type": "string",
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        "install": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "load_probe": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "build": {
+                          "minItems": 1,
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                          }
+                        },
+                        "test": {
+                          "minItems": 1,
+                          "maxItems": 32,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                          }
+                        }
+                      },
+                      "required": [
+                        "toolchain",
+                        "volume",
+                        "lockfile",
+                        "install",
+                        "load_probe"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "decisions": {
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "subject": {
+                          "type": "string",
+                          "enum": [
+                            "service",
+                            "volume",
+                            "data-default",
+                            "data-mode",
+                            "restore",
+                            "mount",
+                            "port",
+                            "vendor"
+                          ]
+                        },
+                        "subject_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        },
+                        "decided_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "decision": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        },
+                        "rejected": {
+                          "minItems": 1,
+                          "maxItems": 64,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          }
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        },
+                        "reviewer": {
+                          "type": "string",
+                          "enum": [
+                            "consumer-maintainer"
+                          ]
+                        },
+                        "provenance": {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            "observed_on": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "declared",
+                                "measured",
+                                "inferred"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096,
+                              "pattern": "\\S"
+                            },
+                            "confirmed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "observed_on",
+                            "kind",
+                            "reason"
+                          ],
+                          "additionalProperties": false,
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "declared",
+                                    "measured"
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "inferred"
+                                  ]
+                                },
+                                "confirmed": {
+                                  "enum": [
+                                    true
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "confirmed"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "subject",
+                        "subject_id",
+                        "decided_on",
+                        "decision",
+                        "rejected",
+                        "reason",
+                        "reviewer",
+                        "provenance"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "provenance": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                      },
+                      "observed_on": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "declared",
+                          "measured",
+                          "inferred"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "confirmed": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "observed_on",
+                      "kind",
+                      "reason"
+                    ],
+                    "additionalProperties": false,
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "declared",
+                              "measured"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "inferred"
+                            ]
+                          },
+                          "confirmed": {
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "confirmed"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "service",
+                  "checkout_mount",
+                  "port_defaults",
+                  "entrypoints",
+                  "decisions",
+                  "provenance"
+                ],
+                "additionalProperties": false
+              },
+              "mcp_sources": {
+                "default": [],
+                "maxItems": 256,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                    },
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "mcp-json"
+                      ]
+                    },
+                    "provenance": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        "observed_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "declared",
+                            "measured",
+                            "inferred"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        },
+                        "confirmed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "observed_on",
+                        "kind",
+                        "reason"
+                      ],
+                      "additionalProperties": false,
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "declared",
+                                "measured"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "inferred"
+                              ]
+                            },
+                            "confirmed": {
+                              "enum": [
+                                true
+                              ]
+                            }
+                          },
+                          "required": [
+                            "confirmed"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "format",
+                    "provenance"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "generated"
+                ]
+              },
+              {
+                "required": [
+                  "mcp_sources"
+                ],
+                "properties": {
+                  "mcp_sources": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "slug",
+          "dir",
+          "mount",
+          "acquire",
+          "var",
+          "purpose"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "acquire": {
+                    "enum": [
+                      "none"
+                    ]
+                  }
+                },
+                "not": {
+                  "required": [
+                    "remote"
+                  ]
+                }
+              },
+              {
+                "properties": {
+                  "acquire": {
+                    "enum": [
+                      "auto",
+                      "manual"
+                    ]
+                  }
+                },
+                "required": [
+                  "remote"
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "mount": {
+                    "enum": [
+                      "host"
+                    ]
+                  }
+                },
+                "required": [
+                  "host_reason"
+                ]
+              },
+              {
+                "properties": {
+                  "mount": {
+                    "not": {
+                      "enum": [
+                        "host"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "mount",
+                "derives"
+              ],
+              "properties": {
+                "mount": {
+                  "enum": [
+                    "none",
+                    "host"
+                  ]
+                },
+                "derives": {
+                  "required": [
+                    "generated"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "gate": {
+                    "enum": [
+                      "operator"
+                    ]
+                  }
+                },
+                "required": [
+                  "gate"
+                ]
+              },
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "mount": {
+                          "enum": [
+                            "host"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "purpose": {
+                          "pattern": "\\b(?:[lL][iI][vV][eE]|[pP][rR][oO][dD][uU][cC][tT][iI][oO][nN]|[hH][aA][rR][dD][wW][aA][rR][eE]|[sS][iI][mM][uU][lL][aA][tT][oO][rR])\\b"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ports": {
+      "type": "object",
+      "properties": {
+        "step": {
+          "default": 100,
+          "type": "integer",
+          "minimum": 0,
+          "exclusiveMinimum": true,
+          "maximum": 9007199254740991
+        },
+        "count": {
+          "default": 27,
+          "type": "integer",
+          "minimum": 0,
+          "exclusiveMinimum": true,
+          "maximum": 9007199254740991
+        },
+        "bases": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
+      },
+      "required": [
+        "bases"
+      ],
+      "additionalProperties": false
+    },
+    "guards": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "hosted_db_hosts": {
+          "default": [],
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:\\*\\.)?(?=[a-z0-9.-]{1,253}(?![\\s\\S]))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?![\\s\\S])"
+          },
+          "description": "Declared guard hosts; uniqueness after removing one leading wildcard is enforced at runtime."
+        },
+        "vendor_endpoint_hosts": {
+          "default": [],
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:\\*\\.)?(?=[a-z0-9.-]{1,253}(?![\\s\\S]))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?![\\s\\S])"
+          },
+          "description": "Declared guard hosts; uniqueness after removing one leading wildcard is enforced at runtime."
+        },
+        "protected_branches": {
+          "default": [
+            "main",
+            "master"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ask_is_deny_on": {
+          "default": [
+            "codex"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "approved": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "workorders": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "attempt_cap": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "wip_cap": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "programme_wip_cap": {
+          "default": 1,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "default": "chromium",
+          "type": "string",
+          "enum": [
+            "chromium",
+            "firefox",
+            "webkit"
+          ]
+        },
+        "network_exposure": {
+          "default": "<loopback>",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[a-z0-9.*:<>\\[\\],-]+$"
+        },
+        "network_exposure_reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "harnesses": {
+          "minItems": 1,
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "enum": [
+                  "claudecode",
+                  "codexcli",
+                  "opencode"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^\\d+\\.\\d+\\.\\d+$"
+              }
+            },
+            "required": [
+              "target",
+              "version"
+            ],
+            "additionalProperties": false
+          },
+          "uniqueItems": true
+        },
+        "images": {
+          "type": "object",
+          "properties": {
+            "runner": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$"
+                },
+                "driver_version": {
+                  "type": "string",
+                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                },
+                "architectures": {
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "amd64",
+                      "arm64"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "reference",
+                "driver_version"
+              ],
+              "additionalProperties": false
+            },
+            "mcp": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$"
+                },
+                "driver_version": {
+                  "type": "string",
+                  "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                }
+              },
+              "required": [
+                "reference",
+                "driver_version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "runner",
+            "mcp"
+          ],
+          "additionalProperties": false
+        },
+        "runner_health_measurement": {
+          "type": "object",
+          "properties": {
+            "duration_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 3600
+            },
+            "provenance": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "maxLength": 4096,
+                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                },
+                "observed_on": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "declared",
+                    "measured",
+                    "inferred"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "\\S"
+                },
+                "confirmed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "source",
+                "observed_on",
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "duration_seconds",
+            "provenance"
+          ],
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "memory_mb": {
+              "type": "integer",
+              "minimum": 6,
+              "maximum": 8589934591
+            },
+            "cpus": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 92233
+            },
+            "provenance": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "maxLength": 4096,
+                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                },
+                "observed_on": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "declared",
+                    "measured",
+                    "inferred"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "\\S"
+                },
+                "confirmed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "source",
+                "observed_on",
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "declared",
+                        "measured"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "inferred"
+                      ]
+                    },
+                    "confirmed": {
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "confirmed"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "memory_mb",
+            "cpus",
+            "provenance"
+          ],
+          "additionalProperties": false
+        },
+        "project": {
+          "type": "object",
+          "properties": {
+            "manifest": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "manifest_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "lockfile": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "driver_version": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+$"
+            }
+          },
+          "required": [
+            "lockfile",
+            "sha256",
+            "driver_version"
+          ],
+          "additionalProperties": false
+        },
+        "endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "max_clients": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "proxy": {
+          "type": "object",
+          "properties": {
+            "host_variable": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Z][A-Z0-9_]*$"
+            },
+            "server_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "proxy_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "allowed_hosts": {
+              "minItems": 1,
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 260
+              },
+              "uniqueItems": true
+            },
+            "bind": {
+              "default": "127.0.0.1",
+              "type": "string",
+              "enum": [
+                "127.0.0.1",
+                "::1"
+              ]
+            }
+          },
+          "required": [
+            "server_port",
+            "proxy_port",
+            "allowed_hosts"
+          ],
+          "additionalProperties": false
+        },
+        "resolver": {
+          "default": [],
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hostname": {
+                "type": "string",
+                "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z][a-z0-9-]*$"
+              },
+              "address": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "ipv4",
+                    "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+                  },
+                  {
+                    "type": "string",
+                    "format": "ipv6",
+                    "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "hostname",
+              "address"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "authentication": {
+          "type": "object",
+          "properties": {
+            "policy": {
+              "type": "string",
+              "enum": [
+                "none",
+                "serialized",
+                "per-worker"
+              ]
+            },
+            "states": {
+              "default": [],
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "worker": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                  },
+                  "path": {
+                    "type": "string",
+                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "seeded"
+                    ]
+                  }
+                },
+                "required": [
+                  "worker",
+                  "path",
+                  "source"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "policy"
+          ],
+          "additionalProperties": false
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "empty",
+                "seeded",
+                "restored"
+              ]
+            },
+            "isolated": {
+              "type": "boolean"
+            },
+            "reaches_production": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "mode",
+            "isolated",
+            "reaches_production"
+          ],
+          "additionalProperties": false
+        },
+        "request_preapproval": {
+          "default": false,
+          "type": "boolean"
+        },
+        "headed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "artifacts": {
+          "type": "object",
+          "properties": {
+            "runner": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "mcp": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "cli": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "auth": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "debugger": {
+              "type": "string",
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            }
+          },
+          "required": [
+            "runner",
+            "mcp",
+            "cli",
+            "auth",
+            "debugger"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "harnesses",
+        "images",
+        "project",
+        "max_clients",
+        "proxy",
+        "authentication",
+        "data",
+        "artifacts"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "resources"
+                ]
+              }
+            },
+            {
+              "required": [
+                "endpoint"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "properties": {
+                "request_preapproval": {
+                  "enum": [
+                    false
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "data": {
+                  "required": [
+                    "mode",
+                    "isolated",
+                    "reaches_production"
+                  ],
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "empty",
+                        "seeded"
+                      ]
+                    },
+                    "isolated": {
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "reaches_production": {
+                      "enum": [
+                        false
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "testing": {
+      "type": "object",
+      "properties": {
+        "stages": {
+          "minItems": 1,
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "command": {
+                "minItems": 1,
+                "maxItems": 128,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              },
+              "requires_stack": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "command",
+              "requires_stack"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "gates": {
+          "minItems": 1,
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "targeted",
+                  "full"
+                ]
+              },
+              "stages": {
+                "minItems": 1,
+                "maxItems": 128,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                }
+              },
+              "changes": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "id",
+              "tier",
+              "stages",
+              "changes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "native_hooks": {
+          "type": "object",
+          "properties": {
+            "install": {
+              "default": "inspect",
+              "type": "string",
+              "enum": [
+                "inspect",
+                "explicit-native"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "native_hook_policy": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "stages",
+        "gates",
+        "native_hooks"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "native_hooks": {
+              "properties": {
+                "install": {
+                  "enum": [
+                    "inspect"
+                  ]
+                }
+              }
+            }
+          },
+          "not": {
+            "required": [
+              "native_hook_policy"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "native_hooks": {
+              "properties": {
+                "install": {
+                  "enum": [
+                    "explicit-native"
+                  ]
+                }
+              },
+              "required": [
+                "install"
+              ]
+            }
+          },
+          "required": [
+            "native_hook_policy"
+          ]
+        }
+      ]
+    },
+    "environment": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "addressing": {
+          "type": "string",
+          "enum": [
+            "hostname",
+            "port"
+          ]
+        },
+        "authentication": {
+          "type": "string",
+          "enum": [
+            "real",
+            "bypassed"
+          ]
+        },
+        "posture_requirements": {
+          "minItems": 1,
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "requirement": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9-]*$"
+              },
+              "addressing": {
+                "type": "string",
+                "enum": [
+                  "hostname",
+                  "port"
+                ]
+              },
+              "authentication": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "bypassed"
+                ]
+              }
+            },
+            "required": [
+              "requirement"
+            ],
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "addressing"
+                ]
+              },
+              {
+                "required": [
+                  "authentication"
+                ]
+              }
+            ]
+          }
+        },
+        "machine": {
+          "type": "object",
+          "properties": {
+            "runtime_memory_mb": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 9007199254740991
+            },
+            "runtime_cpus": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMinimum": true
+            },
+            "free_disk_mb": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 9007199254740991
+            },
+            "cold_start_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "exclusiveMinimum": true,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "runtime_memory_mb",
+            "runtime_cpus",
+            "free_disk_mb",
+            "cold_start_seconds"
+          ],
+          "additionalProperties": false
+        },
+        "resettable_volumes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+          },
+          "uniqueItems": true
+        },
+        "generated_host_paths": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+          },
+          "uniqueItems": true
+        },
+        "compose_files": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "allOf": [
+              {
+                "type": "string",
+                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+              },
+              {
+                "type": "string",
+                "pattern": "^[^:]+$"
+              }
+            ]
+          },
+          "uniqueItems": true
+        },
+        "entrypoint_derivatives": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "entrypoint",
+                  "origin",
+                  "callback_url",
+                  "advertised_listener",
+                  "cors_origin",
+                  "public_base_url"
+                ]
+              },
+              "port": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)(?!\\.{1,2}(?:\\/|$))(?!.*\\/\\.{1,2}(?:\\/|$))(?!.*[%\\\\?#\\x00-\\x20\\x7f]).*$"
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "port",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "install_policies": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "toolchain": {
+                "type": "string",
+                "enum": [
+                  "node",
+                  "python",
+                  "ruby",
+                  "go",
+                  "rust",
+                  "dotnet"
+                ]
+              },
+              "volume": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+              },
+              "lockfile": {
+                "type": "string",
+                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+              },
+              "install": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "load_probe": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "build": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                }
+              },
+              "test": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                }
+              }
+            },
+            "required": [
+              "toolchain",
+              "volume",
+              "lockfile",
+              "install",
+              "load_probe"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "runtime_measurements": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "runtime": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "compose_floor": {
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  },
+                  "measured_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "candidate": {
+                    "type": "string",
+                    "enum": [
+                      "passed"
+                    ]
+                  },
+                  "broken_control": {
+                    "type": "string",
+                    "enum": [
+                      "rejected"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "supported"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime",
+                  "compose_floor",
+                  "measured_on",
+                  "candidate",
+                  "broken_control",
+                  "status"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "runtime": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "compose_floor": {
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  },
+                  "measured_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "candidate": {
+                    "type": "string",
+                    "enum": [
+                      "failed"
+                    ]
+                  },
+                  "broken_control": {
+                    "type": "string",
+                    "enum": [
+                      "rejected",
+                      "accepted"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unavailable"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime",
+                  "compose_floor",
+                  "measured_on",
+                  "candidate",
+                  "broken_control",
+                  "status"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "runtime": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "compose_floor": {
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  },
+                  "measured_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "candidate": {
+                    "type": "string",
+                    "enum": [
+                      "passed"
+                    ]
+                  },
+                  "broken_control": {
+                    "type": "string",
+                    "enum": [
+                      "accepted"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unavailable"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime",
+                  "compose_floor",
+                  "measured_on",
+                  "candidate",
+                  "broken_control",
+                  "status"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "runtime": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "recorded_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unmeasured"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime",
+                  "recorded_on",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "generated": {
+          "type": "object",
+          "properties": {
+            "compose_file": {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            },
+            "services": {
+              "minItems": 1,
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "sibling": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "service",
+                      "one-shot"
+                    ]
+                  },
+                  "one_shot_failure": {
+                    "type": "string",
+                    "enum": [
+                      "park"
+                    ]
+                  },
+                  "profiles": {
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    }
+                  },
+                  "resources": {
+                    "type": "object",
+                    "properties": {
+                      "memory_mb": {
+                        "type": "integer",
+                        "minimum": 6,
+                        "maximum": 8589934591
+                      },
+                      "cpus": {
+                        "type": "number",
+                        "minimum": 0.01,
+                        "maximum": 92233
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "memory_mb",
+                      "cpus",
+                      "provenance"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "command": {
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192,
+                      "pattern": "^[^\\x00]+$"
+                    }
+                  },
+                  "image": {
+                    "type": "object",
+                    "properties": {
+                      "reference": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^[^\\s@]+@sha256:[a-f0-9]{64}$"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "architectures": {
+                        "minItems": 1,
+                        "maxItems": 2,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "amd64",
+                            "arm64"
+                          ]
+                        }
+                      },
+                      "manifest_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "registry_auth_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "reference",
+                      "reason",
+                      "architectures",
+                      "manifest_probe",
+                      "provenance"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "ports": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "host_variable": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[A-Z][A-Z0-9_]*$"
+                        },
+                        "internal": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 65535
+                        },
+                        "host_ip": {
+                          "type": "string",
+                          "enum": [
+                            "127.0.0.1",
+                            "::1",
+                            "0.0.0.0",
+                            "::"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "host_variable",
+                        "internal"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "host_aliases": {
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "hostname": {
+                          "type": "string",
+                          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z][a-z0-9-]*$"
+                        },
+                        "address": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "ipv4",
+                              "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+                            },
+                            {
+                              "type": "string",
+                              "format": "ipv6",
+                              "pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "hostname",
+                        "address"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "mounts": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "bind",
+                            "volume",
+                            "environment-file"
+                          ]
+                        },
+                        "source": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "."
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            }
+                          ]
+                        },
+                        "target": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
+                        },
+                        "source_type": {
+                          "type": "string",
+                          "enum": [
+                            "file",
+                            "directory"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "source",
+                        "target"
+                      ],
+                      "additionalProperties": false,
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "volume"
+                              ]
+                            },
+                            "source": {
+                              "not": {
+                                "enum": [
+                                  "."
+                                ]
+                              }
+                            }
+                          },
+                          "not": {
+                            "required": [
+                              "source_type"
+                            ]
+                          }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "bind"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source_type"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "environment-file"
+                              ]
+                            },
+                            "source_type": {
+                              "enum": [
+                                "file"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source_type"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "dependencies": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "service": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "condition": {
+                          "type": "string",
+                          "enum": [
+                            "service_started",
+                            "service_healthy",
+                            "service_completed_successfully"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "condition",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "health": {
+                    "type": "object",
+                    "properties": {
+                      "property": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "tool_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "interval_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "retries": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100
+                      },
+                      "start_period_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "measurement": {
+                        "type": "object",
+                        "properties": {
+                          "duration_seconds": {
+                            "type": "number",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "duration_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "property",
+                      "probe",
+                      "tool_probe",
+                      "interval_seconds",
+                      "timeout_seconds",
+                      "retries",
+                      "start_period_seconds",
+                      "measurement"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "toolchain_pins": {
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        "pinned": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "observed": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "provenance": {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            "observed_on": {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "declared",
+                                "measured",
+                                "inferred"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096,
+                              "pattern": "\\S"
+                            },
+                            "confirmed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "observed_on",
+                            "kind",
+                            "reason"
+                          ],
+                          "additionalProperties": false,
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "declared",
+                                    "measured"
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "inferred"
+                                  ]
+                                },
+                                "confirmed": {
+                                  "enum": [
+                                    true
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "confirmed"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "pinned",
+                        "observed",
+                        "provenance"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "provenance": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                      },
+                      "observed_on": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "declared",
+                          "measured",
+                          "inferred"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "confirmed": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "observed_on",
+                      "kind",
+                      "reason"
+                    ],
+                    "additionalProperties": false,
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "declared",
+                              "measured"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "inferred"
+                            ]
+                          },
+                          "confirmed": {
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "confirmed"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "sibling",
+                  "role",
+                  "profiles",
+                  "command",
+                  "image",
+                  "ports",
+                  "mounts",
+                  "dependencies",
+                  "health",
+                  "toolchain_pins",
+                  "provenance"
+                ],
+                "additionalProperties": false,
+                "oneOf": [
+                  {
+                    "properties": {
+                      "role": {
+                        "enum": [
+                          "one-shot"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "one_shot_failure"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "role": {
+                        "enum": [
+                          "service"
+                        ]
+                      }
+                    },
+                    "not": {
+                      "required": [
+                        "one_shot_failure"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "volumes": {
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "dependencies",
+                      "product-data"
+                    ]
+                  },
+                  "install_policy": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+                  },
+                  "target": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "pattern": "^\\/(?!\\/)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*[\\\\\\x00-\\x1f\\x7f])[^:]+$"
+                  },
+                  "provenance": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                      },
+                      "observed_on": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "declared",
+                          "measured",
+                          "inferred"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "confirmed": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "observed_on",
+                      "kind",
+                      "reason"
+                    ],
+                    "additionalProperties": false,
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "declared",
+                              "measured"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "inferred"
+                            ]
+                          },
+                          "confirmed": {
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "confirmed"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "purpose",
+                  "target",
+                  "provenance"
+                ],
+                "additionalProperties": false,
+                "oneOf": [
+                  {
+                    "properties": {
+                      "purpose": {
+                        "enum": [
+                          "dependencies"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "install_policy"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "purpose": {
+                        "enum": [
+                          "product-data"
+                        ]
+                      }
+                    },
+                    "not": {
+                      "required": [
+                        "install_policy"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "volume": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                },
+                "default_mode": {
+                  "type": "string",
+                  "enum": [
+                    "empty",
+                    "seeded",
+                    "restored"
+                  ]
+                },
+                "modes": {
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "empty",
+                          "seeded",
+                          "restored"
+                        ]
+                      },
+                      "operations": {
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "schema",
+                                "sweep",
+                                "fixtures",
+                                "restore",
+                                "rewrite"
+                              ]
+                            },
+                            "operation": {
+                              "type": "object",
+                              "properties": {
+                                "location": {
+                                  "type": "string",
+                                  "enum": [
+                                    "host",
+                                    "in-stack"
+                                  ]
+                                },
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 128,
+                                  "pattern": "^[a-z0-9][a-z0-9-]*$"
+                                },
+                                "cwd": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "."
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "maxLength": 4096,
+                                      "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                    }
+                                  ]
+                                },
+                                "argv": {
+                                  "minItems": 1,
+                                  "maxItems": 256,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 8192,
+                                    "pattern": "^[^\\x00]+$"
+                                  }
+                                },
+                                "timeout_seconds": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 3600
+                                },
+                                "provenance": {
+                                  "type": "object",
+                                  "properties": {
+                                    "source": {
+                                      "type": "string",
+                                      "maxLength": 4096,
+                                      "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                    },
+                                    "observed_on": {
+                                      "type": "string",
+                                      "format": "date",
+                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "declared",
+                                        "measured",
+                                        "inferred"
+                                      ]
+                                    },
+                                    "reason": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 4096,
+                                      "pattern": "\\S"
+                                    },
+                                    "confirmed": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "source",
+                                    "observed_on",
+                                    "kind",
+                                    "reason"
+                                  ],
+                                  "additionalProperties": false,
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "declared",
+                                            "measured"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "inferred"
+                                          ]
+                                        },
+                                        "confirmed": {
+                                          "enum": [
+                                            true
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "confirmed"
+                                      ]
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "location",
+                                "cwd",
+                                "argv",
+                                "timeout_seconds",
+                                "provenance"
+                              ],
+                              "additionalProperties": false,
+                              "oneOf": [
+                                {
+                                  "properties": {
+                                    "location": {
+                                      "enum": [
+                                        "host"
+                                      ]
+                                    }
+                                  },
+                                  "not": {
+                                    "required": [
+                                      "service"
+                                    ]
+                                  }
+                                },
+                                {
+                                  "properties": {
+                                    "location": {
+                                      "enum": [
+                                        "in-stack"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "service"
+                                  ]
+                                }
+                              ]
+                            },
+                            "prerequisites": {
+                              "maxItems": 64,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "location": {
+                                    "type": "string",
+                                    "enum": [
+                                      "host",
+                                      "in-stack"
+                                    ]
+                                  },
+                                  "service": {
+                                    "type": "string",
+                                    "maxLength": 128,
+                                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                                  },
+                                  "cwd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "."
+                                        ]
+                                      },
+                                      {
+                                        "type": "string",
+                                        "maxLength": 4096,
+                                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                      }
+                                    ]
+                                  },
+                                  "argv": {
+                                    "minItems": 1,
+                                    "maxItems": 256,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 8192,
+                                      "pattern": "^[^\\x00]+$"
+                                    }
+                                  },
+                                  "timeout_seconds": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 3600
+                                  },
+                                  "provenance": {
+                                    "type": "object",
+                                    "properties": {
+                                      "source": {
+                                        "type": "string",
+                                        "maxLength": 4096,
+                                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                      },
+                                      "observed_on": {
+                                        "type": "string",
+                                        "format": "date",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "declared",
+                                          "measured",
+                                          "inferred"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 4096,
+                                        "pattern": "\\S"
+                                      },
+                                      "confirmed": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "source",
+                                      "observed_on",
+                                      "kind",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false,
+                                    "anyOf": [
+                                      {
+                                        "properties": {
+                                          "kind": {
+                                            "enum": [
+                                              "declared",
+                                              "measured"
+                                            ]
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "properties": {
+                                          "kind": {
+                                            "enum": [
+                                              "inferred"
+                                            ]
+                                          },
+                                          "confirmed": {
+                                            "enum": [
+                                              true
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "confirmed"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "location",
+                                  "cwd",
+                                  "argv",
+                                  "timeout_seconds",
+                                  "provenance"
+                                ],
+                                "additionalProperties": false,
+                                "oneOf": [
+                                  {
+                                    "properties": {
+                                      "location": {
+                                        "enum": [
+                                          "host"
+                                        ]
+                                      }
+                                    },
+                                    "not": {
+                                      "required": [
+                                        "service"
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "location": {
+                                        "enum": [
+                                          "in-stack"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "service"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "after": {
+                              "maxItems": 256,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$"
+                              }
+                            },
+                            "fresh_volume_only": {
+                              "type": "boolean"
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                "observed_on": {
+                                  "type": "string",
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "declared",
+                                    "measured",
+                                    "inferred"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "pattern": "\\S"
+                                },
+                                "confirmed": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "observed_on",
+                                "kind",
+                                "reason"
+                              ],
+                              "additionalProperties": false,
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "declared",
+                                        "measured"
+                                      ]
+                                    }
+                                  }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "inferred"
+                                      ]
+                                    },
+                                    "confirmed": {
+                                      "enum": [
+                                        true
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "confirmed"
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "kind",
+                            "operation",
+                            "prerequisites",
+                            "after",
+                            "fresh_volume_only",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "probes": {
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "location": {
+                              "type": "string",
+                              "enum": [
+                                "host",
+                                "in-stack"
+                              ]
+                            },
+                            "service": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$"
+                            },
+                            "cwd": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "."
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                }
+                              ]
+                            },
+                            "argv": {
+                              "minItems": 1,
+                              "maxItems": 256,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192,
+                                "pattern": "^[^\\x00]+$"
+                              }
+                            },
+                            "timeout_seconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 3600
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                "observed_on": {
+                                  "type": "string",
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "declared",
+                                    "measured",
+                                    "inferred"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "pattern": "\\S"
+                                },
+                                "confirmed": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "observed_on",
+                                "kind",
+                                "reason"
+                              ],
+                              "additionalProperties": false,
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "declared",
+                                        "measured"
+                                      ]
+                                    }
+                                  }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "inferred"
+                                      ]
+                                    },
+                                    "confirmed": {
+                                      "enum": [
+                                        true
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "confirmed"
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "location",
+                            "cwd",
+                            "argv",
+                            "timeout_seconds",
+                            "provenance"
+                          ],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "location": {
+                                  "enum": [
+                                    "host"
+                                  ]
+                                }
+                              },
+                              "not": {
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            },
+                            {
+                              "properties": {
+                                "location": {
+                                  "enum": [
+                                    "in-stack"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "constraints_and_indexes": {
+                        "type": "boolean",
+                        "enum": [
+                          true
+                        ]
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "operations",
+                      "probes",
+                      "constraints_and_indexes",
+                      "provenance"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "fixtures": {
+                  "type": "object",
+                  "properties": {
+                    "writer": {
+                      "type": "string",
+                      "enum": [
+                        "product-models"
+                      ]
+                    },
+                    "stable_key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "pattern": "\\S"
+                    },
+                    "random_seed": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "sweep_scope": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "pattern": "\\S"
+                    },
+                    "persona_source": {
+                      "type": "string",
+                      "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                    },
+                    "identity_owner": {
+                      "type": "string",
+                      "enum": [
+                        "product",
+                        "identity-provider"
+                      ]
+                    },
+                    "persona_outputs": {
+                      "maxItems": 64,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "format": {
+                            "type": "string",
+                            "enum": [
+                              "json",
+                              "typescript"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "format",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "volume_tag": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[a-z0-9][a-z0-9-]*$"
+                    },
+                    "default_small": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "pagination_warning": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "pattern": "\\S"
+                    },
+                    "provenance": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        "observed_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "declared",
+                            "measured",
+                            "inferred"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        },
+                        "confirmed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "observed_on",
+                        "kind",
+                        "reason"
+                      ],
+                      "additionalProperties": false,
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "declared",
+                                "measured"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "inferred"
+                              ]
+                            },
+                            "confirmed": {
+                              "enum": [
+                                true
+                              ]
+                            }
+                          },
+                          "required": [
+                            "confirmed"
+                          ]
+                        }
+                      ]
+                    },
+                    "volume_operations": {
+                      "minItems": 1,
+                      "maxItems": 256,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "volume_probes": {
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "writer",
+                    "stable_key",
+                    "sweep_scope",
+                    "persona_source",
+                    "identity_owner",
+                    "persona_outputs",
+                    "volume_tag",
+                    "default_small",
+                    "pagination_warning",
+                    "provenance",
+                    "volume_operations",
+                    "volume_probes"
+                  ],
+                  "additionalProperties": false
+                },
+                "restore": {
+                  "type": "object",
+                  "properties": {
+                    "rewrites": {
+                      "maxItems": 256,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "category": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "operation": {
+                            "type": "object",
+                            "properties": {
+                              "location": {
+                                "type": "string",
+                                "enum": [
+                                  "host",
+                                  "in-stack"
+                                ]
+                              },
+                              "service": {
+                                "type": "string",
+                                "maxLength": 128,
+                                "pattern": "^[a-z0-9][a-z0-9-]*$"
+                              },
+                              "cwd": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "."
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  }
+                                ]
+                              },
+                              "argv": {
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 8192,
+                                  "pattern": "^[^\\x00]+$"
+                                }
+                              },
+                              "timeout_seconds": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 3600
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "maxLength": 4096,
+                                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                  },
+                                  "observed_on": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "declared",
+                                      "measured",
+                                      "inferred"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4096,
+                                    "pattern": "\\S"
+                                  },
+                                  "confirmed": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "observed_on",
+                                  "kind",
+                                  "reason"
+                                ],
+                                "additionalProperties": false,
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "declared",
+                                          "measured"
+                                        ]
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "inferred"
+                                        ]
+                                      },
+                                      "confirmed": {
+                                        "enum": [
+                                          true
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "confirmed"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "location",
+                              "cwd",
+                              "argv",
+                              "timeout_seconds",
+                              "provenance"
+                            ],
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "host"
+                                    ]
+                                  }
+                                },
+                                "not": {
+                                  "required": [
+                                    "service"
+                                  ]
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "location": {
+                                    "enum": [
+                                      "in-stack"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          }
+                        },
+                        "required": [
+                          "category",
+                          "operation",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "untouched": {
+                      "minItems": 1,
+                      "maxItems": 256,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      }
+                    },
+                    "provenance": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        "observed_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "declared",
+                            "measured",
+                            "inferred"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        },
+                        "confirmed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "observed_on",
+                        "kind",
+                        "reason"
+                      ],
+                      "additionalProperties": false,
+                      "anyOf": [
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "declared",
+                                "measured"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "inferred"
+                              ]
+                            },
+                            "confirmed": {
+                              "enum": [
+                                true
+                              ]
+                            }
+                          },
+                          "required": [
+                            "confirmed"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "rewrites",
+                    "untouched",
+                    "provenance"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "volume",
+                "default_mode",
+                "modes",
+                "fixtures",
+                "restore"
+              ],
+              "additionalProperties": false
+            },
+            "vendors": {
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "posture": {
+                    "type": "string",
+                    "enum": [
+                      "bypassed",
+                      "stubbed",
+                      "substituted",
+                      "vendor-sandbox",
+                      "record-replay",
+                      "absent-and-gated"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "\\S"
+                  },
+                  "provenance": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                      },
+                      "observed_on": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "declared",
+                          "measured",
+                          "inferred"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "confirmed": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "observed_on",
+                      "kind",
+                      "reason"
+                    ],
+                    "additionalProperties": false,
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "declared",
+                              "measured"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "inferred"
+                            ]
+                          },
+                          "confirmed": {
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "confirmed"
+                        ]
+                      }
+                    ]
+                  },
+                  "endpoints": {
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "variable": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[A-Z][A-Z0-9_]*$"
+                        },
+                        "sink": {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^https?://[a-z0-9][a-z0-9-]*(?::(?:0|[1-9]\\d{0,3}|[1-5]\\d{4}|6[0-4]\\d{3}|65[0-4]\\d{2}|655[0-2]\\d|6553[0-5]))?(?:/[^\\s?#]*)?$"
+                        },
+                        "runtime_service": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "supplier": {
+                          "type": "object",
+                          "properties": {
+                            "sibling": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$"
+                            },
+                            "template": {
+                              "type": "string",
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            }
+                          },
+                          "required": [
+                            "sibling",
+                            "template"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "variable",
+                        "sink",
+                        "runtime_service",
+                        "supplier"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "nonempty_variables": {
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[A-Z][A-Z0-9_]*$"
+                    },
+                    "uniqueItems": true
+                  },
+                  "egress_guard": {
+                    "type": "object",
+                    "properties": {
+                      "flag": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[A-Z][A-Z0-9_]*$"
+                      },
+                      "enabled_value": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9_.:-]+$"
+                      },
+                      "local_service": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      }
+                    },
+                    "required": [
+                      "flag",
+                      "enabled_value",
+                      "local_service"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "loader_probe": {
+                    "type": "object",
+                    "properties": {
+                      "location": {
+                        "type": "string",
+                        "enum": [
+                          "host",
+                          "in-stack"
+                        ]
+                      },
+                      "service": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "cwd": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "."
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          }
+                        ]
+                      },
+                      "argv": {
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192,
+                          "pattern": "^[^\\x00]+$"
+                        }
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "location",
+                      "cwd",
+                      "argv",
+                      "timeout_seconds",
+                      "provenance"
+                    ],
+                    "additionalProperties": false,
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "location": {
+                            "enum": [
+                              "host"
+                            ]
+                          }
+                        },
+                        "not": {
+                          "required": [
+                            "service"
+                          ]
+                        }
+                      },
+                      {
+                        "properties": {
+                          "location": {
+                            "enum": [
+                              "in-stack"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "service"
+                        ]
+                      }
+                    ]
+                  },
+                  "route_probe": {
+                    "type": "object",
+                    "properties": {
+                      "location": {
+                        "type": "string",
+                        "enum": [
+                          "host",
+                          "in-stack"
+                        ]
+                      },
+                      "service": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "cwd": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "."
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          }
+                        ]
+                      },
+                      "argv": {
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192,
+                          "pattern": "^[^\\x00]+$"
+                        }
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "location",
+                      "cwd",
+                      "argv",
+                      "timeout_seconds",
+                      "provenance"
+                    ],
+                    "additionalProperties": false,
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "location": {
+                            "enum": [
+                              "host"
+                            ]
+                          }
+                        },
+                        "not": {
+                          "required": [
+                            "service"
+                          ]
+                        }
+                      },
+                      {
+                        "properties": {
+                          "location": {
+                            "enum": [
+                              "in-stack"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "service"
+                        ]
+                      }
+                    ]
+                  },
+                  "egress_probe": {
+                    "type": "object",
+                    "properties": {
+                      "location": {
+                        "type": "string",
+                        "enum": [
+                          "host",
+                          "in-stack"
+                        ]
+                      },
+                      "service": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "cwd": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "."
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          }
+                        ]
+                      },
+                      "argv": {
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8192,
+                          "pattern": "^[^\\x00]+$"
+                        }
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "location",
+                      "cwd",
+                      "argv",
+                      "timeout_seconds",
+                      "provenance"
+                    ],
+                    "additionalProperties": false,
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "location": {
+                            "enum": [
+                              "host"
+                            ]
+                          }
+                        },
+                        "not": {
+                          "required": [
+                            "service"
+                          ]
+                        }
+                      },
+                      {
+                        "properties": {
+                          "location": {
+                            "enum": [
+                              "in-stack"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "service"
+                        ]
+                      }
+                    ]
+                  },
+                  "normalize_empty": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "placeholder": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^cockpit:absent:[a-z0-9-]+$"
+                  },
+                  "shadow_files": {
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "sibling": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9][a-z0-9-]*$"
+                        },
+                        "instance": {
+                          "type": "string",
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        "probe": {
+                          "type": "object",
+                          "properties": {
+                            "location": {
+                              "type": "string",
+                              "enum": [
+                                "host",
+                                "in-stack"
+                              ]
+                            },
+                            "service": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[a-z0-9][a-z0-9-]*$"
+                            },
+                            "cwd": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "."
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                }
+                              ]
+                            },
+                            "argv": {
+                              "minItems": 1,
+                              "maxItems": 256,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192,
+                                "pattern": "^[^\\x00]+$"
+                              }
+                            },
+                            "timeout_seconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 3600
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                "observed_on": {
+                                  "type": "string",
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "declared",
+                                    "measured",
+                                    "inferred"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "pattern": "\\S"
+                                },
+                                "confirmed": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "observed_on",
+                                "kind",
+                                "reason"
+                              ],
+                              "additionalProperties": false,
+                              "anyOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "declared",
+                                        "measured"
+                                      ]
+                                    }
+                                  }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "inferred"
+                                      ]
+                                    },
+                                    "confirmed": {
+                                      "enum": [
+                                        true
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "confirmed"
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "location",
+                            "cwd",
+                            "argv",
+                            "timeout_seconds",
+                            "provenance"
+                          ],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "location": {
+                                  "enum": [
+                                    "host"
+                                  ]
+                                }
+                              },
+                              "not": {
+                                "required": [
+                                  "service"
+                                ]
+                              }
+                            },
+                            {
+                              "properties": {
+                                "location": {
+                                  "enum": [
+                                    "in-stack"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "sibling",
+                        "instance",
+                        "probe"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "expiry": {
+                    "type": "object",
+                    "properties": {
+                      "expires_on": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "expires_on",
+                      "reason",
+                      "probe"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "callback_reachability": {
+                    "type": "object",
+                    "properties": {
+                      "reachable": {
+                        "type": "boolean"
+                      },
+                      "alternative": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      }
+                    },
+                    "required": [
+                      "reachable",
+                      "alternative",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "callback": {
+                    "type": "object",
+                    "properties": {
+                      "feature_flag": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[A-Z][A-Z0-9_]*$"
+                      },
+                      "enable": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "timestamp_source": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "fresh_window_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600
+                      },
+                      "fixture": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "sha256": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          },
+                          "immutable_raw_bytes": {
+                            "type": "boolean",
+                            "enum": [
+                              true
+                            ]
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "sha256",
+                          "immutable_raw_bytes"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "sign": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "dispatch": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "order": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "enable"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "timestamp"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "sign"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "dispatch"
+                            ]
+                          }
+                        ],
+                        "additionalItems": false,
+                        "minItems": 4,
+                        "maxItems": 4
+                      },
+                      "verifier_source": {
+                        "type": "string",
+                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                      },
+                      "tamper_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "feature_flag",
+                      "enable",
+                      "timestamp_source",
+                      "fresh_window_seconds",
+                      "fixture",
+                      "sign",
+                      "dispatch",
+                      "order",
+                      "verifier_source",
+                      "tamper_probe"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "tls": {
+                    "type": "object",
+                    "properties": {
+                      "generate_at_start": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "append_trust_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "hostname_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "verification": {
+                        "type": "string",
+                        "enum": [
+                          "required"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "generate_at_start",
+                      "append_trust_probe",
+                      "hostname_probe",
+                      "verification"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "stub": {
+                    "type": "object",
+                    "properties": {
+                      "validates": {
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        }
+                      },
+                      "rejection_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      },
+                      "outage_probe": {
+                        "type": "object",
+                        "properties": {
+                          "location": {
+                            "type": "string",
+                            "enum": [
+                              "host",
+                              "in-stack"
+                            ]
+                          },
+                          "service": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[a-z0-9][a-z0-9-]*$"
+                          },
+                          "cwd": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "argv": {
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192,
+                              "pattern": "^[^\\x00]+$"
+                            }
+                          },
+                          "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "provenance": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              },
+                              "observed_on": {
+                                "type": "string",
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "declared",
+                                  "measured",
+                                  "inferred"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "pattern": "\\S"
+                              },
+                              "confirmed": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "observed_on",
+                              "kind",
+                              "reason"
+                            ],
+                            "additionalProperties": false,
+                            "anyOf": [
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "declared",
+                                      "measured"
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "inferred"
+                                    ]
+                                  },
+                                  "confirmed": {
+                                    "enum": [
+                                      true
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "confirmed"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "location",
+                          "cwd",
+                          "argv",
+                          "timeout_seconds",
+                          "provenance"
+                        ],
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "host"
+                                ]
+                              }
+                            },
+                            "not": {
+                              "required": [
+                                "service"
+                              ]
+                            }
+                          },
+                          {
+                            "properties": {
+                              "location": {
+                                "enum": [
+                                  "in-stack"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "service"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "validates",
+                      "rejection_probe",
+                      "outage_probe"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "posture",
+                  "reason",
+                  "provenance",
+                  "endpoints",
+                  "loader_probe",
+                  "route_probe",
+                  "egress_probe",
+                  "normalize_empty",
+                  "placeholder",
+                  "callback_reachability"
+                ],
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "posture": {
+                            "not": {
+                              "enum": [
+                                "vendor-sandbox"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "required": [
+                          "expiry"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "posture": {
+                            "not": {
+                              "enum": [
+                                "stubbed"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "required": [
+                          "stub"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "decisions": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "enum": [
+                    "docs/cockpit/environment-decisions.md"
+                  ]
+                },
+                "ownership": {
+                  "type": "string",
+                  "enum": [
+                    "whole-file"
+                  ]
+                },
+                "entries": {
+                  "minItems": 1,
+                  "maxItems": 512,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9][a-z0-9-]*$"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "enum": [
+                          "service",
+                          "volume",
+                          "data-default",
+                          "data-mode",
+                          "restore",
+                          "mount",
+                          "port",
+                          "vendor"
+                        ]
+                      },
+                      "subject_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "decided_on": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "decision": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "rejected": {
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        }
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "pattern": "\\S"
+                      },
+                      "reviewer": {
+                        "type": "string",
+                        "enum": [
+                          "consumer-maintainer"
+                        ]
+                      },
+                      "provenance": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          },
+                          "observed_on": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "declared",
+                              "measured",
+                              "inferred"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096,
+                            "pattern": "\\S"
+                          },
+                          "confirmed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "observed_on",
+                          "kind",
+                          "reason"
+                        ],
+                        "additionalProperties": false,
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "declared",
+                                  "measured"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "inferred"
+                                ]
+                              },
+                              "confirmed": {
+                                "enum": [
+                                  true
+                                ]
+                              }
+                            },
+                            "required": [
+                              "confirmed"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "subject",
+                      "subject_id",
+                      "decided_on",
+                      "decision",
+                      "rejected",
+                      "reason",
+                      "reviewer",
+                      "provenance"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "path",
+                "ownership",
+                "entries"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "compose_file",
+            "services",
+            "volumes",
+            "data",
+            "vendors",
+            "decisions"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "surfaces": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "overlays": {
+          "default": [],
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "feature": {
+                "type": "string",
+                "enum": [
+                  "rules",
+                  "subagents",
+                  "skills",
+                  "hooks"
+                ]
+              },
+              "sources": {
+                "minItems": 1,
+                "maxItems": 256,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "allOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                        },
+                        {
+                          "type": "string",
+                          "maxLength": 4096,
+                          "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                        }
+                      ]
+                    },
+                    "bytes": {
+                      "type": "string",
+                      "maxLength": 65536
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "bytes"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "source": {
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                  }
+                ]
+              },
+              "replaces": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "name",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name",
+              "feature",
+              "sources",
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "harnesses": {
+          "default": [],
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 128,
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]*$"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^(?!(?:claudecode|codexcli|opencode)$)"
+                  }
+                ]
+              },
+              "features": {
+                "minItems": 6,
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "rules",
+                    "mcp",
+                    "subagents",
+                    "skills",
+                    "hooks",
+                    "permissions"
+                  ]
+                }
+              },
+              "capabilities": {
+                "minItems": 6,
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "feature": {
+                          "type": "string",
+                          "enum": [
+                            "rules",
+                            "mcp",
+                            "subagents",
+                            "skills",
+                            "hooks",
+                            "permissions"
+                          ]
+                        },
+                        "measured_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "spelling": {
+                          "allOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                            }
+                          ]
+                        },
+                        "control": {
+                          "allOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                            }
+                          ]
+                        },
+                        "mechanism": {
+                          "type": "object",
+                          "properties": {
+                            "module": {
+                              "allOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                                }
+                              ]
+                            },
+                            "export": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+                            }
+                          },
+                          "required": [
+                            "module",
+                            "export"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "enforced"
+                          ]
+                        },
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "reference": {
+                              "allOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                                }
+                              ]
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "sha256"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "feature",
+                        "measured_on",
+                        "spelling",
+                        "control",
+                        "mechanism",
+                        "state",
+                        "evidence"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "feature": {
+                          "type": "string",
+                          "enum": [
+                            "rules",
+                            "mcp",
+                            "subagents",
+                            "skills",
+                            "hooks",
+                            "permissions"
+                          ]
+                        },
+                        "measured_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "spelling": {
+                          "allOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                            }
+                          ]
+                        },
+                        "control": {
+                          "allOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 4096,
+                              "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                            }
+                          ]
+                        },
+                        "mechanism": {
+                          "type": "object",
+                          "properties": {
+                            "module": {
+                              "allOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                                },
+                                {
+                                  "type": "string",
+                                  "maxLength": 4096,
+                                  "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                                }
+                              ]
+                            },
+                            "export": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+                            }
+                          },
+                          "required": [
+                            "module",
+                            "export"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "instructed"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "feature",
+                        "measured_on",
+                        "spelling",
+                        "control",
+                        "mechanism",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "feature": {
+                          "type": "string",
+                          "enum": [
+                            "rules",
+                            "mcp",
+                            "subagents",
+                            "skills",
+                            "hooks",
+                            "permissions"
+                          ]
+                        },
+                        "measured_on": {
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "pattern": "\\S"
+                        }
+                      },
+                      "required": [
+                        "feature",
+                        "measured_on",
+                        "state",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name",
+              "features",
+              "capabilities"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "bundles": {
+          "default": [],
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "claudecode-plugin"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "cockpit",
+    "sibling",
+    "ports"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "not": {
+            "required": [
+              "browser"
+            ],
+            "properties": {
+              "browser": {
+                "required": [
+                  "resources"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "environment"
+          ],
+          "properties": {
+            "environment": {
+              "required": [
+                "generated"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "x-cockpit-runtime-checks": [
+    {
+      "path": "sibling[].slug",
+      "rule": "unique"
+    },
+    {
+      "path": "sibling[].dir",
+      "rule": "unique"
+    },
+    {
+      "path": "sibling[].var",
+      "rule": "unique"
+    },
+    {
+      "path": "sibling[].environment_files[].instance",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.resettable_volumes[]",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.generated_host_paths[]",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.compose_files[]",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.entrypoint_derivatives[].name",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.install_policies[].volume",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.install_policies[].toolchain+lockfile",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.runtime_measurements[].runtime",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.posture_requirements[].requirement",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.entrypoint_derivatives[].port",
+      "rule": "declared_in_ports.bases"
+    },
+    {
+      "path": "browser.artifacts",
+      "rule": "exact_environment.generated_host_paths_coverage"
+    },
+    {
+      "path": "browser",
+      "rule": "matches_environment_addressing_authentication_and_client_cap"
+    },
+    {
+      "path": "testing.gates[].stages[]",
+      "rule": "references_declared_testing_stage"
+    },
+    {
+      "path": "sibling[].environment_files[]",
+      "rule": "template_and_instance_differ"
+    },
+    {
+      "path": "sibling[].derives.generated",
+      "rule": "row_owned_relations_and_exact_port_defaults"
+    },
+    {
+      "path": "sibling[].derives.mcp_sources[].path",
+      "rule": "unique_within_sibling"
+    },
+    {
+      "path": "sibling[].derives",
+      "rule": "global_baseline_and_cross_row_identity_disjointness"
+    },
+    {
+      "path": "ports",
+      "rule": "count_times_base_count_within_shared_input_budget",
+      "limit": 4096
+    },
+    {
+      "path": "surfaces.overlays[].name",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.overlays[].sources[].path",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.overlays[].sources",
+      "rule": "feature_namespace_and_complete_skill_definitions"
+    },
+    {
+      "path": "surfaces.overlays[].sources[].bytes",
+      "rule": "utf8_byte_length_at_most_65536"
+    },
+    {
+      "path": "surfaces.overlays[].replaces.name",
+      "rule": "matches_declaration_name"
+    },
+    {
+      "path": "surfaces.harnesses[].name",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.harnesses[].features",
+      "rule": "exact_capability_feature_set"
+    },
+    {
+      "path": "surfaces.harnesses[].capabilities[].spelling",
+      "rule": "unique_when_emitted"
+    },
+    {
+      "path": "environment.generated",
+      "rule": "unique_declaration_identities"
+    },
+    {
+      "path": "environment.generated",
+      "rule": "declared_sibling_service_volume_policy_mount_port_references"
+    },
+    {
+      "path": "environment.generated.services[].ports[].host_variable",
+      "rule": "globally_unique"
+    },
+    {
+      "path": "environment.generated.data.modes[].operations[].after",
+      "rule": "earlier_declared_operations"
+    },
+    {
+      "path": "environment.generated.services[].health",
+      "rule": "start_period_at_least_measured_duration"
+    },
+    {
+      "path": "environment.generated.vendors[].endpoints[]",
+      "rule": "exact_declared_local_sink_and_template_supplier"
+    },
+    {
+      "path": "environment.generated.vendors[].endpoints[].variable",
+      "rule": "globally_unique"
+    },
+    {
+      "path": "environment.generated.vendors[]",
+      "rule": "globally_unique_endpoint_nonempty_and_egress_variables"
+    },
+    {
+      "path": "environment.generated.vendors[].egress_guard.local_service",
+      "rule": "declared_service"
+    },
+    {
+      "path": "environment.generated.services[]",
+      "rule": "acyclic_dependencies_and_same_image_health_probes"
+    },
+    {
+      "path": "environment.generated.data",
+      "rule": "product_data_volume_and_mode_operations"
+    },
+    {
+      "path": "environment.generated.decisions.entries[]",
+      "rule": "exact_rendered_choice_and_vendor_coverage"
+    }
+  ],
+  "x-cockpit-editor-limitations": [
+    {
+      "path": "sibling[].environment_files[].instance",
+      "rule": "unique"
+    },
+    {
+      "path": "sibling[].environment_files[]",
+      "rule": "template_and_instance_differ"
+    },
+    {
+      "path": "sibling[].derives.generated",
+      "rule": "row_owned_relations_and_exact_port_defaults"
+    },
+    {
+      "path": "sibling[].derives.mcp_sources[].path",
+      "rule": "unique_within_sibling"
+    },
+    {
+      "path": "sibling[].derives",
+      "rule": "global_baseline_and_cross_row_identity_disjointness"
+    },
+    {
+      "path": "environment.entrypoint_derivatives[].name",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.entrypoint_derivatives[].port",
+      "rule": "declared_in_ports.bases"
+    },
+    {
+      "path": "environment.install_policies[].volume",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.install_policies[].toolchain+lockfile",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.runtime_measurements[].runtime",
+      "rule": "unique"
+    },
+    {
+      "path": "environment.posture_requirements[].requirement",
+      "rule": "unique"
+    },
+    {
+      "path": "browser.artifacts",
+      "rule": "exact_environment.generated_host_paths_coverage"
+    },
+    {
+      "path": "browser",
+      "rule": "matches_environment_addressing_authentication_and_client_cap"
+    },
+    {
+      "path": "testing.gates[].stages[]",
+      "rule": "references_declared_testing_stage"
+    },
+    {
+      "path": "surfaces.overlays[].name",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.overlays[].sources[].path",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.overlays[].sources",
+      "rule": "feature_namespace_and_complete_skill_definitions"
+    },
+    {
+      "path": "surfaces.overlays[].sources[].bytes",
+      "rule": "utf8_byte_length_at_most_65536"
+    },
+    {
+      "path": "surfaces.overlays[].replaces.name",
+      "rule": "matches_declaration_name"
+    },
+    {
+      "path": "surfaces.harnesses[].name",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.harnesses[].features",
+      "rule": "exact_capability_feature_set"
+    },
+    {
+      "path": "surfaces.harnesses[].capabilities[].spelling",
+      "rule": "unique_when_emitted"
+    },
+    {
+      "path": "environment.generated",
+      "rule": "unique_declaration_identities"
+    },
+    {
+      "path": "environment.generated",
+      "rule": "declared_sibling_service_volume_policy_mount_port_references"
+    },
+    {
+      "path": "environment.generated.services[].ports[].host_variable",
+      "rule": "globally_unique"
+    },
+    {
+      "path": "environment.generated.data.modes[].operations[].after",
+      "rule": "earlier_declared_operations"
+    },
+    {
+      "path": "environment.generated.services[].health",
+      "rule": "start_period_at_least_measured_duration"
+    },
+    {
+      "path": "environment.generated.vendors[].endpoints[]",
+      "rule": "exact_declared_local_sink_and_template_supplier"
+    },
+    {
+      "path": "environment.generated.vendors[].endpoints[].variable",
+      "rule": "globally_unique"
+    },
+    {
+      "path": "environment.generated.vendors[]",
+      "rule": "globally_unique_endpoint_nonempty_and_egress_variables"
+    },
+    {
+      "path": "environment.generated.vendors[].egress_guard.local_service",
+      "rule": "declared_service"
+    },
+    {
+      "path": "environment.generated.services[]",
+      "rule": "acyclic_dependencies_and_same_image_health_probes"
+    },
+    {
+      "path": "environment.generated.data",
+      "rule": "product_data_volume_and_mode_operations"
+    },
+    {
+      "path": "environment.generated.decisions.entries[]",
+      "rule": "exact_rendered_choice_and_vendor_coverage"
+    }
+  ]
+}
+```
