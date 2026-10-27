@@ -7,7 +7,7 @@ import { parse as parseYaml } from 'yaml'
 
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
-import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     authenticateGeneratedRender,
@@ -372,7 +372,7 @@ function generatedObservationStep(
             const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
             argv = Object.freeze([
                 docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
-                '--project-name', runtime.projectName, 'exec', '--workdir', operation.cwd, '-T', operation.service!, ...operation.argv,
+                '--project-name', runtime.projectName, 'exec', '-T', operation.service!, ...inStackCommand(operation.cwd, operation.argv),
             ]) as readonly [string, ...string[]]
             argv0 = docker.invocationPath
             consumedFiles = Object.freeze([
@@ -592,7 +592,7 @@ export function resolveGeneratedDataOperation(input: {
         const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
         argv = Object.freeze([
             docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
-            '--project-name', runtime.projectName, 'exec', '--no-TTY', operation.service, ...operation.argv,
+            '--project-name', runtime.projectName, 'exec', '--no-TTY', operation.service, ...inStackCommand(operation.cwd, operation.argv),
         ]) as readonly [string, ...string[]]
         argv0 = docker.invocationPath
         stepCwd = runtime.root

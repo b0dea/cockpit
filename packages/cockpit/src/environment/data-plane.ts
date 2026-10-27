@@ -7,6 +7,7 @@ import { consumeLoadedConfigProjection, type LoadedConfigProjection } from '../c
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
+    inStackCommand,
     isCanonicalTimestamp,
     snapshotEnvironmentObservation,
     snapshotJson,
@@ -315,7 +316,8 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
             && execution.argv0 === declaredArgv[0]
             && execution.cwd === declaredCwd
             && hasBoundExecutable(execution)
-        const commandStart = execution.argv.length - declaredArgv.length
+        const stackArgv = inStackCommand(operation.cwd, declaredArgv)
+        const commandStart = execution.argv.length - stackArgv.length
         const serviceIndex = commandStart - 1
         const exactStackCommand = operation.location === 'in-stack'
             && operation.service !== undefined
@@ -324,7 +326,7 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
             && execution.argv[commandStart - 3] === 'exec'
             && execution.argv[commandStart - 2] === '--no-TTY'
             && execution.argv[serviceIndex] === operation.service
-            && execution.argv.slice(commandStart).every((value, index) => value === declaredArgv[index])
+            && execution.argv.slice(commandStart).every((value, index) => value === stackArgv[index])
             && execution.cwd === input.checkoutRoot
             && hasBoundExecutable(execution)
         if (execution.id !== context.id || execution.timeoutMs > operation.timeout_seconds * 1_000

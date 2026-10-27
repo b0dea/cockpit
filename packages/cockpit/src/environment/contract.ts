@@ -862,3 +862,13 @@ export type EnvironmentCommandOutcome<Result> =
 export interface EnvironmentAdapter {
     observePath(path: string): Promise<Observation<'absent' | 'directory' | 'repository' | 'symlink'>>
 }
+
+/**
+ * The command `compose exec` runs for an in-stack operation. Its cwd is relative to the service's
+ * working directory, as in the rendered healthcheck; `compose exec --workdir` accepts only an
+ * absolute path, so passing the declared cwd there failed every in-stack probe ("Cwd must be an
+ * absolute path"). `.` runs in the working directory and any other cwd changes into it first.
+ */
+export function inStackCommand(cwd: string, argv: readonly string[]): readonly string[] {
+    return cwd === '.' ? argv : ['/bin/sh', '-c', 'cd -- "$0" && exec "$@"', cwd, ...argv]
+}

@@ -5,7 +5,7 @@ import { isProxy } from 'node:util/types'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { GeneratedEnvironment } from '../schema.js'
-import { ENVIRONMENT_CODES, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, inStackCommand, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     admitRuntimeServiceHealth,
@@ -246,7 +246,7 @@ function composeStep(
             docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
             '--project-name', runtime.projectName, 'exec',
             ...(processEnvironment === undefined ? [] : ['--env', `${processEnvironment.name}=${processEnvironment.value}`]),
-            '--workdir', operation.cwd, '-T', operation.service!, ...operation.argv,
+            '-T', operation.service!, ...inStackCommand(operation.cwd, operation.argv),
         ]) as readonly [string, ...string[]]
         argv0 = docker.invocationPath
         consumedFiles = Object.freeze([

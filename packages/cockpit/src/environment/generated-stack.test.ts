@@ -425,6 +425,12 @@ describe('generated environment rendering', () => {
             const { authority } = await generatedAuthority(result, root)
             const execution = createGeneratedObservationExecution({ authority, observation: result.observations.find(({ id }) => id === 'health:app:property')! })
             if (execution.kind !== 'planned') throw new Error(execution.reason)
+            // compose exec takes only an absolute --workdir, so the probe's cwd stays relative to
+            // the service's working directory, as in the rendered healthcheck.
+            const probe = generated.services[0]!.health.probe
+            expect(execution.step.argv).not.toContain('--workdir')
+            expect(execution.step.argv.slice(execution.step.argv.indexOf('-T') + 2)).toEqual(probe.cwd === '.'
+                ? probe.argv : ['/bin/sh', '-c', 'cd -- "$0" && exec "$@"', probe.cwd, ...probe.argv])
             const admission = admitGeneratedObservation({ execution, outcome: await executeProbe(execution.step) })
             expect(admission?.kind).toBe('failed')
             const inspection = inspectGeneratedEnvironment({ rendered: result, candidates: result.manifest.map(({ path, bytes }) => ({ path, bytes })), now: '2026-09-26' })
