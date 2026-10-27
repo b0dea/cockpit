@@ -266,6 +266,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `DOCUMENT_INFERRED` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_OPTION_DUPLICATE` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
+| `DOCUMENT_OUTPUT_JSON_UNSUPPORTED` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_ROOT_COUNT` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_SOURCE_CONFLICT` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
