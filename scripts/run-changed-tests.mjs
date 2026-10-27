@@ -11,6 +11,8 @@ export const mechanism = {
 const TEST_PATH = /^packages\/[^/]+\/src\/.+\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/
 const SOURCE_PATH = /^(packages\/[^/]+\/src\/.+)\.([cm]?[jt]s|[jt]sx)$/
 const MARKDOWN_PATH = /\.md$/
+// llms.txt is the Markdown index agents read first; the documentation tests check where it points.
+const LLMS_INDEX = 'llms.txt'
 const MANIFEST_PATH = /^(?:packages\/[^/]+\/)?package(?:-lock)?\.json$/
 const SCRIPT_PATH = /^scripts\/([^/]+)\.(?:mjs|d\.mts)$/
 const SURFACES_PATH = /^packages\/[^/]+\/surfaces\/.+/
@@ -189,7 +191,7 @@ function ownerTests(root, paths, extras) {
         const fixture = FIXTURE_PATH.exec(path)
         const example = EXAMPLE_PATH.exec(path)
         const mapped = []
-        if (MARKDOWN_PATH.test(path)) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
+        if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
         if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS))
         if (path.startsWith('.github/')) mapped.push(...testsInDirectory(root, WORKFLOW_TESTS))
         if (SURFACES_PATH.test(path)) {

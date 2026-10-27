@@ -190,6 +190,7 @@ describe('changed adjacent-owner test runner', () => {
         ['docs tree', 'docs/guide/page.md'],
         ['examples tree', 'examples/demo/README.md'],
         ['package', 'packages/cockpit/README.md'],
+        ['agent index', 'llms.txt'],
     ])('runs the documentation tests when %s markdown changes', (_name, path) => {
         const fixture = withOwners({ [path]: 'before\n' })
         edit(fixture.root, path)

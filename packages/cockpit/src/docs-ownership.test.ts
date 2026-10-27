@@ -51,6 +51,20 @@ describe('effective documentation ownership', () => {
         expect(security).toContain('## Consumer-identifying leaks')
     })
 
+    it('points the llms.txt agent index only at tracked pages, starting with the agent adoption guide', () => {
+        const index = readFileSync(new URL('../../../llms.txt', import.meta.url), 'utf8')
+        const tracked = new Set(execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0'))
+        const links = [...index.matchAll(/\]\(([^)]+)\)/g)].map(match => match[1]!)
+        const prefix = 'https://raw.githubusercontent.com/b0dea/cockpit/main/'
+
+        expect(index).toMatch(/^# cockpit\n\n> \S/)
+        expect(links[0]).toBe(`${prefix}docs/agent-adoption.md`)
+        for (const link of links) {
+            expect(link.startsWith(prefix), link).toBe(true)
+            expect(tracked.has(link.slice(prefix.length)), link).toBe(true)
+        }
+    })
+
     it('owns every public root policy and the public documentation tree', () => {
         const tracked = trackedDocumentation()
         const paths = [...PUBLIC_POLICIES, ...tracked.filter((path) => path.startsWith('docs/'))]
