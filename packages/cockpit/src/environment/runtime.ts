@@ -296,16 +296,20 @@ export interface ComposeArtifact {
     sha256: string
 }
 
+/** Each `[[sibling]] var` and the absolute sibling directory it names. */
+export type SiblingDirectoryVariables = Readonly<Record<string, string>>
+
 export type RuntimeAdapterAuthority =
     | Readonly<{ generatedComposeAuthority: GeneratedComposeArtifactAuthority; portLeaseProjection?: PortLeaseProjection }>
-    /** A compose-first stack's own files, which interpolate the lease and their own defaults. */
-    | Readonly<{ ownComposeFiles: true; portLeaseProjection?: PortLeaseProjection }>
+    /** A compose-first stack's own files, which interpolate the lease, the sibling directories and their own defaults. */
+    | Readonly<{ ownComposeFiles: true; portLeaseProjection?: PortLeaseProjection; siblingDirectories?: SiblingDirectoryVariables }>
 
 const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]*\}\}/
 
 // A cockpit's own Compose file interpolates from the environment cockpit hands Compose: the leased
-// [ports.bases] variables and nothing else. A reference with an explicit default is the file's own
-// choice; any other reference would resolve to empty, so it stays refused.
+// [ports.bases] variables and the sibling directory variables, nothing else. A reference with an
+// explicit default is the file's own choice; any other reference would resolve to empty, so it
+// stays refused.
 function composeTokensResolved(source: string, portNames: readonly string[]): boolean {
     const tokens = source.match(new RegExp(UNRESOLVED_TOKEN.source, 'g')) ?? []
     return tokens.every((token) => {
@@ -1053,6 +1057,8 @@ export function createRuntimeAdapter(
             ?? captureOwnValues(authority, ['generatedComposeAuthority', 'portLeaseProjection'])
             ?? captureOwnValues(authority, ['ownComposeFiles'])
             ?? captureOwnValues(authority, ['ownComposeFiles', 'portLeaseProjection'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'siblingDirectories'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'portLeaseProjection', 'siblingDirectories'])
     const ownComposeFiles = capturedAuthority?.ownComposeFiles === true
     const generatedComposeAuthority = capturedAuthority?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined
     const suppliedPortProjection = capturedAuthority?.portLeaseProjection as PortLeaseProjection | undefined
@@ -1079,6 +1085,21 @@ export function createRuntimeAdapter(
             ...input,
             env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries.map(([name, port]) => [name, String(port)])) }),
         })
+    }
+    // Sibling directories reach Compose the way the lease does: as named variables every derived
+    // step keeps, so `${API_DIR}` in a cockpit's own file resolves instead of falling back.
+    const suppliedSiblings = snapshotJson(capturedAuthority?.siblingDirectories)
+    if (suppliedSiblings !== undefined) {
+        const originalEnv = input.env
+        const entries = suppliedSiblings !== null && typeof suppliedSiblings === 'object' && !Array.isArray(suppliedSiblings)
+            ? Object.entries(suppliedSiblings as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)) : undefined
+        if (entries === undefined || entries.some(([name, path]) => !/^[A-Z][A-Z0-9_]*$/.test(name)
+            || HOST_PROCESS_CONTROL_ENV.test(name) || Object.hasOwn(originalEnv, name)
+            || typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime sibling directory authority is malformed', input.projectName)
+        }
+        generatedPortNames = Object.freeze([...generatedPortNames, ...entries.map(([name]) => name)])
+        input = Object.freeze({ ...input, env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries) as Record<string, string> }) })
     }
     if (hasUnresolvedInput(input)) {
         return refusal(

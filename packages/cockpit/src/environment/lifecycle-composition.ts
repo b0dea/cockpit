@@ -908,6 +908,8 @@ export function createLifecycleCommandAdapters(
             ])].sort())
         }
         if (!artifacts || artifacts.length === 0) return undefined
+        const siblingDirectories = Object.freeze(Object.fromEntries(currentBinding.config.sibling
+            .map((sibling) => [sibling.var, resolve(currentBinding.siblingsRoot, sibling.dir)])))
         const batchId = randomBytes(32).toString('hex')
         const runtime = createRuntimeAdapter({
             runtime: observed.runtime,
@@ -928,9 +930,12 @@ export function createLifecycleCommandAdapters(
         }, generatedApplication?.generatedComposeAuthority && ports ? {
             generatedComposeAuthority: generatedApplication.generatedComposeAuthority,
             portLeaseProjection: ports,
-        // A compose-first stack reads its host ports from the [ports.bases] variables, so the lease
-        // reaches Compose as those variables instead of the `${VAR:-default}` fallback.
-        } : !generated ? { ownComposeFiles: true as const, ...(ports ? { portLeaseProjection: ports } : {}) } : undefined)
+        // A compose-first stack reads its host ports from the [ports.bases] variables and its
+        // sibling checkouts from the [[sibling]] var variables, so both reach Compose as those
+        // variables instead of the `${VAR:-default}` fallback. A generated file writes each sibling
+        // path literally and its runtime authority admits only leased ports, so it gets neither
+        // the sibling variables nor a use for them.
+        } : !generated ? { ownComposeFiles: true as const, ...(ports ? { portLeaseProjection: ports } : {}), siblingDirectories } : undefined)
         if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
         const topologyPlan = createRuntimeTopologyPlan({

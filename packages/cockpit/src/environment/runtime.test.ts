@@ -1670,8 +1670,9 @@ fi
             })
             expect(projectRuntimeExecutionEnvironment({ ...observed.admitted.topology })).toBeUndefined()
 
-            // A compose-first stack's own file reads the leased variable, with no generated authority.
-            const ownCompose = 'services:\n  app:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n'
+            // A compose-first stack's own file reads the leased variable and its sibling directory
+            // variable, with no generated authority.
+            const ownCompose = 'services:\n  app:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n'
             const ownPath = join(directory, 'compose.own.yml')
             writeFileSync(ownPath, ownCompose)
             const ownFile = { reference: 'compose.own.yml', canonicalPath: ownPath, source: ownCompose, sha256: sha(ownCompose) }
@@ -1681,11 +1682,11 @@ fi
                 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256,
             } } } }, [], {
                 composeFiles: [ownFile], env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
-                authority: { ownComposeFiles: true, portLeaseProjection: ownProjection },
+                authority: { ownComposeFiles: true, portLeaseProjection: ownProjection, siblingDirectories: { APP_DIR: '/synthetic/siblings/app' } },
             })
             if (owned.admitted.kind !== 'complete') throw new Error(owned.admitted.reason)
             expect(projectRuntimeExecutionEnvironment(owned.admitted.topology)).toEqual({
-                PATH: process.env.PATH ?? '/usr/bin', APP_HOST_PORT: String(expectedPort),
+                PATH: process.env.PATH ?? '/usr/bin', APP_HOST_PORT: String(expectedPort), APP_DIR: '/synthetic/siblings/app',
             })
             // A reference with neither a default nor a leased variable would resolve to empty.
             const unset = `${ownCompose}    environment: ["TOKEN=\${UNDECLARED}"]\n`
