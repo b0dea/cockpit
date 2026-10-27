@@ -99,7 +99,7 @@ describe('one-row generated surface integration', () => {
                 { kind: 'environment-file', source: 'worker/.env.local', target: '/workspace/.env', source_type: 'file' },
             ],
         })
-        expect(registry.result.config.ports.bases.WORKER_HOST_PORT).toBe(4200)
+        expect(registry.result.config.ports.bases.WORKER_HOST_PORT).toBe(4250)
         expect(registry.result.config.environment.entrypoint_derivatives).toContainEqual({
             name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/worker',
         })

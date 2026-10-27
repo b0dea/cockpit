@@ -771,6 +771,27 @@ export const Ports = z
                 path: ['count'],
             })
         }
+        // Stack n publishes each base plus n * step, so two bases whose distance is a multiple of
+        // step below count * step hand one port to two stacks. Leasing only refuses that at `up`,
+        // after `check` passed; the config is wrong, so the config check names it.
+        const entries = Object.entries(ports.bases).sort(([, left], [, right]) => left - right)
+        const spread = entries.length === 0 ? 0 : entries.at(-1)![1] - entries[0]![1]
+        for (const [index, [lower, lowerBase]] of entries.entries()) {
+            for (const [upper, upperBase] of entries.slice(index + 1)) {
+                const distance = upperBase - lowerBase
+                if (distance % ports.step !== 0 || distance / ports.step >= ports.count) continue
+                const stacks = distance / ports.step
+                context.addIssue({
+                    code: 'custom',
+                    path: ['bases', upper],
+                    message: distance === 0
+                        ? `${lower} and ${upper} share base ${lowerBase}; give each variable its own base`
+                        : `${lower} (${lowerBase}) and ${upper} (${upperBase}) overlap: stack ${stacks}'s ${lower} is stack 0's ${upper} `
+                            + `with step ${ports.step}; set [ports] step above the bases' spread (at least ${spread + 1}) `
+                            + 'or move a base so no two differ by a multiple of step',
+                })
+            }
+        }
     })
 
 const GuardHosts = z.array(z.string().regex(GUARD_HOST_PATTERN)).max(GUARD_HOST_LIMITS.rows)

@@ -57,7 +57,7 @@ function derivedConfig(): Record<string, unknown> {
                 service: derivedService,
                 checkout_mount: { target: '/workspace/worker', source_type: 'directory' },
                 additional_mounts: [{ kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' }],
-                port_defaults: { WORKER_HOST_PORT: 4200 },
+                port_defaults: { WORKER_HOST_PORT: 4250 },
                 entrypoints: [{ name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/' }],
                 volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', target: '/workspace/node_modules', provenance }],
                 install_policies: [{ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' }],
@@ -90,7 +90,7 @@ describe('registry derivation', () => {
                 { kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' },
             ],
         })
-        expect(result.result.config.ports.bases.WORKER_HOST_PORT).toBe(4200)
+        expect(result.result.config.ports.bases.WORKER_HOST_PORT).toBe(4250)
         expect(result.result.config.environment.entrypoint_derivatives).toContainEqual({
             name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/',
         })

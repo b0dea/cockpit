@@ -137,7 +137,8 @@ target = "/workspace/.env"
 source_type = "file"
 
 [sibling.derives.generated.port_defaults]
-WORKER_HOST_PORT = 4200
+# 4200 would be stack 1's APP_HOST_PORT under the default step of 100.
+WORKER_HOST_PORT = 4250
 
 [[sibling.derives.generated.entrypoints]]
 name = "worker-origin"

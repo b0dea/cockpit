@@ -368,7 +368,7 @@ describe('lifecycle application contracts', () => {
         const { configPath, context } = await lifecycleContextFixture(derivedRegistrySource())
 
         expect(context.source.path).toBe(configPath)
-        expect(context.ports.bases.WORKER_HOST_PORT).toBe(4200)
+        expect(context.ports.bases.WORKER_HOST_PORT).toBe(4250)
         expect(context.entrypointDerivatives).toContainEqual({
             name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/',
         })

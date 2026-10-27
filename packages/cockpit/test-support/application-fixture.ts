@@ -76,7 +76,8 @@ function derivedRegistrySource(): string {
             service: derivedService,
             checkout_mount: { target: '/workspace/worker', source_type: 'directory' },
             additional_mounts: [{ kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' }],
-            port_defaults: { WORKER_HOST_PORT: 4200 },
+            // 4200 would be stack 1's APP_HOST_PORT under the default step of 100.
+            port_defaults: { WORKER_HOST_PORT: 4250 },
             entrypoints: [{ name: 'worker-origin', kind: 'origin', port: 'WORKER_HOST_PORT', path: '/' }],
             volumes: [{ id: 'worker-dependencies', purpose: 'dependencies', install_policy: 'worker-dependencies', target: '/workspace/node_modules', provenance }],
             install_policies: [{ ...policy, volume: 'worker-dependencies', lockfile: 'worker/package-lock.json' }],

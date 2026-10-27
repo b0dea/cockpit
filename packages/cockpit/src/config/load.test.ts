@@ -369,6 +369,18 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         expect(JSON.stringify(outcome)).not.toContain('ssh://example.invalid/api.git')
     })
 
+    it('names port families whose bases overlap across stacks and the step that separates them', async () => {
+        const overlapping = await loadCockpitConfig(fixture(validConfig.replace(
+            'bases = { APP_PORT = 4100 }', 'bases = { API_HOST_PORT = 4200, WEB_HOST_PORT = 4300 }')))
+        expect(overlapping).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CONFIG_SCHEMA_INVALID' }] })
+        expect(overlapping.diagnostics[0]!.message).toContain(
+            "ports.bases.WEB_HOST_PORT: API_HOST_PORT (4200) and WEB_HOST_PORT (4300) overlap: stack 1's API_HOST_PORT is stack 0's WEB_HOST_PORT with step 100; set [ports] step above the bases' spread (at least 101)")
+
+        const separated = await loadCockpitConfig(fixture(validConfig.replace(
+            'step = 100', 'step = 200').replace('bases = { APP_PORT = 4100 }', 'bases = { API_HOST_PORT = 4200, WEB_HOST_PORT = 4300 }')))
+        expect(separated.kind).toBe('complete')
+    })
+
     it('keeps the executor contract resolved and policy-free', () => {
         expectTypeOf<ExecutionStep>().toMatchTypeOf<{
             id: string
