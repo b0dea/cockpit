@@ -39,7 +39,7 @@ import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import type { GuardHandlerIdentity } from '../surfaces/restrictions.js'
+import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import type { FixContext } from '../fix-catalogue.js'
 import { completeGuardTransport, planGuardTransport, type NativeGuardOutput } from '../guards/harness-adapter.js'
@@ -234,6 +234,8 @@ export const mechanism = {
 
 export interface GuardEvaluationApplicationInput {
     readonly identity: unknown
+    /** The checkout the invoked guard script resolved from its own location. */
+    readonly guardRoot: string
     readonly payload: unknown
     readonly harness: SurfaceTarget
     readonly cwd: string
@@ -289,7 +291,7 @@ export async function runGuardEvaluationApplication(
         diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }],
     })
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'harness', 'identity', 'payload'], ['transport', 'askIsDeny'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['transport', 'askIsDeny'])
         if (!data
             || data.transport !== undefined && typeof data.transport !== 'boolean'
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
@@ -302,6 +304,8 @@ export async function runGuardEvaluationApplication(
         const identity = captured as unknown as GuardHandlerIdentity
         if ([identity.root, identity.configPath, identity.node, identity.module].some(path => !isAbsolute(path) || resolve(path) !== path || /[\x00-\x1f\x7f-\x9f]/.test(path))
             || dirname(identity.configPath) !== identity.root || typeof data.cwd !== 'string' || realpathSync(data.cwd) !== data.cwd
+            // A local identity copied from another checkout would evaluate this one under that one's policy.
+            || data.guardRoot !== identity.root
             || realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))) !== identity.module) return unavailable('Installed guard location does not match this application.')
         const roots = new Map<string, Stats>()
         for (const [path, device, inode, directory] of [
@@ -327,7 +331,7 @@ export async function runGuardEvaluationApplication(
         const config = loaded.result.config
         const manifestPath = '.cockpit/generated-environment-ownership.json'
         const registration = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }[harness]
-        const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration].map(path => ({
+        const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity].map(path => ({
             path, action: 'read-file' as const, maxBytes: path === manifestPath ? 1_048_576 : 65_536,
         }))
         const readPublication = async () => {
@@ -340,6 +344,8 @@ export async function runGuardEvaluationApplication(
             }))
         }
         const publication = await readPublication()
+        const local = parseGuardLocalIdentity(publication.get(GUARD_LOCAL_PATHS.identity)!.bytes.toString('utf8'))
+        if (!local || !isDeepStrictEqual(local, identity)) return unavailable('Installed guard identity does not match its machine-local record.')
         const manifestRead = publication.get(manifestPath)!
         const ownership = parseOwnershipManifest(manifestRead.bytes.toString('utf8'), {
             root: identity.root, configPath: identity.configPath,
@@ -356,10 +362,6 @@ export async function runGuardEvaluationApplication(
             const entry = ownership.manifest.entries.find(entry => entry.path === path)
             const actual = publication.get(path)!
             if (!entry || entry.kind !== 'file' || entry.sha256 !== actual.sha256) return unavailable('Installed guard registration or transport bytes drifted.')
-            if (path === '.cockpit/guards/bash-guard.sh'
-                && !actual.bytes.toString('utf8').split('\n').includes(`export COCKPIT_GUARD_IDENTITY='${JSON.stringify(identity).replaceAll("'", "'\\''")}'`)) {
-                return unavailable('Installed guard identity does not match its authenticated transport.')
-            }
             published.set(path, actual.sha256)
         }
         if (data.transport === true) {
@@ -373,7 +375,7 @@ export async function runGuardEvaluationApplication(
             const shellSha256 = createHash('sha256').update(readFileSync(shell)).digest('hex')
             const step: ExecutionStep = {
                 id: 'guard-handler', argv: [shell, guard, '--handler-stdio', ...plan.argv.slice(1)], argv0: '/bin/bash',
-                cwd: plan.cwd, env: { COCKPIT_GUARD_STDIN: plan.stdin, COCKPIT_ASK_IS_DENY: data.askIsDeny ? '1' : '0' },
+                cwd: plan.cwd, env: { COCKPIT_GUARD_STDIN: plan.stdin, COCKPIT_GUARD_ROOT: identity.root, COCKPIT_ASK_IS_DENY: data.askIsDeny ? '1' : '0' },
                 timeoutMs: plan.timeoutMs, stdoutLimitBytes: plan.stdoutBytes, stderrLimitBytes: plan.stderrBytes,
                 paths: [], ports: [], labels: { action: 'guard-handler' }, expected: [],
                 consumedFiles: [
@@ -462,7 +464,7 @@ export async function runGuardEvaluationApplication(
                 || before.isFile() && (before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || before.size !== after.size)) return unavailable('Guard filesystem authority changed during evaluation.')
         }
         const currentPublication = await readPublication()
-        for (const [path, hash] of [[manifestPath, manifestRead.sha256], ...published] as const) {
+        for (const [path, hash] of [[manifestPath, manifestRead.sha256], [GUARD_LOCAL_PATHS.identity, publication.get(GUARD_LOCAL_PATHS.identity)!.sha256], ...published] as const) {
             if (currentPublication.get(path)!.sha256 !== hash) return unavailable('Guard publication changed during evaluation.')
         }
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')

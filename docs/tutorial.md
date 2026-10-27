@@ -107,6 +107,7 @@ Exit code 0: nothing has drifted.
 | fixtures/personas.generated.ts | Typed personas rendered from the declared persona source |
 | env/.secrets/.gitignore | An ignore boundary created before any secret material exists |
 | .cockpit/generated-environment-ownership.json | The ownership manifest: what cockpit wrote and the bytes it expects |
+| .cockpit/local/guard-identity | This machine's Node and cockpit handler identity for the guard. It ignores itself in Git, so the committed files stay identical on every clone; each clone's `sync` writes its own |
 
 Open **.claude/settings.json** to see the guard wired in as a Claude Code PreToolUse hook. The
 Codex and OpenCode files wire the same guard through their own hook mechanisms.

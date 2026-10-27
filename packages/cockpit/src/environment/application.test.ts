@@ -10,6 +10,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { planAutonomyLaunch } from '../autonomy/launcher.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
+import { encodeGuardLocalIdentity, parseGuardLocalIdentity } from '../guards/local-identity.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import type { ExecutionStep, StackId } from './contract.js'
@@ -247,6 +248,7 @@ const installedGuardMutablePaths = [
     'cockpit.toml',
     '.cockpit/guards/bash-guard.sh',
     '.cockpit/generated-environment-ownership.json',
+    '.cockpit/local/guard-identity',
     '.claude/settings.json',
     '.codex/hooks.json',
 ] as const
@@ -281,7 +283,7 @@ function restoreInstalledGuardFixture(fixture: InstalledGuardFixture) {
 
 describe('pending guard policy construction', () => {
     it('refuses missing installed guard identity through the application boundary', async () => {
-        expect(await runGuardEvaluationApplication({ identity: null, payload: {}, harness: 'claudecode', cwd: '/workspace/product' }, {
+        expect(await runGuardEvaluationApplication({ identity: null, guardRoot: '/workspace/product', payload: {}, harness: 'claudecode', cwd: '/workspace/product' }, {
             loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout, resolveGit: async () => ({ state: 'unavailable', reason: 'synthetic missing Git' }),
         })).toMatchObject({ decision: { decision: 'unavailable', reason: expect.any(String) }, diagnostics: [expect.objectContaining({ severity: 'error' })] })
     })
@@ -318,9 +320,7 @@ describe('pending guard policy construction', () => {
         mkdirSync(join(root, 'fixtures'), { recursive: true })
         writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        const guard = readFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'utf8')
-        const line = guard.split('\n').find(line => line.startsWith('export COCKPIT_GUARD_IDENTITY='))!
-        const identity = JSON.parse(line.slice("export COCKPIT_GUARD_IDENTITY='".length, -1).replaceAll("'\\''", "'"))
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
         const fixture = Object.freeze({
             root,
             configPath: realpathSync(configPath),
@@ -342,7 +342,7 @@ describe('pending guard policy construction', () => {
         if (!sharedInstalledGuard) throw new Error('installed guard fixture initialization did not complete')
         restoreInstalledGuardFixture(sharedInstalledGuard)
         const identity = JSON.parse(JSON.stringify(installedIdentity)) as GuardEvaluationApplicationInput['identity']
-        const request: GuardEvaluationApplicationInput = { identity, harness: 'claudecode', cwd: root,
+        const request: GuardEvaluationApplicationInput = { identity, guardRoot: root, harness: 'claudecode', cwd: root,
             payload: { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: 'app/.env.example' } } }
         const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
             resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
@@ -377,6 +377,7 @@ describe('pending guard policy construction', () => {
                 { action: 'read-file', segments: ['.cockpit'], name: 'generated-environment-ownership.json', maxBytes: 1_048_576 },
                 { action: 'read-file', segments: ['.cockpit', 'guards'], name: 'bash-guard.sh', maxBytes: 65_536 },
                 { action: 'read-file', segments: ['.claude'], name: 'settings.json', maxBytes: 65_536 },
+                { action: 'read-file', segments: ['.cockpit', 'local'], name: 'guard-identity', maxBytes: 65_536 },
             ] })
         }
         const module = steps.filter(({ step }) => step.cwd !== root)
@@ -513,11 +514,9 @@ describe('pending guard policy construction', () => {
         mkdirSync(join(root, 'fixtures'), { recursive: true })
         writeFileSync(join(root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        const guard = readFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'utf8')
-        const line = guard.split('\n').find(line => line.startsWith('export COCKPIT_GUARD_IDENTITY='))!
-        const identity = JSON.parse(line.slice("export COCKPIT_GUARD_IDENTITY='".length, -1).replaceAll("'\\''", "'"))
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
         const payload = { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: 'app/.env.example' } }
-        const request = { identity, payload, harness: 'claudecode' as const, cwd: root }
+        const request = { identity, guardRoot: root, payload, harness: 'claudecode' as const, cwd: root }
         const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
             resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' } })
@@ -525,6 +524,15 @@ describe('pending guard policy construction', () => {
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('malformed') } })
         expect(await runGuardEvaluationApplication({ ...request, identity: { ...identity, rootInode: '0' } }, adapters))
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('identity changed') } })
+        // A guard in another checkout must not evaluate under this checkout's identity and policy.
+        expect(await runGuardEvaluationApplication({ ...request, guardRoot: join(root, 'app') }, adapters))
+            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('location') } })
+        const localPath = join(root, '.cockpit/local/guard-identity')
+        const localBytes = readFileSync(localPath, 'utf8')
+        writeFileSync(localPath, encodeGuardLocalIdentity({ ...identity, moduleSha256: 'f'.repeat(64) }))
+        expect(await runGuardEvaluationApplication(request, adapters))
+            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('machine-local record') } })
+        writeFileSync(localPath, localBytes)
         expect(await runGuardEvaluationApplication(request, { ...adapters, resolveGit: async () => ({ state: 'unavailable', reason: 'missing' }) }))
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('Git executable') } })
         expect(await runGuardEvaluationApplication({ ...request, payload: { ...payload, cwd: join(root, 'app') } }, adapters))

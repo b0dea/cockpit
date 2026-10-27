@@ -62,7 +62,8 @@ import {
     type SurfaceInputEvidence,
 } from '../surfaces/render.js'
 import { renderConsumerInstructions } from '../surfaces/consumer-instructions.js'
-import { expandRestrictions, type GuardHandlerIdentity } from '../surfaces/restrictions.js'
+import { expandRestrictions } from '../surfaces/restrictions.js'
+import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import {
@@ -2197,7 +2198,7 @@ async function prepareSurfaces(
         policy: { hosted_db_hosts: config.guards.hosted_db_hosts, protected_branches: config.guards.protected_branches,
             ask_is_deny_on: config.guards.ask_is_deny_on as readonly ('claude' | 'codex')[], readonly: { kind: 'agent', name: 'evaluator' } },
         adapters: RESTRICTION_ASSETS.slice(1).map(path => JSON.parse(asset(path).bytes)),
-        handler: guardHandler,
+        configFile: relative(prepared.root, prepared.configPath),
     })
     if (restrictions.kind !== 'complete') return refuse(restrictions.code, restrictions.message, 'surfaces')
 
@@ -3010,6 +3011,12 @@ export async function applyGeneratedEnvironmentRepair(
         },
     })
     if (outcome.kind === 'refusal') return outcome
+    if (prepared.guardHandler && settings.dryRun !== true) {
+        const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler)
+        if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
+            `the committed guard files were published, but ${local.message}; the guard refuses every agent tool call until it exists`,
+            GUARD_LOCAL_PATHS.identity, 'fix the path, then run `cockpit sync` again in a terminal')
+    }
     return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun ? outcome.staleRemoval : undefined)
 }
 

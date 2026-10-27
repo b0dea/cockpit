@@ -1277,7 +1277,9 @@ export async function runCli(
             }
             const identityBytes = (runtime.env ?? process.env).COCKPIT_GUARD_IDENTITY
             if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new Error('Installed guard identity is missing or oversized.')
-            response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), payload, harness, cwd: process.cwd(), transport: !reply,
+            const guardRoot = (runtime.env ?? process.env).COCKPIT_GUARD_ROOT
+            if (!guardRoot) throw new Error('Installed guard root is missing.')
+            response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(), transport: !reply,
                 askIsDeny: (runtime.env ?? process.env).COCKPIT_ASK_IS_DENY === '1' }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
                 resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),

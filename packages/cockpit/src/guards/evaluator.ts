@@ -4,6 +4,7 @@ import { GUARD_INPUT_LIMITS, isParsedGuardInput, type ParsedInvocation } from '.
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
+import { GUARD_LOCAL_PATHS } from './local-identity.js'
 
 export const mechanism = {
     id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts', exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'guardIdentity'],
@@ -64,8 +65,9 @@ const GUARD_CONTROL_FILES = [
     'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
-// bundle carries its own MCP servers and hook registration, so no file below them is data.
-const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin'] as const
+// bundle carries its own MCP servers and hook registration, so no file below them is data. The
+// machine-local guard identity names the handler the guard launches, so it is a control as well.
+const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', GUARD_LOCAL_PATHS.directory] as const
 const SECRETS_ROOT = 'env/.secrets'
 /** Root-relative paths whose identity every policy carries beside each instance's. */
 export const GUARD_ROOT_PROTECTIONS: readonly { readonly path: string; readonly type: 'file' | 'directory' }[] = Object.freeze([

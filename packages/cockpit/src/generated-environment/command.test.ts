@@ -342,13 +342,17 @@ describe('selected bootstrap target', () => {
 })
 
 
-it('publishes authenticated guard transport identity and detects registration drift', async () => {
+it('publishes the guard handler identity only to the ignored machine-local file and detects registration drift', async () => {
     const { root, configPath } = await surfaceConsumer('authenticated-guard')
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     const guard = await readFile(join(root, '.cockpit/guards/bash-guard.sh'), 'utf8')
-    expect(guard).toContain('COCKPIT_GUARD_IDENTITY')
-    expect(guard).toContain(await realpath(configPath))
-    expect(guard).toContain(digest(await readFile(configPath)))
+    expect(guard).not.toContain(await realpath(root))
+    expect(guard).not.toContain(digest(await readFile(configPath)))
+    const local = await readFile(join(root, '.cockpit/local/guard-identity'), 'utf8')
+    expect(local).toContain(await realpath(configPath))
+    expect(local).toContain(digest(await readFile(configPath)))
+    expect(spawnSync('git', ['-C', root, 'check-ignore', '--quiet', '.cockpit/local/guard-identity']).status).toBe(0)
     expect(guard).not.toContain('check_instance_path')
     expect(guard).not.toContain('hosted_db_hosts_json')
     await writeFile(join(root, '.codex/hooks.json'), '{}\n')
@@ -360,15 +364,19 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-    const hook = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
-        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command
-    const invoke = (command: string, cwd = join(root, 'app')) => {
-        const result = spawnSync('/bin/sh', ['-c', hook], {
-            cwd, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }),
+    const registered = async (path: string) => JSON.parse(await readFile(join(root, path), 'utf8')).hooks.PreToolUse
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('bash-guard.sh')).command as string
+    const hook = await registered('.claude/settings.json')
+    const invoke = (command: string, cwd = join(root, 'app'), registration = hook) => {
+        const result = spawnSync('/bin/sh', ['-c', registration], {
+            cwd, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }),
         })
         expect(result.stderr).not.toContain('"invocation":')
         return result
     }
+    expect(JSON.parse(invoke('curl https://api.vendor.example.test/messages', join(root, 'app'), await registered('.codex/hooks.json')).stdout))
+        .toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: 'Refusing executable use of a declared vendor host.' } })
     expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
     expect(invoke('npm test -- unit.test.ts')).toMatchObject({ status: 0, stdout: '', stderr: '' })
     expect(invoke('npm run build --extra').stdout).toContain('permissionDecision":"ask')

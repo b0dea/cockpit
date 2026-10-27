@@ -180,14 +180,13 @@ describe('one-row generated surface integration', () => {
         const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
             .filter(path => before[path] !== after[path])
             .sort()
+        // The guard transport and its registrations name neither the checkout nor the configuration,
+        // so a new row leaves them byte-identical.
         expect(changed).toEqual([
             '.claude/settings.json',
-            '.cockpit/guards/bash-guard.sh',
             '.cockpit/mcp/65dfe895cdc7ae8504fb9a4430d8a72d14b21aa8792a20d78ac1eecfa6113cc6.sh',
             '.codex/config.toml',
-            '.codex/hooks.json',
             '.mcp.json',
-            '.opencode/plugin/cockpit-guards.js',
             '.sibling-worker-AGENTS.md',
             'AGENTS.md',
             'CLAUDE.local.md',

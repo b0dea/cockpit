@@ -8,6 +8,7 @@ import { stringify } from 'smol-toml'
 import { encodeOwnershipManifest } from './ownership.js'
 import { cockpitId } from '../environment/identity.js'
 import { spawn, spawnSync } from 'node:child_process'
+import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -23,8 +24,11 @@ import {
 } from './restrictions.js'
 
 const root = new URL('../../', import.meta.url)
-const contexts = new Map<string, { root: string; alias: string; api: string; source: string; configPath: string }>()
-const renderedContexts = new Map<string, { root: string; alias: string; api: string }>()
+interface GuardContext { root: string; alias: string; api: string; source: string; configPath: string; handler: GuardHandlerIdentity }
+// Rendered bytes no longer name their checkout, so the next completed expansion is bound to the
+// checkout the most recent fixture input prepared.
+let pendingContext: GuardContext | undefined
+const renderedContexts = new WeakMap<RestrictionExpansionComplete, GuardContext>()
 const scratch: string[] = []
 afterAll(() => scratch.forEach(path => rmSync(path, { recursive: true, force: true })))
 
@@ -49,6 +53,7 @@ async function shippedInputs() {
 }
 
 function pureInput(shipped: Awaited<ReturnType<typeof shippedInputs>>): RestrictionExpansionInput {
+    pendingContext = undefined
     return {
         canonicalProjectRoot: '/workspace/product',
         guardTemplate: shipped.guardTemplate,
@@ -59,6 +64,7 @@ function pureInput(shipped: Awaited<ReturnType<typeof shippedInputs>>): Restrict
             readonly: { kind: 'agent', name: 'evaluator' },
         },
         adapters: shipped.adapters,
+        configFile: 'cockpit.toml',
     }
 }
 
@@ -81,6 +87,7 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
         },
         adapters: await Promise.all(['claude', 'codex', 'opencode'].map(async (name) =>
             JSON.parse(await fixture(`${name}.adapter.json`)) as unknown)),
+        configFile: 'cockpit.toml',
         ...overrides,
     }
     let canonical = mapped(value.canonicalProjectRoot)
@@ -88,10 +95,10 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const instances = value.instances.map(row => ({ ...row, ...(row.root ? { root: mapped(row.root) } : {}) }))
     // Invalid expansion inputs remain pure capture controls, without filesystem effects.
     if (!canonical.startsWith('/') || canonical.endsWith('/') || canonical.length > 4096
-        || !roots.every(path => path.startsWith(parent) || path.startsWith(tmpdir()) || path.startsWith('/private/var/'))) return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances,
-            handler: { root: canonical, rootDevice: '0', rootInode: '0', configDevice: '0', configInode: '0',
-                configPath: `${canonical}/cockpit.toml`, configSha256: 'a'.repeat(64), node: `${canonical}/node`, nodeSha256: 'b'.repeat(64),
-                module: `${canonical}/cli.js`, moduleSha256: 'c'.repeat(64) } }
+        || !roots.every(path => path.startsWith(parent) || path.startsWith(tmpdir()) || path.startsWith('/private/var/'))) {
+        pendingContext = undefined
+        return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances }
+    }
     await mkdir(canonical, { recursive: true })
     for (const path of roots) await mkdir(path, { recursive: true })
     const alias = canonical
@@ -117,14 +124,15 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const handler = { root: canonical, rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino), configPath,
         configDevice: String(configStat.dev), configInode: String(configStat.ino), configSha256: hash(configPath),
         node, nodeSha256: hash(node), module, moduleSha256: hash(module) }
-    contexts.set(handler.configSha256, { root: canonical, alias, api, source, configPath })
-    return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances, handler }
+    pendingContext = { root: canonical, alias, api, source, configPath, handler }
+    return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances }
 }
 
 function complete(value: ReturnType<typeof expandRestrictions>): RestrictionExpansionComplete {
     expect(value.kind).toBe('complete')
     if (value.kind !== 'complete') throw new Error(JSON.stringify(value))
-    const context = [...contexts].find(([hash]) => value.sharedGuard.bytes.includes(hash))?.[1]
+    const context = pendingContext
+    pendingContext = undefined
     if (context) {
         const files = [value.sharedGuard, ...value.targets.flatMap(row => row.files)]
         for (const file of files) {
@@ -137,7 +145,9 @@ function complete(value: ReturnType<typeof expandRestrictions>): RestrictionExpa
             generation: 'a'.repeat(64), sourceSha256, personaSource: { path: 'fixtures/synthetic.json', sha256: 'b'.repeat(64) },
             owned: files, surfaces: [] })
         writeFileSync(join(context.root, '.cockpit/generated-environment-ownership.json'), manifest.bytes)
-        renderedContexts.set(value.sharedGuard.bytes, context)
+        mkdirSync(join(context.root, '.cockpit/local'), { recursive: true })
+        writeFileSync(join(context.root, '.cockpit/local/guard-identity'), encodeGuardLocalIdentity(context.handler), { mode: 0o600 })
+        renderedContexts.set(value, context)
     }
     return value
 }
@@ -146,11 +156,11 @@ function target(result: RestrictionExpansionComplete, name: RestrictionExpansion
     return result.targets.find((candidate) => candidate.target === name)!
 }
 
-function runGuard(bytes: string, payload: unknown, env: Record<string, string> = {}) {
-    const context = renderedContexts.get(bytes)
+function runGuard(published: RestrictionExpansionComplete, payload: unknown, env: Record<string, string> = {}) {
+    const context = renderedContexts.get(published)
     if (!context) throw new Error('Guard fixture was not published')
     const input = JSON.parse(JSON.stringify(payload).replaceAll('/workspace/product', context.root).replaceAll('/workspace/api', context.api).replaceAll(context.alias, context.root))
-    const result = spawnSync('/bin/bash', ['-c', bytes, 'guard', '--harness', 'claudecode'], {
+    const result = spawnSync('/bin/bash', [join(context.root, published.sharedGuard.path), '--harness', 'claudecode'], {
         cwd: context.root,
         input: JSON.stringify({ ...input, cwd: context.root }),
         encoding: 'utf8',
@@ -197,7 +207,7 @@ describe('restriction expansion', () => {
     it('refuses shipped facts when the actual template or measured adapters are incomplete or changed', async () => {
         const captured = await shippedInputs()
         expect(inspectShippedRestrictionCapabilities({
-            guardTemplate: captured.guardTemplate.replace('__COCKPIT_GUARD_NODE__', ''),
+            guardTemplate: captured.guardTemplate.replace('__COCKPIT_GUARD_CONFIG__', ''),
             adapters: captured.adapters,
         })).toMatchObject({ kind: 'refusal', code: 'RESTRICTION_TEMPLATE_INVALID' })
         expect(inspectShippedRestrictionCapabilities({
@@ -272,27 +282,56 @@ describe('restriction expansion', () => {
         }
     })
 
-    it('launches published non-executable guards through both hook registrations', async () => {
+    it('commits identical guard and registration bytes for every checkout and finds the checkout at run time', async () => {
         const directory = await isolatedProjectRoot('cockpit-hook-launch-')
         const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
-        await mkdir(join(directory, '.cockpit', 'guards'), { recursive: true })
-        await writeFile(join(directory, result.sharedGuard.path), result.sharedGuard.bytes, { mode: 0o600 })
-        for (const name of ['claudecode', 'codexcli'] as const) {
+        const elsewhere = await isolatedProjectRoot('cockpit-hook-elsewhere-')
+        const other = complete(expandRestrictions(await input({ canonicalProjectRoot: elsewhere })))
+        const published = (value: RestrictionExpansionComplete) => [value.sharedGuard, ...value.targets.flatMap(row => row.files)]
+        expect(published(other)).toEqual(published(result))
+        for (const file of published(result)) {
+            expect(file.bytes).not.toContain(directory)
+            expect(file.bytes).not.toContain(dirname(process.execPath))
+            expect(file.bytes).not.toMatch(/\b\d+:\d+\b|Inode|Device/)
+        }
+
+        await mkdir(join(directory, 'nested'))
+        const runs = (name: 'claudecode' | 'codexcli', cwd: string, env: NodeJS.ProcessEnv, file: string) => {
             const registration = JSON.parse(target(result, name).files[0]!.bytes) as {
                 hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
             }
-            const command = registration.hooks.PreToolUse[0]!.hooks[0]!.command
-            const allowed = spawnSync('/bin/sh', ['-c', command], {
-                cwd: directory, input: JSON.stringify(edit('env/service.env.example')), encoding: 'utf8',
+            return spawnSync('/bin/sh', ['-c', registration.hooks.PreToolUse[0]!.hooks[0]!.command], {
+                cwd, env, input: JSON.stringify({ ...edit(join(directory, file)), cwd }), encoding: 'utf8',
             })
+        }
+        const { CLAUDE_PROJECT_DIR: _unset, ...ambient } = process.env
+        for (const [name, cwd, env] of [
+            ['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }],
+            ['codexcli', join(directory, 'nested'), ambient],
+        ] as const) {
+            const allowed = runs(name, cwd, env, 'env/service.env.example')
             expect(allowed.status, allowed.stderr).toBe(0)
             expect(allowed.stdout).toBe('')
-            const denied = spawnSync('/bin/sh', ['-c', command], {
-                cwd: directory, input: JSON.stringify(edit('env/service.env')), encoding: 'utf8',
-            })
+            const denied = runs(name, cwd, env, 'env/service.env')
             expect(denied.status, denied.stderr).toBe(0)
             expect(denied.stdout).toContain('permissionDecision":"deny')
         }
+        // Without the harness's project root the registration cannot find the guard and blocks.
+        expect(runs('claudecode', directory, ambient, 'env/service.env.example')).toMatchObject({
+            status: 2, stdout: '', stderr: expect.stringContaining('through CLAUDE_PROJECT_DIR'),
+        })
+        expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
+            status: 2, stdout: '', stderr: expect.stringContaining('through the Git top level'),
+        })
+    })
+
+    it('refuses every call with the fix command while the machine-local identity is missing', async () => {
+        const directory = await isolatedProjectRoot('cockpit-local-missing-')
+        const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
+        rmSync(join(directory, '.cockpit/local/guard-identity'))
+        expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({
+            status: 2, stdout: '', stderr: expect.stringContaining(`Fix: run \`cockpit sync --config ${directory}/cockpit.toml\` in a terminal`),
+        })
     })
 
     it('turns every guard failure other than the blocking exit into a blocking exit', async () => {
@@ -306,7 +345,7 @@ describe('restriction expansion', () => {
             // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
             for (const [exit, status, stderr] of [[1, 2, 'cockpit guard failed (exit 1)\n'], [137, 2, 'cockpit guard failed (exit 137)\n'], [2, 2, 'refused\n'], [0, 0, '']] as const) {
                 await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
-                const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8' })
+                const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: directory } })
                 expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
             }
         }
@@ -338,25 +377,26 @@ describe('restriction expansion', () => {
         expect(target(result, 'opencode').files[0]!.bytes).toContain('"tool.execute.before"')
         expect(target(result, 'opencode').files[0]!.bytes).toContain('spawnSync("/bin/bash"')
 
-        expect(runGuard(result.sharedGuard.bytes, bash('psql postgresql://db.example.test/app')).stdout)
+        expect(runGuard(result, bash('psql postgresql://db.example.test/app')).stdout)
             .toContain('permissionDecision":"deny')
-        expect(runGuard(result.sharedGuard.bytes, bash('git push origin main')).stdout)
+        expect(runGuard(result, bash('git push origin main')).stdout)
             .toContain('permissionDecision":"deny')
 
         const hostChanged = complete(expandRestrictions(await input({ policy: {
             ...baseInput.policy, hosted_db_hosts: ['archive.example.test'],
         } })))
-        expect(hostChanged.sharedGuard.sha256).not.toBe(result.sharedGuard.sha256)
-        expect(runGuard(hostChanged.sharedGuard.bytes, bash('psql postgresql://db.example.test/app')).stdout).toContain('permissionDecision":"ask')
-        expect(runGuard(hostChanged.sharedGuard.bytes, bash('psql postgresql://archive.example.test/app')).stdout)
+        // Policy is read from the configuration at run time, so the committed guard bytes do not change.
+        expect(hostChanged.sharedGuard.sha256).toBe(result.sharedGuard.sha256)
+        expect(runGuard(hostChanged, bash('psql postgresql://db.example.test/app')).stdout).toContain('permissionDecision":"ask')
+        expect(runGuard(hostChanged, bash('psql postgresql://archive.example.test/app')).stdout)
             .toContain('permissionDecision":"deny')
 
         const branchChanged = complete(expandRestrictions(await input({ policy: {
             ...baseInput.policy, protected_branches: ['release'],
         } })))
-        expect(branchChanged.sharedGuard.sha256).not.toBe(result.sharedGuard.sha256)
-        expect(runGuard(branchChanged.sharedGuard.bytes, bash('git push origin main')).stdout).toContain('permissionDecision":"ask')
-        expect(runGuard(branchChanged.sharedGuard.bytes, bash('git push origin release')).stdout)
+        expect(branchChanged.sharedGuard.sha256).toBe(result.sharedGuard.sha256)
+        expect(runGuard(branchChanged, bash('git push origin main')).stdout).toContain('permissionDecision":"ask')
+        expect(runGuard(branchChanged, bash('git push origin release')).stdout)
             .toContain('permissionDecision":"deny')
 
         const denyClaude = complete(expandRestrictions(await input({ policy: {
@@ -376,17 +416,17 @@ describe('restriction expansion', () => {
         const result = complete(expandRestrictions(await input()))
 
         for (const path of ['env/service.env', './env/service.env', '/workspace/product/env/service.env', '../product/env/service.env']) {
-            const outcome = runGuard(result.sharedGuard.bytes, edit(path))
+            const outcome = runGuard(result, edit(path))
             expect(outcome, JSON.stringify({ path, ...outcome })).toMatchObject({
                 status: 0, stdout: expect.stringContaining('permissionDecision":"deny'),
             })
         }
         for (const path of ['/workspace/product-other/env/service.env']) {
-            expect(runGuard(result.sharedGuard.bytes, edit(path))).toMatchObject({
+            expect(runGuard(result, edit(path))).toMatchObject({
                 status: 2, stderr: expect.stringContaining('escapes configured roots'),
             })
         }
-        expect(runGuard(result.sharedGuard.bytes, edit('env/service.env.example'))).toMatchObject({ status: 0, stdout: '' })
+        expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({ status: 0, stdout: '' })
 
         const directory = await isolatedProjectRoot('cockpit-restriction-')
         await writeFile(join(directory, 'private.env'), 'synthetic')
@@ -394,7 +434,7 @@ describe('restriction expansion', () => {
             canonicalProjectRoot: directory,
             instances: [{ kind: 'instance', name: 'local-instance', path: 'private.env' }],
         })))
-        expect(runGuard(local.sharedGuard.bytes, edit(join(directory, 'private.env')))).toMatchObject({
+        expect(runGuard(local, edit(join(directory, 'private.env')))).toMatchObject({
             status: 0, stdout: expect.stringContaining('declared environment instance'),
         })
     })
@@ -435,7 +475,7 @@ while (Date.now() < end) {
                     }),
                     closed.then(() => { throw new Error('namespace churn exited before readiness') }),
                 ])
-                const outcome = runGuard(result.sharedGuard.bytes, bash('psql postgresql://db.example.test/app'), {
+                const outcome = runGuard(result, bash('psql postgresql://db.example.test/app'), {
                     PATH: `${hostileBin}:${process.env.PATH ?? ''}`,
                 })
                 expect(outcome, JSON.stringify(outcome)).toMatchObject({
@@ -458,11 +498,11 @@ while (Date.now() < end) {
         const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
 
         for (const payload of [edit('alias-env/service.env'), bash('git add alias-env/service.env')]) {
-            expect(runGuard(result.sharedGuard.bytes, payload)).toMatchObject({
+            expect(runGuard(result, payload)).toMatchObject({
                 status: 2, stderr: expect.stringContaining('symlinked'),
             })
         }
-        const protectedPath = runGuard(result.sharedGuard.bytes, edit('env/service.env'))
+        const protectedPath = runGuard(result, edit('env/service.env'))
         expect(protectedPath.stderr, JSON.stringify(protectedPath)).toBe('')
         expect(protectedPath, JSON.stringify(protectedPath)).toMatchObject({
             status: 0, stdout: expect.stringContaining('permissionDecision":"deny'),
@@ -483,26 +523,26 @@ while (Date.now() < end) {
             '../api/env/private.env',
             './../api/./env/../env/private.env',
         ]) {
-            expect(runGuard(result.sharedGuard.bytes, edit(path))).toMatchObject({
+            expect(runGuard(result, edit(path))).toMatchObject({
                 status: 0, stdout: expect.stringContaining('permissionDecision":"deny'),
             })
         }
         for (const path of ['/workspace/api/env/private.env.example', '../api/env/private.env.example']) {
-            expect(runGuard(result.sharedGuard.bytes, edit(path))).toMatchObject({ status: 0, stdout: '' })
+            expect(runGuard(result, edit(path))).toMatchObject({ status: 0, stdout: '' })
         }
         for (const path of ['/workspace/other/env/private.env', '../other/env/private.env']) {
-            expect(runGuard(result.sharedGuard.bytes, edit(path))).toMatchObject({
+            expect(runGuard(result, edit(path))).toMatchObject({
                 status: 2, stderr: expect.stringContaining('escapes configured roots'),
             })
         }
 
         const patch = '*** Begin Patch\n*** Update File: env/service.env.example\n*** Move to: ../api/env/private.env\n@@\n-old\n+new\n*** End Patch'
-        expect(runGuard(result.sharedGuard.bytes, {
+        expect(runGuard(result, {
             hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: { command: patch },
         })).toMatchObject({ status: 0, stdout: expect.stringContaining('permissionDecision":"deny') })
-        expect(runGuard(result.sharedGuard.bytes, bash('git add ../api/env/private.env')).stdout)
+        expect(runGuard(result, bash('git add ../api/env/private.env')).stdout)
             .toContain('permissionDecision":"deny')
-        expect(runGuard(result.sharedGuard.bytes, bash('git add ../api/env/private.env.example')).stdout)
+        expect(runGuard(result, bash('git add ../api/env/private.env.example')).stdout)
             .toContain('permissionDecision":"ask')
     })
 
@@ -515,11 +555,11 @@ while (Date.now() < end) {
             '*** Update File: env/service.env.example\n*** Move to: env/service.env',
         ]) {
             const patch = `*** Begin Patch\n${header}\n@@\n-old\n+new\n*** End Patch`
-            expect(runGuard(result.sharedGuard.bytes, {
+            expect(runGuard(result, {
                 hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: { command: patch },
             })).toMatchObject({ status: 0, stdout: expect.stringContaining('permissionDecision":"deny') })
         }
-        expect(runGuard(result.sharedGuard.bytes, {
+        expect(runGuard(result, {
             hook_event_name: 'PreToolUse', tool_name: 'apply_patch',
             tool_input: { command: '*** Begin Patch\n*** Update File: env/service.env.example\n@@\n-old\n+new\n*** End Patch' },
         })).toMatchObject({ status: 0, stdout: '' })
@@ -532,45 +572,48 @@ while (Date.now() < end) {
             { kind: 'instance', name: 'reports-instance', path: 'env/reports/private.env' },
         ] })))
 
-        expect(runGuard(result.sharedGuard.bytes, bash('git add ./env/reports/private.env')).stdout)
+        expect(runGuard(result, bash('git add ./env/reports/private.env')).stdout)
             .toContain('permissionDecision":"deny')
-        expect(runGuard(result.sharedGuard.bytes, bash('git add env/service.env.example')).stdout).toContain('permissionDecision":"ask')
+        expect(runGuard(result, bash('git add env/service.env.example')).stdout).toContain('permissionDecision":"ask')
         expect(result.sharedGuard.bytes).not.toContain('reports-instance')
     })
 
     it('keeps destructive policy active when the instance set is empty and denies asks without a prompt tier', async () => {
         const result = complete(expandRestrictions(await input({ instances: [] })))
-        expect(runGuard(result.sharedGuard.bytes, bash('git reset --hard HEAD~1')))
+        expect(runGuard(result, bash('git reset --hard HEAD~1')))
             .toMatchObject({ status: 2, stderr: expect.stringContaining('Dynamic command construction is unsupported') })
         const command = bash('git reset --hard HEAD')
 
-        expect(runGuard(result.sharedGuard.bytes, command)).toMatchObject({ status: 0, stderr: '', stdout: expect.stringContaining('permissionDecision":"ask') })
-        expect(runGuard(result.sharedGuard.bytes, command, { COCKPIT_ASK_IS_DENY: '1' }).stdout)
+        expect(runGuard(result, command)).toMatchObject({ status: 0, stderr: '', stdout: expect.stringContaining('permissionDecision":"ask') })
+        expect(runGuard(result, command, { COCKPIT_ASK_IS_DENY: '1' }).stdout)
             .toContain('permissionDecision":"deny')
         expect(target(result, 'codexcli').files[0]!.bytes).toContain('COCKPIT_ASK_IS_DENY=1')
         expect(target(result, 'opencode').files[0]!.bytes).toContain('COCKPIT_ASK_IS_DENY: "1"')
     })
 
-    it('bounds rendered UTF-8 output after substitution and shell-quote amplification', async () => {
+    it('bounds rendered UTF-8 output and keeps quote-bearing checkout paths out of it', async () => {
+        const quoted = await isolatedProjectRoot("cockpit-quote'-")
         const baseInput = await input({
-            canonicalProjectRoot: await isolatedProjectRoot("cockpit-quote'-"),
+            canonicalProjectRoot: quoted,
             instances: [{ kind: 'instance', name: 'quoted-instance', path: `env/${"'".repeat(100)}.env` }],
         })
-        const minimal = '#!/usr/bin/env bash\n# __COCKPIT_GUARD_IDENTITY__\n# __COCKPIT_GUARD_NODE__\n# __COCKPIT_GUARD_MODULE__\n'
+        const minimal = '#!/usr/bin/env bash\n# __COCKPIT_GUARD_CONFIG__\n'
         const rendered = complete(expandRestrictions({ ...baseInput, guardTemplate: minimal }))
-        expect(rendered.sharedGuard.bytes).toContain("'\\''")
-        const padding = RESTRICTION_OUTPUT_LIMITS.scalarBytes - Buffer.byteLength(rendered.sharedGuard.bytes)
-        const exact = complete(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'x'.repeat(padding)}` }))
-        expect(Buffer.byteLength(exact.sharedGuard.bytes)).toBe(RESTRICTION_OUTPUT_LIMITS.scalarBytes)
+        expect(rendered.sharedGuard.bytes).toBe('#!/usr/bin/env bash\n# cockpit.toml\n')
+        expect(JSON.stringify(rendered)).not.toContain(quoted)
+        // Substitution now shortens the template, so bounded input capture is the binding scalar bound.
+        const padding = RESTRICTION_OUTPUT_LIMITS.scalarBytes - Buffer.byteLength(minimal)
+        complete(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'x'.repeat(padding)}` }))
         expect(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'x'.repeat(padding + 1)}` })).toMatchObject({
+            kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID',
+        })
+        // Each scalar fits, but JSON escaping doubles every quote past the aggregate bound.
+        expect(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'"'.repeat(padding)}` })).toMatchObject({
             kind: 'refusal', code: 'RESTRICTION_OUTPUT_LIMIT',
         })
-
-        const aggregate = await input({
-            canonicalProjectRoot: `/${"a'".repeat(2_000)}`,
-            guardTemplate: `${minimal}${'x'.repeat(RESTRICTION_OUTPUT_LIMITS.scalarBytes - 12_000)}`,
-        })
-        expect(expandRestrictions(aggregate)).toMatchObject({ kind: 'refusal', code: 'RESTRICTION_OUTPUT_LIMIT' })
+        for (const configFile of ["cock'pit.toml", '../cockpit.toml', '/cockpit.toml', 'cockpit$(id).toml']) {
+            expect(expandRestrictions({ ...baseInput, configFile })).toMatchObject({ kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID' })
+        }
     })
 
     it('refuses unsupported policy, malformed payloads, foreign adapters and policy-bearing adapters', async () => {
@@ -612,9 +655,9 @@ while (Date.now() < end) {
         })
 
         const result = complete(expandRestrictions(value))
-        expect(runGuard(result.sharedGuard.bytes, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: {} }))
+        expect(runGuard(result, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: {} }))
             .toMatchObject({ status: 2, stderr: expect.stringContaining('Malformed file payload') })
-        expect(runGuard(result.sharedGuard.bytes, {
+        expect(runGuard(result, {
             hook_event_name: 'tool.execute.before', input: { tool: 'bash' }, args: { command: 'git reset --hard' },
         })).toMatchObject({ status: 2, stderr: expect.stringContaining('Guard request is malformed') })
     })
