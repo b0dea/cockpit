@@ -95,8 +95,6 @@ changes.
   restate them elsewhere.
 - **Every bug fix lands with a test that fails without it.** One test pins one public behaviour;
   extend the closest existing case rather than adding branch or getter coverage.
-- **Independent work is fanned out.** Split parallel work by file ownership; never point two
-  agents at the same file; audit each agent's output.
 
 ## Harness capabilities
 
