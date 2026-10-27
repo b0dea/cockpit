@@ -2556,6 +2556,7 @@ async function executeUpRound(
     adapters: UpCommandAdapters,
     forceReset: boolean,
     rememberAcquisition: (value: LeasePortFamilyResult) => void,
+    rememberRuntimeStart: () => void,
 ): Promise<UpRoundResult> {
     const operate = async (runtime: RuntimeReadiness, stage: LifecycleStageProjection, ports: AcquiredPorts): Promise<UpRoundResult> => {
         const current = await readLifecycleRecord(context)
@@ -2734,6 +2735,7 @@ async function executeUpRound(
         }
         for (let index = issuance.firstIncompleteServiceIndex; index < orderedServices.length; index += 1) {
             const service = orderedServices[index]!
+            rememberRuntimeStart()
             const admitted = await startService(issuance.topology, service.id, adapters)
             if (admitted.kind === 'refused') return { kind: 'complete' as const, result: forwardedRefusal(admitted.diagnostics) }
             if (admitted.kind !== 'complete') {
@@ -2891,6 +2893,14 @@ export async function runUp(
     const rememberAcquisition = (lease: LeasePortFamilyResult) => {
         if (!acquired && lease.kind === 'complete' && lease.change === 'acquired') acquired = lease as AcquiredLeaseResult
     }
+    // The holder claim and its lease are what own the stack's runtime: `down` and `reset` act only
+    // for a holder, and the next `up` resumes from the holder's durable progress. Once this `up`
+    // has asked Compose to start a service, containers may exist on the leased ports, so a refusal
+    // keeps the claim rather than compensating it. Releasing it orphaned those containers: the
+    // next `up` leased the same family and collided with its own ports, and `down` had no holder.
+    let runtimeStarted = false
+    const rememberRuntimeStart = () => { runtimeStarted = true }
+    const releasable = () => acquired !== undefined && !runtimeStarted
     const generatedPreparation = await prepareGeneratedBringup(context, adapters, rememberAcquisition)
     if (generatedPreparation) {
         if (!acquired) return generatedPreparation
@@ -2906,17 +2916,17 @@ export async function runUp(
     }
     let forceReset = false
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition)
+        const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition, rememberRuntimeStart)
         if (round.kind === 'retry') {
             forceReset = round.forceReset
             continue
         }
         const result: UpCommandResult = round.result.progress || !generatedBringupProgress.has(context)
             ? round.result : { ...round.result, progress: generatedBringupProgress.get(context) }
-        if (result.kind === 'refusal' && acquired) {
+        if (result.kind === 'refusal' && releasable()) {
             const compensation = await compensateAcquiredPortHolder({
                 namespace: context.namespace,
-                leaseResult: acquired,
+                leaseResult: acquired!,
                 now: new Date().toISOString(),
             })
             if (compensation.kind === 'refusal') return {
@@ -2926,10 +2936,10 @@ export async function runUp(
         }
         return result
     }
-    if (acquired) {
+    if (releasable()) {
         const compensation = await compensateAcquiredPortHolder({
             namespace: context.namespace,
-            leaseResult: acquired,
+            leaseResult: acquired!,
             now: new Date().toISOString(),
         })
         if (compensation.kind === 'refusal') {

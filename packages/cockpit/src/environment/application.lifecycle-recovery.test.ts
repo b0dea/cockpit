@@ -828,7 +828,7 @@ describe('lifecycle application contracts', () => {
         })
     })
 
-    it('compensates a partial startup and completes from its durable prefix on the next invocation', async () => {
+    it('keeps the lease of a partial startup that reached Compose and completes from its durable prefix on the next invocation', async () => {
         const value = await unissuedContextFixture()
         const firstLoaded = await loadCockpitConfig(value.configPath)
         if (firstLoaded.kind !== 'complete') throw new Error('fixture configuration did not load')
@@ -924,7 +924,8 @@ describe('lifecycle application contracts', () => {
             kind: 'refusal',
             diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID' })]),
         })
-        expect(compensate).toHaveBeenCalledOnce()
+        // The failed start may have left containers on the leased ports, so the holder keeps them.
+        expect(compensate).not.toHaveBeenCalled()
         expect(second).toMatchObject({ kind: 'complete', result: { change: 'resumed' } })
         expect(executed).toEqual(['start', 'status', 'identity', 'inspect'])
         expect(await readState(secondContext.namespace.paths.lifecycle(secondContext.stackId))).toMatchObject({
