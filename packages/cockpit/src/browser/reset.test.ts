@@ -47,7 +47,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         '#!/bin/sh',
         'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-        'if [ "$1" = "info" ] && [ "$3" = "{{.OperatingSystem}}" ]; then printf "Docker Desktop\\n"; exit 0; fi',
+        'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ]; then',
         '  case " $*" in',

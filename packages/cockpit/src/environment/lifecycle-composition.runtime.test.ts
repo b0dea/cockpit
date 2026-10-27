@@ -140,7 +140,7 @@ describe('production lifecycle adapter composition', () => {
             await once(listener, 'close')
         }
 
-        expect(operatingSystemOutput).toBe('Docker Desktop\n')
+        expect(operatingSystemOutput).toBe('["Docker Desktop","docker-desktop","linux"]\n')
         expect(readiness).toEqual(expect.objectContaining({ topology: expect.objectContaining({
             stackId: loaded.result.stackId,
             configSha256: loaded.result.source.sha256,

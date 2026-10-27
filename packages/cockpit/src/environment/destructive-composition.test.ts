@@ -251,7 +251,7 @@ describe('destructive command composition', () => {
             'if [ "$1" = "--host" ]; then shift 2; fi',
             'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-            'if [ "$1" = "info" ] && [ "$3" = "{{.OperatingSystem}}" ]; then printf "Docker Desktop\\n"; exit 0; fi',
+            'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
             'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " config "; then /bin/cat "$PWD/topology.json"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " up "; then /usr/bin/touch "$PWD/runtime-up"; exit 0; fi',

@@ -76,7 +76,7 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
         '#!/bin/sh',
         'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-        'if [ "$1" = "info" ] && [ "$3" = "{{.OperatingSystem}}" ]; then printf "Docker Desktop\\n"; exit 0; fi',
+        'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ]; then /bin/cat "$PWD/topology.json"; exit 0; fi',
         'exit 64',
@@ -209,7 +209,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
         '#!/bin/sh',
         'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-        'if [ "$1" = "info" ] && [ "$3" = "{{.OperatingSystem}}" ]; then printf "Docker Desktop\\n"; exit 0; fi',
+        'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ]; then /bin/cat "$PWD/topology.json"; exit 0; fi',
         'exit 64',
@@ -324,7 +324,7 @@ case "$1" in
     version) printf '27.1.2\\n'; exit 0 ;;
     info)
         case "$joined" in
-            *OperatingSystem*) printf 'Docker Desktop\\n' ;;
+            *OperatingSystem*) printf '%s\\n' '["Docker Desktop","docker-desktop","linux"]' ;;
             *) printf '2147483648|2\\n' ;;
         esac
         exit 0 ;;

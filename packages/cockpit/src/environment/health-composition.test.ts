@@ -92,7 +92,7 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
             '#!/bin/sh',
             'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
-            'if [ "$1" = "info" ] && [ "$3" = "{{.OperatingSystem}}" ]; then printf "Docker Desktop\\n"; exit 0; fi',
+            'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
             'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ]; then /bin/cat "$PWD/topology.json"; exit 0; fi',
             'exit 64',
@@ -341,7 +341,9 @@ describe('production health adapter composition', () => {
                 owner: 'runtime-planning',
                 code: 'RUNTIME_UNMEASURED',
                 verdict: 'unavailable',
-                reason: 'Runtime docker-desktop is not supported by a complete measurement row',
+                reason: 'Runtime docker-desktop is not supported by a complete measurement row (docker info: OperatingSystem "Docker Desktop", '
+                    + `Name "docker-desktop", OSType "linux"; host ${process.platform}; measured rows: docker-desktop (unmeasured)). `
+                    + 'Measure it with: cockpit runtime measure --config <cockpit.toml> --image <local-image> --write',
             }),
         ]))
     })
