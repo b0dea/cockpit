@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -121,6 +121,7 @@ function parseArguments(argv) {
     let maxWorkers = 4
     let hasMaxWorkers = false
     const arguments_ = []
+    const positional = []
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index]
         if (argument === '--maxWorkers' || argument.startsWith('--maxWorkers=')) {
@@ -143,8 +144,9 @@ function parseArguments(argv) {
         }
         if (argument.startsWith('-')) throw new Error(`unsupported test runner option: ${argument}`)
         arguments_.push(argument)
+        positional.push(argument)
     }
-    return { arguments_, filtered, complete: arguments_.length === 0, maxWorkers }
+    return { arguments_, positional, filtered, complete: arguments_.length === 0, maxWorkers }
 }
 
 function boundedDuration(value, fallback, maximum, label) {
@@ -373,6 +375,31 @@ function validateReport(reportPath, filtered, complete, root) {
     }
 }
 
+// A run cut off by the deadline leaves no JSON report, so everything selected counts as unfinished.
+// A report that exists but cannot be read also lists everything, and says so, rather than guessing.
+function unfinishedFiles(root, selected, reportPath) {
+    const files = [...new Set(selected)].filter(path => existsSync(resolve(root, path)) && lstatSync(resolve(root, path)).isFile())
+    if (!existsSync(reportPath)) return files
+    let passed
+    try {
+        const report = JSON.parse(readFileSync(reportPath, 'utf8'))
+        passed = new Set(report.testResults.filter(result => result.status === 'passed').map(result => result.name))
+    } catch (error) {
+        console.error(`TEST_RUN_REMAINING_REPORT_UNREADABLE: listing every selected file as unfinished (${error instanceof Error ? error.message : String(error)})`)
+        return files
+    }
+    return files.filter(path => !passed.has(resolve(root, path)))
+}
+
+function writeRemaining(root, reportDirectory, id, selected, reportPath) {
+    const remaining = unfinishedFiles(root, selected, reportPath)
+    if (remaining.length === 0) return
+    const relativePath = `.vitest-reports/remaining-${id}.txt`
+    writeFileSync(resolve(root, relativePath), `${remaining.join('\n')}\n`)
+    console.error(`${remaining.length} selected file${remaining.length === 1 ? '' : 's'} did not complete and passed. Rerun exactly those:`)
+    console.error(`npm test -- $(cat ${relativePath})`)
+}
+
 /**
  * @param {string[]} argv
  * @param {{root?: string, runner?: string, timeoutMs?: number, terminationGraceMs?: number, cleanupTimeoutMs?: number, processInventory?: typeof readProcessTable}} [options]
@@ -381,8 +408,10 @@ function validateReport(reportPath, filtered, complete, root) {
 export async function runTestsCli(argv, options = {}) {
     const root = realpathSync(options.root ?? process.cwd())
     const reportDirectory = resolve(root, '.vitest-reports')
-    const reportPath = resolve(reportDirectory, `results-${process.pid}-${Date.now()}.json`)
+    const runId = `${process.pid}-${Date.now()}`
+    const reportPath = resolve(reportDirectory, `results-${runId}.json`)
     const latestReportPath = resolve(reportDirectory, 'latest.json')
+    let selectedFiles = []
     let child
     let forwardedSignal = null
     let timedOut = false
@@ -402,6 +431,7 @@ export async function runTestsCli(argv, options = {}) {
     const signalHandlers = new Map()
     try {
         const parsed = parseArguments(argv)
+        selectedFiles = parsed.positional
         const timeoutMs = boundedDuration(options.timeoutMs, EXECUTION_TIMEOUT_MS, EXECUTION_TIMEOUT_MS, 'execution timeout')
         const terminationGraceMs = boundedDuration(options.terminationGraceMs, TERMINATION_GRACE_MS,
             TERMINATION_GRACE_MS, 'termination grace')
@@ -540,6 +570,11 @@ export async function runTestsCli(argv, options = {}) {
     } finally {
         if (observationInterval) clearInterval(observationInterval)
         for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler)
+        if (selectedFiles.length > 0) try {
+            writeRemaining(root, reportDirectory, runId, selectedFiles, reportPath)
+        } catch (error) {
+            console.error(`TEST_RUN_REMAINING_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`)
+        }
         if (existsSync(reportPath)) renameSync(reportPath, latestReportPath)
         else rmSync(reportPath, { force: true })
     }

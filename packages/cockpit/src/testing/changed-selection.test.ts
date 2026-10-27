@@ -79,6 +79,8 @@ describe('changed adjacent-owner test runner', () => {
             '--reporter=json', expect.stringMatching(/^--outputFile\.json=/),
         ])
         expect(result.stdout).toContain('adjacent-owner tests: 4 owner files')
+        expect(result.stdout).toContain([ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/shared.test.ts',
+            'packages/cockpit/src/untracked.test.ts'].join('\n'))
         expect(result.stdout).toContain('Adjacent tests only; review non-adjacent dependents and shared seams separately.')
     })
 

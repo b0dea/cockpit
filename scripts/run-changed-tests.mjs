@@ -234,6 +234,7 @@ export async function runChangedTestsCli(argv) {
             return 0
         }
         console.log(`adjacent-owner tests: ${owners.selected.length} owner files`)
+        for (const path of owners.selected) console.log(path)
         console.log('Adjacent tests only; review non-adjacent dependents and shared seams separately.')
         return await runTestsCli(owners.selected, { root })
     } catch (error) {

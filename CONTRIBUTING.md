@@ -55,7 +55,10 @@ npm test -- packages/cockpit/src/tree-hygiene.test.ts
 `--maxWorkers=1`, `2` or `3` on a busy machine), accepts file paths and `-t '<test name>'` after
 `--`, and prints failures as they happen. It writes the latest result to
 **.vitest-reports/latest.json**. `npm run test:changed -- <base-commit>` runs the tests adjacent
-to what changed since that commit. Test discovery stays inside this checkout's `packages/` tree,
+to what changed since that commit and lists the selected files before it starts; when a run ends
+without completing them (the deadline, a failure, an interrupt), the runner writes the unfinished
+ones to **.vitest-reports/remaining-<id>.txt** and prints the `npm test -- $(cat ...)` command that
+reruns exactly those. Test discovery stays inside this checkout's `packages/` tree,
 so nested worktrees run their own tests.
 
 ## Verification
