@@ -9,6 +9,8 @@ are trying to do. Contributor documentation lives separately under docs/contribu
 
 - [Tutorial](tutorial.md): run the synthetic example end to end.
 - [Getting started](getting-started.md): install cockpit and bring up your own product.
+- [Agent adoption guide](agent-adoption.md): the situations and exact commands for an AI agent
+  setting cockpit up, with the safety contract it works under.
 - [Concepts](concepts.md): the glossary and the terms diagnostics use.
 - [FAQ](faq.md): short answers, including when not to use cockpit.
 

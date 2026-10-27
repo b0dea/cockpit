@@ -19,6 +19,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['CONTRIBUTING.md', [developer, developer, developer]],
     ['README.md', [sourceInstall, operator]],
     ['docs/adoption.md', [operator, operator, operator]],
+    ['docs/agent-adoption.md', [operator, operator, operator, operator, runtime, operator, operator, operator, operator, runtime, runtime, operator]],
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [runtime]],
     ['docs/getting-started.md', [sourceInstall, operator, operator, operator, operator, runtime, operator, operator, runtime]],
