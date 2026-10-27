@@ -309,8 +309,11 @@ function tomlErrorSummary(error: unknown): string {
 
 const SCHEMA_ISSUES_SHOWN = 3
 
-function schemaIssueSummary(issues: readonly { path: readonly PropertyKey[]; message: string }[]): string {
-    const shown = issues.slice(0, SCHEMA_ISSUES_SHOWN)
+export function schemaIssueSummary(
+    issues: readonly { path: readonly PropertyKey[]; message: string }[],
+    limit = SCHEMA_ISSUES_SHOWN,
+): string {
+    const shown = issues.slice(0, limit)
         .map(issue => `${issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.')}: ${issue.message}`)
     const more = issues.length - shown.length
     return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`

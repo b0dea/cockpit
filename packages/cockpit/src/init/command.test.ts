@@ -108,24 +108,30 @@ describe('init operator command', () => {
         expect(calls).toEqual(['application:false', 'answer', 'application:true'])
     })
 
-    it('answers at most three questions per round and returns the fourth pending without refusal', async () => {
+    it('keeps answering until the interview is done instead of stopping after three answers', async () => {
+        const total = 7
         let answerCount = 0
         const question = (index: number): InitApplicationOutcome => ({ ...pending(), result: { ...pending().result!, question: {
             id: `question:${String(index).padStart(64, '0')}`, field: `repository-${index}.runnable`,
             source: `repository-${index}/package.json`, why: 'unknown command',
         } } })
+        const artifact: InitApplicationOutcome = { kind: 'artifact', status: 0, diagnostics: [], artifact: 'name = "synthetic"\n',
+            destination: '/synthetic/cockpit.toml', result: pending().result! }
+        const written: string[] = []
         const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
             { interactive: true, json: false }, {
                 terminal: true,
                 confirm: async () => 'a'.repeat(64),
                 answerQuestion: async () => `npm run service-${answerCount++}`,
-                writeArtifact: async () => undefined,
-            }, async input => input.greenfieldAnswer === undefined
-                ? (input.accepted ? question(0) : pending())
-                : question(answerCount))
+                writeArtifact: async destination => { written.push(destination) },
+            }, async input => {
+                if (!input.accepted) return pending()
+                if (written.length > 0) return { ...artifact, kind: 'complete', artifact: null, destination: null }
+                return answerCount < total ? question(answerCount) : artifact
+            })
 
-        expect(answerCount).toBe(3)
-        expect(outcome).toMatchObject({ kind: 'pending', status: 0, result: { question: { field: 'repository-3.runnable' } } })
-        expect(outcome.diagnostics).toEqual([])
+        expect(answerCount).toBe(total)
+        expect(written).toEqual(['/synthetic/cockpit.toml'])
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
     })
 })

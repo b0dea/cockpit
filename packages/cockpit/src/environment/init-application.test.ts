@@ -232,8 +232,16 @@ describe('init application', () => {
             { questionId: id, bytes: 'npm run dev\u0000', provenance: 'operator-confirmed' },
         ]) {
             const outcome = await runInitApplication({ ...accepted, greenfieldAnswer: greenfieldAnswer as never }, adapters)
-            expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GREENFIELD_ANSWER_INVALID' }] })
+            expect(outcome).toMatchObject({ kind: 'refusal' })
+            expect(outcome.diagnostics[0]).toMatchObject({ code: 'GREENFIELD_ANSWER_INVALID' })
         }
+        const rejected = await runInitApplication({ ...accepted, greenfieldAnswer: {
+            questionId: id, bytes: 'api_key=synthetic-secret', provenance: 'operator-confirmed' } as never }, adapters)
+        expect(rejected.diagnostics).toEqual([
+            expect.objectContaining({ code: 'GREENFIELD_ANSWER_INVALID' }),
+            expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                message: 'operator answers cannot contain sensitive fields' }),
+        ])
         const original = estate(f.root, 'incomplete-multi-repository')
         if (original.kind !== 'complete') throw new Error('expected complete synthetic observation')
         observed = { kind: 'complete', status: 0, diagnostics: [], result: { ...original.result,

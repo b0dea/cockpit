@@ -386,7 +386,10 @@ export async function runInitApplication(
         if (documented.artifact === null) {
             if (proposed && documented.diagnostics.some(row => row.code.startsWith('DOCUMENT_CONFIGURATION_ANSWER')
                 || row.code === 'DOCUMENT_DEFAULT_CONFIRMATION_INVALID')) {
-                return refused('GREENFIELD_ANSWER_INVALID', 'configuration owner rejected the proposed answer', address.path)
+                // The owner's diagnostics name the field and the schema reason; dropping them left the operator with no way to correct the answer.
+                return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null, diagnostics: [
+                    diagnostic('GREENFIELD_ANSWER_INVALID', 'configuration owner rejected the proposed answer', address.path),
+                    ...documented.diagnostics] }
             }
             return ownerRefusal(documented, current.value.stage, projection)
         }

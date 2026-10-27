@@ -32,6 +32,9 @@ export interface InitCommandIo {
 
 export type InitApplicationHandler = (input: InitApplicationInput) => Promise<InitApplicationOutcome>
 
+// Real interviews ask up to seven questions; the bound only stops an application that never converges from looping forever.
+const MAX_INTERVIEW_ANSWERS = 64
+
 function refusal(code: string, message: string): InitApplicationOutcome {
     return { kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: [{ severity: 'error', code, message }], result: null }
@@ -66,7 +69,8 @@ export async function runInitOperatorCommand(
         outcome = await application(accepted)
     } else outcome = preview
     for (let answered = 0; outcome.kind === 'pending' && outcome.result?.question !== undefined; answered += 1) {
-        if (answered >= 3) return outcome
+        if (answered >= MAX_INTERVIEW_ANSWERS) return refusal('INIT_INTERVIEW_LIMIT_EXCEEDED',
+            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun cockpit init to resume from the persisted answers`)
         if (!io.answerQuestion) return outcome
         const bytes = await io.answerQuestion(outcome.result.question)
         if (bytes === undefined) return refusal('GREENFIELD_ANSWER_REQUIRED', 'greenfield init requires an explicit answer to the named question')

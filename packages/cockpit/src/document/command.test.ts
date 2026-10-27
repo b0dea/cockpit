@@ -453,6 +453,10 @@ describe('document source classification', () => {
         const ambiguous = await documentCommand({ registry: ambiguousPath })
 
         expect(missing.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
+        expect(missing.diagnostics[0]).toMatchObject({
+            message: expect.stringContaining('document inventories an existing shell-registry cockpit'),
+            fix: expect.stringContaining('cockpit init <root> --target <harness>'),
+        })
         expect(unreadable.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_UNREADABLE'])
         expect(empty.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_EMPTY'])
         expect(absent.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
@@ -710,6 +714,13 @@ describe('operator-confirmed document completion', () => {
         const ports = await documentCommand({ ...input, configuration })
 
         expect(ports).toMatchObject({ kind: 'gap-draft', question: { field: 'ports.bases' } })
+        const rejected = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [answer(ports.question!, { APP_HOST_PORT: 'not-a-port' })],
+        } })
+        expect(rejected.diagnostics).toMatchObject([{
+            code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            message: expect.stringContaining('bases.APP_HOST_PORT: Invalid input: expected number, received string'),
+        }])
         const portAnswer = answer(ports.question!, { APP_HOST_PORT: 4100 })
         const policies = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer],

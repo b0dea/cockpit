@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readBoundedInput, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
+import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { snapshotJson } from '../environment/contract.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
@@ -121,6 +121,12 @@ function schemaDirective(destination: string | null): string {
     if (!destination) return './node_modules/@b0dea/cockpit/cockpit.schema.json'
     const path = relative(dirname(destination), schemaArtifact).split(sep).join('/')
     return path.startsWith('.') ? path : `./${path}`
+}
+
+const SCHEMA_ISSUES_SHOWN = 10
+
+function issueSummary(error: { readonly issues: readonly { path: readonly PropertyKey[]; message: string }[] }): string {
+    return schemaIssueSummary(error.issues, SCHEMA_ISSUES_SHOWN)
 }
 
 function refusal(code: string, message: string, target?: string, fix?: string): RefusedDocumentOutcome {
@@ -706,7 +712,7 @@ function completeConfigurationDocument(
         if (read.kind === 'refusal') return read.outcome
         const parsed = CockpitConfig.shape.cockpit.safeParse({ ...defaults.cockpit, name: read.value })
         if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            'the operator-confirmed cockpit name does not match the schema', question.field)
+            `the operator-confirmed cockpit name does not match the schema: ${issueSummary(parsed.error)}`, question.field)
         name = parsed.data.name
         answerIndex += 1
     }
@@ -728,7 +734,9 @@ function completeConfigurationDocument(
         }
         siblingAnswerRows = read.value as Record<string, unknown>[]
         const parsed = CockpitConfig.shape.sibling.safeParse(read.value)
-        if (!parsed.success || detectedRows.some((row, index) => !siblingAnswerRows[index]
+        if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed sibling declarations do not match the schema: ${issueSummary(parsed.error)}`, question.field)
+        if (detectedRows.some((row, index) => !siblingAnswerRows[index]
             || !sameDetectedSibling(siblingAnswerRows[index]!, row)) || detectedRows.length > siblingAnswerRows.length) {
             return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
                 'the operator-confirmed sibling declarations are invalid or change detected registry facts', question.field)
@@ -738,7 +746,7 @@ function completeConfigurationDocument(
     } else {
         const parsed = CockpitConfig.shape.sibling.safeParse(detectedRows)
         if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
-            'detected registry sibling facts do not satisfy the configuration schema', 'sibling')
+            `detected registry sibling facts do not satisfy the configuration schema: ${issueSummary(parsed.error)}`, 'sibling')
         siblingRows = parsed.data
         siblingAnswerRows = detectedRows
     }
@@ -810,7 +818,7 @@ function completeConfigurationDocument(
     if (portRead.kind === 'refusal') return portRead.outcome
     const parsedPorts = CockpitConfig.shape.ports.safeParse({ ...defaults.ports, bases: portRead.value })
     if (!parsedPorts.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-        'the operator-confirmed port bases do not match the schema', portQuestion.field)
+        `the operator-confirmed port bases do not match the schema: ${issueSummary(parsedPorts.error)}`, portQuestion.field)
     answerIndex += 1
 
     const policyQuestion = configurationQuestion(context, 'environment.install_policies',
@@ -821,7 +829,8 @@ function completeConfigurationDocument(
     if (policyRead.kind === 'refusal') return policyRead.outcome
     const parsedPolicies = InstallPolicy.array().max(256).safeParse(policyRead.value)
     if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-        'the operator-confirmed dependency install protocols do not match the schema', policyQuestion.field)
+        `the operator-confirmed dependency install protocols do not match the schema: ${issueSummary(parsedPolicies.error)}`,
+        policyQuestion.field)
     answerIndex += 1
 
     const generatedQuestion = configurationQuestion(context, 'environment.generated',
@@ -832,7 +841,7 @@ function completeConfigurationDocument(
     if (generatedRead.kind === 'refusal') return generatedRead.outcome
     const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
     if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-        'the operator-confirmed generated environment does not match the schema or omits required provenance',
+        `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
         generatedQuestion.field)
     let runnableWitnesses = 0
     for (const disposition of estateRunnable) {
@@ -860,7 +869,7 @@ function completeConfigurationDocument(
         sibling: siblingRows, ports: parsedPorts.data,
         environment: { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data } })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
-        'the completed operator-confirmed configuration does not match the schema')
+        `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)
     if (configuration.classification === 'one-sibling' && candidate.data.sibling.length !== 1
         || (configuration.classification === 'ready-multi-repository'
             || configuration.classification === 'incomplete-multi-repository') && candidate.data.sibling.length < 2) {
@@ -916,7 +925,9 @@ async function documentCommandOwned(
             return completeConfigurationDocument(input, root, null, [], estateGaps, estateRunnable)
         }
         if (code === 'ENOENT') {
-            return refusal('REGISTRY_NOT_FOUND', 'the registry file does not exist', registry, 'check the cockpit root or registry path')
+            return refusal('REGISTRY_NOT_FOUND',
+                'the registry file does not exist; document inventories an existing shell-registry cockpit (env/lib/instance.sh)',
+                registry, 'for a new product run: cockpit init <root> --target <harness>; otherwise check the cockpit root or registry path')
         }
         return refusal('REGISTRY_UNREADABLE', `the registry file could not be read (${code ?? 'unknown I/O error'})`, registry)
     }
@@ -954,8 +965,10 @@ async function documentCommandOwned(
     if (!parsed.dialect || parsed.siblings.length === 0) {
         return refusal(
             parsed.found ? 'REGISTRY_EMPTY' : 'REGISTRY_NOT_FOUND',
-            parsed.found ? 'the registry contains no usable rows' : 'the file contains no sibling registry',
+            parsed.found ? 'the registry contains no usable rows'
+                : 'the file contains no sibling registry; document inventories an existing shell-registry cockpit',
             registry,
+            parsed.found ? undefined : 'for a new product run: cockpit init <root> --target <harness>',
         )
     }
 
