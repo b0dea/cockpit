@@ -361,6 +361,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_AMBIGUOUS` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_ANSWER_CONFLICT` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_FIELD_UNKNOWN` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_INVALID` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_UNUSED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
