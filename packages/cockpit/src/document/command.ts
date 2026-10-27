@@ -262,7 +262,10 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
     if (Object.keys(record).sort().join(',') !== 'observedAt,repositories,root'
         || record.root !== root || typeof record.observedAt !== 'string'
         || !observedAt || Number.isNaN(observedAt.valueOf()) || observedAt.toISOString() !== record.observedAt
-        || !Array.isArray(record.repositories) || record.repositories.length < 1 || record.repositories.length > 64) return undefined
+        // No repository is a valid observation: an empty directory or one holding only documents has
+        // nothing runnable, and that is answered with a surfaces-only cockpit rather than a refusal.
+        // currentEstateRows still refuses an empty list while any candidate directory has a manifest.
+        || !Array.isArray(record.repositories) || record.repositories.length > 64) return undefined
     const rows: EstateRepositoryObservation[] = []
     for (const value of record.repositories) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -393,8 +396,10 @@ export async function classifyEstateObservation(
         ? 'no-runnable-product' : !multi ? 'one-sibling'
             : unknown.length > 0 ? 'incomplete-multi-repository' : 'ready-multi-repository'
     const gaps = classification === 'no-runnable-product'
-        ? [Object.freeze({ field: 'runnable-product', source: rows.map(row => `${row.slug}/${row.source.path}`).join(', '),
-            why: rows.map(row => row.why).filter(Boolean).join('; ') })]
+        ? [Object.freeze(rows.length === 0
+            ? { field: 'runnable-product', source: '.', why: `no directory under the root carries ${PUBLIC_MANIFESTS.join(', ')}` }
+            : { field: 'runnable-product', source: rows.map(row => `${row.slug}/${row.source.path}`).join(', '),
+                why: rows.map(row => row.why).filter(Boolean).join('; ') })]
         : unknown.map(row => Object.freeze({ field: `${row.slug}.runnable`, source: `${row.slug}/${row.source.path}`, why: row.why! }))
     const result: EstateClassificationResult = Object.freeze({
         classification,

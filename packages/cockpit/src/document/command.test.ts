@@ -225,9 +225,9 @@ describe('estate observation classification', () => {
             .toMatchObject({ kind: 'refusal', status: 2 })
     })
 
-    it('refuses empty, contradictory, guessed-toolchain and secret-shaped observations', async () => {
+    it('refuses contradictory, guessed-toolchain and secret-shaped observations', async () => {
         const { estateRoot, repositories } = materializeEstate('one-sibling.json')
-        const cases = [[], [{ ...repositories[0], why: 'contradiction' }],
+        const cases = [[{ ...repositories[0], why: 'contradiction' }],
             [{ ...repositories[0], toolchain: 'node' }], [{ ...repositories[0], token: 'synthetic' }],
             [{ ...repositories[0], runnable: 'unknown', why: 'api_token=raw-secret-shaped-value' }]]
         for (const rows of cases) {
@@ -272,6 +272,32 @@ describe('public estate observation', () => {
         expect(outcome).toMatchObject({ kind: 'refusal' })
         expect(await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate }))
             .toMatchObject({ kind: 'complete', result: { classification: 'ready-multi-repository' } })
+    })
+
+    it.each(['an empty', 'a documents-only'])('observes %s root with no package manifest as nothing runnable', async shape => {
+        const estateRoot = temporaryPath('genesis')
+        mkdirSync(estateRoot)
+        if (shape === 'a documents-only') {
+            mkdirSync(join(estateRoot, 'decisions'))
+            writeFileSync(join(estateRoot, 'decisions/0001-record.md'), '# Record decisions\n')
+        }
+        const canonical = realpathSync(estateRoot)
+        const classified = await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate })
+        expect(classified).toMatchObject({ kind: 'complete', result: {
+            classification: 'no-runnable-product', runnable: [], applicability: { compose: 'inapplicable' },
+            gaps: [{ field: 'runnable-product', source: '.' }],
+        } })
+        if (classified.kind !== 'complete') throw new Error('manifest-free estate classification failed')
+        expect(await documentObservedCommand({ root: canonical, configuration: {
+            sourceObservationSha256: classified.result.sourceObservationSha256,
+            classification: classified.result.classification, answers: [],
+        } })).toMatchObject({ kind: 'gap-draft', question: { field: 'sibling' } })
+        // An empty observation is only true while it stays true: a manifest makes it an omission.
+        mkdirSync(join(estateRoot, 'api'))
+        writeFileSync(join(estateRoot, 'api/package.json'), JSON.stringify({ scripts: { dev: 'node server.js' } }))
+        expect(await classifyEstateObservation({ root: canonical }, {
+            observe: async () => ({ root: canonical, observedAt: '2026-10-25T10:00:00.000Z', repositories: [] }),
+        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID' }] })
     })
 
     it('keeps a polyglot repository unknown until its runnable command is confirmed', async () => {
