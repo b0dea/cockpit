@@ -1,6 +1,8 @@
 ---
 name: verify-harness-capability
 description: Establish whether an agent harness actually enforces a capability, by driving it with a deliberately broken control alongside. Use before claiming any cell in the support matrix, and when a generated surface appears to be accepted but does nothing.
+metadata:
+  internal: true
 ---
 
 <!-- cockpit:verified version=0.0.0 -->
