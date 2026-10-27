@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, rmSy
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
-import { evaluateGuard } from './evaluator.js'
+import { evaluateGuard, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
 import { parseGuardInput } from './invocation-parser.js'
 import { invocationCorpus, shellPayload } from './fixtures/invocation-corpus.js'
 import { GuardCommandArgv } from '../schema.js'
@@ -12,11 +12,17 @@ import { renderGuardProjectCommand } from '../environment/install-policy.js'
 const root = '/workspace/project'
 const other = '/workspace/other'
 const instance = `${root}/config/active.instance`
-const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: posix.resolve(cwd, path), symlink: false })
+const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
+// Identity facts for every protected path; synthetic tests name only the ones they exercise.
+type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
+function protectedIdentities(instances: readonly { path: string }[], known: IdentityFacts = {}) {
+    return [...instances.map((item) => item.path), ...GUARD_ROOT_PROTECTIONS.map((item) => `${root}/${item.path}`)]
+        .map((path) => ({ path, ...(known[path] ?? { identity: null, ancestors: [] }) }))
+}
 const candidate = (executable: string, argv: string[], cwd = root) => ({ executable, argv, cwd })
 function policy() {
     return {
-        canonicalRoot: root, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }],
+        canonicalRoot: root, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }], protectedIdentities: protectedIdentities([{ path: instance }]),
         protectedBranches: ['main', 'release/stable'], hostedDatabaseHosts: ['db.example.test', '*.database.example.test'], vendorHosts: ['api.vendor.example.test'],
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
         projectCommands: [
@@ -249,6 +255,7 @@ describe('resolved guard evaluation', () => {
         ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect).decision).toBe('deny')
         const noInstances = policy()
         noInstances.instances = []
+        noInstances.protectedIdentities = protectedIdentities([])
         expect(evaluateGuard(parseGuardInput(shellPayload('git add -f env')), noInstances, inspect).decision).toBe('deny')
         expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: 'config/template', content: 'value' })), policy(), inspect).decision).toBe('allow')
         expect(decide('git add config/template').decision).toBe('ask')
@@ -259,16 +266,108 @@ describe('resolved guard evaluation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing mutation of the guard, its hook registration or its ownership manifest.' }
         for (const path of ['.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json', '.claude/settings.json',
-            '.claude/settings.local.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js', '.Claude/Settings.json']) {
+            '.claude/settings.local.json', '.codex/hooks.json', '.codex/config.toml', 'opencode.json', 'opencode.jsonc',
+            '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js', '.Claude/Settings.json']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
                 payload('apply_patch', { command: `*** Begin Patch\n*** Update File: template\n*** Move to: ${path}\n@@\n-a\n+b\n*** End Patch` }),
                 shellPayload(`printf ok > ${path}`),
             ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`).toEqual(refusal)
         }
-        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.cockpit/guards/notes.md`]) {
+        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.cockpit/guards/notes.md`, `${root}/.opencode/agents/reviewer.md`]) {
             expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: path, content: '{}' })), policy(), inspect).decision, path).toBe('allow')
         }
+    })
+
+    describe('protected identity', () => {
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        const env = `${root}/api/.env`
+        const secrets = `${root}/env/.secrets`
+        const control = `${root}/.codex/hooks.json`
+        // Synthetic inodes for a case-insensitive volume: every spelling of an existing entry reports its identity.
+        const known = {
+            [env]: { identity: '1:30', ancestors: ['1:10', '1:20'] },
+            [secrets]: { identity: '1:50', ancestors: ['1:10', '1:40'] },
+            [control]: { identity: '1:70', ancestors: ['1:10', '1:60'] },
+        }
+        const configured = () => ({ ...policy(), instances: [{ name: 'api', path: env }], protectedIdentities: protectedIdentities([{ path: env }], known) })
+        const volume = (facts: IdentityFacts) => (request: { path: string; cwd: string }) => {
+            const path = posix.resolve(request.cwd, request.path)
+            return { status: 'resolved', path, symlink: false, ...(facts[path] ?? { identity: null, ancestors: [] }) }
+        }
+        const writes = (path: string) => [
+            payload('Write', { file_path: path, content: 'value' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
+            payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${path}\n+value\n*** End Patch` }),
+            payload('apply_patch', { command: `*** Begin Patch\n*** Update File: template\n*** Move to: ${path}\n@@\n-a\n+b\n*** End Patch` }),
+            shellPayload(`npm test > ${path}`),
+        ]
+
+        it('denies case variants of an instance through every write channel whether or not the leaf exists yet', () => {
+            for (const path of [`${root}/api/.ENV`, `${root}/API/.Env`]) {
+                for (const facts of [{ [path]: known[env] }, {}] as IdentityFacts[]) {
+                    for (const input of writes(path)) {
+                        expect(evaluateGuard(parseGuardInput(input), configured(), volume(facts)), `${input.tool_name} ${path}`)
+                            .toEqual({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+                    }
+                }
+            }
+            for (const facts of [{ [`${root}/API`]: { identity: '1:20', ancestors: ['1:10'] } }, {}] as IdentityFacts[]) {
+                const grant = configured()
+                grant.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: 'git', argv: ['add', 'API'] })
+                expect(evaluateGuard(parseGuardInput(shellPayload('git add API')), grant, volume(facts)).decision).toBe('deny')
+            }
+        })
+
+        it('denies any spelling that shares the identity of an instance or guard control file', () => {
+            const linked = `${root}/notes/registration.json`
+            for (const [identity, reason] of [[known[env], 'Refusing mutation or staging of a declared environment instance.'],
+                [known[control], 'Refusing mutation of the guard, its hook registration or its ownership manifest.']] as const) {
+                for (const input of writes(linked)) {
+                    expect(evaluateGuard(parseGuardInput(input), configured(), volume({ [linked]: identity })), `${input.tool_name}`).toEqual({ decision: 'deny', reason })
+                }
+            }
+            // toLowerCase() leaves U+017F alone; the volume and the shared normalisation fold it to `s`.
+            const variant = `${root}/.claude/\u017Fettings.json`
+            for (const facts of [{ [variant]: { identity: '1:90', ancestors: ['1:10', '1:80'] } }, {}] as IdentityFacts[]) {
+                expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: variant, content: '{}' })), configured(), volume(facts)))
+                    .toEqual({ decision: 'deny', reason: 'Refusing mutation of the guard, its hook registration or its ownership manifest.' })
+            }
+        })
+
+        it('denies a not-yet-existing leaf inside the secrets root under a folded spelling or a shared ancestor identity', () => {
+            const reason = 'Refusing mutation or staging below a secrets directory.'
+            for (const path of [`${root}/env/.\u017Fecrets/project/new-resolver`, `${root}/ENV/.SECRETS/new-resolver`]) {
+                for (const input of writes(path)) expect(evaluateGuard(parseGuardInput(input), configured(), volume({})), `${input.tool_name} ${path}`).toEqual({ decision: 'deny', reason })
+            }
+            const linked = `${root}/linked/new-resolver`
+            for (const input of writes(linked)) {
+                expect(evaluateGuard(parseGuardInput(input), configured(), volume({ [linked]: { identity: null, ancestors: ['1:10', '1:40', '1:50'] } })), `${input.tool_name}`)
+                    .toEqual({ decision: 'deny', reason })
+            }
+        })
+
+        it('permits an unprotected file whose name differs from an existing one only by case', () => {
+            for (const path of [`${root}/config/Template`, `${root}/api/.ENV.example`, `${root}/notes/Hooks.json`]) {
+                for (const input of writes(path)) {
+                    expect(evaluateGuard(parseGuardInput(input), configured(), volume({ [path]: { identity: '1:95', ancestors: ['1:10', '1:20'] } })).decision, `${input.tool_name} ${path}`).toBe('allow')
+                }
+            }
+        })
+
+        it('refuses a policy or evidence that omits or malforms an identity', () => {
+            const input = parseGuardInput(payload('Write', { file_path: `${root}/config/template`, content: 'value' }))
+            const complete = configured()
+            for (const protectedIdentities of [complete.protectedIdentities.slice(1), [...complete.protectedIdentities, complete.protectedIdentities[0]],
+                complete.protectedIdentities.map((item, i) => i === 0 ? { ...item, identity: 'inode' } : item),
+                complete.protectedIdentities.map((item, i) => i === 0 ? { ...item, ancestors: [7] } : item)]) {
+                expect(evaluateGuard(input, { ...complete, protectedIdentities }, volume({})).decision).toBe('unavailable')
+            }
+            for (const evidence of [{ status: 'resolved', path: `${root}/config/template`, symlink: false },
+                { status: 'resolved', path: `${root}/config/template`, symlink: false, identity: '1', ancestors: [] },
+                { status: 'resolved', path: `${root}/config/template`, symlink: false, identity: null, ancestors: 'none' }]) {
+                expect(evaluateGuard(input, complete, (request) => request.path === root ? volume({})(request) : evidence).decision).toBe('unavailable')
+            }
+        })
     })
 
     it('refuses missing, escaping, symlink or malformed path evidence and still finds later hard denies', () => {

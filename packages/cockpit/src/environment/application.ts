@@ -32,7 +32,7 @@ import {
 import { gitEnvironment, type SetupObservation, type SetupResult } from './setup.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolvedExecutable, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
-import { evaluateGuard, type GuardDecision, type GuardEvaluationPolicy, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
+import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { resolveOrdinaryInvocation } from '../command-table.js'
 import { issueResolvedAutonomyGrants, type ResolvedAutonomyGrants } from '../autonomy/launcher.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
@@ -404,19 +404,25 @@ export async function runGuardEvaluationApplication(
             const root = prepared.result.policy.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
             if (!root) return { status: 'unavailable', path, symlink: false }
             let cursor = root
-            inspected.set(root, lstatSync(root))
+            const rootStatus = lstatSync(root)
+            inspected.set(root, rootStatus)
+            // Identities let the evaluator recognise a protected entry under any spelling the volume
+            // resolves to it; a missing leaf reports its nearest existing ancestors only.
+            const chain = [guardIdentity(rootStatus)]
+            let exists = true
             for (const component of relative(root, path).split(sep).filter(Boolean)) {
                 cursor = join(cursor, component)
                 let status: Stats
                 try { status = lstatSync(cursor) }
                 catch (error) {
-                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') break
+                    if ((error as NodeJS.ErrnoException).code === 'ENOENT') { exists = false; break }
                     throw error
                 }
                 if (status.isSymbolicLink()) return { status: 'resolved', path, symlink: true }
                 inspected.set(cursor, status)
+                chain.push(guardIdentity(status))
             }
-            return { status: 'resolved', path, symlink: false }
+            return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain }
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
@@ -517,6 +523,31 @@ export async function prepareGuardEvaluationPolicy(
                 return guardPolicyRefusal('guard policy checkout does not match configuration authority')
             }
             const config = guardConfig
+            const protectedIdentities = new Map<string, GuardProtectedIdentity>()
+            // Records the identity of every existing component so the evaluator can match a protected
+            // entry by inode rather than by spelling.
+            const protect = (root: string, path: string, leaf: 'file' | 'directory', label: string) => {
+                const segments = relative(root, path).split(sep)
+                const chain = [guardIdentity(identities.get(root)!)]
+                let cursor = root
+                let exists = true
+                for (const [index, segment] of segments.entries()) {
+                    cursor = join(cursor, segment)
+                    let status: Stats
+                    try { status = lstatSync(cursor) }
+                    catch (error) {
+                        if ((error as NodeJS.ErrnoException).code === 'ENOENT') { exists = false; break }
+                        throw error
+                    }
+                    if (status.isSymbolicLink() || (index < segments.length - 1 || leaf === 'directory' ? !status.isDirectory() : !status.isFile())) {
+                        throw new Error(`guard policy ${label} path has a symlink or unexpected file type`)
+                    }
+                    identities.set(cursor, status)
+                    chain.push(guardIdentity(status))
+                }
+                protectedIdentities.set(path, Object.freeze({ path, identity: exists ? chain.at(-1)! : null,
+                    ancestors: Object.freeze(exists ? chain.slice(0, -1) : chain) }))
+            }
             const directory = (path: string) => {
                 const before = lstatSync(path)
                 if (!before.isDirectory() || before.isSymbolicLink() || realpathSync(path) !== path
@@ -537,25 +568,12 @@ export async function prepareGuardEvaluationPolicy(
                 for (const file of derived.result.secretPaths.filter(row => row.slug === sibling.slug)) {
                     const path = resolve(root, file.path)
                     if (!confinedPath(root, path) || path === root) throw new Error('guard policy instance escapes its sibling root')
-                    const segments = relative(root, path).split(sep)
-                    let cursor = root
-                    for (const [index, segment] of segments.entries()) {
-                        cursor = join(cursor, segment)
-                        let status: Stats
-                        try { status = lstatSync(cursor) }
-                        catch (error) {
-                            if ((error as NodeJS.ErrnoException).code === 'ENOENT') break
-                            throw error
-                        }
-                        if (status.isSymbolicLink() || (index < segments.length - 1 ? !status.isDirectory() : !status.isFile())) {
-                            throw new Error('guard policy instance path has a symlink or unexpected file type')
-                        }
-                        identities.set(cursor, status)
-                    }
+                    protect(root, path, 'file', 'instance')
                     instances.push(Object.freeze({ name: `${sibling.slug}-${createHash('sha256').update(file.path).digest('hex').slice(0, 12)}`, path }))
                 }
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new Error('guard policy exceeds restriction root or instance bounds')
+            for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
             for (const [path, before] of identities) {
                 const after = lstatSync(path)
                 if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
@@ -565,6 +583,7 @@ export async function prepareGuardEvaluationPolicy(
             }
             const policy = Object.freeze({ canonicalRoot,
                 allowedRoots: Object.freeze([...allowedRoots]), instances: Object.freeze(instances),
+                protectedIdentities: Object.freeze([...protectedIdentities.values()]),
                 protectedBranches: Object.freeze([...config.guards.protected_branches]),
                 hostedDatabaseHosts: Object.freeze([...config.guards.hosted_db_hosts]),
                 vendorHosts: Object.freeze([...config.guards.vendor_endpoint_hosts]),

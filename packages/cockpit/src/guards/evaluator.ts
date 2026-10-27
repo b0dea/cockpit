@@ -6,7 +6,7 @@ import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 
 export const mechanism = {
-    id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts', exports: ['evaluateGuard'],
+    id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts', exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'guardIdentity'],
 } as const
 
 export interface GuardInvocationProfile {
@@ -20,10 +20,17 @@ export interface GuardProjectCommand {
     readonly kind: 'build' | 'test'
     readonly argv: readonly string[]
 }
+/** Filesystem identity of a protected path: its own when it exists, and every existing directory above it. */
+export interface GuardProtectedIdentity {
+    readonly path: string
+    readonly identity: string | null
+    readonly ancestors: readonly string[]
+}
 export interface GuardEvaluationPolicy {
     readonly canonicalRoot: string
     readonly allowedRoots: readonly string[]
     readonly instances: readonly { readonly name: string; readonly path: string }[]
+    readonly protectedIdentities: readonly GuardProtectedIdentity[]
     readonly protectedBranches: readonly string[]
     readonly hostedDatabaseHosts: readonly string[]
     readonly vendorHosts: readonly string[]
@@ -42,14 +49,35 @@ export interface GuardDecision {
     readonly reason: string
 }
 
-// An agent able to rewrite any of these can switch the guard off: the published guard transport,
-// every harness registration that launches it, the manifest that
-// authenticates both, and Claude's local settings, where `disableAllHooks` would switch the hook
-// off. These spellings match the restriction expansion and the guard application.
-const GUARD_CONTROL_PATHS = [
+// An agent able to rewrite any of these can switch the guard off or run code when a harness starts:
+// the published guard transport, every harness registration that launches it, the manifest that
+// authenticates both, Claude's local settings, where `disableAllHooks` would switch the hook off, and
+// the generated Codex and OpenCode configurations. These spellings match the restriction expansion,
+// the guard application and the generated surface outputs.
+const GUARD_CONTROL_FILES = [
     '.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json',
-    '.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js',
+    '.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', '.codex/config.toml',
+    'opencode.json', 'opencode.jsonc',
 ] as const
+// OpenCode loads every module in these directories as a plugin at start, so no file below them is data.
+const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins'] as const
+const SECRETS_ROOT = 'env/.secrets'
+/** Root-relative paths whose identity every policy carries beside each instance's. */
+export const GUARD_ROOT_PROTECTIONS: readonly { readonly path: string; readonly type: 'file' | 'directory' }[] = Object.freeze([
+    ...GUARD_CONTROL_FILES.map((path) => Object.freeze({ path, type: 'file' as const })),
+    ...[...GUARD_CONTROL_DIRECTORIES, SECRETS_ROOT].map((path) => Object.freeze({ path, type: 'directory' as const })),
+])
+/** One spelling of a file's identity, shared by the policy build and the path inspector. */
+export function guardIdentity(status: { readonly dev: number; readonly ino: number }): string {
+    return `${status.dev}:${status.ino}`
+}
+const IDENTITY = /^\d+:\d+$/
+// The one normalisation applied to both sides of every spelling comparison: NFC plus full case
+// folding. A case-insensitive volume resolves `.ENV` or `.ſecrets` to the protected entry, and
+// neither byte equality nor toLowerCase() equates those spellings.
+function fold(path: string): string {
+    return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
+}
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
@@ -67,6 +95,7 @@ function canonical(value: JsonSnapshot | undefined): value is string {
     return scalar(value) && value.startsWith('/') && value !== '/' && posix.normalize(value) === value && !value.endsWith('/')
 }
 function within(path: string, root: string): boolean { return path === root || path.startsWith(root + '/') }
+function identity(value: JsonSnapshot | undefined): value is string { return typeof value === 'string' && value.length <= 64 && IDENTITY.test(value) }
 function strings(value: JsonSnapshot | undefined): value is readonly string[] {
     return Array.isArray(value) && value.every(scalar)
 }
@@ -82,10 +111,10 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'allowedRoots', 'instances', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'cockpitInvocations', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'cockpitInvocations', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
-        || !Array.isArray(p.instances) || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)) return undefined
+        || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)) return undefined
     const roots = p.allowedRoots
     const confined = (value: JsonSnapshot | undefined): value is string => canonical(value) && roots.some((root) => within(value, root))
     if ([p.hostedDatabaseHosts, p.vendorHosts].some((hosts) => hosts.length > GUARD_HOST_LIMITS.rows
@@ -93,7 +122,14 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || p.protectedBranches.some((branch) => /[\s:*?\[\\]/.test(branch))
         || p.instances.some((item) => !record(item) || !keys(item, ['name', 'path']) || !scalar(item.name) || !confined(item.path))
         || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv']) || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv))
-        || p.projectCommands.some((item) => !record(item) || !keys(item, ['executable', 'checkoutRoot', 'kind', 'argv']) || !confined(item.checkoutRoot) || !['build', 'test'].includes(String(item.kind)) || !projectTuple(item))) return undefined
+        || p.projectCommands.some((item) => !record(item) || !keys(item, ['executable', 'checkoutRoot', 'kind', 'argv']) || !confined(item.checkoutRoot) || !['build', 'test'].includes(String(item.kind)) || !projectTuple(item))
+        || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
+            || item.identity !== null && !identity(item.identity) || !Array.isArray(item.ancestors) || !item.ancestors.every(identity))) return undefined
+    // A policy that omits an identity would silently fall back to spellings, so coverage is exact.
+    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string),
+        ...GUARD_ROOT_PROTECTIONS.map((item) => `${p.canonicalRoot}/${item.path}`)])
+    const carried = new Set(p.protectedIdentities.map((item) => (item as JsonSnapshotObject).path as string))
+    if (carried.size !== p.protectedIdentities.length || carried.size !== expected.size || [...expected].some((path) => !carried.has(path))) return undefined
     // Every field above is captured own data and checked before entering the typed policy core.
     return p as unknown as GuardEvaluationPolicy
 }
@@ -181,9 +217,16 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     if (!isParsedGuardInput(input)) return unavailable('Guard input is unavailable or was not captured by the invocation parser.')
     const resolved = capturePolicy(policy)
     if (!resolved) return unavailable('Guard policy is incomplete or malformed.')
-    const secretRoot = `${resolved.canonicalRoot}/env/.secrets`
-    // Lower-cased because the default macOS volume resolves either spelling to the same file.
-    const guardControls = GUARD_CONTROL_PATHS.map((path) => `${resolved.canonicalRoot}/${path}`.toLowerCase())
+    const absolute = (path: string) => `${resolved.canonicalRoot}/${path}`
+    const secretRoot = absolute(SECRETS_ROOT)
+    const controlFiles = GUARD_CONTROL_FILES.map(absolute)
+    const controlDirectories = GUARD_CONTROL_DIRECTORIES.map(absolute)
+    const identities = new Map(resolved.protectedIdentities.map((item) => [item.path, item]))
+    const identityOf = (path: string) => identities.get(path)!.identity
+    const chainOf = (path: string) => { const item = identities.get(path)!; return item.identity === null ? item.ancestors : [...item.ancestors, item.identity] }
+    const secretDenial = deny('Refusing mutation or staging below a secrets directory.')
+    const instanceDenial = deny('Refusing mutation or staging of a declared environment instance.')
+    const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
     let pending: GuardDecision | undefined
     let hardDeny: GuardDecision | undefined
     const hold = (decision: GuardDecision) => {
@@ -201,23 +244,35 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             hold(unavailable('Guard path escapes configured roots.'))
             return
         }
-        if (request.operation !== 'cwd' && (lexical.split('/').some((segment) => segment.toLowerCase() === '.secrets')
-            || request.operation === 'stage' && within(secretRoot, lexical))) {
-            hold(deny('Refusing mutation or staging below a secrets directory.'))
-        }
-        if (request.operation !== 'cwd' && resolved.instances.some((item) => lexical === item.path || request.operation === 'stage' && within(item.path, lexical))) {
-            hold(deny('Refusing mutation or staging of a declared environment instance.'))
-        }
-        if (request.operation === 'write' && guardControls.includes(lexical.toLowerCase())) {
-            hold(deny('Refusing mutation of the guard, its hook registration or its ownership manifest.'))
-        }
+        const mutating = request.operation !== 'cwd'
+        const staging = request.operation === 'stage'
+        // Spelling checks run before inspection so a hard denial survives missing evidence; they
+        // cover leaves that do not exist yet, which have no identity to compare.
+        const folded = fold(lexical)
+        if (mutating && (folded.split('/').includes('.secrets') || staging && within(fold(secretRoot), folded))) hold(secretDenial)
+        if (mutating && resolved.instances.some((item) => folded === fold(item.path) || staging && within(fold(item.path), folded))) hold(instanceDenial)
+        if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path))
+            || controlDirectories.some((path) => within(folded, fold(path))))) hold(controlDenial)
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
         catch { hold(unavailable('Guard path inspection failed.')); return }
-        if (!record(evidence) || !keys(evidence, ['status', 'path', 'symlink']) || evidence.status !== 'resolved' || !canonical(evidence.path)
-            || evidence.path !== lexical || evidence.symlink !== false || !resolved.allowedRoots.some((root) => within(evidence.path as string, root))) {
+        if (!record(evidence) || !keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors']) || evidence.status !== 'resolved' || !canonical(evidence.path)
+            || evidence.path !== lexical || evidence.symlink !== false || !resolved.allowedRoots.some((root) => within(evidence.path as string, root))
+            || evidence.identity !== null && !identity(evidence.identity) || !Array.isArray(evidence.ancestors) || !evidence.ancestors.every(identity)) {
             hold(unavailable('Guard path evidence is missing, escaped, symlinked or mismatched.'))
+            return
         }
+        if (!mutating) return
+        // Identity catches every spelling the volume resolves to a protected entry, including ones
+        // the shared normalisation does not equate, such as a hard link.
+        const leaf = evidence.identity
+        const chain = [...evidence.ancestors as string[], ...(leaf === null ? [] : [leaf])]
+        const is = (path: string) => leaf !== null && identityOf(path) === leaf
+        const below = (path: string) => { const protectedIdentity = identityOf(path); return protectedIdentity !== null && chain.includes(protectedIdentity) }
+        const covers = (path: string) => leaf !== null && chainOf(path).includes(leaf)
+        if (below(secretRoot) || staging && covers(secretRoot)) hold(secretDenial)
+        if (resolved.instances.some((item) => is(item.path) || staging && covers(item.path))) hold(instanceDenial)
+        if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below))) hold(controlDenial)
     }
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })

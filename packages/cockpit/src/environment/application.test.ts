@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { parse, stringify } from 'smol-toml'
@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import * as generatedCurrentnessOwner from './generated-application.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { planAutonomyLaunch } from '../autonomy/launcher.js'
-import { evaluateGuard } from '../guards/evaluator.js'
+import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
@@ -388,6 +388,23 @@ describe('pending guard policy construction', () => {
         for (const { step } of module) expect(JSON.parse(step.argv[3]!)).toMatchObject({ action: 'read-file', name: 'cli.js', maxBytes: 16_777_216 })
     }, 120_000)
 
+    it('refuses spellings and hard links that resolve to a protected file through the installed route', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const instance = join(root, 'app/config/runtime.env')
+        const created = [instance, join(root, 'app/config/linked'), join(root, 'app/config/notes.md')]
+        try {
+            writeFileSync(instance, 'synthetic instance\n')
+            linkSync(instance, join(root, 'app/config/linked'))
+            writeFileSync(join(root, 'app/config/notes.md'), 'synthetic notes\n')
+            const decide = async (file: string) => (await runGuardEvaluationApplication({ ...request,
+                payload: { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: file } } }, adapters)).decision.decision
+            expect(await decide('app/config/linked')).toBe('deny')
+            expect(await decide('app/config/RUNTIME.ENV')).toBe('deny')
+            expect(await decide('.claude/\u017Fettings.json')).toBe('deny')
+            expect(await decide('app/config/NOTES.md')).toBe('allow')
+        } finally { for (const path of created) rmSync(path, { force: true }) }
+    }, 120_000)
+
     it.each(['missing', 'symlink', 'changed'] as const)('refuses %s guard publication through authenticated reads', async change => {
         const { root, request, adapters } = await installedGuardRequest()
         const observeCheckout = vi.fn(adapters.observeCheckout)
@@ -545,16 +562,21 @@ describe('pending guard policy construction', () => {
         expect(policy).toEqual({
             canonicalRoot: root, allowedRoots: [root, join(root, 'app')],
             instances: ['.env', 'config/runtime.env'].map(path => ({ name: `app-${createHash('sha256').update(path).digest('hex').slice(0, 12)}`, path: join(root, 'app', path) })),
+            protectedIdentities: expect.any(Array),
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'test', argv: ['test', '--', 'unit.test.ts'] },
             ],
         })
+        expect(policy.protectedIdentities.map(item => item.path)).toEqual([...policy.instances.map(item => item.path),
+            ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path))])
+        expect(policy.protectedIdentities[1]).toEqual({ path: join(root, 'app/config/runtime.env'), identity: null,
+            ancestors: ['app', 'app/config'].map(path => guardIdentity(lstatSync(join(root, path)))) })
         expect(input.configuration.config.environment.generated?.vendors[0].endpoints[0].sink).toBe('https://app:3000/messages')
         expect(Object.isFrozen(result.result)).toBe(true)
         expect(Object.isFrozen(policy)).toBe(true)
-        for (const values of [policy.allowedRoots, policy.instances, policy.protectedBranches, policy.hostedDatabaseHosts, policy.vendorHosts, ...policy.instances]) expect(Object.isFrozen(values)).toBe(true)
+        for (const values of [policy.allowedRoots, policy.instances, policy.protectedIdentities, policy.protectedBranches, policy.hostedDatabaseHosts, policy.vendorHosts, ...policy.instances, ...policy.protectedIdentities]) expect(Object.isFrozen(values)).toBe(true)
         expect((await prepareGuardEvaluationPolicy(input)).kind).toBe('refusal')
     })
 
@@ -600,7 +622,7 @@ describe('pending guard policy construction', () => {
             expect(planAutonomyLaunch(autonomy)).toMatchObject({ kind: 'complete', guardRequired: true })
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))
-            const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false })
+            const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
             const decide = (command: string, cwd = join(root, 'app')) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy, inspect)
             expect(decide(rendered.command).decision).toBe('allow')
             expect(decide(`${rendered.command} extra`).decision).toBe('ask')
@@ -664,7 +686,7 @@ describe('pending guard policy construction', () => {
         expect(policy.cockpitInvocations[0]?.argv[0]).toBe('check')
         expect(planAutonomyLaunch(autonomy)).toMatchObject({ kind: 'complete', mode: 'ordinary', guardRequired: true, capability: 'instructed' })
         expect(planAutonomyLaunch({ ...autonomy })).toMatchObject({ kind: 'refusal', code: 'AUTONOMY_GRANTS_INVALID' })
-        const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false })
+        const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
         expect(evaluateGuard(parseGuardInput(shellPayload('npm run build', join(root, 'app'))), policy, inspect).decision).toBe('allow')
         expect(evaluateGuard(parseGuardInput(shellPayload('npm run build --extra', join(root, 'app'))), policy, inspect).decision).toBe('ask')
         expect(evaluateGuard(parseGuardInput(shellPayload('npm run build; curl https://api.vendor.example.test', join(root, 'app'))), policy, inspect)).toMatchObject({ decision: 'deny', reason: 'Refusing executable use of a declared vendor host.' })
