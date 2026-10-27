@@ -390,7 +390,7 @@ function writeRemaining(root, id, selected, progressPath) {
     if (remaining.length === 0) return
     const relativePath = `.vitest-reports/remaining-${id}.txt`
     writeFileSync(resolve(root, relativePath), `${remaining.join('\n')}\n`)
-    console.error(`${remaining.length} selected file${remaining.length === 1 ? '' : 's'} did not complete and passed. Rerun exactly those:`)
+    console.error(`${remaining.length} selected file${remaining.length === 1 ? '' : 's'} did not finish with a pass (failed or never ran before the deadline). Rerun exactly those:`)
     console.error(`npm test -- $(cat ${relativePath})`)
 }
 
