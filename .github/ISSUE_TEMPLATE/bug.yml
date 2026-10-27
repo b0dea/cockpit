@@ -5,10 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        A vulnerability is **never** reported here. Check the
-        [security policy](https://github.com/b0dea/cockpit/security/policy) for current
-        private-channel availability. If no verified route is named, request one publicly
-        without including vulnerability details.
+        A vulnerability is **never** reported here. Follow the
+        [security policy](https://github.com/b0dea/cockpit/security/policy) to report it
+        privately.
 
         One defect per issue. A report that bundles three is triaged as none.
   - type: textarea
@@ -68,5 +67,5 @@ body:
           required: true
         - label: This is not a security vulnerability.
           required: true
-        - label: I have separated operator-approved, external, or destructive actions from behavior the repository can verify.
+        - label: The commands and output above are from a real run, not reconstructed from memory.
           required: true

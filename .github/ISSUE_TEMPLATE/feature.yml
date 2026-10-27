@@ -60,5 +60,5 @@ body:
           required: true
         - label: This request contains nothing identifying a private deployment.
           required: true
-        - label: The acceptance check does not treat an operator gate as automated evidence.
+        - label: The acceptance check says which parts a test can verify and which need a person to judge.
           required: true

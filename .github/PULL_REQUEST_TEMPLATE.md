@@ -15,15 +15,16 @@ and which you believe but did not run — that distinction is the useful half. -
 Every line here is something that has gone wrong before. Strike out anything that genuinely
 does not apply, with the reason.
 
-- [ ] `npm test` and `npm run typecheck` pass locally.
+- [ ] `npm test`, `npm run typecheck`, `npm run lint:docs` and `npm run lint:supply-chain` pass
+      locally, and their output is pasted above.
 - [ ] A bug fix comes with a test that **fails without the change** — I saw it fail.
 - [ ] No consumer-identifying material: no client or employer names, no private hostnames, no
       real registries, no credentials, no internal URLs — including in the commit messages,
       which cannot be corrected later without a rewrite.
 - [ ] Fixtures are synthetic and exercise the same shape as the real thing.
 - [ ] Documentation for a behaviour change is in this pull request, not a follow-up.
-- [ ] `CHANGELOG.md` has an entry under *Unreleased* if this is visible to someone using
-      cockpit.
+- [ ] A changeset (`npx changeset`) describes any change visible to someone using cockpit, or
+      the pull request carries the `no-changeset` label.
 - [ ] Nothing here reads as a control while binding nothing: no configuration that parses and
       does nothing, no CI step that runs nothing, no claim of enforcement without the thing
       that enforces it.
@@ -32,8 +33,8 @@ does not apply, with the reason.
 - [ ] Shipped templates under `packages/cockpit/surfaces/` contain no repository-maintenance
       instructions.
 - [ ] A new dependency is exactly pinned, in the lockfile, and argued for in the description.
-- [ ] Operator-approved, destructive, external-service, native-harness, and publication gates remain
-      explicit; none is reported complete without its own evidence.
+- [ ] Anything that needs a human decision, a destructive action, an external service, a native
+      harness run or publication is listed as not verified, rather than reported done.
 
 ## Related issues
 
