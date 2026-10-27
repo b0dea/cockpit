@@ -58,6 +58,13 @@ and `invocation.exitCode`; a pending `init` also exits 0, so read its `result.st
 Look at the directory before asking. Several cases can apply; bootstrap first. Each line names
 the guide section that owns the detail.
 
+- **Inside an existing product repository** (a Git checkout with a package manifest at its
+  root). The `--json` preview's `result.cockpitRoot` asks for the cockpit root before
+  anything is written. Relay the question, both options with their exact paths and trade-offs,
+  and the recommendation (`dedicated`: a new `../<repo>-cockpit` folder with this repository as
+  its first sibling) to the human, and put their choice in the answers file as
+  `cockpit.root = "dedicated"` or `"in-repo"`. Never choose it yourself: the digest flags refuse
+  with `INIT_COCKPIT_ROOT_REQUIRED` until it is answered. Guide: *Inside a product repository*.
 - **Empty directory, or only documents and decisions.** Follow **Bootstrap** below: with no
   package manifest `init` builds a surfaces-only cockpit and proposes the cockpit root itself as
   the first sibling (`dir = "."`, `mount = "none"`); the purpose comes from the human. Add each

@@ -84,6 +84,38 @@ The three states of a harness feature. See
 The directory that holds <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. It identifies one cockpit instance. Relative
 generated paths, local state and lifecycle commands all resolve from here.
 
+## Where the cockpit lives
+
+The cockpit root is a folder of its own beside the product repositories, not one of them. By
+default it is a dedicated folder or repository such as `shop-cockpit`, with
+`siblings_root = ".."` so each product repository is a sibling next to it:
+
+```text
+work/
+  shop/            product repository, first sibling (dir = "shop")
+  shop-cockpit/    cockpit root: cockpit.toml, AGENTS.md, guards, harness settings
+```
+
+Why: cockpit writes its configuration, instructions, guards and harness settings into the
+cockpit root. A dedicated folder keeps the product repositories free of those files and lets one
+cockpit own several repositories neutrally. It grows from one repository to many with
+`cockpit sibling add` and never needs moving.
+
+- **A new product, an empty folder or a folder of documents** is itself the cockpit. `init`
+  declares that folder as its own first sibling (`dir = "."`), and the product's repositories
+  are added under it later with `cockpit sibling add <slug> --create`.
+- **Inside an existing product repository** (a Git checkout with a package manifest), `init`
+  asks first where the cockpit lives, under the answers key `cockpit.root`, and never picks for
+  you: `--accept-preview` and `--accept-defaults` refuse with `INIT_COCKPIT_ROOT_REQUIRED` until
+  it is answered. `"dedicated"`, the recommendation, creates `../<repo>-cockpit`, the one
+  directory `init` writes outside the folder it ran in, and declares the repository as its first
+  sibling. `"in-repo"` makes the product repository the cockpit root: it then carries the cockpit
+  files, and the cockpit cannot neutrally own several repositories.
+- **To move an in-repo cockpit out later**, run `cockpit init` again from the product repository
+  with `cockpit.root = "dedicated"`, which builds the dedicated cockpit beside it. Then delete
+  from the product repository every path listed in `.cockpit/generated-environment-ownership.json`,
+  that file, and `cockpit.toml`.
+
 ## Cockpit sibling declaration
 
 The `[[sibling]]` entry for one product repository: its stable slug, directory, acquisition

@@ -69,6 +69,7 @@ Start from what is on disk, not from what the human called it. Look before askin
 | On disk | Go to |
 |---|---|
 | Nothing yet: an empty directory, a product not started | [Empty directory](#empty-directory) |
+| You are inside an existing product repository | [Inside a product repository](#inside-a-product-repository) |
 | One repository of documents, decisions or notes, with nothing to run | [Docs or decisions only](#docs-or-decisions-only) |
 | One repository with a service that runs | [One or several repositories](#one-or-several-repositories) |
 | Several repositories side by side | [One or several repositories](#one-or-several-repositories) |
@@ -83,9 +84,11 @@ Start from what is on disk, not from what the human called it. Look before askin
 Several can apply at once: a multi-repository product can also have committed agent settings and
 one service with no local setup. Handle the bootstrap case first, then the others.
 
-The cockpit checkout is the directory that holds `cockpit.toml` and the generated files, with the
-product's repositories beside each other inside it. If it is not yet a Git repository, ask the
-human before running `git init` there: the generated files are meant to be committed.
+The cockpit checkout is the directory that holds `cockpit.toml` and the generated files. It is a
+folder of its own beside the product repositories;
+[Where the cockpit lives](concepts.md#where-the-cockpit-lives) says why and covers the exceptions.
+If it is not yet a Git repository, ask the human before running `git init` there: the generated
+files are meant to be committed.
 
 ### Empty directory
 
@@ -148,6 +151,36 @@ is where the product's notes and decisions live until its repositories exist.
    cockpit sync --config cockpit.toml --json
    cockpit check --config cockpit.toml --json
    ```
+
+### Inside a product repository
+
+Done when the human has chosen the cockpit root and `init` reports `environment-verified`
+from that root, or has stopped at a named gap you have reported.
+
+A Git checkout with a package manifest at its root is a product repository. Run in it, the
+`--json` preview carries `result.cockpitRoot` before anything else: the question, both options
+with the exact paths each writes, and `recommended = "dedicated"`. Relay it to the human with
+both trade-offs; [Where the cockpit lives](concepts.md#where-the-cockpit-lives) states them. Never
+answer it yourself: the choice decides which directory `init` writes into, so `--accept-preview`
+and `--accept-defaults` refuse with `INIT_COCKPIT_ROOT_REQUIRED` until the answers file has it.
+
+```toml
+cockpit.root = "dedicated"   # or "in-repo"
+```
+
+An option with `unavailable` set cannot be taken here, for example a repository directory name
+that is not a valid sibling slug; it says why and what to do instead.
+
+With `"dedicated"`, the next run creates the folder listed in that option's `creates`, and every later
+step runs there with the repository as its first sibling (`dir` is the repository's name,
+`siblings_root = ".."`). Keep running the same command from the product repository with the same
+answers file, not from the new folder, which `init` would treat as a fresh empty cockpit;
+`result.root` shows the cockpit root, and the `sync`, `check` and `sibling add`
+commands that follow take `--config <result.root>/cockpit.toml`. With `"in-repo"`, `init`
+proposes the repository as its own first sibling (`dir = "."`) and continues as in
+[Empty directory](#empty-directory) steps 2 and 3. It observes manifests only in directories
+below the root, so an in-repo cockpit declares no runtime until you add
+`environment.compose_files` or `[environment.generated]` by hand.
 
 ### Docs or decisions only
 
@@ -215,7 +248,8 @@ Run from the directory that holds the repositories. Each step stops for the huma
 
 Rerunning with the same answers file resumes. A changed value for a recorded answer is refused
 with `INIT_ANSWER_CONFLICT`: drop that key to keep the recorded answer, or tell the human there is
-no command to reset it. One repository gets stack scope; several get the multi-repository estate.
+no command to reset it. One repository gets the same cockpit as several: instructions, guards
+and settings.
 
 ### Scattered repositories
 

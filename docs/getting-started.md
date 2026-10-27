@@ -51,8 +51,9 @@ The [CLI reference](cli-reference.md) lists every command and flag.
 | An existing cockpit driven by a shell registry | [Incremental adoption](adoption.md) |
 | You would rather write the configuration by hand | The annotated example in the [tutorial](tutorial.md#read-the-configuration) |
 
-Put the product's repositories side by side under one directory. That directory becomes the
-cockpit checkout and holds <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`.
+The cockpit lives in a folder of its own beside the product's repositories, which holds
+<!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`; [Where the cockpit lives](concepts.md#where-the-cockpit-lives)
+explains the default, the new-product case and why a product repository is not the default root.
 
 ## Bootstrap a new product
 
@@ -74,8 +75,10 @@ cockpit init "$(pwd)" --target codexcli --interactive
 `init` then looks at the repositories under the directory and asks for every fact it cannot
 read from them: commands, images, health checks and the port map. Each accepted answer records
 where it came from, and a changed repository invalidates earlier answers instead of reusing
-them. Re-running the same command resumes where it stopped. A single repository gets stack
-scope: the environment without the multi-repository registry and guide projection. A directory
+them. Re-running the same command resumes where it stopped. A single repository gets the same
+cockpit as several: instructions, guards, settings and the environment. Run inside an existing
+product repository, `init` first asks for the cockpit root (`cockpit.root`); see
+[Where the cockpit lives](concepts.md#where-the-cockpit-lives). A directory
 with nothing runnable gets a surfaces-only configuration with no `[environment]`, and `init` says
 that no runtime is declared; see [Environment modes](environment.md#environment-modes). That
 includes an empty directory and a repository of documents with no package manifest: there,
@@ -136,6 +139,7 @@ vendor_endpoint_hosts = []
 
 | Field | Answer |
 |---|---|
+| `cockpit.root` | `"dedicated"` or `"in-repo"`, only when `init` runs inside a product repository; never chosen by a digest flag ([Where the cockpit lives](concepts.md#where-the-cockpit-lives)) |
 | `cockpit.name` | the cockpit name, only when the directory name is not a valid one |
 | `sibling` | one `[[sibling]]` table per repository |
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
