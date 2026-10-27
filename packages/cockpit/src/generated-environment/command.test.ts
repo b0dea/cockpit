@@ -281,6 +281,8 @@ describe('selected bootstrap target', () => {
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
         if (applied.kind !== 'complete') throw new Error('bootstrap publication was refused')
+        // The bootstrap skill is consumer output like the full render, so it carries no development markers.
+        await expect(readFile(join(root, '.agents/skills/bootstrap/SKILL.md'), 'utf8')).resolves.not.toMatch(/cockpit:verified|SHIPPED SURFACE/)
 
         const stateHome = await mkdtemp(join(tmpdir(), 'cockpit-bootstrap-state-'))
         roots.push(stateHome)

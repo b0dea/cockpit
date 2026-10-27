@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { parseDocument, visit } from 'yaml'
 
 import { commands } from '../command-table.js'
+import { stripDevelopmentMarkers } from './development-markers.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import {
     type SurfaceGenerationDiagnostic,
@@ -439,7 +440,13 @@ export function projectInspectedSkillOutputs(
         || createHash('sha256').update(file.bytes).digest('hex') !== file.sha256)) {
         return refusal('SKILL_PROJECTION_INVALID', 'inspected skill output set is incomplete or changed', target)
     }
-    const projection = Object.freeze({ kind: 'complete' as const, target, skill, files: Object.freeze([...files]) })
+    // These bytes land in the consumer's checkout, and the first sync adopts them as already owned, so
+    // they must be exactly what the full render publishes there: without its development markers.
+    const published = files.map(file => {
+        const bytes = stripDevelopmentMarkers(file.bytes)
+        return bytes === file.bytes ? file : Object.freeze({ ...file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') })
+    })
+    const projection = Object.freeze({ kind: 'complete' as const, target, skill, files: Object.freeze(published) })
     inspectedBootstrapOutputs.add(projection)
     return projection
 }
