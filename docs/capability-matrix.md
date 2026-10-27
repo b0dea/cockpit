@@ -4,7 +4,7 @@
 
 Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.
 
-Source manifest: `023ea4f39627d266951ec4c93b3bb9b6f3b02d209f831287cdc852b719a93173`.
+Source manifest: `f1d49c4c395974fa07a65ede057806f848ad6ac330d16541bdd0d757cc1cccd9`.
 
 | Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |
 | --- | --- | --- | --- | --- | --- | --- | --- |
