@@ -54,12 +54,15 @@ interpolation, and refuses with `COMPOSE_TOPOLOGY_UNAVAILABLE` when Docker canno
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
 
 To run the stack, `sync` publishes `compose.cockpit.yml`, an owned override that adds cockpit's
-ownership labels to every service and the default network; `check` drift-checks it, and runtime
-commands pass it after the declared files only while it equals a fresh render. Your Compose files
-are never edited, and an `include` they use is refused because its services cannot be labelled.
-Runtime commands hand Compose the leased `[ports.bases]` variables, and nothing else: a `${VAR}`
-reference needs a `:-default` unless it names a leased port. Each `mount = "always"` sibling must
-be bind-mounted, since that is what the declaration promises.
+ownership labels to every service, the default network and every named volume that is not
+`external` (volumes also get a generation label, so `reset` can account for a
+`resettable_volumes` entry); `check` drift-checks it, and runtime commands pass it after the
+declared files only while it equals a fresh render. Your Compose files are never edited, and an
+`include` they use is refused because its services cannot be labelled.
+Runtime commands hand Compose the leased `[ports.bases]` variables and each `[[sibling]] var` set
+to that sibling's absolute directory, and nothing else: a `${VAR}` reference needs a `:-default`
+unless it names a leased port or a sibling variable. Each `mount = "always"` sibling must be
+bind-mounted, since that is what the declaration promises.
 
 ## Sibling and template paths
 
