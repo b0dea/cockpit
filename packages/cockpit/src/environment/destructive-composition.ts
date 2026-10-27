@@ -280,7 +280,24 @@ async function inspectDiscovery(
             : admitNetworkInspections(discovery, containerDiscovery, evidence)
 }
 
+type ReclaimObservation = Awaited<ReturnType<typeof discoverReclaimRound>>
+
+// Discovery lists the whole daemon and then inspects what it listed. On a busy shared daemon
+// another stack's container or volume can vanish in between, and the round then fails closed
+// on an id that was never ours; inside a reserved drain that left the attempt for repair. One
+// more complete round, authenticated from scratch, covers that race without admitting partial
+// evidence.
 async function observeReclaim(
+    input: CapturedCompositionInput,
+    context: DestructiveRunContext,
+    cwd: string,
+    execute: Executor,
+): Promise<ReclaimObservation> {
+    return await discoverReclaimRound(input, context, cwd, execute)
+        ?? await discoverReclaimRound(input, context, cwd, execute)
+}
+
+async function discoverReclaimRound(
     input: CapturedCompositionInput,
     context: DestructiveRunContext,
     cwd: string,

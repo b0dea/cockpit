@@ -314,7 +314,7 @@ describe('destructive command composition', () => {
         let activeInspections = 0
         let maximumActiveInspections = 0
         let inspectionCalls = 0
-        let rejectOneInspection = false
+        let rejectInspections: 'none' | 'first' | 'all' = 'none'
         const trackedExecute = async (step: Parameters<typeof executeProbe>[0]) => {
             if (!step.labels.resourceKind?.endsWith('-inspection')) return executeProbe(step)
             inspectionCalls += 1
@@ -323,7 +323,7 @@ describe('destructive command composition', () => {
             maximumActiveInspections = Math.max(maximumActiveInspections, activeInspections)
             try {
                 await new Promise(resolveDelay => setTimeout(resolveDelay, 10))
-                if (rejectOneInspection && inspectionCall === 1) throw new Error('synthetic inspection failure')
+                if (rejectInspections === 'all' || rejectInspections === 'first' && inspectionCall === 1) throw new Error('synthetic inspection failure')
                 return await executeProbe(step)
             } finally {
                 activeInspections -= 1
@@ -386,14 +386,21 @@ describe('destructive command composition', () => {
         expect(reclaimOnly).not.toHaveProperty('runtime')
         expect(await topologyReads()).toBe(readsBefore)
 
-        rejectOneInspection = true
+        // A resource that vanishes between listing and inspection fails one round; one more
+        // complete round covers it, and evidence that keeps failing still fails closed.
+        rejectInspections = 'first'
         activeInspections = 0
         maximumActiveInspections = 0
         inspectionCalls = 0
+        await expect(adapters.observe(destructive.result)).resolves.toMatchObject({ down: { discovery: { resources: expect.any(Array) } } })
+        expect(inspectionCalls).toBe(2)
+        rejectInspections = 'all'
+        inspectionCalls = 0
         await expect(adapters.observe(destructive.result)).resolves.toBeUndefined()
-        expect(inspectionCalls).toBe(1)
+        expect(inspectionCalls).toBe(2)
         expect(activeInspections).toBe(0)
         expect(maximumActiveInspections).toBeLessThanOrEqual(4)
+        rejectInspections = 'none'
 
         await writeFile(join(root, 'daemon-stopped'), '')
         const stoppedDown = await runDown({ configPath }, adapters)
