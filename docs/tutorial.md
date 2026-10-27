@@ -196,8 +196,10 @@ Each operation and probe has a `provenance` table saying where the value came fr
 
 ## What changes on a real product
 
-The example declares services but ships no service code, so the runtime commands stop at a
-refusal:
+The example declares services but ships no service code to run, so it ends here. On a product
+with real services, the next commands are `up`, `preflight` and, for everyday work, `session`.
+They currently need Docker Desktop; on any other Docker runtime `up` refuses like this (captured
+on OrbStack):
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
@@ -206,8 +208,7 @@ ERROR LIFECYCLE_EVIDENCE_INVALID [stack:2c3cf884...]: lifecycle, port or runtime
 ...
 ```
 
-On a product with real services, the next commands are `up`, `preflight` and, for everyday
-work, `session`. [Bring the product up](getting-started.md#bring-the-product-up) and
+[Bring the product up](getting-started.md#bring-the-product-up) and
 [Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment)
 describe them.
 

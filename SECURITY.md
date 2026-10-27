@@ -2,6 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
+This policy is for anyone who finds a security problem in cockpit: how to report it privately,
+what response to expect, and what is in scope.
+
 ## Supported versions
 
 | Version | Supported |
@@ -9,29 +12,27 @@
 | the newest minor | yes |
 | everything older | no |
 
-Security and bug fixes land on the newest minor release, and only there. There is no long-term
-support branch and no backporting; upgrading to the newest minor is the fix.
-
-Nothing has been published yet — the package sits at `0.0.0` and has never been released. The
-policy above applies from the first release onward.
+Fixes land on the newest minor release only. There is no long-term support branch and no
+backporting; upgrading to the newest minor is the fix. Nothing has been released yet (the
+package is at 0.0.0), so this applies from the first release.
 
 ## Reporting a vulnerability
 
-**A vulnerability never goes to the public issue tracker first.**
+**Never report a vulnerability in a public issue, pull request or discussion.**
 
 <!-- cockpit:operator-evidence private-reporting-channel=pending -->
 
-The repository's private reporting channel has not yet been verified live, so this policy does not
-name or link a channel that may not exist. Enabling the channel, submitting a private test report,
-and confirming its receipt are publication gates. Until that evidence exists, a public issue may
-state only that the private route is unavailable; include no vulnerability details.
+Report it privately through GitHub's private vulnerability reporting: open the repository's
+**Security** tab and choose **Report a vulnerability**. If that button is not there, private
+reporting has not been enabled yet. In that case open a public issue that asks for a private
+contact and contains no details of the problem.
 
-The same applies to fixes: do not open a pull request whose diff or message explains the
-vulnerability before there is a release. A public fix is a disclosure.
+Do not open a pull request whose diff or message explains the vulnerability before a fix is
+released. A public fix is a disclosure.
 
-Useful in a report: what an attacker can do, the smallest reproduction you have, the versions
-involved (cockpit, Node, operating system, and which agent tool if it is relevant), and whether
-you intend to publish. A synthetic reproduction is fine and preferred — this project cannot
+A useful report says what an attacker can do, gives the smallest reproduction you have, names
+the versions involved (cockpit, Node, operating system, and the agent tool if relevant), and
+says whether you intend to publish. Synthetic reproductions are preferred: this project cannot
 accept material that identifies someone's private deployment, even in a security report.
 
 ## What to expect

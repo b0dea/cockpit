@@ -119,8 +119,8 @@ section.
   and an evaluator that is never the session that did the work.
 - **Shared machines stay safe.** Port leases, holder tracking and `sleep` mean one agent cannot
   stop another agent's stack.
-- **Adopt what you already have.** `cockpit document` describes an existing setup as an annotated
-  draft, marking every value it inferred and every gap it could not fill.
+- **Adopt what you already have.** `cockpit document` turns an existing shell-registry cockpit
+  into an annotated draft, marking every value it inferred and every gap it could not fill.
 
 ## How cockpit compares
 
@@ -154,7 +154,11 @@ repository carries only synthetic fixtures. What is true today:
   can change between minors. [Release policy](docs/release-policy.md) covers deprecation and
   migration notes.
 - **macOS and Linux.** CI runs both on Node 22.13, 24 and 26. Windows is not supported.
-- **Docker with Compose is required** for `up`, `session`, `preflight`, `down` and `reset`.
+- **Bringing the stack up currently needs Docker Desktop.** `up`, `session`, `preflight`, `down`
+  and `reset` need Docker with Compose, and the runtime check today admits only Docker Desktop.
+  OrbStack, Colima, Rancher Desktop and Linux Docker Engine are refused, currently with a
+  generic `LIFECYCLE_EVIDENCE_INVALID`. Wider runtime support is being designed. Generation,
+  `setup` and `check` work without Docker.
 - **Native enforcement is not yet measured.** cockpit generates the hooks, permissions and rules,
   and its guard adapters were probed against specific harness versions (Claude Code 2.1.220,
   Codex 0.149.0, OpenCode 1.18.15, August 2026). It has not re-measured them against current
@@ -164,9 +168,8 @@ repository carries only synthetic fixtures. What is true today:
 - **Not a sandbox.** Guards, Git ignore rules and file permissions stop mistakes, not malicious
   code running as your user. [Safety and autonomy](docs/safety-and-autonomy.md) lists what each
   guard does.
-- **The synthetic example stops at `check`.** It declares services but ships no service code,
-  so `up` and `preflight` refuse there. Bring-up is exercised on real products and by the test
-  suite.
+- **The synthetic example stops at `check`.** It declares services but ships no service code
+  to run, so it demonstrates configuration, generation and drift, not a running stack.
 - **One maintainer.** See [Governance](CONTRIBUTING.md#governance).
 
 ## Documentation

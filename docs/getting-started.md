@@ -9,7 +9,10 @@ work first on a throwaway example, follow the [tutorial](tutorial.md).
 ## Install cockpit
 
 You need Node.js `^22.13.0 || ^24.0.0 || ^26.0.0`, Git, and macOS or Linux. The commands that
-run the stack also need Docker with Compose.
+run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker with Compose, and
+today their runtime check admits only Docker Desktop: OrbStack, Colima, Rancher Desktop and
+Linux Docker Engine are refused with `LIFECYCLE_EVIDENCE_INVALID`. Wider runtime support is being
+designed. Configuration, generation, `setup` and `check` work without Docker.
 
 ```sh
 git clone https://github.com/b0dea/cockpit.git

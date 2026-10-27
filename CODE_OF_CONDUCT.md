@@ -2,6 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
+This code of conduct applies to everyone taking part in the cockpit project: issues, pull
+requests, reviews and any other project space.
+
 ## Our Pledge
 
 We as members, contributors, and leaders pledge to make participation in our community a
@@ -57,9 +60,10 @@ community leaders responsible for enforcement.
 
 **Contact: the maintainer, [@b0dea](https://github.com/b0dea).**
 
-The repository does not yet publish a live-verified private conduct channel. Do not put incident
-details in a public issue. A public issue may request a private contact route without naming the
-people or conduct involved; the issue is then closed once that route is established.
+No private conduct address is published yet. Until one is listed here, open a public issue that
+asks for a private contact without naming the people or the conduct involved; the maintainer
+replies with a private route and closes the issue. For content on GitHub itself, you can also use
+GitHub's own report-abuse option on the comment, issue or profile.
 
 All complaints will be reviewed and investigated promptly and fairly. Community leaders are
 obligated to respect the privacy and security of the reporter of any incident. There is one
