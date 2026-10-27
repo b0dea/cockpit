@@ -49,7 +49,7 @@ import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, 
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -320,6 +320,15 @@ const RUNTIME_OPERATIONS = ['validate', 'up', 'down'] as const
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
 const SHA256 = /^[a-f0-9]{64}$/
 const VERSION = /^\d+\.\d+\.\d+$/
+// What Docker and Compose print: a numeric core and an optional vendor suffix, such as Docker
+// Desktop's `2.29.7-desktop.1`. Accepting only the bare core refused every Docker Desktop runtime.
+// Floors and comparisons use the core; the full string stays as evidence.
+const OBSERVED_VERSION = /^(\d+\.\d+\.\d+)(?:[-+][0-9A-Za-z.-]+)?$/
+
+/** The numeric core of a version Docker or Compose printed, or undefined when it has none. */
+export function observedVersionCore(value: string): string | undefined {
+    return value.match(OBSERVED_VERSION)?.[1]
+}
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 
 function exactKeys(value: object, keys: readonly string[]): boolean {
@@ -618,7 +627,9 @@ function runtimeUnmeasured(reason: string): RuntimeMeasurementAdmission {
 }
 
 function versionAtLeast(actual: string, floor: string): boolean {
-    const left = actual.split('.').map(Number)
+    const core = observedVersionCore(actual)
+    if (core === undefined) return false
+    const left = core.split('.').map(Number)
     const right = floor.split('.').map(Number)
     for (let index = 0; index < left.length; index += 1) {
         if (left[index] !== right[index]) return left[index]! > right[index]!
@@ -769,9 +780,9 @@ export async function observeDockerRuntime(
         } catch { return undefined }
     }
     const server = await readText(versionStep)
-    if (!server || !VERSION.test(server.value)) return runtimeVersionUnavailable('Docker server version probe failed or returned unauthenticated output')
+    if (!server || !OBSERVED_VERSION.test(server.value)) return runtimeVersionUnavailable('Docker server version probe failed or returned unauthenticated output')
     const compose = await readText(composeStep)
-    if (!compose || !VERSION.test(compose.value)) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output')
+    if (!compose || !OBSERVED_VERSION.test(compose.value)) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output')
     const identityText = await readText(identityStep, 512)
     const fields = identityText === undefined ? undefined : dockerIdentityFields(identityText.value)
     if (!identityText || !fields) return runtimeVersionUnavailable('Docker identity probe (docker info OperatingSystem, Name, OSType) failed or returned unauthenticated output')
@@ -1096,8 +1107,8 @@ export function createRuntimeAdapter(
     if (
         !isResolvedDockerExecutable(input.executable)
         || input.executable.sha256 !== input.runtime.executableSha256
-        || !/^\d+\.\d+\.\d+$/.test(input.runtime.version)
-        || !/^\d+\.\d+\.\d+$/.test(input.composeVersion)
+        || !OBSERVED_VERSION.test(input.runtime.version)
+        || !OBSERVED_VERSION.test(input.composeVersion)
         || !PROJECT_NAME.test(input.projectName)
     ) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime command or project name is invalid', input.projectName)
@@ -3469,10 +3480,10 @@ function runtimeProbeInput(value: unknown): RuntimeProbeInput | undefined {
             || !exactKeys(candidate.runtime, ['name', 'version'])) return undefined
         const runtimeValue = candidate.runtime as Record<string, unknown>
         if (typeof runtimeValue.name !== 'string' || runtimeValue.name.length === 0 || runtimeValue.name.length > 128 || runtimeValue.name.includes('\0')
-            || typeof runtimeValue.version !== 'string' || !VERSION.test(runtimeValue.version)) return undefined
+            || typeof runtimeValue.version !== 'string' || !OBSERVED_VERSION.test(runtimeValue.version)) return undefined
         runtime = Object.freeze({ name: runtimeValue.name, version: runtimeValue.version })
     }
-    if ((candidate.composeVersion !== null && (typeof candidate.composeVersion !== 'string' || !VERSION.test(candidate.composeVersion)))
+    if ((candidate.composeVersion !== null && (typeof candidate.composeVersion !== 'string' || !OBSERVED_VERSION.test(candidate.composeVersion)))
         || typeof candidate.composeFloor !== 'string' || !VERSION.test(candidate.composeFloor)
         || typeof candidate.measuredOn !== 'string' || !validDate(candidate.measuredOn)) return undefined
     const runtimeVersionProbe = probeExecution(candidate.runtimeVersionProbe, 'runtime-version')

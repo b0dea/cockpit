@@ -75,6 +75,8 @@ export interface RuntimeProbeVerdict {
 
 const SHA256 = /^[a-f0-9]{64}$/
 const VERSION = /^v?(\d+\.\d+\.\d+)$/
+// An observed version may carry a vendor suffix (Docker Desktop's `2.29.7-desktop.1`); a floor may not.
+const OBSERVED_VERSION = /^v?(\d+\.\d+\.\d+)(?:[-+][0-9A-Za-z.-]+)?$/
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
 const SAFE_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DOCKER_HOST'])
@@ -101,7 +103,7 @@ function validDate(value: string): boolean {
 }
 
 function versionAtLeast(actual: string, floor: string): boolean {
-    const left = actual.match(VERSION)?.[1].split('.').map(Number)
+    const left = actual.match(OBSERVED_VERSION)?.[1].split('.').map(Number)
     const right = floor.match(VERSION)?.[1].split('.').map(Number)
     if (!left || !right) return false
     for (let index = 0; index < 3; index += 1) {

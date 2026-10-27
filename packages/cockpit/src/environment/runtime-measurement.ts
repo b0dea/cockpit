@@ -19,7 +19,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
-import { admitRuntimeMeasurement, observeDockerRuntime } from './runtime.js'
+import { admitRuntimeMeasurement, observeDockerRuntime, observedVersionCore } from './runtime.js'
 import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
 
 export const mechanism = {
@@ -203,7 +203,10 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
             + 'pull or build it first, the probe never pulls', '--image')
     }
 
-    const composeFloor = observed.composeVersion.replace(/^v/, '')
+    // The floor is the numeric core; a vendor suffix such as `-desktop.1` is evidence, not a floor.
+    const composeFloor = observedVersionCore(observed.composeVersion)
+    if (composeFloor === undefined) return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+        `Docker Compose reported version ${JSON.stringify(observed.composeVersion.slice(0, 64))}, which has no numeric X.Y.Z core`, 'docker compose version')
     const measuredOn = new Date().toISOString().slice(0, 10)
     // The probe requires an empty canonical directory and creates its isolated HOME beside it, so
     // both live under one private parent that is removed whatever the verdict.

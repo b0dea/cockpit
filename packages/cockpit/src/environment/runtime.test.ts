@@ -44,6 +44,7 @@ import {
     measureColdStart,
     measureMachineFloor,
     observeDockerRuntime,
+    observedVersionCore,
     observeRuntimeServiceColdStart,
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
@@ -187,6 +188,22 @@ fi
                     kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
                 }))
             }
+        } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
+    })
+
+    it('admits a Docker Desktop Compose version by its numeric core and keeps the suffix as evidence', async () => {
+        const fixture = executableWithVersions('29.4.0\n', '2.29.7-desktop.1\n')
+        try {
+            const observed = await observeDockerRuntime({
+                executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
+            }, (step) => executeProbe(step))
+            expect(observed).toEqual(expect.objectContaining({ kind: 'complete', composeVersion: '2.29.7-desktop.1' }))
+            const row = { runtime: 'docker-desktop', measured_on: '2026-09-26', candidate: 'passed', broken_control: 'rejected', status: 'supported' } as const
+            expect(admitRuntimeMeasurement(observed, [{ ...row, compose_floor: '2.29.7' }]))
+                .toEqual({ kind: 'admitted', runtimeIdentity: 'docker-desktop' })
+            expect(admitRuntimeMeasurement(observed, [{ ...row, compose_floor: '2.30.0' }]))
+                .toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
+            expect(observedVersionCore('2.29.7-desktop.1')).toBe('2.29.7')
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })
 
