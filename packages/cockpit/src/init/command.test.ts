@@ -134,4 +134,77 @@ describe('init operator command', () => {
         expect(written).toEqual(['/synthetic/cockpit.toml'])
         expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
     })
+    describe('without a terminal', () => {
+        const digest = 'a'.repeat(64), defaultsDigest = 'd'.repeat(64)
+        const asking = (field: string, expectedSha256?: string): InitApplicationOutcome => ({ ...pending(), result: { ...pending().result!,
+            question: { id: `question:${field.length.toString().padStart(64, '0')}`, field, source: 'configuration:x', why: 'unknown',
+                ...(expectedSha256 ? { expectedSha256 } : {}) } } })
+        const noTerminal: InitCommandIo = { terminal: false, confirm: async () => { throw new Error('asked a terminal') },
+            writeArtifact: async () => undefined }
+        const answers = { sibling: [{ slug: 'app' }], ports: { bases: {} }, environment: { install_policies: [], compose_files: ['compose.yml'] } }
+        const walk = (given: string[]) => {
+            const sent: string[] = []
+            const questions = [asking('sibling'), asking('ports.bases'), asking('environment.install_policies'),
+                asking('environment.generated'), asking('configuration.defaults', defaultsDigest)]
+            const application = async (input: { accepted: boolean; greenfieldAnswer?: { bytes: string } }) => {
+                if (!input.accepted) return pending()
+                if (input.greenfieldAnswer) sent.push(input.greenfieldAnswer.bytes)
+                const next = questions.shift()
+                return next ?? { kind: 'complete' as const, status: 0 as const, diagnostics: [], artifact: null, destination: null, result: pending().result }
+            }
+            return { sent, application, given }
+        }
+
+        it('completes with the printed digests and answers keyed by field, never opening a terminal', async () => {
+            const { sent, application } = walk([])
+            const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers, defaultsSha256: defaultsDigest } },
+                noTerminal, application)
+            expect(outcome.kind).toBe('complete')
+            expect(sent).toEqual([
+                '[{"slug":"app"}]', '{}', '[]', '{"compose_files":["compose.yml"]}', JSON.stringify({ confirmed: true, sha256: defaultsDigest }),
+            ])
+        })
+
+        it('refuses a digest that is not the pending one before publishing anything', async () => {
+            const accepted: boolean[] = []
+            const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: 'b'.repeat(64), answers } }, noTerminal,
+                async input => { accepted.push(input.accepted); return pending() })
+            expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_PREVIEW_NOT_ACCEPTED' }] })
+            expect(accepted).toEqual([false])
+        })
+
+        it('stops at the first unanswered field and withholds the defaults until their digest is given', async () => {
+            const { sent, application } = walk([])
+            const partial = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [] } } }, noTerminal, application)
+            expect(partial).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' } } })
+            expect(sent).toEqual(['[]'])
+
+            const held = walk([])
+            const awaiting = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers } }, noTerminal, held.application)
+            expect(awaiting).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults', expectedSha256: defaultsDigest } } })
+
+            const wrong = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers, defaultsSha256: 'e'.repeat(64) } },
+                noTerminal, walk([]).application)
+            expect(wrong).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_DEFAULTS_NOT_ACCEPTED' }] })
+        })
+
+        it('names an answers key that matches no interview field and an ambiguous environment answer', async () => {
+            const unknown = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [], ports: { base: {} } } } },
+                noTerminal, async () => pending())
+            expect(unknown).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_FIELD_UNKNOWN',
+                message: expect.stringContaining('names no interview field: ports.base;') }] })
+
+            const ambiguous = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers: {
+                    sibling: [], ports: { bases: {} }, environment: { install_policies: [], generated: {}, compose_files: ['compose.yml'] } } } },
+                noTerminal, walk([]).application)
+            expect(ambiguous).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_AMBIGUOUS' }] })
+        })
+    })
 })

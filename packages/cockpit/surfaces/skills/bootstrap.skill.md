@@ -30,6 +30,7 @@ opencode:
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Bootstrap**.
 Start with `cockpit init` using one explicit root and harness target. Compose `cockpit document`, `cockpit sync`, `cockpit check`, `cockpit doctor`, `cockpit up`, and `cockpit preflight` only when that procedure reaches them.
+A repository that has never run locally (only in CI, staging or a cluster) follows **Create a local setup** in the same procedure.
 
 Preview every proposed mutation and obtain explicit confirmation before irreversible work.
 The init command owns durable resume and final environment checks; show its actual result and any pending proof.

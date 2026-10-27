@@ -2105,6 +2105,47 @@ describe('init command admission', () => {
             greenfieldAnswer: { questionId: id, bytes: '{}', provenance: 'operator-confirmed' } })
     })
 
+    it('reads the answers file and accepts only the printed digest when no terminal is attached', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-init-answers-'))
+        try {
+            const answers = join(directory, 'answers.toml')
+            writeFileSync(answers, '[ports]\nbases = { API_PORT = 4100 }\n')
+            const question = { id: `question:${'c'.repeat(64)}` as const, field: 'ports.bases', source: `configuration:${'b'.repeat(64)}`, why: 'no source' }
+            const result = (extra: object = {}) => ({ stage: 'surface-published' as const, root: process.cwd(), target: 'codexcli' as const,
+                previewSha256: 'a'.repeat(64), files: [], nextCommand: 'next', ...extra })
+            const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => input.greenfieldAnswer
+                ? { kind: 'complete' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [], result: result() }
+                : { kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [], result: result({ question }) })
+            let stdout = ''
+            const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true } }
+            const base = ['init', process.cwd(), '--target', 'codexcli', '--json']
+
+            expect(await runCli([...base, '--accept-preview', 'a'.repeat(64), '--answers', answers], io, { init: application })).toBe(0)
+            expect(application.mock.calls.at(-1)![0]).toMatchObject({ accepted: true,
+                greenfieldAnswer: { questionId: question.id, bytes: '{"API_PORT":4100}' } })
+            expect(JSON.parse(stdout).result.stage).toBe('surface-published')
+
+            application.mockClear()
+            expect(await runCli([...base, '--accept-preview', 'b'.repeat(64), '--answers', answers], io, { init: application })).toBe(2)
+            expect(application.mock.calls.every(([input]) => !input.accepted)).toBe(true)
+
+            for (const refused of [
+                [...base, '--answers', answers],
+                [...base, '--accept-defaults', 'a'.repeat(64)],
+                [...base, '--accept-preview', 'not-a-digest'],
+                [...base, '--accept-preview', 'a'.repeat(64), '--interactive'],
+                [...base, '--accept-preview', 'a'.repeat(64), '--answers', join(directory, 'missing.toml')],
+            ]) {
+                application.mockClear()
+                expect(await runCli(refused, io, { init: application })).toBe(2)
+                expect(application).not.toHaveBeenCalled()
+            }
+            writeFileSync(answers, 'ports = [unclosed')
+            expect(await runCli([...base, '--accept-preview', 'a'.repeat(64), '--answers', answers], io, { init: application })).toBe(2)
+            expect(application).not.toHaveBeenCalled()
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it('refuses missing, extra or duplicate root and target before dispatch', async () => {
         for (const args of [
             [], ['--target', 'codexcli'], ['.'], ['.', '.', '--target', 'codexcli'],

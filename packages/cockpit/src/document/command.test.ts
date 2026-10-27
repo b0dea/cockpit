@@ -750,6 +750,31 @@ describe('operator-confirmed document completion', () => {
         expect(await loadCockpitConfig(configPath)).toMatchObject({ kind: 'complete', status: 0 })
     })
 
+    it('completes compose-first from a Compose file the checkout already has instead of a generated environment', async () => {
+        const { input } = sourceInput('X_SIBLINGS=(\n  "app|app|app|app|APP_DIR|Synthetic application"\n)\n', 'root')
+        const configuration = { sourceObservationSha256, answers: [] }
+        const portAnswer = answer((await documentCommand({ ...input, configuration }))!.question!, {})
+        const afterPorts = await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer] } })
+        const policyAnswer = answer(afterPorts.question!, generatedConfig.environment.install_policies)
+        const generated = await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer, policyAnswer] } })
+        expect(generated.question!.why).toContain('compose_files')
+        const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
+        const defaults = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer] } })
+        expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        const complete = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, confirmDefaults(defaults.question!)] } })
+        expect(complete).toMatchObject({ kind: 'complete', status: 0 })
+        const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; generated?: unknown } }
+        expect(document.environment.compose_files).toEqual(['compose.yml'])
+        expect(document.environment.generated).toBeUndefined()
+
+        const empty = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, answer(generated.question!, { compose_files: [] })] } })
+        expect(empty).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            message: expect.stringContaining('at least one path') }] })
+    })
+
     it('asks only missing logical groups without a registry and accepts explicit empty ports', async () => {
         const estateRoot = temporaryPath('Invalid_Name')
         mkdirSync(estateRoot)

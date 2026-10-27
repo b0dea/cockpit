@@ -718,6 +718,27 @@ it('runs installed init for each isolated target and refuses missing roots or br
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
             expect(questions.map(question => question.field)).toEqual(['sibling', 'ports.bases', 'configuration.defaults'])
+            // The interactive answers are persisted, so a caller with no terminal finishes the same
+            // init from the printed digests alone: it must not need a second interview.
+            const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
+            expect(pendingRun.status, pendingRun.stderr).toBe(0)
+            const printed = JSON.parse(pendingRun.stdout).result
+            expect(printed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['configuration.defaults'])
+            const answersFile = join(root, '..', `${classification}-answers.toml`)
+            writeFileSync(answersFile, '[ports]\nbases = {}\n')
+            const finish = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', target,
+                '--accept-preview', printed.previewSha256, '--answers', answersFile, ...extra, '--json'], { cwd: root, env, encoding: 'utf8' })
+            const awaiting = finish()
+            expect(awaiting.status, awaiting.stderr).toBe(0)
+            expect(JSON.parse(awaiting.stdout).result.question).toMatchObject({ field: 'configuration.defaults' })
+            expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
+            const wrong = finish('--accept-defaults', 'f'.repeat(64))
+            expect(wrong.status).toBe(2)
+            expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
+            const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
+            expect(done.status, done.stdout + done.stderr).toBe(0)
+            expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified', nextCommand: 'bootstrap complete' })
+            expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
         } else {
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
@@ -734,6 +755,34 @@ it('runs installed init for each isolated target and refuses missing roots or br
             })
         }
     }
+    // An agent has no terminal at any point: three runs, each given only what the previous one printed.
+    mkdirSync(join(packScratch, 'init-headless'))
+    const headless = realpathSync(join(packScratch, 'init-headless'))
+    mkdirSync(join(headless, 'library'))
+    writeFileSync(join(headless, 'library/package.json'), `${JSON.stringify({ name: 'synthetic-library', version: '0.0.0', scripts: { test: 'node test.mjs' } })}\n`)
+    writeFileSync(join(headless, 'library/Dockerfile'), 'FROM node:22-slim\nEXPOSE 4100\nCMD ["node", "index.mjs"]\n')
+    const answersFile = join(packScratch, 'headless-answers.toml')
+    writeFileSync(answersFile, [
+        '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
+        'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', ''].join('\n'))
+    const run = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', headless, '--target', 'opencode', ...args, '--json'],
+        { cwd: headless, env, encoding: 'utf8' })
+    const first = run()
+    expect(first.status, first.stderr).toBe(0)
+    const listed = JSON.parse(first.stdout).result
+    expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['sibling', 'ports.bases', 'configuration.defaults'])
+    expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
+        expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
+    ])
+    const second = run('--accept-preview', listed.previewSha256, '--answers', answersFile)
+    expect(second.status, second.stderr).toBe(0)
+    const defaults = JSON.parse(second.stdout).result.question
+    expect(defaults).toMatchObject({ field: 'configuration.defaults' })
+    const third = run('--accept-preview', listed.previewSha256, '--answers', answersFile, '--accept-defaults', defaults.expectedSha256)
+    expect(third.status, third.stdout + third.stderr).toBe(0)
+    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
+    expect(existsSync(join(headless, 'cockpit.toml'))).toBe(true)
+
     const untouched = join(packScratch, 'init-missing-root')
     mkdirSync(untouched)
     const missing = spawnSync(process.execPath, [launcher, 'init', '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })
@@ -747,4 +796,4 @@ it('runs installed init for each isolated target and refuses missing roots or br
         expect(JSON.parse(broken.stdout).diagnostics.length).toBeGreaterThan(0)
         expect(existsSync(join(untouched, '.agents'))).toBe(false)
     } finally { writeFileSync(asset, bytes) }
-}, 120_000)
+}, 240_000)

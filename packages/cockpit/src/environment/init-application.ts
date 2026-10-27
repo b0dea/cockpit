@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
-import type {
-    DocumentCommandInput, DocumentOutcome, EstateClassificationOutcome, EstateClassificationResult,
+import {
+    plannedGreenfieldQuestions,
+    type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
 } from '../document/command.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { bootstrapHolderId } from './identity.js'
@@ -106,6 +107,13 @@ export interface InitApplicationAdapters {
     readonly check: (input: Readonly<{ configPath: string }>) => Promise<OwnerOutcome>
     readonly preflight: (input: Readonly<{ configPath: string }>) => Promise<OwnerOutcome>
     readonly classifyEstate?: (input: Readonly<{ root: string }>) => Promise<EstateClassificationOutcome>
+    /** Proposes answers from files the repositories already carry; every value comes back as inferred. */
+    readonly infer?: (input: Readonly<{ root: string; repositories: readonly Readonly<{ slug: string; path: string }>[] }>)
+        => Promise<Readonly<{
+            facts: readonly Readonly<{ fields: readonly string[]; target: string; value: unknown;
+                provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }> }>[]
+            skipped: readonly Readonly<{ source: string; reason: string }>[]
+        }>>
 }
 
 export interface GreenfieldQuestion {
@@ -127,6 +135,27 @@ export interface GreenfieldResult extends EstateClassificationResult {
     }>[]
 }
 
+/** One proposed value for an unanswered field. It stays a proposal until the operator confirms it in an answer. */
+export interface InferredItem {
+    readonly target: string
+    readonly value: unknown
+    readonly provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }>
+}
+
+export interface OutstandingField {
+    readonly field: string
+    readonly why: string
+    readonly inferred: readonly InferredItem[]
+}
+
+/** Every field the interview will still ask, in order, so an unattended caller can answer them in one pass. */
+export interface InterviewPlan {
+    /** Fields an earlier run already answered; their answers are kept. */
+    readonly answered: readonly string[]
+    readonly outstanding: readonly OutstandingField[]
+    readonly inferenceSkipped: readonly Readonly<{ source: string; reason: string }>[]
+}
+
 export interface InitResult {
     readonly stage: BootstrapStateRecord['value']['stage']
     readonly root: string
@@ -137,6 +166,7 @@ export interface InitResult {
     readonly ownerOutcome?: OwnerOutcome
     readonly question?: GreenfieldQuestion
     readonly estate?: GreenfieldResult
+    readonly interview?: InterviewPlan
 }
 
 interface InitOutcomeBase {
@@ -177,13 +207,32 @@ function result(
     projection: BootstrapProjection,
     nextCommand: string,
     ownerOutcome?: OwnerOutcome,
-    greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult }>,
+    greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan }>,
 ): InitResult {
     return Object.freeze({ stage, root: projection.root, target: projection.target,
         previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]), nextCommand,
         ...(ownerOutcome === undefined ? {} : { ownerOutcome }),
         ...(greenfield?.question === undefined ? {} : { question: greenfield.question }),
-        ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }) })
+        ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }),
+        ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }) })
+}
+
+async function interviewPlan(
+    input: InitApplicationInput,
+    adapters: InitApplicationAdapters,
+    classification: EstateClassificationResult,
+    answered: number,
+): Promise<InterviewPlan> {
+    const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
+    const inference = await adapters.infer?.({ root: input.root,
+        repositories: classification.runnable.map(row => ({ slug: row.slug, path: row.path })) })
+    return Object.freeze({
+        answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),
+        outstanding: Object.freeze(planned.slice(answered).map(({ field, why }) => Object.freeze({ field, why,
+            inferred: Object.freeze((inference?.facts ?? []).filter(fact => fact.fields.includes(field))
+                .map(({ target, value, provenance }) => Object.freeze({ target, value, provenance }))) }))),
+        inferenceSkipped: inference?.skipped ?? [],
+    })
 }
 
 function commandDigest(input: InitApplicationInput): string {
@@ -317,9 +366,21 @@ export async function runInitApplication(
         return refused('INIT_STATE_STALE', 'bootstrap state does not match the current root, target, command, sources, or preview', address.path)
     }
     if (!input.accepted && (current?.value.greenfield === undefined || current.value.stage !== 'surface-published')) {
-        return { kind: 'pending', status: 0, artifact: null, destination: null,
-            diagnostics: resumed?.diagnostics ?? prepared!.diagnostics,
-            result: result(current?.value.stage ?? 'surface-previewed', projection, 'confirm selected bootstrap preview') }
+        const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
+        let interview: InterviewPlan | undefined
+        const stage = current?.value.stage ?? 'surface-previewed'
+        // Questions are only asked after acceptance, but listing them now lets an unattended caller
+        // prepare every answer before it consents. The observation is read-only.
+        if (input.registry === undefined && adapters.classifyEstate && (stage === 'surface-previewed' || stage === 'surface-published')) {
+            const classified = await adapters.classifyEstate(Object.freeze({ root: input.root }))
+            if (classified.kind === 'complete') interview = await interviewPlan(input, adapters, classified.result, 0)
+            else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
+                message: `the interview could not be previewed (${classified.diagnostics.map(row => row.code).join(', ')}); each question is still reported when accepting reaches it`,
+                target: input.root })
+        }
+        return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics,
+            result: result(stage, projection, 'confirm selected bootstrap preview', undefined,
+                interview === undefined ? undefined : { interview }) }
     }
     if (input.accepted && (!SHA256.test(input.acceptedPreviewSha256 ?? '') || input.acceptedPreviewSha256 !== projection.previewSha256)) {
         return refused('INIT_PREVIEW_CHANGED', 'selected bootstrap preview changed after acceptance', input.root)
@@ -399,11 +460,12 @@ export async function runInitApplication(
             if (!proposed && expected && JSON.stringify(expected) !== JSON.stringify(question)) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration question changed after it was persisted', address.path)
             }
+            const interview = classification ? await interviewPlan(input, adapters, classification, answers.length) : undefined
             if (!input.accepted) {
                 const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
                 return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
                     result: result('surface-published', projection, 'answer the named unresolved configuration fact', undefined,
-                        { question, ...(estate ? { estate } : {}) }) }
+                        { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
             }
             const questions = [...(state?.questions ?? []),
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]
@@ -416,7 +478,7 @@ export async function runInitApplication(
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
             return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
                 result: result('surface-published', projection, 'answer the named unresolved configuration fact', undefined,
-                    { question, ...(estate ? { estate } : {}) }) }
+                    { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
         }
         if (documented.kind !== 'complete') return ownerRefusal(documented, current.value.stage, projection)
         if (documented.destination !== destination || Buffer.byteLength(documented.artifact, 'utf8') > DRAFT_BYTE_LIMIT) {

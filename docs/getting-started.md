@@ -82,6 +82,64 @@ that no runtime is declared; see [Environment modes](environment.md#environment-
 Review the port map, the generated environment declaration and the defaults before accepting
 the configuration.
 
+### Bootstrap without a terminal
+
+An agent or CI job has no terminal, so `--interactive` refuses with `INIT_TERMINAL_REQUIRED`.
+Give `init` the consent and the answers as arguments instead. Every digest comes from a pending
+run, so consent stays bound to the exact bytes it was shown; there is no blanket `--yes`.
+
+1. Run the preview. With `--json` it lists the `previewSha256` to accept and, under
+   `interview.outstanding`, every field the interview will still ask, in order. Each entry has a
+   `why` and the values `init` could propose, each with `provenance.kind` `inferred` and the file
+   it was read from.
+2. Write the answers as TOML, keyed by field, and show them to the human together with the digest.
+3. Rerun with `--accept-preview <previewSha256>` and `--answers <file>`. The run stops at the
+   first field still unanswered, or at `configuration.defaults`, whose surfaced values are in the
+   diagnostics and whose digest is in `question.expectedSha256`.
+4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one
+   is refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
+
+```sh
+cockpit init "$(pwd)" --target codexcli --json
+cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json
+cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+```
+
+The answers file spells each field as a TOML path, so `ports.bases` is the `bases` key of a
+`[ports]` table. A key that names no field is refused. For a directory with one library that
+has nothing runnable, the whole file is:
+
+```toml
+[[sibling]]
+slug = "library"
+dir = "library"
+mount = "always"
+acquire = "none"
+var = "LIBRARY_DIR"
+purpose = "Shared library"
+
+[ports]
+bases = {}
+```
+
+| Field | Answer |
+|---|---|
+| `cockpit.name` | the cockpit name, only when the directory name is not a valid one |
+| `sibling` | one `[[sibling]]` table per repository |
+| `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
+| `ports.bases` | the host-published base port map; `{}` means none |
+| `environment.install_policies` | the dependency install protocols; `[]` for none |
+| `environment.generated` | the generated environment to render |
+| `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
+
+Answers an earlier run recorded are kept, so the same file can be passed on every run; a field
+the interview never asked for is reported as `INIT_ANSWER_UNUSED`. The proposed values come from
+cheap, exact sources only: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, the variable names
+(never the values) in `.env.example`, an existing Compose file, and the `services:` of GitHub
+workflows. Each is a proposal to confirm, not an answer; an unreadable source is listed in
+`interview.inferenceSkipped`. A run that declares a runtime ends with `preflight`, which needs the Docker runtime named in
+[Install cockpit](#install-cockpit); without it the run stops there and resumes when you rerun.
+
 ## Bring the product up
 
 This is the canonical sequence. Every other page links here rather than repeating it.

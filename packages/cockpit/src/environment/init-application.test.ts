@@ -316,6 +316,36 @@ describe('init application', () => {
         expect(f.calls).not.toContain('preflight')
     })
 
+    it('lists every outstanding field with its inferred values and provenance before and after acceptance', async () => {
+        const f = fixture()
+        const infer: NonNullable<InitApplicationAdapters['infer']> = async ({ repositories }) => ({
+            facts: [{ fields: ['environment.generated', 'ports.bases'], target: `${repositories[0]!.slug}.container_ports`, value: [3000],
+                provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }],
+            skipped: [{ source: 'app/.github/workflows/ci.yml', reason: 'is not valid YAML' }],
+        })
+        const adapters: InitApplicationAdapters = { ...f.adapters, infer, classifyEstate: async ({ root }) => estate(root, 'one-sibling'),
+            document: interviewDocument(f.destination, ['sibling', 'ports.bases']) }
+        const input = { ...f.input, registry: undefined }
+        const preview = await runInitApplication(input, adapters)
+        expect(preview).toMatchObject({ kind: 'pending', result: { stage: 'surface-previewed', interview: {
+            answered: [], inferenceSkipped: [{ source: 'app/.github/workflows/ci.yml' }] } } })
+        const planned = preview.result!.interview!.outstanding
+        expect(planned.map(row => row.field)).toEqual(['sibling', 'ports.bases', 'environment.install_policies',
+            'environment.generated', 'configuration.defaults'])
+        expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
+            provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }])
+        expect(planned.find(row => row.field === 'sibling')!.inferred).toEqual([])
+        expect(f.calls).not.toContain('apply')
+
+        const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
+        const first = await runInitApplication(accepted, adapters)
+        const second = await runInitApplication({ ...accepted, greenfieldAnswer: {
+            questionId: first.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
+        expect(second.result!.interview).toMatchObject({ answered: ['sibling'] })
+        expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
+            'environment.install_policies', 'environment.generated', 'configuration.defaults'])
+    })
+
     it('refuses a different target after bootstrap state is bound', async () => {
         const f = fixture()
         await runInitApplication({ ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }, f.adapters)

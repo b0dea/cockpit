@@ -102,10 +102,11 @@ export const commands = [
         ordinary: ordinary('init', { target: value('surface-target', true), registry: value('confined-path'), json: flag }, {
             configuration: 'none',
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
-            forbidden: Object.freeze({ presence: Object.freeze(['interactive']), values: Object.freeze([]) }),
+            forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']), values: Object.freeze([]) }),
         }),
         options: { target: { type: 'string' }, registry: { type: 'string' },
-            interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false } },
+            interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
+            answers: { type: 'string' }, 'accept-preview': { type: 'string' }, 'accept-defaults': { type: 'string' } },
     },
     {
         name: 'compare',

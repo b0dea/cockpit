@@ -14,7 +14,7 @@ import { renderCompleteDocument, renderIncompleteDocument, type Attribution, typ
 export const mechanism = {
     id: 'document-outcome',
     module: 'packages/cockpit/src/document/command.ts',
-    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate'],
+    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'plannedGreenfieldQuestions'],
 } as const
 
 export interface EstateObservationInput { readonly root: string }
@@ -561,6 +561,49 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
         answers: Object.freeze(answers) })
 }
 
+const QUESTION_WHY = {
+    name: 'the source does not establish a schema-valid cockpit name',
+    siblingEstate: 'the source does not establish schema-shaped sibling declarations',
+    siblingRegistry: 'the registry leaves required sibling configuration unresolved',
+    ports: 'no source establishes the host-published base port map; an explicit empty map means none',
+    policies: 'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands',
+    generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer { "compose_files": ["compose.yml"] }',
+    defaults: 'confirm the exact surfaced inferred and schema-default values before completing the document',
+} as const
+
+const runnableWhy = (gaps: EstateClassificationResult['gaps']) =>
+    `resolve the exact current runnable gaps: ${gaps.map(gap => `${gap.field} from ${gap.source}`).join('; ')}`
+
+/**
+ * The questions a greenfield estate interview asks, in order. Init lists them before any answer
+ * exists so an unattended caller can prepare every answer in one pass; the loop in
+ * completeConfigurationDocument asks the same questions in the same order.
+ */
+export function plannedGreenfieldQuestions(input: Readonly<{
+    root: string
+    classification: EstateClassification
+    gaps: EstateClassificationResult['gaps']
+}>): readonly Readonly<{ field: DocumentConfigurationField; why: string }>[] {
+    const surfacesOnly = input.classification === 'no-runnable-product'
+    return Object.freeze([
+        ...(cockpitName(input.root) ? [] : [{ field: 'cockpit.name' as const, why: QUESTION_WHY.name }]),
+        { field: 'sibling' as const, why: QUESTION_WHY.siblingEstate },
+        ...(!surfacesOnly && input.gaps.length > 0 ? [{ field: 'estate.runnable' as const, why: runnableWhy(input.gaps) }] : []),
+        { field: 'ports.bases' as const, why: QUESTION_WHY.ports },
+        ...(surfacesOnly ? [] : [
+            { field: 'environment.install_policies' as const, why: QUESTION_WHY.policies },
+            { field: 'environment.generated' as const, why: QUESTION_WHY.generated },
+        ]),
+        { field: 'configuration.defaults' as const, why: QUESTION_WHY.defaults },
+    ])
+}
+
+/** Compose-first answer: the repository already has Compose files, so no generated environment is rendered. */
+function composeFilesAnswer(value: unknown): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    return Object.keys(value).join(',') === 'compose_files' ? (value as { compose_files: unknown }).compose_files : undefined
+}
+
 function configurationQuestion(
     context: ConfigurationContext,
     field: DocumentConfigurationField,
@@ -702,8 +745,7 @@ function completeConfigurationDocument(
     let siblingAnswerRows: readonly Record<string, unknown>[] = []
 
     if (!name) {
-        const question = configurationQuestion(context, 'cockpit.name',
-            'the source does not establish a schema-valid cockpit name')
+        const question = configurationQuestion(context, 'cockpit.name', QUESTION_WHY.name)
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
             attributions: inferGreenfieldSiblingRoot(
@@ -720,8 +762,7 @@ function completeConfigurationDocument(
     const needsSiblingAnswer = detected.length === 0 || gaps([...detected]).some(gap => gap.blocking)
     if (needsSiblingAnswer) {
         const question = configurationQuestion(context, 'sibling', detected.length === 0
-            ? 'the source does not establish schema-shaped sibling declarations'
-            : 'the registry leaves required sibling configuration unresolved')
+            ? QUESTION_WHY.siblingEstate : QUESTION_WHY.siblingRegistry)
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
             attributions: inferGreenfieldSiblingRoot(
@@ -767,8 +808,7 @@ function completeConfigurationDocument(
         const slugs = estateGaps.map(gap => /^([a-z][a-z0-9-]{0,63})\.runnable$/.exec(gap.field)?.[1])
         if (slugs.some(slug => !slug) || new Set(slugs).size !== slugs.length) return refusal(
             'DOCUMENT_ESTATE_GAPS_INVALID', 'the current estate runnable gaps are malformed or duplicated')
-        const question = configurationQuestion(context, 'estate.runnable',
-            `resolve the exact current runnable gaps: ${estateGaps.map(gap => `${gap.field} from ${gap.source}`).join('; ')}`)
+        const question = configurationQuestion(context, 'estate.runnable', runnableWhy(estateGaps))
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: documentedRows(siblingRows),
             attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root), gaps: [] },
@@ -800,8 +840,7 @@ function completeConfigurationDocument(
         answerIndex += 1
     }
 
-    const portQuestion = configurationQuestion(context, 'ports.bases',
-        'no source establishes the host-published base port map; an explicit empty map means none')
+    const portQuestion = configurationQuestion(context, 'ports.bases', QUESTION_WHY.ports)
     const portRead = readConfigurationAnswer(configuration.answers, answerIndex, portQuestion)
     const previewRows = documentedRows(siblingRows)
     const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, greenfieldEstate)
@@ -822,8 +861,7 @@ function completeConfigurationDocument(
 
     let environment = defaults.environment
     if (!surfacesOnly) {
-        const policyQuestion = configurationQuestion(context, 'environment.install_policies',
-            'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands')
+        const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
         const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
         if (policyRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
             attributions, gaps: [] }, destination, policyQuestion)
@@ -834,37 +872,48 @@ function completeConfigurationDocument(
             policyQuestion.field)
         answerIndex += 1
 
-        const generatedQuestion = configurationQuestion(context, 'environment.generated',
-            'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance')
+        const generatedQuestion = configurationQuestion(context, 'environment.generated', QUESTION_WHY.generated)
         const generatedRead = readConfigurationAnswer(configuration.answers, answerIndex, generatedQuestion)
         if (generatedRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
             attributions, gaps: [] }, destination, generatedQuestion)
         if (generatedRead.kind === 'refusal') return generatedRead.outcome
-        const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
-        if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
-            generatedQuestion.field)
-        let runnableWitnesses = 0
-        for (const disposition of estateRunnable) {
-            const services = parsedGenerated.data.services.filter(service => service.sibling === disposition.slug)
-            const resolution = runnableResolutions.get(disposition.slug)
-            const runnable = disposition.disposition === 'confirmed' || resolution?.runnable === true
-            const witnessMatches = resolution?.runnable === true
-                ? services.filter(service => service.id === resolution.service
-                    && JSON.stringify(service.command) === JSON.stringify(resolution.command)).length
-                : 0
-            if (runnable ? services.length === 0 || resolution?.runnable === true && witnessMatches !== 1 : services.length !== 0) {
-                return refusal('DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH',
-                    'the generated environment does not match the operator-confirmed runnable dispositions', generatedQuestion.field)
+        const composeFirst = composeFilesAnswer(generatedRead.value)
+        if (composeFirst) {
+            const parsedCompose = Array.isArray(composeFirst) && composeFirst.length > 0
+                ? CockpitConfig.shape.environment.safeParse({ ...defaults.environment,
+                    install_policies: parsedPolicies.data, compose_files: composeFirst }) : undefined
+            if (!parsedCompose?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the operator-confirmed Compose files do not match the schema: ${parsedCompose
+                    ? issueSummary(parsedCompose.error) : 'compose_files must list at least one path'}`,
+                generatedQuestion.field)
+            environment = parsedCompose.data
+        } else {
+            const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
+            if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
+                generatedQuestion.field)
+            let runnableWitnesses = 0
+            for (const disposition of estateRunnable) {
+                const services = parsedGenerated.data.services.filter(service => service.sibling === disposition.slug)
+                const resolution = runnableResolutions.get(disposition.slug)
+                const runnable = disposition.disposition === 'confirmed' || resolution?.runnable === true
+                const witnessMatches = resolution?.runnable === true
+                    ? services.filter(service => service.id === resolution.service
+                        && JSON.stringify(service.command) === JSON.stringify(resolution.command)).length
+                    : 0
+                if (runnable ? services.length === 0 || resolution?.runnable === true && witnessMatches !== 1 : services.length !== 0) {
+                    return refusal('DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH',
+                        'the generated environment does not match the operator-confirmed runnable dispositions', generatedQuestion.field)
+                }
+                if (runnable) runnableWitnesses += 1
             }
-            if (runnable) runnableWitnesses += 1
-        }
-        if (estateRunnable.length > 0 && runnableWitnesses === 0) {
-            return refusal('DOCUMENT_NO_RUNNABLE_PRODUCT',
-                'the observed and operator-confirmed estate contains no runnable product', generatedQuestion.field)
+            if (estateRunnable.length > 0 && runnableWitnesses === 0) {
+                return refusal('DOCUMENT_NO_RUNNABLE_PRODUCT',
+                    'the observed and operator-confirmed estate contains no runnable product', generatedQuestion.field)
+            }
+            environment = { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data }
         }
         answerIndex += 1
-        environment = { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data }
     }
 
     const candidate = CockpitConfig.safeParse({ ...defaults, cockpit: { ...defaults.cockpit, name,
@@ -880,8 +929,7 @@ function completeConfigurationDocument(
     }
 
     const expectedSha256 = confirmationDigest(attributions)
-    const defaultsQuestion = configurationQuestion(context, 'configuration.defaults',
-        'confirm the exact surfaced inferred and schema-default values before completing the document', expectedSha256)
+    const defaultsQuestion = configurationQuestion(context, 'configuration.defaults', QUESTION_WHY.defaults, expectedSha256)
     const defaultsRead = readConfigurationAnswer(configuration.answers, answerIndex, defaultsQuestion)
     if (defaultsRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
         attributions, gaps: [] }, destination, defaultsQuestion)

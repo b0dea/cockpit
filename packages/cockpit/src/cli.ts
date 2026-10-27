@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { installedPackageMetadata } from './package-metadata.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
-import { realpath, writeFile } from 'node:fs/promises'
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { parse as parseToml } from 'smol-toml'
 import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
@@ -14,7 +15,8 @@ import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, documentCommand, documentObservedCommand, observePublicEstate, type DocumentCommandInput } from './document/command.js'
-import { runInitOperatorCommand } from './init/command.js'
+import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
+import { deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
 import { nodeAuthority, readAnchoredBatches } from './generated-environment/transaction.js'
 import { comparisonCommand, type ComparisonCommandInput, type ComparisonCommandAdapters } from './comparison/command.js'
@@ -150,7 +152,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     'baseline-record': Readonly<{ configPath: string; confirmation: string; recordedAt: string }>
     check: GeneratedEnvironmentCommandInput
     compare: ComparisonCommandInput & Readonly<{ decideReset?: ComparisonCommandAdapters['decideReset'] }>
-    init: InitApplicationInput
+    init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
     document: DocumentCommandInput
     down: DownCommandInput
@@ -513,6 +515,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             applyBootstrap: applySelectedBootstrapSurface,
             document: documentObservedCommand,
             classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+            infer: deriveInferredFacts,
             observeDestination: async ({ path, byteLimit }) => {
                 const node = await nodeAuthority()
                 const read = node ? await readAnchoredBatches(dirname(path), [
@@ -689,6 +692,37 @@ function optionCount(args: readonly string[], name: string): number {
     return args.filter((arg) => arg === option || arg.startsWith(`${option}=`)).length
 }
 
+const ANSWERS_FILE_BYTE_LIMIT = 262_144
+
+/** Reads the consent digests and answers file of an unattended init; absent flags mean a terminal run. */
+async function decodeUnattendedInit(values: {
+    interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string
+}): Promise<{ value?: UnattendedInit } | CommandOutcome> {
+    const { answers: answersPath, 'accept-preview': previewSha256, 'accept-defaults': defaultsSha256 } = values
+    if (answersPath === undefined && previewSha256 === undefined && defaultsSha256 === undefined) return {}
+    if (values.interactive) return usageOutcome('CLI_USAGE_INVALID',
+        'init --interactive asks a person; --answers, --accept-preview and --accept-defaults are for a caller without a terminal', '--interactive')
+    if (previewSha256 === undefined) return usageOutcome('CLI_USAGE_INVALID',
+        '--answers and --accept-defaults require --accept-preview: run init --json first and pass the preview digest it prints', '--accept-preview')
+    for (const [name, digest] of [['--accept-preview', previewSha256], ['--accept-defaults', defaultsSha256]] as const) {
+        if (digest !== undefined && !/^[a-f0-9]{64}$/.test(digest)) return usageOutcome('CLI_USAGE_INVALID',
+            `${name} must be a lowercase sha256 digest printed by a pending init run`, name)
+    }
+    let answers: Record<string, unknown> = {}
+    if (answersPath !== undefined) {
+        const path = resolve(answersPath)
+        try {
+            if ((await stat(path)).size > ANSWERS_FILE_BYTE_LIMIT) return usageOutcome('CLI_USAGE_INVALID',
+                `--answers file exceeds ${ANSWERS_FILE_BYTE_LIMIT} bytes`, '--answers')
+            answers = parseToml(await readFile(path, 'utf8'))
+        } catch (error) {
+            return usageOutcome('CLI_USAGE_INVALID',
+                `--answers ${path} could not be read as TOML (${error instanceof Error ? error.message : 'unknown error'})`, '--answers')
+        }
+    }
+    return { value: { previewSha256, answers, ...(defaultsSha256 === undefined ? {} : { defaultsSha256 }) } }
+}
+
 async function decodeRequest(
     handler: HandlerIdentifier,
     parsed: ParsedCommandArguments,
@@ -778,10 +812,14 @@ async function decodeRequest(
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return usageOutcome('CLI_USAGE_INVALID', 'init supports macOS and Linux state ownership')
         }
+        const unattended = await decodeUnattendedInit(parsed.values as {
+            interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string })
+        if ('status' in unattended) return unattended
         return { handler, input: { root: absoluteRoot, target: target as SurfaceTarget,
             ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
             accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
-            ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}) } }
+            ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
+            ...(unattended.value ? { unattended: unattended.value } : {}) } }
     }
     if (handler === 'compare') {
         const [operation, ...extra] = parsed.positionals
@@ -1036,7 +1074,7 @@ async function invokeHandler(
         const handler = handlers[request.handler]
         return handler?.(request.input) ?? unavailable()
     }
-    if (request.handler === 'init') return runInitOperatorCommand(request.input, options, {
+    if (request.handler === 'init') return runInitOperatorCommand(request.input, { ...options, unattended: request.input.unattended }, {
         terminal: io.confirmInit !== undefined || io.answerInitQuestion !== undefined
             || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true,
         confirm: async preview => {

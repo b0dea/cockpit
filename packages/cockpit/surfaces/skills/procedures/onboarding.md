@@ -21,7 +21,15 @@ for confirmation. These conversation controls are instructed; no harness enforce
 
 Show the exact preview before mutation. In a human terminal, run
 `cockpit init . --target codexcli --interactive` and accept only the exact displayed digest.
-JSON mode returns a preview without acceptance. Re-run the same explicit root and target to
+JSON mode returns a preview without acceptance. An agent session has no terminal, so it uses the
+non-interactive form instead. Run the `--json` preview and read `interview.outstanding`: every field
+the interview will ask, each with its inferred values and the file each came from. Write the answers
+file keyed by field, show the human that file and the preview digest, and only then re-run with
+`--accept-preview` and `--answers`. The run stops at `configuration.defaults`; once the human has read
+the surfaced defaults, add `--accept-defaults` with the digest the run printed. Each digest binds
+consent to the bytes the human saw, so never copy one from anywhere but the latest pending run; run
+`cockpit init --help` for the flags. The step is done when the result reports
+`environment-verified`. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
 named gaps. Native discovery, a real interview and clean-machine proof require separate evidence.
@@ -32,6 +40,38 @@ discover provider identities or create browser state.
 
 For environment or secret adoption, follow **Secret handling** after sync has established its owned
 ignore boundary.
+
+## Create a local setup
+
+Use this when a repository has no local setup: it has only ever run in CI, staging or a cluster,
+so there is no Dockerfile, Compose file or documented way to start it on a laptop. Cockpit cannot
+read a setup that does not exist, and a setup it guessed would look complete while holding
+guesses. So derive each value from evidence, record it as inferred, and let the human confirm it.
+
+1. Read what the repository already states, without running or changing anything: the manifests and
+   lockfiles for the runtime and entrypoint, CI workflows for the services they start, deployment
+   files for the ports and variable names they inject, and the code for its health endpoint.
+   `cockpit init --json` already proposes several of these under `interview.outstanding`; reuse them
+   rather than re-deriving. Done when you hold a list of entrypoint and runtime, ports, environment
+   variable names, backing services with images, and a health endpoint, each with the file it came from.
+2. Record variable names only. Values belong to the secret owner; see **Secret handling**. Done when
+   no value from an env file, manifest or workflow appears in your notes or output.
+3. Mark every derived value as `inferred` with its source file and the reason you read it from there.
+   Show the human the whole list and ask them to confirm or correct it. Done when the human has
+   answered for every inferred value; confirm one only on their word.
+4. Turn each unknown into a named gap instead of a value: an undecided decision for data, mounts,
+   ports and restore, and an explicit vendor posture for every third-party endpoint. Cockpit renders
+   a subject with no decision as undecided, which keeps the gap visible. Done when each unknown is
+   named with who can resolve it, and nothing in the declaration was filled in to make it load.
+5. Decide where the runnable pieces live. A Dockerfile or Compose file written into a product
+   repository is a product change, so ask the human first and show the exact path and contents.
+   Without that authorisation, declare an environment cockpit renders itself and leave the product
+   untouched. Done when either the human approved that specific file or no product file was written.
+6. Finish the configuration with `cockpit init`, or `cockpit sync` then `cockpit check` on an
+   existing one. Done when `cockpit check --config cockpit.toml --json` exits 0. Where a runtime is
+   declared, run `cockpit runtime measure --config cockpit.toml --write`, then
+   `cockpit up --config cockpit.toml` or `cockpit session --config cockpit.toml -- <agent command>`,
+   and report the actual result. Done when the stack reports healthy, or you have named what stopped it.
 
 ## Secret handling
 
