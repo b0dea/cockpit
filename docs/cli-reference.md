@@ -16,6 +16,9 @@ Configuration: `none`. Owners: none.
 | `--registry` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
+| `--answers` | string | unset |
+| `--accept-preview` | string | unset |
+| `--accept-defaults` | string | unset |
 
 | Exit | Meaning |
 | --- | --- |
@@ -67,6 +70,7 @@ Configuration: `none`. Owners: none.
 | `INIT_DRAFT_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DRAFT_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DRAFT_SOURCE_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_INTERVIEW_PREVIEW_UNAVAILABLE` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_PREVIEW_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ROOT_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
