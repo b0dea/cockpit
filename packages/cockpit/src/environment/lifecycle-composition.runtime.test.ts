@@ -27,18 +27,7 @@ import {
     type RuntimeTopologyEvidence,
 } from './runtime.js'
 import { createLifecycleCompositionFixtureSupport } from '../../test-support/lifecycle-composition-fixture.js'
-import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
-
-// Stands in for `sync`: a compose_files stack runs only with the ownership override rendered from
-// its current Compose file and identity.
-async function publishComposeOwnership(checkout: string, context: { readonly stackId: string; readonly cockpitId: string; readonly source: { readonly sha256: string } }) {
-    const rendered = renderComposeOwnership({
-        sources: [{ reference: 'compose.yml', source: await readFile(join(checkout, 'compose.yml'), 'utf8') }],
-        stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
-    })
-    if (rendered.kind !== 'complete') throw new Error(rendered.reason)
-    await writeFile(join(checkout, COMPOSE_OWNERSHIP_FILE), rendered.bytes)
-}
+import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 
 const run = promisify(execFile)
 const roots: string[] = []

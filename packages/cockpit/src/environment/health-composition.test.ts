@@ -10,6 +10,7 @@ import { recordLifecycleSeeded, recordLifecycleStarted } from './lifecycle-stage
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
 import { selectStateRoot } from './state.js'
 import { createHealthCommandAdapters } from './health-composition.js'
+import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 
 const run = promisify(execFile)
 const roots: string[] = []
@@ -83,6 +84,7 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
     await recordLifecycleSeeded({ namespace: selected.value, stackId: stack, holderId: holder, observedAt: new Date().toISOString() })
     if (options.configuredRuntime || options.machineOnly) {
         const sourceSha256 = (await import('node:crypto')).createHash('sha256').update(await readFile(configPath)).digest('hex')
+        if (options.configuredRuntime) await publishComposeOwnership(checkout, { stackId: stack, cockpitId: cockpit, source: { sha256: sourceSha256 } })
         await writeFile(join(checkout, 'topology.json'), JSON.stringify({ services: { api: { labels: {
             'dev.b0dea.cockpit.stack-id': stack,
             'dev.b0dea.cockpit.config-sha256': sourceSha256,

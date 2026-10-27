@@ -13,6 +13,7 @@ import * as lifecycleComposition from './lifecycle-composition.js'
 import * as ports from './ports.js'
 import { consumeComparisonPostState, createDestructiveCommandAdapters, withBoundedComparisonLifecycle } from './destructive-composition.js'
 import { consumeRuntimeLifecycleProjection } from './runtime.js'
+import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 
 const roots: string[] = []
 const run = promisify(execFile)
@@ -290,6 +291,7 @@ describe('destructive command composition', () => {
         const loaded = await lifecycle.load({ configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
+        await publishComposeOwnership(root, loaded.result)
         await writeFile(join(root, 'topology.json'), JSON.stringify({ services: { api: {
             labels: {
                 'dev.b0dea.cockpit.stack-id': loaded.result.stackId,

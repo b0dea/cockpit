@@ -12,6 +12,7 @@ import { resolveObservationPostures } from '../environment/observations.js'
 import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { observeConfiguration } from '../environment/state.js'
 import { assertBrowserArtifactRegistration, resolveBrowserRuntime } from './runtime.js'
+import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 
 const roots: string[] = []
 const run = promisify(execFile)
@@ -65,6 +66,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     const lifecycle = createLifecycleCommandAdapters({ configPath, env: input.env, sessionId: input.sessionId, timeoutMs: input.timeoutMs }, executeProbe)
     const loaded = await lifecycle.load({ configPath })
     if (loaded.kind !== 'complete') throw Error(`fixture lifecycle refused: ${JSON.stringify(loaded)}`)
+    await publishComposeOwnership(root, loaded.result)
     await writeFile(join(root, 'topology.json'), JSON.stringify({ services: { web: {
         labels: { 'dev.b0dea.cockpit.stack-id': loaded.result.stackId, 'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256 },
         volumes: mounts,
