@@ -285,6 +285,13 @@ describe('installed container-runtime capability promotion', () => {
         if (checks.localRuntime && checks.imagePreexisting && checks.topology) {
             expect(checks.profile, JSON.stringify(verdict)).toBe(true)
         }
+        // A runtime that brought the candidate up and recovered it must also preview its reset
+        // and tear it down through the production owners; a refusal there is a probe or owner
+        // defect, not a property of the runtime.
+        if (checks.recovery) {
+            expect(checks.resetPreview, JSON.stringify(verdict)).toBe(true)
+            expect(checks.teardown, JSON.stringify(verdict)).toBe(true)
+        }
         if (verdict.status === 'supported') {
             expect(verdict.operatorAction).toBeNull()
             expect(Object.values(verdict.evidence!.candidateChecks)).not.toContain(false)

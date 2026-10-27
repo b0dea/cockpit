@@ -501,9 +501,15 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         }
         preClaims = stateSnapshot(await readActiveStackInventory(context.namespace))
         preLease = stateSnapshot(await readState(context.namespace.paths.lease(context.stackId)))
+        // The candidate carries the same ownership set generated stacks carry. Reclaim admits a
+        // resource as current only with stack, config and owner labels, and reset admits a
+        // data-bearing volume only with a generation; without them the probe measured a reset
+        // refusal that no generated stack produces.
         const labels = {
             'dev.b0dea.cockpit.stack-id': context.stackId,
             'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+            'dev.b0dea.cockpit.owner-id': context.cockpitId,
+            'dev.b0dea.cockpit.generation-id': hash(`runtime-probe-generation:${batchId}`),
             [ownerLabelName]: batchId,
         }
         ownerCleanup = async () => {
@@ -515,8 +521,15 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 runtimeMeasurementProbeAuthority: () => issueRuntimeMeasurementProbeAuthority(runtime),
             }, cleanupOwnerExecute)
             const down = await runDown({ configPath }, destructive)
-            checks.teardown = down.kind === 'complete'
             noteRefusal('down', down)
+            // `down` removes the stack's runtime resources and keeps its declared data, which only
+            // an approved `reset` removes: the resettable volume and the generated host path must
+            // both survive it. The probe then removes that data itself, as its own disposable state.
+            const left = down.kind === 'complete' ? await inventory(cleanupExecute.run, 'after-down', probeScope) : undefined
+            checks.teardown = left !== undefined && left.containers.length === 0 && left.networks.length === 0
+            checks.configuredHostPathTeardown = left !== undefined && JSON.stringify(left.volumes) === JSON.stringify([volumeName])
+                && await readFile(join(generatedPath, 'owned'), 'utf8').then((owned) => owned === `${marker}\n`, () => false)
+            if (left !== undefined && left.volumes.length > 0) await exactCleanup(cleanupExecute.run, { ...left, containers: [], networks: [] })
             const [postClaims, postLease] = await Promise.all([
                 readActiveStackInventory(context.namespace),
                 readState(context.namespace.paths.lease(context.stackId)),
@@ -637,7 +650,6 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         checks.resetPreview = reset.kind === 'preview' && !reset.result.noop
         noteRefusal('reset preview', reset)
         await ownerCleanup()
-        checks.configuredHostPathTeardown = await readFile(join(generatedPath, 'owned')).then(() => false, () => true)
     } catch (error) {
         failureReason = error instanceof RuntimeProbeFailure ? error.message : 'the installed runtime cell threw before it could close'
     } finally {
