@@ -85,6 +85,8 @@ afterEach(async () => {
 const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
 describe('production lifecycle adapter composition', () => {
+    // Two generated-environment bring-ups plus a session join take 30-55s on an idle machine, so the
+    // 60s default is too tight; the hand-off test below carries the same 120s budget.
     it('releases a supervised co-tenant without stopping the original holder runtime', async () => {
         const scenario = await runGeneratedScenario()
         expect(scenario.result, JSON.stringify(scenario.result)).toMatchObject({ kind: 'complete', status: 0 })
@@ -134,7 +136,7 @@ describe('production lifecycle adapter composition', () => {
 
         const rejoined = await runUp({ configPath: scenario.candidate.configPath }, sessionAdapters)
         expect(rejoined, JSON.stringify(rejoined)).toMatchObject({ kind: 'complete', result: { change: 'unchanged' } })
-    })
+    }, 120_000)
 
     // This handoff deliberately reacquires authority across seven loads and five lifecycle calls.
     it('hands an authenticated runtime to the remaining holder and stops after its final release', async () => {
