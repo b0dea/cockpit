@@ -2,25 +2,79 @@ name: CI
 
 # Keep anonymisation mechanical. A written publication rule without this job would depend on
 # whether a human remembered to run the scanner before pushing.
+#
+# `ci-ok` is the one required status check. Every other job may be skipped by the change filter,
+# so none of them can be required individually without leaving docs-only pull requests pending.
 on:
   pull_request:
+    # The changeset check reads labels, so a label change has to re-run it.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
-# Read-only. Nothing here publishes, comments, or writes back to the repository, so nothing
-# here needs a token that can.
+# Read-only. Nothing here publishes, comments, or writes back to the repository. Jobs below
+# narrow this further rather than widen it.
 permissions:
   contents: read
 
-# A superseded push has nothing left to prove.
+# A superseded pull request push has nothing left to prove. A push to main is never cancelled,
+# so the post-merge record is complete for every commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides which heavy jobs a change needs, inside the workflow. A workflow-level paths-ignore
+  # would leave required checks pending forever on docs-only pull requests.
+  changes:
+    name: classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      lockfile: ${{ steps.classify.outputs.lockfile }}
+      release: ${{ steps.classify.outputs.release }}
+      changeset: ${{ steps.classify.outputs.changeset }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge commit and both parents: enough to diff the pull request against its base.
+          fetch-depth: 2
+          persist-credentials: false
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != pull_request ]]; then
+            # main always runs everything: a push can carry several commits, and the post-merge
+            # record must not depend on a filter.
+            printf '%s\n' code=true lockfile=true release=false changeset=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only --no-renames HEAD^1 HEAD)"
+          added_changesets="$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD -- '.changeset/*.md' | grep -v '^\.changeset/README\.md$' || true)"
+          printf 'changed files:\n%s\n' "$changed"
+          # Documentation-only: the files that no build, test or package inventory reads. Package
+          # READMEs and anything under packages/ are code, because the tarball ships them.
+          docs_only='^(docs/.*|[^/]+\.md|\.changeset/.*\.md|\.github/ISSUE_TEMPLATE/.*|\.github/PULL_REQUEST_TEMPLATE\.md)$'
+          code=false
+          if printf '%s\n' "$changed" | grep -Ev "$docs_only" | grep -q .; then code=true; fi
+          lockfile=false
+          if printf '%s\n' "$changed" | grep -Eq '^(package\.json|package-lock\.json|packages/[^/]+/package\.json)$'; then lockfile=true; fi
+          # A user-visible change is shipped source or surfaces. Tests and test support are not.
+          release=false
+          if printf '%s\n' "$changed" | grep -E '^packages/cockpit/(src|surfaces)/' | grep -Ev '\.test\.ts$|/test-support/' | grep -q .; then release=true; fi
+          changeset=false
+          if [[ -n "$added_changesets" ]]; then changeset=true; fi
+          printf '%s\n' "code=$code" "lockfile=$lockfile" "release=$release" "changeset=$changeset" >> "$GITHUB_OUTPUT"
+
   # Its own job rather than a step inside the matrix, so a red build names which rule broke.
   # "tests failed" and "the tree leaked" are different emergencies and must not look alike in
-  # the checks list.
+  # the checks list. It also carries the documentation checks, so a docs-only change still
+  # meets every rule that reads documentation without paying for the matrix.
   #
   # What this job can and cannot enforce, because a green tick here is read as more than it is:
   # the scan has two classes, and a CI checkout holds only the material for one. Credential
@@ -28,15 +82,18 @@ jobs:
   # site-specific names live in an ignored file that exists only in the maintainer's checkout,
   # so THIS JOB CANNOT CATCH A SITE-NAME LEAK. That class is enforced where commits originate,
   # by running the suite locally, and the scan prints which classes it covered.
-  anonymisation:
-    name: anonymisation scan
+  hygiene:
+    name: anonymisation scan and documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # Actions are pinned to a full-length commit SHA, never a tag: a tag is mutable and
       # resolves to wherever its owner last moved it, so a tag reference is a dependency that
       # updates itself without review. The trailing comment says which release the SHA is.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -47,28 +104,32 @@ jobs:
         # nothing. The scan itself reports what it covered; read that line before trusting a
         # green run from a clone that carries no site-specific list.
         run: npm test -- packages/cockpit/src/tree-hygiene.test.ts
+      - run: npm run lint:docs
+      # The documentation tests read docs/ directly. On a code change the full matrix runs
+      # them again; this keeps them on the docs-only path the matrix is skipped for.
+      - name: documentation contracts
+        run: npm test -- packages/cockpit/src/docs-ownership.test.ts packages/cockpit/src/docs-decisions.test.ts packages/cockpit/src/docs-lint.contracts.test.ts packages/cockpit/src/docs-lint.evidence.test.ts packages/cockpit/src/docs-lint.prose.test.ts packages/cockpit/src/docs-lint.reference.test.ts
 
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }}, ${{ matrix.gate }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       # One platform's failure must not hide the other's: a macOS-only path bug is exactly
       # what this matrix exists to find.
       fail-fast: false
       matrix:
-        # Full behavior runs at the supported range edges on both platforms. The middle
-        # runtime keeps package, launcher and process compatibility without a fifth and
-        # sixth copy of the process-heavy suite.
-        include:
-          - { os: ubuntu-latest, node: '22.13.0', gate: full }
-          - { os: macos-latest, node: '22.13.0', gate: full }
-          - { os: ubuntu-latest, node: '24', gate: compatibility }
-          - { os: macos-latest, node: '24', gate: compatibility }
-          - { os: ubuntu-latest, node: '26', gate: full }
-          - { os: macos-latest, node: '26', gate: full }
+        # Full behavior runs at the supported range edges. Pull requests pay for one macOS
+        # cell (macOS minutes cost ten times Linux minutes) and the whole matrix runs on main,
+        # so a platform-specific regression is still caught within one merge.
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.13.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.13.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.13.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.13.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"macos-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"},{"os":"macos-latest","node":"26","gate":"full"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -90,58 +151,54 @@ jobs:
         run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.test.ts
       - name: tests leave the committed schema unchanged
         run: git diff --exit-code -- packages/cockpit/cockpit.schema.json
-      - run: npm run typecheck
-      - run: npm run lint:docs
-
-  example:
-    name: synthetic example (Linux container path)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run build
-      - run: npm test -- packages/cockpit/src/example-cockpit.test.ts
-
-  supply-chain:
-    name: package and supply-chain readiness
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run build
-      - run: npm run lint:supply-chain
-      - run: npm test -- packages/cockpit/src/supply-chain.test.ts packages/cockpit/src/packaging.test.ts
-      - run: node scripts/supply-chain-check.mjs --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
+      # Platform-independent checks run once, on the cell that already holds an install and a
+      # build. The full suite on that cell also covers the synthetic example and the package
+      # inventory tests, so they need no separate job.
+      - if: matrix.extras
+        run: npm run typecheck
+      - if: matrix.extras
+        run: npm run lint:supply-chain
+      - if: matrix.extras
+        run: node scripts/supply-chain-check.mjs --sbom "$RUNNER_TEMP/cockpit-sbom.cdx.json"
+      # Registry signatures and provenance attestations of every installed package: catches a
+      # tampered or unsigned tarball that the lockfile integrity hash alone would accept.
+      - if: matrix.extras
+        run: npm audit signatures
 
   test-protection:
     name: test protection
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - if: github.event_name == 'pull_request'
-        run: node scripts/check-test-protection.mjs "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" merge-base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-test-protection.mjs "$BASE_SHA" "$HEAD_SHA" merge-base
       - if: github.event_name == 'push'
-        run: node scripts/check-test-protection.mjs "${{ github.event.before }}" "${{ github.sha }}" exact
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: node scripts/check-test-protection.mjs "$BEFORE_SHA" "$AFTER_SHA" exact
 
   runtime-floor-negative:
     name: runtime floor negative control (node 20)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
       - name: launcher refuses before importing compiled code
@@ -156,3 +213,67 @@ jobs:
           test "$node20_status" -ne 0
           grep -Eq 'COCKPIT_NODE_VERSION_UNSUPPORTED.*22' "$RUNNER_TEMP/cockpit-node20.stderr"
           ! grep -q 'packages/cockpit/dist/' "$RUNNER_TEMP/cockpit-node20.stderr"
+
+  # A change to shipped source or surfaces is a release note someone has to write. The label is
+  # the deliberate escape hatch for changes that alter nothing a consumer can observe.
+  changeset:
+    name: changeset present
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          CHANGESET_ADDED: ${{ needs.changes.outputs.changeset }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGESET_ADDED" == true ]]; then
+            echo 'changeset found'
+          elif printf '%s' "$LABELS" | grep -Fq '"no-changeset"'; then
+            echo 'no-changeset label present: skipping the changeset requirement'
+          else
+            echo "::error::This pull request changes packages/cockpit/src or packages/cockpit/surfaces without a changeset. Run 'npx changeset' and commit the new .changeset/*.md file, or add the 'no-changeset' label if no consumer-visible behavior changed."
+            exit 1
+          fi
+
+  # Needs a public repository (or GitHub Advanced Security), so it skips itself while the
+  # repository is private instead of failing every dependency change.
+  dependency-review:
+    name: dependency review
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.lockfile == 'true' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # The single required status check. `always()` keeps it running when a need failed, and a
+  # skipped need counts as passed: the change filter skips jobs on purpose, but a failed or
+  # cancelled one must never read as green.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [changes, hygiene, test, test-protection, runtime-floor-negative, changeset, dependency-review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NEEDS" | node -e '
+            const needs = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const bad = Object.entries(needs).filter(([, need]) => need.result === "failure" || need.result === "cancelled")
+            for (const [name, need] of Object.entries(needs)) console.log(name + ": " + need.result)
+            if (bad.length) { console.error("::error::failed or cancelled: " + bad.map(([name]) => name).join(", ")); process.exit(1) }
+          '
