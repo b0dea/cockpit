@@ -135,8 +135,18 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
             "pattern": "^[a-z0-9][a-z0-9-]*$"
           },
           "dir": {
-            "type": "string",
-            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "."
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+              }
+            ]
           },
           "remote": {
             "type": "string",
