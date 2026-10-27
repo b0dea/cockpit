@@ -18,7 +18,7 @@ import { CockpitConfig } from '../schema.js'
 export const mechanism = {
     id: 'configuration-loading',
     module: 'packages/cockpit/src/config/load.ts',
-    exports: ['loadCockpitConfig', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput'],
+    exports: ['loadCockpitConfig', 'observeConfigSource', 'consumeLoadedConfigProjection', 'projectMachineFloorConfig', 'consumeMachineFloorConfigProjection', 'projectWorkEnvironmentConfig', 'consumeWorkEnvironmentConfigProjection', 'STRUCTURED_INPUT_BYTE_LIMIT', 'readBoundedInput', 'schemaIssueSummary'],
 } as const
 
 export const STRUCTURED_INPUT_BYTE_LIMIT = 1_048_576
