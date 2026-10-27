@@ -48,7 +48,7 @@ Configuration: `none`. Owners: none.
 | `DOCUMENT_SOURCE_REQUIRED` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_STDOUT_TARGET` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_COMPENSATION_FAILED` | `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_UNSAFE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PUBLICATION_FAILED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
@@ -236,6 +236,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--dry-run` | boolean | `false` |
+| `--adopt` | string | unset |
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
@@ -248,6 +249,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `GENERATED_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
@@ -258,7 +260,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_DUPLICATE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_UNSAFE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
@@ -273,6 +275,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_STALE_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `MCP_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/mcp.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_RENDER_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
+| `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_CUSTOM_REFUSED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_GENERATION_FAILED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -301,6 +304,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `GENERATED_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
@@ -311,7 +315,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_DUPLICATE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_UNSAFE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
@@ -326,6 +330,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_STALE_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `MCP_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/mcp.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_RENDER_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
+| `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_CUSTOM_REFUSED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_GENERATION_FAILED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -527,7 +532,7 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit sibling
 
@@ -554,7 +559,7 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_DIRECTORY_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_DIR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_GIT_FAILED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |

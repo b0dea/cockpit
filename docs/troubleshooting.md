@@ -229,7 +229,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `CLI_COMMAND_REQUIRED` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_UNKNOWN_COMMAND` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
-| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_REVISION_INVALID` | `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_FIXTURE_INVALID` | `packages/cockpit/src/comparison/contract.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_NORMALIZATION_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
@@ -327,7 +327,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `GENERATED_INSPECTION_INVALID` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_DUPLICATE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_PATH_UNOWNED` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
@@ -511,6 +511,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_ARTIFACT_INVALID` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_CLEANUP_FAILED` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
