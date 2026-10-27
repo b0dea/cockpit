@@ -360,7 +360,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `GREENFIELD_OBSERVATION_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GREENFIELD_OBSERVATION_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
-| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_INPUT_UNAVAILABLE` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_TRANSPORT_INVALID` | `packages/cockpit/src/guards/harness-adapter.ts` | no static remedy captured; inspect implementing owners |
@@ -374,6 +374,9 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `INIT_ARTIFACT_WRITE_FAILED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_COCKPIT_ROOT_CREATE_FAILED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_COCKPIT_ROOT_REQUIRED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_COCKPIT_ROOT_UNAVAILABLE` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DEFAULTS_NOT_ACCEPTED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DESTINATION_UNAVAILABLE` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DRAFT_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
@@ -384,6 +387,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `INIT_PREVIEW_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_PREVIEW_NOT_ACCEPTED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ROOT_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_ROOT_OBSERVATION_FAILED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_STATE_STALE` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_STATE_UNAUTHENTICATED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |

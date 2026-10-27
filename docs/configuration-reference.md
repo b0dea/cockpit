@@ -9,7 +9,6 @@ The runtime schema and defaults are the configuration authorities.
 ```json
 {
   "cockpit": {
-    "scope": "estate",
     "siblings_root": "..",
     "guide": "AGENTS.md",
     "guide_cap": 200
@@ -95,14 +94,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
         "name": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]*$"
-        },
-        "scope": {
-          "default": "estate",
-          "type": "string",
-          "enum": [
-            "estate",
-            "stack"
-          ]
         },
         "siblings_root": {
           "default": "..",
