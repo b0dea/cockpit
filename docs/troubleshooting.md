@@ -468,6 +468,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `RESTRICTION_TEMPLATE_INVALID` | `packages/cockpit/src/surfaces/restrictions.ts` | no static remedy captured; inspect implementing owners |
 | `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
