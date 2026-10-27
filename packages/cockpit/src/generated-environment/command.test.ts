@@ -171,7 +171,12 @@ it.each(['v2 migration', 'producer identity change'])('timestamps committed %s w
 
 
 describe('generated sibling-root authority', () => {
-    it.each(['lexical escape', 'symbolic-link escape'] as const)('refuses a %s before rendering or publication', async kind => {
+    // A lexical escape never reaches the resolver: the schema refuses it at load. A symbolic
+    // link inside the root is only visible on disk, so the resolver still owns that case.
+    it.each([
+        ['lexical escape', 'CONFIG_SCHEMA_INVALID'],
+        ['symbolic-link escape', 'GENERATED_SIBLING_ROOT_INVALID'],
+    ] as const)('refuses a %s before rendering or publication', async (kind, diagnosticCode) => {
         const { root, configPath } = await consumer(`sibling-${kind.replaceAll(' ', '-')}`)
         const siblings = join(root, 'siblings')
         const outside = join(root, 'outside')
@@ -191,12 +196,12 @@ describe('generated sibling-root authority', () => {
 
         expect(result).toMatchObject({
             kind: 'refusal',
-            diagnostics: [expect.objectContaining({ code: 'GENERATED_SIBLING_ROOT_INVALID' })],
+            diagnostics: [expect.objectContaining({ code: diagnosticCode })],
         })
         await expect(lstat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
-    it('accepts an absolute sibling directory contained by the declared root', async () => {
+    it('refuses an absolute sibling directory even when the declared root contains it', async () => {
         const { root, configPath } = await consumer('absolute-contained-sibling')
         const source = (await readFile(configPath, 'utf8')).replace(
             'dir = "app"', `dir = ${JSON.stringify(join(root, 'app'))}`,
@@ -204,7 +209,9 @@ describe('generated sibling-root authority', () => {
         await writeFile(configPath, source)
 
         const result = await syncGeneratedEnvironment({ configPath })
-        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete' })
+        expect(result, JSON.stringify(result)).toMatchObject({
+            kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'CONFIG_SCHEMA_INVALID' })],
+        })
     }, 120_000)
 
     it('refuses a vendor template outside the publication root instead of writing a local lookalike', async () => {

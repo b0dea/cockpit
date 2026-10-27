@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFile, stat, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
@@ -44,7 +44,7 @@ describe('public surface publication transaction', () => {
             await writeFile(join(fixture.root, 'app/package-lock.json'), '{}\n')
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = estate
-            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = join(fixture.root, 'app')
+            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
             // Vendor templates require cockpit-relative output paths.
             declaration.environment.generated!.vendors = []
             declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries

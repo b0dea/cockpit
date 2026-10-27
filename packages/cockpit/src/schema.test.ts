@@ -156,9 +156,14 @@ describe('consumer surface declarations', () => {
 
     // A cloned repository's cockpit.toml is hostile input: `dir` is resolved under the siblings
     // root and each guide is joined onto it before being projected into the agent-visible tree.
-    it.each(['../escape', '/etc', '..', '.', 'a/../../b', 'a\\b'])('rejects sibling dir %j', (dir) => {
+    it.each(['../escape', '/etc', '..', './a', 'a/./b', 'a/../../b', 'a\\b'])('rejects sibling dir %j', (dir) => {
         const sibling = { slug: 'app', dir, mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }
         expect(CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} } }).success).toBe(false)
+    })
+
+    it('accepts dir "." for a single-repository stack', () => {
+        const sibling = { slug: 'app', dir: '.', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }
+        expect(CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} } }).success).toBe(true)
     })
 
     it.each(['../../../secret', '/etc/passwd', 'docs/../../secret', 'docs\\..\\secret'])('rejects sibling guide %j', (guide) => {

@@ -4,7 +4,7 @@ import fsPromises from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { readFile, readdir, rm, symlink, writeFile, mkdir, rename, realpath, lstat, readlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
@@ -446,7 +446,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(dirname(siblingRoot)).toBe(estate)
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = estate
-            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = join(fixture.root, 'app')
+            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
             declaration.environment.generated!.vendors = []
             declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
                 .filter(entry => entry.subject !== 'vendor')
@@ -511,7 +511,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             })
             const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             declaration.cockpit.siblings_root = declaredRoot
-            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = appRoot
+            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(declaredRoot, appRoot)
             declaration.environment.generated!.vendors = []
             declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
                 .filter(entry => entry.subject !== 'vendor')

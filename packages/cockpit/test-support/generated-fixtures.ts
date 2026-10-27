@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { readFile, rm, writeFile, mkdir, chmod, realpath, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
 import { expect } from 'vitest'
 import { parse as parseYaml } from 'yaml'
@@ -152,10 +152,11 @@ export function createGeneratedCommandFixture() {
         await writeFile(join(siblingDirectory, 'AGENTS.md'), 'Synthetic sibling guide.\n')
         let declaration = (await readFile(result.configPath, 'utf8'))
             .replace('purpose = "Synthetic application"', 'purpose = "Synthetic application"\nguides = ["AGENTS.md"]')
+        // `dir` must be relative, so the caller sets `siblings_root` to the parent of `siblingDirectory`.
         if (options.siblingDirectory) declaration += `
     [[sibling]]
     slug = "external"
-    dir = ${JSON.stringify(siblingDirectory)}
+    dir = ${JSON.stringify(basename(siblingDirectory))}
     mount = "always"
     acquire = "none"
     var = "EXTERNAL_DIR"
