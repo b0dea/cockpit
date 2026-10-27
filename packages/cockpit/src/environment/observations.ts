@@ -354,7 +354,7 @@ async function issueObservationPostures(
     const generated = loaded.result.config.environment.generated
     if (generated) {
         postures.add('generated-environment')
-        postures.add('data-plane')
+        if (generated.data) postures.add('data-plane')
         if (generated.vendors.length > 0) postures.add('external-dependencies')
     }
     for (const sibling of loaded.result.config.sibling) {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { isProxy } from 'node:util/types'
 import { stringify as stringifyYaml } from 'yaml'
 
-import { GeneratedEnvironment, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
+import { decisionSubjects, GeneratedEnvironment, type GeneratedEnvironment as GeneratedEnvironmentDeclaration, type Provenance } from '../schema.js'
 import { snapshotGeneratedJson, type StackId } from './contract.js'
 import { externalDependencyTemplateFragments } from './templates.js'
 
@@ -148,6 +148,27 @@ function decisionValue(value: unknown): string {
     return JSON.stringify(value)
 }
 
+// A value with no provenance of its own takes its nearest enclosing declaration's; with none at
+// all it was written into the configuration file itself, and the log says exactly that.
+const CONFIGURATION_DECLARED = 'declared in the cockpit configuration'
+
+function subjectProvenance(
+    declaration: GeneratedEnvironmentDeclaration,
+    subject: ReturnType<typeof decisionSubjects>[number],
+): Readonly<{ provenance?: Provenance; inheritedFrom?: string }> {
+    const service = subject.service === undefined ? undefined : declaration.services.find(({ id }) => id === subject.service)
+    switch (subject.subject) {
+        case 'service': return { provenance: service?.provenance }
+        case 'mount':
+        case 'port': return { provenance: service?.provenance, inheritedFrom: `service:${subject.service}` }
+        case 'volume': return { provenance: declaration.volumes.find(({ id }) => id === subject.subjectId)?.provenance }
+        case 'data-default':
+        case 'data-mode': return { provenance: declaration.data?.modes.find(({ mode }) => mode === subject.subjectId)?.provenance }
+        case 'restore': return { provenance: declaration.data?.restore?.provenance }
+        case 'vendor': return { provenance: declaration.vendors.find(({ id }) => id === subject.subjectId)?.provenance }
+    }
+}
+
 function renderDecisions(declaration: GeneratedEnvironmentDeclaration, sourceSha256: string, generation: string): string {
     const lines = [
         '# Environment decisions',
@@ -161,7 +182,20 @@ function renderDecisions(declaration: GeneratedEnvironmentDeclaration, sourceSha
     for (const service of [...declaration.services].sort((left, right) => left.id.localeCompare(right.id))) {
         lines.push(`- Resource ceilings: ${service.id}: ${service.resources ? decisionValue(service.resources) : 'not declared; runtime defaults apply'}`)
     }
-    for (const entry of [...declaration.decisions.entries].sort((left, right) => `${left.subject}:${left.subject_id}`.localeCompare(`${right.subject}:${right.subject_id}`))) {
+    for (const subject of decisionSubjects(declaration)) {
+        const entry = declaration.decisions.entries.find((candidate) => candidate.subject === subject.subject && candidate.subject_id === subject.subjectId)
+        if (!entry) {
+            const { provenance, inheritedFrom } = subjectProvenance(declaration, subject)
+            lines.push(
+                '',
+                `## ${subject.subject}:${subject.subjectId}`,
+                '',
+                '- Status: **undecided**',
+                `- Provenance: ${provenance ? decisionValue(provenance) : decisionValue(CONFIGURATION_DECLARED)}`,
+                ...(inheritedFrom === undefined ? [] : [`- Provenance inherited from: ${decisionValue(inheritedFrom)}`]),
+            )
+            continue
+        }
         const vendor = entry.subject === 'vendor' ? declaration.vendors.find((candidate) => candidate.id === entry.subject_id) : undefined
         lines.push(
             '',
@@ -207,6 +241,11 @@ function serviceEnvironment(
     return { environment: Object.fromEntries([...values].sort(([left], [right]) => left.localeCompare(right))), normalize: [...normalize].sort(), startup }
 }
 
+function buildContext(build: NonNullable<GeneratedEnvironmentDeclaration['services'][number]['build']>, siblingDirectory: string): Record<string, string> {
+    const context = siblingDirectory === '.' ? build.context : build.context === '.' ? siblingDirectory : `${siblingDirectory}/${build.context}`
+    return { context, ...(build.dockerfile === undefined ? {} : { dockerfile: build.dockerfile }) }
+}
+
 function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: GeneratedEnvironmentInput): string | undefined {
     const ownershipLabels = {
         'dev.b0dea.cockpit.stack-id': input.stackId,
@@ -244,7 +283,7 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
             ? { type: 'volume', source: mount.source, target: mount.target }
             : { type: 'bind', source: mount.source, target: mount.target, read_only: mount.kind === 'environment-file' })
         services[service.id] = {
-            image: service.image.reference,
+            ...(service.image ? { image: service.image.reference } : { build: buildContext(service.build!, input.siblingDirectories[service.sibling]!) }),
             ...(service.resources ? { mem_limit: `${service.resources.memory_mb}m`, cpus: service.resources.cpus } : {}),
             labels: {
                 ...ownershipLabels,
@@ -269,12 +308,16 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
                 retries: service.health.retries,
                 start_period: `${service.health.start_period_seconds}s`,
                 'x-cockpit-property': service.health.property,
-                'x-cockpit-measurement': `${service.health.measurement.duration_seconds}s; ${service.health.measurement.provenance.reason}`,
+                'x-cockpit-measurement': service.health.measurement
+                    ? `${service.health.measurement.duration_seconds}s; ${service.health.measurement.provenance.reason}`
+                    : 'unmeasured',
             },
             restart: service.role === 'one-shot' ? 'no' : 'unless-stopped',
             'x-cockpit-mount-contracts': service.mounts.map((mount) => `${mount.kind}:${mount.source}:${mount.target}:${mount.source_type ?? 'named-volume'}`).sort(),
-            'x-cockpit-image-reason': service.image.reason,
-            'x-cockpit-image-architectures': [...service.image.architectures].sort(),
+            ...(service.image ? {
+                'x-cockpit-image-reason': service.image.reason,
+                'x-cockpit-image-architectures': [...service.image.architectures].sort(),
+            } : {}),
         }
     }
     const volumes = sortedRecord(declaration.volumes.map((volume) => [volume.id, {
@@ -335,6 +378,15 @@ function observationPlans(declaration: GeneratedEnvironmentDeclaration, portDefa
         expected: { ports: Object.freeze(ports) },
     })
     for (const service of declaration.services) {
+        for (const mount of service.mounts) {
+            if (mount.kind !== 'volume') plans.push({ id: `mount:${service.id}:${mount.target}`, kind: 'mount-lstat', target: mount.source, expected: { type: mount.source_type } })
+        }
+        for (const pin of service.toolchain_pins) plans.push({ id: `toolchain:${service.id}:${pin.path}`, kind: 'toolchain-pin', target: pin.path, expected: { pinned: pin.pinned, observed: pin.observed, action: 'diagnose-only' } })
+        plans.push({ id: `health:${service.id}:property`, kind: 'health-probe', target: service.health.property, expected: { service: service.id, role: 'property', ...(service.health.tool_probe ? {} : { toolPresence: 'unchecked' }) }, operation: service.health.probe })
+        if (service.health.tool_probe) plans.push({ id: `health:${service.id}:tool`, kind: 'health-probe', target: service.health.property, expected: { service: service.id, role: 'tool-availability' }, operation: service.health.tool_probe })
+        // Launcher and manifest checks inspect a pinned image before start; a built service has
+        // no image until the build runs, so they have nothing to inspect.
+        if (!service.image) continue
         const launcherChecks = [
             ...(boundedStartupServices.has(service.id) ? ['command -v timeout >/dev/null'] : []),
             ...(service.role === 'one-shot' ? ['command -v tail >/dev/null'] : []),
@@ -352,14 +404,8 @@ function observationPlans(declaration: GeneratedEnvironmentDeclaration, portDefa
                 parkExecutable: service.role === 'one-shot' ? 'tail' : null,
             },
         })
-        for (const mount of service.mounts) {
-            if (mount.kind !== 'volume') plans.push({ id: `mount:${service.id}:${mount.target}`, kind: 'mount-lstat', target: mount.source, expected: { type: mount.source_type } })
-        }
         plans.push({ id: `image:${service.id}:manifest`, kind: 'image-manifest', target: service.image.reference, expected: { architectures: Object.freeze([...service.image.architectures].sort()), reason: service.image.reason }, operation: service.image.manifest_probe })
         if (service.image.registry_auth_probe) plans.push({ id: `image:${service.id}:registry-auth`, kind: 'registry-auth', target: imageRegistry(service.image.reference), expected: { requirement: 'build-time-only', credentialValues: 'excluded' }, operation: service.image.registry_auth_probe })
-        for (const pin of service.toolchain_pins) plans.push({ id: `toolchain:${service.id}:${pin.path}`, kind: 'toolchain-pin', target: pin.path, expected: { pinned: pin.pinned, observed: pin.observed, action: 'diagnose-only' } })
-        plans.push({ id: `health:${service.id}:property`, kind: 'health-probe', target: service.health.property, expected: { service: service.id, role: 'property' }, operation: service.health.probe })
-        plans.push({ id: `health:${service.id}:tool`, kind: 'health-probe', target: service.health.property, expected: { service: service.id, role: 'tool-availability' }, operation: service.health.tool_probe })
     }
     return Object.freeze(plans.sort((left, right) => left.id.localeCompare(right.id)).map((plan) => Object.freeze({
         ...plan,
@@ -394,6 +440,10 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
     }
     if (!safeGeneratedPath(declaration.compose_file) || !safeGeneratedPath(declaration.decisions.path)) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'generated output path is invalid' })
+    }
+    if (declaration.services.some(({ build, sibling }) => build !== undefined
+        && (typeof safeInput.siblingDirectories[sibling] !== 'string' || !safeGeneratedPath(safeInput.siblingDirectories[sibling]!)))) {
+        return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'a built service names a sibling without a confined checkout directory' })
     }
     const compose = renderCompose(declaration, safeInput)
     const secretsTemplates = renderSecretsTemplates(declaration, safeInput.siblingDirectories)

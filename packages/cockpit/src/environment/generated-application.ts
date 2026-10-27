@@ -81,6 +81,7 @@ import {
     projectGeneratedRuntimeAuthority,
     resolveGeneratedDataOperation,
     renderGeneratedEnvironment,
+    undecidedGeneratedDecisions,
     type GeneratedDataOperation,
     type GeneratedObservationRuntime,
     type GeneratedRuntimeAuthority,
@@ -435,8 +436,12 @@ export type GeneratedEnvironmentCommandOutcome = (CompleteOutcome | RefusalOutco
         storedProducer: GeneratedProducer | null
         currentProducer: GeneratedEnvironmentCurrentness['currentProducer']
         repair: ReturnType<typeof proposeGeneratedEnvironmentRepair>
+        decisions?: GeneratedDecisionReport
     }>
 }>
+
+// Undecided subjects are reported, never refused: the log shows them, and check counts them.
+export type GeneratedDecisionReport = Readonly<{ path: string; undecided: number; subjects: readonly string[] }>
 
 const defaultAdapters: GeneratedEnvironmentCommandAdapters = { observeSource: observeConfigSource, execute: executeProbe }
 const OWNERSHIP_PATH = '.cockpit/generated-environment-ownership.json'
@@ -1293,7 +1298,10 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         loaded.result.source.path,
     )
     const generated = Object.freeze(rendered.manifest.map(({ path, bytes, sha256: digest }) => Object.freeze({ path, bytes, sha256: digest })))
-    const sourcePath = declaration.data.fixtures.persona_source
+    // The anchored source read pins the publication root's identity for the whole sync. A stack
+    // without fixtures has no persona source, so the configuration file itself is the anchor.
+    const fixtures = declaration.data?.fixtures
+    const sourcePath = fixtures?.persona_source ?? relative(root, loaded.result.source.path)
     const sourceTarget = await safePath(root, sourcePath, false)
     if (!sourceTarget) return refuse(
         'GENERATED_PERSONA_SOURCE_UNAVAILABLE',
@@ -1304,11 +1312,11 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     if (!source) {
         return refuse('GENERATED_PERSONA_SOURCE_UNAVAILABLE', 'the declared persona source is unreadable', sourcePath)
     }
-    const persona = projectPersonaOutputs(
+    const persona = fixtures ? projectPersonaOutputs(
         declaration,
         { path: sourcePath, bytes: source.bytes },
         (output, bytes) => renderPersona(output.format, bytes),
-    )
+    ) : Object.freeze({ source: Object.freeze({ path: sourcePath, sha256: source.sha256 }), outputs: Object.freeze([]) })
     if (!persona) return refuse('GENERATED_PERSONA_INVALID', 'the declared persona projection is invalid', sourcePath)
     const personaFiles = persona.outputs.map((output) => Object.freeze({
         path: output.path,
@@ -2788,6 +2796,7 @@ export interface GeneratedEnvironmentCurrentness {
     readonly fixContext: FixContext
     readonly repairAuthority?: GeneratedEnvironmentRepairAuthority
     readonly repairRefusal?: RefusalOutcome
+    readonly decisions?: GeneratedDecisionReport
 }
 
 interface RepairRecord {
@@ -2816,6 +2825,7 @@ export async function prepareGeneratedEnvironmentCurrentness(
     const outcome = 'status' in publication ? publication : await checkCanonicalGeneratedEnvironment(input, prepared, adapters)
     const authority = prepared && 'plan' in publication
         ? issueRepairAuthority({ prepared, plan: publication.plan, adapters }) : undefined
+    const decisions = prepared && undecidedGeneratedDecisions(prepared.rendered)
     return Object.freeze({
         outcome,
         changes: 'plan' in publication ? publication.plan.changes : Object.freeze([]),
@@ -2825,6 +2835,7 @@ export async function prepareGeneratedEnvironmentCurrentness(
         fixContext: Object.freeze({ resolvedConfigPath: prepared?.configPath ?? null,
             generatedTargets: Object.freeze(prepared ? [...prepared.owned, ...prepared.surfaces].map(row => row.path) : []) }),
         ...(authority ? { repairAuthority: authority } : {}),
+        ...(decisions ? { decisions } : {}),
         ...('status' in publication ? { repairRefusal: publication }
             : 'refusal' in publication ? { repairRefusal: publication.refusal } : {}),
     })
@@ -2986,8 +2997,16 @@ export async function checkGeneratedEnvironment(
     portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
     const currentness = await prepareGeneratedEnvironmentCurrentness(input, {}, portLease)
-    return Object.freeze({ ...currentness.outcome, fixContext: currentness.fixContext, report: Object.freeze({
+    const undecided = currentness.decisions
+    const diagnostics = currentness.outcome.kind === 'complete' && undecided && undecided.undecided > 0
+        ? Object.freeze([...currentness.outcome.diagnostics, {
+            severity: 'info' as const, code: 'GENERATED_DECISIONS_UNDECIDED', target: undecided.path,
+            message: `${undecided.undecided} structural subject${undecided.undecided === 1 ? ' has' : 's have'} no decision entry and ${undecided.undecided === 1 ? 'is' : 'are'} listed as undecided: ${undecided.subjects.join(', ')}; record each under environment.generated.decisions.entries when it is decided`,
+        }])
+        : currentness.outcome.diagnostics
+    return Object.freeze({ ...currentness.outcome, diagnostics, fixContext: currentness.fixContext, report: Object.freeze({
         storedProducer: currentness.storedProducer, currentProducer: currentness.currentProducer,
         repair: proposeGeneratedEnvironmentRepair(currentness),
+        ...(undecided ? { decisions: undecided } : {}),
     }) })
 }

@@ -1563,7 +1563,7 @@ fi
             const observed = await topologyEvidence({
                 services: {
                     app: {
-                        image: config.environment.generated!.services[0]!.image.reference,
+                        image: config.environment.generated!.services[0]!.image!.reference,
                         labels: {
                             'dev.b0dea.cockpit.stack-id': stack,
                             'dev.b0dea.cockpit.config-sha256': configSha256,

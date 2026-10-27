@@ -28,6 +28,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/troubleshooting.md', [operator, operator, developer, developer]],
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
     ['examples/synthetic/README.md', [sourceInstall, executed, operator, executed, runtime]],
+    ['examples/minimal/README.md', [executed]],
 ])
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
@@ -162,6 +163,32 @@ describe('the public synthetic cockpit', () => {
         expect(staleResult.response.diagnostics.map((row: { code: string }) => row.code)).toContain('SURFACE_STATE_CONFLICT')
     })
 
+    it('renders a valid Compose file from the minimal example and reports its undecided subjects', () => {
+        const root = join(scratch, 'minimal')
+        cpSync(join(repositoryRoot, 'examples/minimal'), root, { recursive: true })
+        execFileSync('git', ['init', '--quiet', root])
+        const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
+        expect(executable.map(argv => argv.slice(1, 2))).toEqual([['sync'], ['sync'], ['check']])
+        const results = executable.map(argv => {
+            const result = run(root, argv)
+            expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
+            return result
+        })
+        expect(results[0]!.response.result.changes).toContainEqual({ operation: 'write', path: 'compose.generated.yml' })
+        const compose = readFileSync(join(root, 'compose.generated.yml'), 'utf8')
+        expect(compose).toContain('    build:\n      context: api\n')
+        const native = spawnSync('docker', ['compose', '-f', join(root, 'compose.generated.yml'), 'config', '-q'], { cwd: root, encoding: 'utf8' })
+        if (native.error) {
+            expect({ kind: 'unavailable', reason: (native.error as NodeJS.ErrnoException).code ?? 'native Compose did not return' }).toMatchObject({ kind: 'unavailable' })
+        } else expect(native.status, native.stderr).toBe(0)
+        expect(readFileSync(join(root, 'docs/cockpit/environment-decisions.md'), 'utf8')).toContain('## service:api\n\n- Status: **undecided**')
+        const check = results[2]!.response
+        expect(check.result.currentness.decisions).toEqual({
+            path: 'docs/cockpit/environment-decisions.md', undecided: 2, subjects: ['port:api:http', 'service:api'],
+        })
+        expect(check.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'GENERATED_DECISIONS_UNDECIDED' }))
+    })
+
     it('rejects undocumented or machine-local command dependencies', () => {
         const exampleRoot = join(repositoryRoot, 'examples/synthetic')
         const readme = readFileSync(join(exampleRoot, 'README.md'), 'utf8')
@@ -182,6 +209,7 @@ describe('the public synthetic cockpit', () => {
         const classified = publicShellInventory(documents)
         expect(classified.filter(row => row.kind === 'unclassified')).toEqual([])
         expect(classified.filter(row => row.kind === 'executed')).toEqual([
+            { path: 'examples/minimal/README.md', block: 1, ...executed },
             { path: 'examples/synthetic/README.md', block: 2, ...executed },
             { path: 'examples/synthetic/README.md', block: 4, ...executed },
         ])

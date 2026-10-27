@@ -174,8 +174,8 @@ describe('generated environment rendering', () => {
         generated.vendors = []
         generated.decisions.entries = generated.decisions.entries.filter(({ subject }) => subject !== 'vendor' && subject !== 'port')
         generated.services[0]!.ports = []
-        const { service: _service, ...manifestProbe } = generated.services[0]!.image.manifest_probe
-        generated.services[0]!.image.manifest_probe = {
+        const { service: _service, ...manifestProbe } = generated.services[0]!.image!.manifest_probe
+        generated.services[0]!.image!.manifest_probe = {
             ...manifestProbe,
             location: 'host', cwd: '.',
             argv: [process.execPath, '-e', 'process.exit(0)'],
@@ -241,7 +241,7 @@ describe('generated environment rendering', () => {
             rendered: result, topology: harness.topology, runtime: { ...harness.runtime, executable: accessor as never },
         })).toBeUndefined()
         expect(nestedEvaluations).toBe(0)
-        const dataOperation = generated.data.modes[0]!.probes[0]!
+        const dataOperation = generated.data!.modes[0]!.probes[0]!
         const dataStep = resolveGeneratedDataOperation({ authority, operation: dataOperation, context: { id: 'data:empty:probe:0', phase: 'probe' } })
         expect(dataStep).toMatchObject({
             id: 'data:empty:probe:0',
@@ -361,10 +361,10 @@ describe('generated environment rendering', () => {
         job.mounts = []
         job.dependencies = [{ service: 'app', condition: 'service_healthy', reason: 'The job consumes the application route' }]
         job.toolchain_pins = []
-        job.image.manifest_probe.service = 'job'
-        if (job.image.registry_auth_probe) job.image.registry_auth_probe.service = 'job'
+        job.image!.manifest_probe.service = 'job'
+        if (job.image!.registry_auth_probe) job.image!.registry_auth_probe.service = 'job'
         job.health.probe.service = 'job'
-        job.health.tool_probe.service = 'job'
+        job.health.tool_probe!.service = 'job'
         generated.services.push(job)
         generated.decisions.entries.push({
             ...generated.decisions.entries[0]!, id: 'service-job', subject: 'service', subject_id: 'job',
@@ -380,7 +380,7 @@ describe('generated environment rendering', () => {
         expect(result.observations).toContainEqual(expect.objectContaining({
             id: 'startup:job:launcher', kind: 'image-startup-launcher',
             launcher: {
-                image: job.image.reference,
+                image: job.image!.reference,
                 entrypoint: '/bin/sh',
                 argv: ['-eu', '-c', 'command -v tail >/dev/null'],
                 timeoutSeconds: 30,
@@ -396,7 +396,7 @@ describe('generated environment rendering', () => {
             expect.objectContaining({ id: 'health:app:property', expected: { service: 'app', role: 'property' } }),
             expect.objectContaining({ id: 'health:app:tool', expected: { service: 'app', role: 'tool-availability' } }),
         ]))
-        const image = generated.services[0]!.image.reference
+        const image = generated.services[0]!.image!.reference
         const present = spawnSync('docker', ['image', 'inspect', image], nativeOptions)
         if (present.error || present.status !== 0) {
             expect({ kind: 'unavailable', reason: 'declared image is not locally available' }).toMatchObject({ kind: 'unavailable' })
@@ -408,6 +408,53 @@ describe('generated environment rendering', () => {
             expect(absentTool.status).not.toBe(0)
             expect(brokenProperty.status).toBe(42)
         }
+    })
+
+    it('names unchecked tool presence when a health probe without a tool probe fails', async () => {
+        const generated = await declaration()
+        generated.vendors = []
+        generated.decisions.entries = generated.decisions.entries.filter(({ subject }) => subject !== 'vendor' && subject !== 'port')
+        generated.services[0]!.ports = []
+        Reflect.deleteProperty(generated.services[0]!.health, 'tool_probe')
+        const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput })
+        if (result.kind !== 'complete') throw new Error(result.reason)
+        expect(result.observations.map(({ id }) => id)).not.toContain('health:app:tool')
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-generated-health-'))
+        try {
+            await mkdir(join(root, 'app'), { recursive: true })
+            const { authority } = await generatedAuthority(result, root)
+            const execution = createGeneratedObservationExecution({ authority, observation: result.observations.find(({ id }) => id === 'health:app:property')! })
+            if (execution.kind !== 'planned') throw new Error(execution.reason)
+            const admission = admitGeneratedObservation({ execution, outcome: await executeProbe(execution.step) })
+            expect(admission?.kind).toBe('failed')
+            const inspection = inspectGeneratedEnvironment({ rendered: result, candidates: result.manifest.map(({ path, bytes }) => ({ path, bytes })), now: '2026-09-26' })
+            expect(observeGeneratedEnvironment({ rendered: result, inspection, admissions: [admission!] })).toMatchObject({
+                observed: { state: 'failed', reason: 'generated observations failed: health:app:property (tool presence unchecked)' },
+            })
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+
+    it('lists every subject without a decision entry as undecided with the provenance it inherits', async () => {
+        const generated = await declaration()
+        const undecided = ['service:app', 'volume:dependencies', 'data-default:seeded', 'data-mode:empty', 'restore:policy', 'mount:app:bind:.:/workspace/source', 'port:app:http']
+        generated.decisions.entries = generated.decisions.entries.filter(({ subject, subject_id }) => !undecided.includes(`${subject}:${subject_id}`))
+        const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput })
+        if (result.kind !== 'complete') throw new Error(result.reason)
+        const sections = new Map(result.decisions.split(/^## /m).slice(1).map((section) => [section.slice(0, section.indexOf('\n')), section]))
+        for (const subject of undecided) expect(sections.get(subject), subject).toContain('- Status: **undecided**')
+        expect(generated.services[0]!.provenance?.source).toBe('overlay.toml')
+        expect(sections.get('port:app:http')).toMatch(/\n- Provenance: \{[^\n]*"source":"overlay\.toml"[^\n]*\}\n- Provenance inherited from: "service:app"\n/)
+        expect(sections.get('vendor:messages')).toContain('- Decision: ')
+        const candidates = result.manifest.map(({ path, bytes }) => ({ path, bytes }))
+        expect(inspectGeneratedEnvironment({ rendered: result, candidates, now: '2026-09-26' })).toEqual({ kind: 'passed' })
+
+        const unattributed = structuredClone(generated)
+        Reflect.deleteProperty(unattributed.services[0]!, 'provenance')
+        const configured = renderGeneratedEnvironment({ declaration: unattributed, ...resolvedInput })
+        if (configured.kind !== 'complete') throw new Error(configured.reason)
+        expect(configured.decisions).toContain('## port:app:http\n\n- Status: **undecided**\n- Provenance: "declared in the cockpit configuration"\n- Provenance inherited from: "service:app"')
     })
 
     it('binds ownership, canonical drift and every preflight observation', async () => {

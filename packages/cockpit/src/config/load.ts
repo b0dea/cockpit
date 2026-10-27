@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { parse } from 'smol-toml'
 import {
     ENVIRONMENT_CODES,
@@ -319,6 +319,20 @@ export function schemaIssueSummary(
     return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`
 }
 
+// The schema lets a declared provenance omit observed_on only when the configuration file is
+// its own source; only the loader knows that file's name, so it closes the rule here.
+function undatedForeignProvenance(value: unknown, configName: string, path: readonly string[] = []): string | undefined {
+    if (value === null || typeof value !== 'object') return undefined
+    for (const [key, item] of Object.entries(value)) {
+        const itemPath = [...path, key]
+        if (key === 'provenance' && item !== null && typeof item === 'object' && !Array.isArray(item)
+            && !Object.hasOwn(item, 'observed_on') && (item as { source?: unknown }).source !== configName) return itemPath.join('.')
+        const nested = undatedForeignProvenance(item, configName, itemPath)
+        if (nested !== undefined) return nested
+    }
+    return undefined
+}
+
 function refusal(code: RefusalCode, message: string, target: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
     const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target }
     return { kind: 'refusal', status: 2, diagnostics: [diagnostic], result: null }
@@ -360,6 +374,12 @@ export async function loadCockpitConfig(
     if (!validated.success) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
             `cockpit configuration does not match the schema: ${schemaIssueSummary(validated.error.issues)}`, path)
+    }
+
+    const undated = undatedForeignProvenance(validated.data, basename(path))
+    if (undated !== undefined) {
+        return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
+            `cockpit configuration does not match the schema: ${undated}: provenance without observed_on must name this configuration file (${basename(path)}) as its source; add observed_on for any other source`, path)
     }
 
     const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))

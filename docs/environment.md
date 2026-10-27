@@ -163,7 +163,10 @@ runtime can load the installed dependencies. `DEPENDENCY_RUNTIME_STALE`,
 binding failed; `DEPENDENCY_RUNTIME_UNAVAILABLE` means current authenticated evidence could not
 be obtained.
 
-The data modes are `empty`, `seeded`, and `restored`. Durable outcomes name the exact applied,
+The data modes are `empty`, `seeded`, and `restored`. A declaration lists one or more of them,
+including its `default_mode`; a `seeded` mode needs `fixtures` and a `restored` mode needs
+`restore`. A stack without `environment.generated.data` has no data step, and `up` completes the
+data stage with nothing applied. Durable outcomes name the exact applied,
 attempted, and not-applied operation IDs. Intent, an earlier success, and an unauthenticated or
 failed current read-only probe do not count as completion. Persona outputs are rendered only from
 the declared authenticated persona source.
@@ -185,12 +188,13 @@ files. A generated host-port variable must also be safe for the host process env
 that control a loader, interpreter, shell, module path, or container runtime are refused even when
 their leased values are numeric.
 
-<!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md` is a whole-file-owned generated output. Its declaration
-must contain one current dated entry for every service, volume, data default and mode, restore
-policy, mount, port, and vendor. Service entries carry the image choice made by the declaration.
-Missing, duplicate, future-dated, stale, or sensitive entries refuse inspection. Mechanical
-coverage does not establish that a business decision is correct; that semantic review remains
-`human_needed`.
+<!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md` is a whole-file-owned generated output. It lists every service, volume, data default and mode,
+restore policy, mount, port, and vendor. A subject with a dated entry shows that decision; a
+subject without one is listed as **undecided** with the provenance it inherits, and `check`
+reports the undecided subjects as `GENERATED_DECISIONS_UNDECIDED`, an information diagnostic
+rather than a failure. Duplicate, future-dated, stale, or sensitive entries refuse inspection.
+Mechanical coverage does not establish that a business decision is correct; that semantic review
+remains `human_needed`.
 
 Bring-up starts from lifecycle history written by `setup`. It completes current generated-runtime
 inspection, dependencies, data, and vendors through the owner callbacks

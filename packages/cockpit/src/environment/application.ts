@@ -2283,7 +2283,7 @@ async function completeGeneratedBringup(
                     load_probe: Object.freeze([...selected.policy.load_probe]) as readonly [string, ...string[]],
                 } })
         }
-        return Object.freeze({ kind: 'complete' as const, dependencies, mode: generated.data.default_mode,
+        return Object.freeze({ kind: 'complete' as const, dependencies, mode: generated.data?.default_mode,
             vendors: generated.vendors.map(({ id }) => id) })
     })
     if (selection?.kind === 'refusal') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
@@ -2393,33 +2393,39 @@ async function completeGeneratedBringup(
         if (!applied.includes('dependencies')) applied.push('dependencies')
         const dependencyCheckpoint = await checkpoint()
         if (dependencyCheckpoint) return { ...dependencyCheckpoint, progress: progress() }
-        const data = await adapters.completeGeneratedData!(context, runtime, services, projection)
-        if (data.kind === 'refusal') {
-            const failed = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
-                configSha256: projection.sourceSha256, generation: projection.generation, mode: selection.mode })
-            const recorded = failed && consumeDataModeOutcomeProjection(failed)
-            if (recorded?.outcome.kind === 'refusal' && isCanonicalTimestamp(recorded.observedAt)
-                && Date.parse(recorded.observedAt) >= Date.parse(runtime.topology.observationWindow.startedAt)
-                && Date.parse(recorded.observedAt) <= Date.now()) {
-                merge({ ...recorded.outcome, attempted: recorded.outcome.attempted.map(({ id }) => id) })
+        // A stack that declares no data has no data step; the stage completes with nothing applied,
+        // as external dependencies do for a stack without vendors.
+        const mode = selection.mode
+        if (mode === undefined) merge({ applied: ['data'], notApplied: [] })
+        else {
+            const data = await adapters.completeGeneratedData!(context, runtime, services, projection)
+            if (data.kind === 'refusal') {
+                const failed = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
+                    configSha256: projection.sourceSha256, generation: projection.generation, mode })
+                const recorded = failed && consumeDataModeOutcomeProjection(failed)
+                if (recorded?.outcome.kind === 'refusal' && isCanonicalTimestamp(recorded.observedAt)
+                    && Date.parse(recorded.observedAt) >= Date.parse(runtime.topology.observationWindow.startedAt)
+                    && Date.parse(recorded.observedAt) <= Date.now()) {
+                    merge({ ...recorded.outcome, attempted: recorded.outcome.attempted.map(({ id }) => id) })
+                }
+                return refusal(data)
             }
-            return refusal(data)
+            if (data.kind !== 'complete'
+                || !((isDataModeCompletion(data.result, {
+                        stackId: context.stackId, configSha256: projection.sourceSha256,
+                        generation: projection.generation, mode,
+                        earliestMs: Date.parse(runtime.topology.observationWindow.startedAt), latestMs: Date.now(),
+                    }) && data.result.mode === mode)
+                    || (isDataModeObservation(data.result) && current(data.result, isDataModeObservation)
+                        && data.result.source === `data-mode:${projection.sourceSha256}:${projection.generation}`))) {
+                return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data')
+            }
+            const persisted = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
+                configSha256: projection.sourceSha256, generation: projection.generation, mode })
+            const durable = persisted && consumeDataModeOutcomeProjection(persisted)
+            if (!durable || durable.outcome.kind !== 'complete') return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data history')
+            merge({ applied: ['data', ...durable.outcome.applied], notApplied: [] })
         }
-        if (data.kind !== 'complete'
-            || !((isDataModeCompletion(data.result, {
-                    stackId: context.stackId, configSha256: projection.sourceSha256,
-                    generation: projection.generation, mode: selection.mode,
-                    earliestMs: Date.parse(runtime.topology.observationWindow.startedAt), latestMs: Date.now(),
-                }) && data.result.mode === selection.mode)
-                || (isDataModeObservation(data.result) && current(data.result, isDataModeObservation)
-                    && data.result.source === `data-mode:${projection.sourceSha256}:${projection.generation}`))) {
-            return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data')
-        }
-        const persisted = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
-            configSha256: projection.sourceSha256, generation: projection.generation, mode: selection.mode })
-        const durable = persisted && consumeDataModeOutcomeProjection(persisted)
-        if (!durable || durable.outcome.kind !== 'complete') return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data history')
-        merge({ applied: ['data', ...durable.outcome.applied], notApplied: [] })
         const dataCheckpoint = await checkpoint()
         if (dataCheckpoint) return { ...dataCheckpoint, progress: progress() }
         if (selection.vendors.length > 0) {

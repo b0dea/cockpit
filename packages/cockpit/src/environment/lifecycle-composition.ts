@@ -750,7 +750,8 @@ export function createLifecycleCommandAdapters(
     ) => {
         const binding = bindings.get(context)
         const generated = binding?.config.environment.generated
-        if (!binding?.generatedRuntime || !generated || binding.generatedApplication !== projection
+        const data = generated?.data
+        if (!binding?.generatedRuntime || !generated || !data || binding.generatedApplication !== projection
             || generatedApplicationProjection(projection) !== projection) {
             return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
                 'generated-data', 'generated data authority is unavailable')
@@ -760,11 +761,11 @@ export function createLifecycleCommandAdapters(
             stackId: context.stackId,
             configSha256: context.source.sha256,
             generation: projection.generation,
-            mode: generated.data.default_mode,
+            mode: data.default_mode,
         })
         const planned = await withLifecycleConfiguration(context, async (configuration) => planDataMode({
             environment: generated,
-            mode: generated.data.default_mode,
+            mode: data.default_mode,
             checkoutRoot: binding.checkoutRoot,
             includeFixtureVolume: false,
             namespace: context.namespace,

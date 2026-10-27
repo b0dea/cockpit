@@ -90,10 +90,10 @@ describe('generated browser runner rendering', () => {
             id: 'cockpit-browser-runner',
             profiles: [],
             command: ['/cockpit/browser-runner.sh', 'serve'],
-            image: { ...template.image,
-                manifest_probe: { ...template.image.manifest_probe, service: 'cockpit-browser-runner' },
-                registry_auth_probe: template.image.registry_auth_probe
-                    ? { ...template.image.registry_auth_probe, service: 'cockpit-browser-runner' } : undefined },
+            image: { ...template.image!,
+                manifest_probe: { ...template.image!.manifest_probe, service: 'cockpit-browser-runner' },
+                registry_auth_probe: template.image!.registry_auth_probe
+                    ? { ...template.image!.registry_auth_probe, service: 'cockpit-browser-runner' } : undefined },
             ports: [{ name: 'browser-proxy', host_variable: 'BROWSER_PORT', host_ip: '127.0.0.1' as const, internal: 3001 }],
             host_aliases: [{ hostname: 'app.example.invalid', address: '127.0.0.1' }],
             mounts: [{ kind: 'environment-file' as const, source: '.cockpit/browser/runner.sh', target: '/cockpit/browser-runner.sh', source_type: 'file' as const }],

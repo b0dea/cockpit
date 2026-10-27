@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { isProxy } from 'node:util/types'
-import { GeneratedEnvironment, type DataMode, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
+import { GeneratedEnvironment, type DataMode, type GeneratedEnvironment as GeneratedEnvironmentDeclaration, type Provenance } from '../schema.js'
 import { consumeLoadedConfigProjection, type LoadedConfigProjection } from '../config/load.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
@@ -36,7 +36,8 @@ export const observationDeclarations = Object.freeze([
     { id: 'data-mode', owner: mechanism.id, postures: ['data-plane'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, isIssued: isDataModeObservation, issuedAt: dataModeObservationIssuedAt },
 ] as const)
 
-type DataDeclaration = GeneratedEnvironmentDeclaration['data']
+type DataDeclaration = NonNullable<GeneratedEnvironmentDeclaration['data']>
+type FixtureDeclaration = NonNullable<DataDeclaration['fixtures']>
 type DataOperation = DataDeclaration['modes'][number]['operations'][number]
 type OverlayOperation = DataOperation['operation']
 
@@ -61,7 +62,8 @@ export interface DataModePlan {
         after?: readonly string[]
         provenance?: Readonly<{ source: string; reason: string }>
     }>[]
-    readonly fixtureVolume: Readonly<{ included: boolean; tag: string; warning: string }>
+    // Absent when the declaration has no fixtures: a stack without a seeded mode has no fixture volume.
+    readonly fixtureVolume?: Readonly<{ included: boolean; tag: string; warning: string }>
 }
 
 interface PlannedContract {
@@ -77,10 +79,12 @@ interface PlannedContract {
     readonly observedAt: string
     readonly issuedAtMs: number
     readonly dataVolume: string
-    readonly stableKey: string
-    readonly randomSeed?: string
-    readonly fixtureProvenance: Readonly<{ source: string; observed_on: string; kind: string; reason: string }>
-    readonly fixtureVolume: DataModePlan['fixtureVolume']
+    readonly fixtures?: Readonly<{
+        stableKey: string
+        randomSeed?: string
+        provenance: Provenance
+        volume: NonNullable<DataModePlan['fixtureVolume']>
+    }>
     readonly rewired: readonly string[]
     readonly untouched: readonly string[]
 }
@@ -103,10 +107,11 @@ export type DataModeExecutionResult =
           readonly kind: 'complete'
           readonly mode: DataMode
           readonly applied: readonly string[]
-          readonly stableKeySha256: string
+          // The fixture identity fields are present exactly when fixtures are declared.
+          readonly stableKeySha256?: string
           readonly randomSeedSha256?: string
-          readonly fixtureProvenanceSha256: string
-          readonly fixtureVolume: DataModePlan['fixtureVolume']
+          readonly fixtureProvenanceSha256?: string
+          readonly fixtureVolume?: DataModePlan['fixtureVolume']
           readonly restore: Readonly<{ rewired: readonly string[]; untouched: readonly string[] }>
       }
     | {
@@ -286,7 +291,9 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         || !isDeepStrictEqual(snapshotJson(parsed), snapshotJson(configuration.config.environment.generated))) {
         return refusal('generated environment data declaration does not match the authenticated configuration', 'generated environment')
     }
-    const selected = parsed.data.modes.find(({ mode }) => mode === input.mode)
+    const data = parsed.data
+    if (!data) return refusal('the generated environment declares no data modes', 'environment.generated.data')
+    const selected = data.modes.find(({ mode }) => mode === input.mode)
     if (!selected) return refusal('selected data mode is not declared', String(input.mode))
     const planId = randomBytes(32).toString('hex')
     const metadata: Array<DataModePlan['steps'][number]> = []
@@ -350,11 +357,12 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
             id: `data:${input.mode}:${operation.id}`,
             phase: 'operation', operationId: operation.id, operationKind: operation.kind,
             after: Object.freeze([...operation.after]),
-            provenance: Object.freeze({ source: operation.provenance.source, reason: operation.provenance.reason }),
+            provenance: Object.freeze({ source: (operation.provenance ?? selected.provenance).source, reason: (operation.provenance ?? selected.provenance).reason }),
         }, operation.fresh_volume_only)) return refusal('data operation did not resolve to a confined execution step', operation.id)
     }
     if (input.mode === 'restored') {
-        for (const rewrite of parsed.data.restore.rewrites) {
+        if (!data.restore) return refusal('the restored data mode has no restore declaration', 'environment.generated.data.restore')
+        for (const rewrite of data.restore.rewrites) {
             if (!append(rewrite.operation, {
                 id: `data:restored:rewrite:${rewrite.category}`,
                 phase: 'restore-rewrite', operationId: rewrite.category, operationKind: 'rewrite',
@@ -369,13 +377,15 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
     if (input.includeFixtureVolume && input.mode !== 'seeded') {
         return refusal('fixture volume is available only beside the seeded data mode', input.mode)
     }
+    const fixtures = data.fixtures
     if (input.includeFixtureVolume) {
-        for (const [index, operation] of parsed.data.fixtures.volume_operations.entries()) {
+        if (!fixtures) return refusal('the fixture volume requires a fixtures declaration', 'environment.generated.data.fixtures')
+        for (const [index, operation] of fixtures.volume_operations.entries()) {
             if (!append(operation, { id: `data:volume:operation:${index}`, phase: 'fixture-volume-operation' }, false)) {
                 return refusal('fixture-volume operation did not resolve to a confined execution step', `fixture-volume:${index}`)
             }
         }
-        for (const [index, probe] of parsed.data.fixtures.volume_probes.entries()) {
+        for (const [index, probe] of fixtures.volume_probes.entries()) {
             if (!append(probe, { id: `data:volume:probe:${index}`, phase: 'fixture-volume-probe' }, false)) {
                 return refusal('fixture-volume probe did not resolve to a confined execution step', `fixture-volume-probe:${index}`)
             }
@@ -384,23 +394,26 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
     const capturedExecution = snapshotExecutionPlan({ steps })
     if (!capturedExecution) return refusal('resolved data execution plan is malformed', 'data execution plan')
     const execution = Object.freeze({ steps: Object.freeze(capturedExecution.steps.map(freezeStep)) })
-    const fixtureVolume = Object.freeze({
+    const fixtureVolume = fixtures && Object.freeze({
         included: input.includeFixtureVolume,
-        tag: parsed.data.fixtures.volume_tag,
-        warning: parsed.data.fixtures.pagination_warning,
+        tag: fixtures.volume_tag,
+        warning: fixtures.pagination_warning,
     })
-    const plan = Object.freeze({ mode: input.mode, execution, steps: Object.freeze(metadata), fixtureVolume })
+    const plan = Object.freeze({ mode: input.mode, execution, steps: Object.freeze(metadata), ...(fixtureVolume ? { fixtureVolume } : {}) })
     issuedPlans.set(plan, Object.freeze({
         mode: input.mode, execution, steps: plan.steps, namespace,
         stackId: input.stackId, holderId: input.holderId,
         configPath: configuration.source.path, configSha256: configuration.source.sha256,
         generation: input.generation, observedAt: input.observedAt, issuedAtMs: Date.now(),
-        dataVolume: parsed.data.volume, stableKey: parsed.data.fixtures.stable_key,
-        ...(parsed.data.fixtures.random_seed === undefined ? {} : { randomSeed: parsed.data.fixtures.random_seed }),
-        fixtureProvenance: Object.freeze({ ...parsed.data.fixtures.provenance }),
-        fixtureVolume,
-        rewired: Object.freeze(input.mode === 'restored' ? parsed.data.restore.rewrites.map(({ category }) => category) : []),
-        untouched: Object.freeze(input.mode === 'restored' ? [...parsed.data.restore.untouched] : []),
+        dataVolume: data.volume,
+        ...(fixtures && fixtureVolume ? { fixtures: Object.freeze({
+            stableKey: fixtures.stable_key,
+            ...(fixtures.random_seed === undefined ? {} : { randomSeed: fixtures.random_seed }),
+            provenance: Object.freeze({ ...fixtures.provenance }),
+            volume: fixtureVolume,
+        }) } : {}),
+        rewired: Object.freeze(input.mode === 'restored' && data.restore ? data.restore.rewrites.map(({ category }) => category) : []),
+        untouched: Object.freeze(input.mode === 'restored' && data.restore ? [...data.restore.untouched] : []),
     }))
     return Object.freeze({ kind: 'preview', plan })
 }
@@ -434,6 +447,13 @@ function persistedOutcome(value: unknown, mode: DataMode): DataModeExecutionResu
     if (!boundedStrings(candidate.applied)) return undefined
     if (candidate.kind === 'complete') {
         const keys = Object.keys(candidate).sort().join('\0')
+        const restoreValid = exactRecord(candidate.restore, ['rewired', 'untouched'])
+            && boundedStrings(candidate.restore.rewired) && boundedStrings(candidate.restore.untouched)
+        if (candidate.stableKeySha256 === undefined) {
+            return keys === ['applied', 'kind', 'mode', 'restore'].sort().join('\0') && restoreValid
+                ? snapshot as unknown as DataModeExecutionResult
+                : undefined
+        }
         const expected = (candidate.randomSeedSha256 === undefined
             ? ['applied', 'fixtureProvenanceSha256', 'fixtureVolume', 'kind', 'mode', 'restore', 'stableKeySha256']
             : ['applied', 'fixtureProvenanceSha256', 'fixtureVolume', 'kind', 'mode', 'randomSeedSha256', 'restore', 'stableKeySha256']).sort().join('\0')
@@ -443,8 +463,7 @@ function persistedOutcome(value: unknown, mode: DataMode): DataModeExecutionResu
             && exactRecord(candidate.fixtureVolume, ['included', 'tag', 'warning'])
             && typeof candidate.fixtureVolume.included === 'boolean' && typeof candidate.fixtureVolume.tag === 'string'
             && typeof candidate.fixtureVolume.warning === 'string'
-            && exactRecord(candidate.restore, ['rewired', 'untouched'])
-            && boundedStrings(candidate.restore.rewired) && boundedStrings(candidate.restore.untouched)
+            && restoreValid
             ? snapshot as unknown as DataModeExecutionResult
             : undefined
     }
@@ -564,7 +583,7 @@ export function projectDataModeObservationSteps(input: {
     if (!contract || !history || contract.stackId !== history.stackId
         || contract.configSha256 !== history.configSha256 || contract.generation !== history.generation
         || contract.mode !== history.mode) return undefined
-    const includesFixtureVolume = history.outcome.kind === 'complete' && history.outcome.fixtureVolume.included
+    const includesFixtureVolume = history.outcome.kind === 'complete' && history.outcome.fixtureVolume?.included === true
     return Object.freeze(contract.steps.flatMap((metadata, index) => metadata.phase === 'probe'
         || includesFixtureVolume && metadata.phase === 'fixture-volume-probe'
         ? [contract.execution.steps[index]!]
@@ -754,10 +773,12 @@ export async function executeDataMode(
     const result = Object.freeze({
         kind: 'complete' as const, mode: contract.mode,
         applied: Object.freeze(contract.steps.map(({ id }) => id)),
-        stableKeySha256: createHash('sha256').update(contract.stableKey).digest('hex'),
-        ...(contract.randomSeed === undefined ? {} : { randomSeedSha256: createHash('sha256').update(contract.randomSeed).digest('hex') }),
-        fixtureProvenanceSha256: createHash('sha256').update(JSON.stringify(contract.fixtureProvenance)).digest('hex'),
-        fixtureVolume: contract.fixtureVolume,
+        ...(contract.fixtures === undefined ? {} : {
+            stableKeySha256: createHash('sha256').update(contract.fixtures.stableKey).digest('hex'),
+            ...(contract.fixtures.randomSeed === undefined ? {} : { randomSeedSha256: createHash('sha256').update(contract.fixtures.randomSeed).digest('hex') }),
+            fixtureProvenanceSha256: createHash('sha256').update(JSON.stringify(contract.fixtures.provenance)).digest('hex'),
+            fixtureVolume: contract.fixtures.volume,
+        }),
         restore: Object.freeze({ rewired: contract.rewired, untouched: contract.untouched }),
     })
     const persisted = await persist(result)
@@ -803,7 +824,7 @@ export function isDataModeCompletion(
 export function projectPersonaOutputs(
     environment: unknown,
     source: { readonly path: string; readonly bytes: Uint8Array },
-    render: (output: DataDeclaration['fixtures']['persona_outputs'][number], sourceBytes: Buffer) => Uint8Array,
+    render: (output: FixtureDeclaration['persona_outputs'][number], sourceBytes: Buffer) => Uint8Array,
 ): PersonaProjection | undefined {
     let sourcePath: string
     let sourceBytes: Buffer
@@ -817,10 +838,11 @@ export function projectPersonaOutputs(
         sourceBytes = Buffer.from(bytes)
     } catch { return undefined }
     const parsed = GeneratedEnvironment.safeParse(snapshotJson(environment))
-    if (!parsed.success || sourcePath !== parsed.data.data.fixtures.persona_source || typeof render !== 'function') return undefined
+    const fixtures = parsed.success ? parsed.data.data?.fixtures : undefined
+    if (!fixtures || sourcePath !== fixtures.persona_source || typeof render !== 'function') return undefined
     const outputs: PersonaProjection['outputs'][number][] = []
     try {
-        for (const output of parsed.data.data.fixtures.persona_outputs) {
+        for (const output of fixtures.persona_outputs) {
             const bytes = Buffer.from(render(Object.freeze({ ...output }), Buffer.from(sourceBytes)))
             if (bytes.byteLength > 16_777_216) return undefined
             outputs.push(Object.freeze({

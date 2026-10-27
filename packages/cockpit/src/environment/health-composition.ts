@@ -254,7 +254,8 @@ function producers(input: {
             return Object.freeze([observation])
         },
         data: async () => {
-            if (generated === undefined) return Object.freeze([])
+            const data = generated?.data
+            if (generated === undefined || data === undefined) return Object.freeze([])
             const session = await runtimeSession
             const lifecycle = session?.lifecycle
             if (!session || !lifecycle) throw new TypeError('data health needs authenticated runtime readiness')
@@ -267,12 +268,12 @@ function producers(input: {
                         stackId: session.context.stackId,
                         configSha256: application.sourceSha256,
                         generation: application.generation,
-                        mode: generated.data.default_mode,
+                        mode: data.default_mode,
                     })
                     if (!projection) return undefined
                     const planned = await withLifecycleConfiguration(session.context, async (configuration) => planDataMode({
                         environment: generated,
-                        mode: generated.data.default_mode,
+                        mode: data.default_mode,
                         checkoutRoot: runtime.root,
                         includeFixtureVolume: true,
                         namespace: session.context.namespace,

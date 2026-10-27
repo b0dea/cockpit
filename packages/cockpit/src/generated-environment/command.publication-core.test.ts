@@ -43,7 +43,7 @@ describe('generated environment command', () => {
 
         const loaded = await loadCockpitConfig(configPath)
         if (loaded.kind !== 'complete' || !loaded.result.config.environment.generated) throw new Error('generated declaration unavailable')
-        const operation = loaded.result.config.environment.generated.data.modes[0]!.operations[0]!.operation
+        const operation = loaded.result.config.environment.generated.data!.modes[0]!.operations[0]!.operation
         const step = resolveGeneratedApplicationOperation(application, harness, operation, {
             id: 'generated-data-operation', phase: 'operation', operationId: 'empty-schema', operationKind: 'schema',
         })

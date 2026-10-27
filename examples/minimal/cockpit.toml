@@ -1,0 +1,38 @@
+[cockpit]
+name = "tinya"
+siblings_root = "."
+
+[[sibling]]
+slug = "api"
+dir = "api"
+mount = "always"
+acquire = "none"
+var = "API_DIR"
+purpose = "Tiny api"
+
+[ports.bases]
+API_HOST_PORT = 4100
+
+[environment.machine]
+runtime_memory_mb = 512
+runtime_cpus = 1
+free_disk_mb = 1024
+cold_start_seconds = 60
+
+[environment.generated]
+compose_file = "compose.generated.yml"
+
+[[environment.generated.services]]
+id = "api"
+sibling = "api"
+build = { context = "." }
+command = ["node", "server.mjs"]
+ports = [{ name = "http", host_variable = "API_HOST_PORT", internal = 3000 }]
+
+[environment.generated.services.health]
+property = "GET /health returns 200"
+probe = { location = "in-stack", service = "api", cwd = ".", argv = ["node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"], timeout_seconds = 10 }
+interval_seconds = 5
+timeout_seconds = 3
+retries = 4
+start_period_seconds = 20

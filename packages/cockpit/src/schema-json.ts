@@ -176,7 +176,9 @@ export function renderCockpitSchema(): string {
         { path: 'environment.generated.vendors[].egress_guard.local_service', rule: 'declared_service' },
         { path: 'environment.generated.services[]', rule: 'acyclic_dependencies_and_same_image_health_probes' },
         { path: 'environment.generated.data', rule: 'product_data_volume_and_mode_operations' },
-        { path: 'environment.generated.decisions.entries[]', rule: 'exact_rendered_choice_and_vendor_coverage' },
+        { path: 'environment.generated.data', rule: 'declared_default_mode_fixtures_for_seeded_and_restore_for_restored' },
+        { path: 'environment.generated.decisions.entries[]', rule: 'declared_subject_with_undecided_subjects_rendered' },
+        { path: 'environment.generated', rule: 'undated_declared_provenance_names_the_configuration_file' },
     ]
     ;(schema['x-cockpit-runtime-checks'] as unknown[]).push(...generatedChecks)
     ;(schema['x-cockpit-editor-limitations'] as unknown[]).push(...generatedChecks)
@@ -191,9 +193,17 @@ export function renderCockpitSchema(): string {
         }
         if (fields?.observed_on && fields.kind && fields.source) {
             node.anyOf = [
-                { properties: { kind: { enum: ['declared', 'measured'] } } },
-                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed'] },
+                { properties: { kind: { enum: ['declared'] } } },
+                { properties: { kind: { enum: ['measured'] } }, required: ['observed_on'] },
+                { properties: { kind: { enum: ['inferred'] }, confirmed: { enum: [true] } }, required: ['confirmed', 'observed_on'] },
             ]
+        }
+        if (fields?.image && fields.build && fields.command) {
+            // allOf, because the role rule below owns this node's oneOf.
+            node.allOf = [{ oneOf: [
+                { required: ['image'], not: { required: ['build'] } },
+                { required: ['build'], not: { required: ['image'] } },
+            ] }]
         }
         if (fields?.posture && fields.endpoints) {
             fields.nonempty_variables.uniqueItems = true
@@ -210,7 +220,7 @@ export function renderCockpitSchema(): string {
         }
         if (fields?.role && fields.one_shot_failure) {
             node.oneOf = [
-                { properties: { role: { enum: ['one-shot'] } }, required: ['one_shot_failure'] },
+                { properties: { role: { enum: ['one-shot'] } }, required: ['role', 'one_shot_failure'] },
                 { properties: { role: { enum: ['service'] } }, not: { required: ['one_shot_failure'] } },
             ]
         }

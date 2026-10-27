@@ -92,7 +92,9 @@ const generatedRuntimeChecks = [
     { path: 'environment.generated.vendors[].egress_guard.local_service', rule: 'declared_service' },
     { path: 'environment.generated.services[]', rule: 'acyclic_dependencies_and_same_image_health_probes' },
     { path: 'environment.generated.data', rule: 'product_data_volume_and_mode_operations' },
-    { path: 'environment.generated.decisions.entries[]', rule: 'exact_rendered_choice_and_vendor_coverage' },
+    { path: 'environment.generated.data', rule: 'declared_default_mode_fixtures_for_seeded_and_restore_for_restored' },
+    { path: 'environment.generated.decisions.entries[]', rule: 'declared_subject_with_undecided_subjects_rendered' },
+    { path: 'environment.generated', rule: 'undated_declared_provenance_names_the_configuration_file' },
 ]
 
 const rowDerivationRuntimeChecks = [

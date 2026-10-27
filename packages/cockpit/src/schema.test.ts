@@ -5,10 +5,11 @@ import { Browser, EntrypointDerivative, Environment, GeneratedService, InstallPo
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
-import { stringify } from 'smol-toml'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { parse as parseToml, stringify } from 'smol-toml'
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig } from './config/load.js'
 
 const provenance = { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'declared', reason: 'Synthetic overlay declaration' }
@@ -313,7 +314,6 @@ describe('generated environment declarations', () => {
         ['undeclared policy', (config: typeof generatedConfig) => { Reflect.set(config.environment.generated.volumes[0], 'install_policy', 'missing') }],
         ['too-short measured start', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.start_period_seconds = 1 }],
         ['nonlocal sink', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].sink = 'https://vendor.invalid/' }],
-        ['missing decision coverage', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.pop() }],
         ['forward operation reference', (config: typeof generatedConfig) => { config.environment.generated.data.modes[1].operations[0].after = ['fixtures'] }],
         ['dependency policy mismatch', (config: typeof generatedConfig) => {
             config.environment.install_policies.push({ ...config.environment.install_policies[0], volume: 'other-dependencies', lockfile: 'other-lock.json' })
@@ -347,13 +347,18 @@ describe('generated environment declarations', () => {
                 { ...decision, id: 'worker-port', subject: 'port', subject_id: 'worker:worker' },
             )
         }],
-        ['missing volume decision', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.splice(1, 1) }],
-        ['missing data-default decision', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.splice(3, 1) }],
         ['changed data-default decision', (config: typeof generatedConfig) => { config.environment.generated.data.default_mode = 'restored' }],
-        ['missing data-mode decision', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.splice(4, 1) }],
-        ['missing restore decision', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.splice(7, 1) }],
-        ['missing mount decision', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.splice(8, 1) }],
-        ['missing port decision', (config: typeof generatedConfig) => { config.environment.generated.decisions.entries.splice(11, 1) }],
+        ['seeded mode without fixtures', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.data, 'fixtures') }],
+        ['restored mode without restore', (config: typeof generatedConfig) => { Reflect.deleteProperty(config.environment.generated.data, 'restore') }],
+        ['restore without a restored mode', (config: typeof generatedConfig) => {
+            config.environment.generated.data.modes.pop()
+            config.environment.generated.decisions.entries = config.environment.generated.decisions.entries.filter(({ subject_id }) => subject_id !== 'restored')
+        }],
+        ['default mode outside the declared modes', (config: typeof generatedConfig) => {
+            config.environment.generated.data.modes = config.environment.generated.data.modes.filter(({ mode }) => mode === 'empty')
+            Reflect.deleteProperty(config.environment.generated.data, 'restore')
+            config.environment.generated.decisions.entries = config.environment.generated.decisions.entries.filter(({ subject }) => !['data-mode', 'restore'].includes(subject))
+        }],
     ])('enforces the runtime-only %s relation without claiming editor enforcement', (_name, mutate) => {
         const config = structuredClone(generatedConfig)
         mutate(config)
@@ -362,6 +367,49 @@ describe('generated environment declarations', () => {
         if (!parsed.success) expect(parsed.error.issues.some((issue) => issue.code === 'custom')).toBe(true)
         const schema = JSON.parse(renderCockpitSchema())
         expect(schema['x-cockpit-editor-limitations']).toContainEqual({ path: 'environment.generated', rule: 'declared_sibling_service_volume_policy_mount_port_references' })
+    })
+
+    it('accepts the minimal example and requires exactly one of image or build in runtime and editor schemas', async () => {
+        const minimal = parseToml(await readFile(fileURLToPath(new URL('../../../examples/minimal/cockpit.toml', import.meta.url)), 'utf8'))
+        const validate = publishedCockpitValidator
+        const parsed = CockpitConfig.safeParse(minimal)
+        expect(parsed.success, parsed.success ? '' : parsed.error.message).toBe(true)
+        expect(validate(minimal), JSON.stringify(validate.errors)).toBe(true)
+        const service = (config: typeof minimal) => (config as { environment: { generated: { services: Record<string, unknown>[] } } }).environment.generated.services[0]!
+        const both = structuredClone(minimal)
+        service(both).image = generatedConfig.environment.generated.services[0]!.image
+        const neither = structuredClone(minimal)
+        Reflect.deleteProperty(service(neither), 'build')
+        const escaped = structuredClone(minimal)
+        service(escaped).build = { context: '../outside' }
+        for (const config of [both, neither, escaped]) {
+            expect(CockpitConfig.safeParse(config).success).toBe(false)
+            expect(validate(config)).toBe(false)
+        }
+    })
+
+    it('lets a declaration omit observed_on only when this configuration file is its source', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'cockpit-provenance-'))
+        try {
+            const path = join(directory, 'cockpit.toml')
+            const undated = (source: string) => {
+                const config = structuredClone(generatedConfig)
+                config.environment.generated.services[0]!.provenance = { source, kind: 'declared', reason: 'Written in the configuration' } as typeof provenance
+                return config
+            }
+            await writeFile(path, stringify(undated('cockpit.toml')))
+            expect((await loadCockpitConfig(path)).kind).toBe('complete')
+            await writeFile(path, stringify(undated('docs/runtime.md')))
+            expect(await loadCockpitConfig(path)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                message: expect.stringContaining('environment.generated.services.0.provenance: provenance without observed_on must name this configuration file (cockpit.toml)'),
+            })] })
+            const measured = undated('cockpit.toml')
+            measured.environment.generated.services[0]!.provenance.kind = 'measured'
+            expect(CockpitConfig.safeParse(measured).success).toBe(false)
+            expect(publishedCockpitValidator(measured)).toBe(false)
+        } finally {
+            await rm(directory, { recursive: true, force: true })
+        }
     })
 
     it('requires canonical lowercase endpoint URL spelling in runtime and editor schemas', () => {

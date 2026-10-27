@@ -6,7 +6,7 @@ import { isProxy } from 'node:util/types'
 import { parse as parseYaml } from 'yaml'
 
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import type { GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
+import { decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
 import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
@@ -34,7 +34,7 @@ export type {
 export const mechanism = {
     id: 'generated-environment',
     module: 'packages/cockpit/src/environment/generated-stack.ts',
-    exports: ['renderGeneratedEnvironment', 'inspectGeneratedEnvironment', 'projectGeneratedComposeArtifactAuthority', 'projectGeneratedRuntimeAuthority', 'inspectGeneratedRuntimeAuthority', 'resolveGeneratedDataOperation', 'createGeneratedObservationExecution', 'admitGeneratedObservation', 'isGeneratedObservationAdmission', 'observeGeneratedEnvironment', 'isGeneratedObservation', 'observationDeclarations'],
+    exports: ['renderGeneratedEnvironment', 'inspectGeneratedEnvironment', 'undecidedGeneratedDecisions', 'projectGeneratedComposeArtifactAuthority', 'projectGeneratedRuntimeAuthority', 'inspectGeneratedRuntimeAuthority', 'resolveGeneratedDataOperation', 'createGeneratedObservationExecution', 'admitGeneratedObservation', 'isGeneratedObservationAdmission', 'observeGeneratedEnvironment', 'isGeneratedObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -76,12 +76,13 @@ export interface GeneratedObservationRuntime {
 }
 
 export interface GeneratedRuntimeAuthority { readonly kind: 'generated-runtime-authority' }
-export type GeneratedDataOperation = GeneratedEnvironmentDeclaration['data']['modes'][number]['operations'][number]['operation']
+type GeneratedDataDeclaration = NonNullable<GeneratedEnvironmentDeclaration['data']>
+export type GeneratedDataOperation = GeneratedDataDeclaration['modes'][number]['operations'][number]['operation']
 export type GeneratedDataStepContext = Readonly<{
     readonly id: string
     readonly phase: 'prerequisite' | 'operation' | 'probe' | 'restore-rewrite' | 'fixture-volume-operation' | 'fixture-volume-probe'
     readonly operationId?: string
-    readonly operationKind?: GeneratedEnvironmentDeclaration['data']['modes'][number]['operations'][number]['kind']
+    readonly operationKind?: GeneratedDataDeclaration['modes'][number]['operations'][number]['kind']
     readonly after?: readonly string[]
     readonly provenance?: Readonly<{ source: string; reason: string }>
 }>
@@ -214,7 +215,8 @@ function sensitiveDecisionSource(declaration: GeneratedEnvironmentDeclaration): 
 
 function decisionInspection(declaration: GeneratedEnvironmentDeclaration, bytes: string, now: string): GeneratedInspectionResult | undefined {
     const headings = [...bytes.matchAll(/^## ([^\n]+)$/gm)].map((match) => match[1]!)
-    const expected = declaration.decisions.entries.map((entry) => `${entry.subject}:${entry.subject_id}`).sort()
+    // Undecided subjects are rendered too, so the log covers every subject, decided or not.
+    const expected = decisionSubjects(declaration).map(({ subject, subjectId }) => `${subject}:${subjectId}`).sort()
     if (new Set(headings).size !== headings.length) return { kind: 'refusal', code: 'GENERATED_DECISION_DUPLICATE', target: declaration.decisions.path, reason: 'decision log contains a duplicate entry' }
     if (headings.length !== expected.length || headings.sort().some((heading, index) => heading !== expected[index])) return { kind: 'refusal', code: 'GENERATED_DECISION_COVERAGE', target: declaration.decisions.path, reason: 'decision log does not cover the declaration exactly' }
     const today = Date.parse(`${now}T00:00:00.000Z`)
@@ -226,6 +228,15 @@ function decisionInspection(declaration: GeneratedEnvironmentDeclaration, bytes:
     }
     if (sensitiveDecisionSource(declaration) || SENSITIVE_TEXT.test(bytes) || redactSensitiveText(bytes) !== bytes) return { kind: 'refusal', code: 'GENERATED_DECISION_SENSITIVE', target: declaration.decisions.path, reason: 'decision log contains a machine-local path or secret material' }
     return undefined
+}
+
+/** The decision-log subjects of an issued render that have no entry, for check to report. */
+export function undecidedGeneratedDecisions(rendered: GeneratedEnvironmentResult): Readonly<{ path: string; undecided: number; subjects: readonly string[] }> | undefined {
+    const declaration = authenticateGeneratedRender(rendered)?.declaration
+    if (!declaration) return undefined
+    const decided = new Set(declaration.decisions.entries.map((entry) => `${entry.subject}:${entry.subject_id}`))
+    const subjects = Object.freeze(decisionSubjects(declaration).map(({ subject, subjectId }) => `${subject}:${subjectId}`).filter((key) => !decided.has(key)))
+    return Object.freeze({ path: declaration.decisions.path, undecided: subjects.length, subjects })
 }
 
 export function inspectGeneratedEnvironment(input: {
@@ -530,14 +541,15 @@ export function inspectGeneratedRuntimeAuthority(authority: GeneratedRuntimeAuth
 }
 
 function declaredDataOperations(declaration: GeneratedEnvironmentDeclaration): readonly GeneratedDataOperation[] {
+    const data = declaration.data
     return [
-        ...declaration.data.modes.flatMap(({ operations, probes }) => [
+        ...(data?.modes ?? []).flatMap(({ operations, probes }) => [
             ...operations.flatMap(({ operation, prerequisites }) => [operation, ...prerequisites]),
             ...probes,
         ]),
-        ...declaration.data.fixtures.volume_operations,
-        ...declaration.data.fixtures.volume_probes,
-        ...declaration.data.restore.rewrites.map(({ operation }) => operation),
+        ...(data?.fixtures?.volume_operations ?? []),
+        ...(data?.fixtures?.volume_probes ?? []),
+        ...(data?.restore?.rewrites ?? []).map(({ operation }) => operation),
     ]
 }
 
@@ -700,7 +712,7 @@ export function observeGeneratedEnvironment(input: {
         observed: missing.length === 0 && !duplicate && failed.length === 0
             ? { state: 'available', value: { generation: authority.generation, observations: admittedIds.sort() }, observedAt }
             : failed.length > 0
-                ? { state: 'failed', reason: `generated observations failed: ${failed.map(({ id }) => id).join(', ')}`, observedAt }
+                ? { state: 'failed', reason: `generated observations failed: ${failed.map(({ id, expected }) => expected.toolPresence === 'unchecked' ? `${id} (tool presence unchecked)` : id).join(', ')}`, observedAt }
                 : { state: 'unavailable', reason: `generated observations are incomplete: ${missing.join(', ') || 'duplicate admission'}`, observedAt },
         expectation: { kind: 'present' },
         applicability: { state: 'required', posture: 'generated-environment' },

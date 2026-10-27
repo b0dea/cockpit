@@ -18,8 +18,8 @@ function derivedConfig(): Record<string, unknown> {
     const policy = structuredClone(config.environment.install_policies[0]!)
     const provenance = structuredClone(service.provenance)
     const operationOwners = [
-        service.image.manifest_probe,
-        service.image.registry_auth_probe,
+        service.image!.manifest_probe,
+        service.image!.registry_auth_probe,
         service.health.probe,
         service.health.tool_probe,
     ]

@@ -43,7 +43,7 @@ describe('generated Compose artifact authority', () => {
         const metadata = authenticateGeneratedRender(rendered)
         expect(metadata).toBeDefined()
         if (!metadata) return
-        expect(Reflect.set(metadata.declaration.services[0]!.image, 'reference', 'synthetic.invalid/mutated:latest')).toBe(false)
+        expect(Reflect.set(metadata.declaration.services[0]!.image!, 'reference', 'synthetic.invalid/mutated:latest')).toBe(false)
         expect(Reflect.set(metadata.declaration.services[0]!.health.probe, 'timeout_seconds', 1)).toBe(false)
 
         const authority = projectGeneratedComposeArtifactAuthority(rendered)

@@ -32,6 +32,7 @@ export const mechanism = {
         'Provenance',
         'GeneratedService',
         'GeneratedEnvironment',
+        'decisionSubjects',
         'DataMode',
         'VendorPosture',
         'Environment',
@@ -253,14 +254,20 @@ export const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
 export const LOCAL_ENDPOINT_URL_PATTERN = String.raw`^https?://[a-z0-9][a-z0-9-]*(?::(?:0|[1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]))?(?:/[^\s?#]*)?$`
 const LOCAL_ENDPOINT_URL_RE = new RegExp(LOCAL_ENDPOINT_URL_PATTERN)
 const LocalEndpointUrl = z.string().max(4096).regex(LOCAL_ENDPOINT_URL_RE)
+// Where a declared value came from. A date records when its source was looked at, so it is
+// required wherever the source lies outside this configuration. The one exception is a value
+// declared by the configuration file itself, which the loader checks by path because the
+// schema cannot see the file name.
 export const Provenance = z.object({
     source: SafeRelativePath.max(4096),
-    observed_on: z.string().date(),
+    observed_on: z.string().date().optional(),
     kind: z.enum(['declared', 'measured', 'inferred']),
     reason: DeclarationReason,
     confirmed: z.boolean().optional(),
 }).strict().refine((value) => value.kind !== 'inferred' || value.confirmed === true, {
     path: ['confirmed'], message: 'inferred declarations require explicit confirmation',
+}).refine((value) => value.kind === 'declared' || value.observed_on !== undefined, {
+    path: ['observed_on'], message: 'measured and inferred provenance require observed_on',
 })
 
 const OverlayOperation = z.object({
@@ -269,7 +276,8 @@ const OverlayOperation = z.object({
     cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]),
     argv: BoundedArgv,
     timeout_seconds: z.number().int().min(1).max(3600),
-    provenance: Provenance,
+    // Absent means the nearest enclosing declaration's provenance applies.
+    provenance: Provenance.optional(),
 }).strict().refine((value) => value.location === 'in-stack' ? value.service !== undefined : value.service === undefined, {
     path: ['service'], message: 'only in-stack operations require a service',
 })
@@ -279,12 +287,14 @@ const GeneratedHostAlias = z.object({
     address: z.union([z.ipv4(), z.ipv6()]),
 }).strict()
 
+const HealthMeasurement = z.object({ duration_seconds: z.number().positive().max(3600), provenance: Provenance }).strict()
+
 export const GeneratedService = z.object({
     id: DeclarationId,
     sibling: DeclarationId,
-    role: z.enum(['service', 'one-shot']),
+    role: z.enum(['service', 'one-shot']).default('service'),
     one_shot_failure: z.literal('park').optional(),
-    profiles: z.array(DeclarationId).max(64),
+    profiles: z.array(DeclarationId).max(64).default([]),
     resources: z.object({
         memory_mb: z.number().int().min(6).max(Math.floor(Number.MAX_SAFE_INTEGER / 1_048_576)),
         // Bound the default 100 ms CPU quota within its signed 64-bit calculation.
@@ -292,32 +302,43 @@ export const GeneratedService = z.object({
         provenance: Provenance,
     }).strict().optional(),
     command: BoundedArgv,
+    // Exactly one of `image` and `build` (checked with the environment). The manifest probe
+    // stays required on an image: it is what verifies the declared architectures exist.
     image: z.object({
         reference: z.string().max(4096).regex(/^[^\s@]+@sha256:[a-f0-9]{64}$/),
         reason: DeclarationReason,
         architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2),
         manifest_probe: OverlayOperation,
         registry_auth_probe: OverlayOperation.optional(),
-        provenance: Provenance,
-    }).strict(),
-    ports: z.array(z.object({ name: DeclarationId, host_variable: EnvironmentName, internal: z.number().int().min(1).max(65535), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).optional() }).strict()).max(256),
+        provenance: Provenance.optional(),
+    }).strict().optional(),
+    // Built from the service's sibling checkout. Both paths are confined: `context` below the
+    // sibling, `dockerfile` below the context, so a build can never reach outside the checkout.
+    build: z.object({
+        context: z.union([z.literal('.'), SafeRelativePath.max(4096)]),
+        dockerfile: SafeRelativePath.max(4096).optional(),
+    }).strict().optional(),
+    ports: z.array(z.object({ name: DeclarationId, host_variable: EnvironmentName, internal: z.number().int().min(1).max(65535), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).optional() }).strict()).max(256).default([]),
     host_aliases: z.array(GeneratedHostAlias).max(64).refine((aliases) => !hasDuplicate(aliases.map(({ hostname }) => hostname)), {
         message: 'generated service host aliases must name unique hostnames',
     }).optional(),
-    mounts: z.array(z.object({ kind: z.enum(['bind', 'volume', 'environment-file']), source: z.union([z.literal('.'), SafeRelativePath.max(4096)]), target: ContainerPath, source_type: z.enum(['file', 'directory']).optional() }).strict().refine((mount) => mount.kind === 'volume' ? mount.source_type === undefined && mount.source !== '.' : mount.kind === 'environment-file' ? mount.source_type === 'file' : mount.source_type !== undefined, { path: ['source_type'], message: 'bind sources require their expected type and volume sources use declared identities' })).max(256),
-    dependencies: z.array(z.object({ service: DeclarationId, condition: z.enum(['service_started', 'service_healthy', 'service_completed_successfully']), reason: DeclarationReason }).strict()).max(256),
+    mounts: z.array(z.object({ kind: z.enum(['bind', 'volume', 'environment-file']), source: z.union([z.literal('.'), SafeRelativePath.max(4096)]), target: ContainerPath, source_type: z.enum(['file', 'directory']).optional() }).strict().refine((mount) => mount.kind === 'volume' ? mount.source_type === undefined && mount.source !== '.' : mount.kind === 'environment-file' ? mount.source_type === 'file' : mount.source_type !== undefined, { path: ['source_type'], message: 'bind sources require their expected type and volume sources use declared identities' })).max(256).default([]),
+    dependencies: z.array(z.object({ service: DeclarationId, condition: z.enum(['service_started', 'service_healthy', 'service_completed_successfully']), reason: DeclarationReason }).strict()).max(256).default([]),
     health: z.object({
-        property: DeclarationReason, probe: OverlayOperation, tool_probe: OverlayOperation,
+        // Without a tool probe a failing property probe cannot say whether the product or the
+        // probe's own tool is missing; failure text names that gap instead of guessing.
+        property: DeclarationReason, probe: OverlayOperation, tool_probe: OverlayOperation.optional(),
         interval_seconds: z.number().int().min(1).max(3600),
         timeout_seconds: z.number().int().min(1).max(3600),
         retries: z.number().int().min(1).max(100),
         start_period_seconds: z.number().int().min(1).max(3600),
-        measurement: z.object({ duration_seconds: z.number().positive().max(3600), provenance: Provenance }).strict(),
-    }).strict().refine((health) => health.start_period_seconds >= health.measurement.duration_seconds, {
+        measurement: HealthMeasurement.optional(),
+    }).strict().refine((health) => health.measurement === undefined || health.start_period_seconds >= health.measurement.duration_seconds, {
         path: ['start_period_seconds'], message: 'start period is shorter than its measurement',
     }),
-    toolchain_pins: z.array(z.object({ path: SafeRelativePath, pinned: z.string().min(1).max(256), observed: z.string().min(1).max(256), provenance: Provenance }).strict()).max(32),
-    provenance: Provenance,
+    toolchain_pins: z.array(z.object({ path: SafeRelativePath, pinned: z.string().min(1).max(256), observed: z.string().min(1).max(256), provenance: Provenance }).strict()).max(32).default([]),
+    // Absent means the value is declared by the configuration file itself.
+    provenance: Provenance.optional(),
 }).strict()
 
 export const DataMode = z.enum(['empty', 'seeded', 'restored'])
@@ -330,7 +351,8 @@ const DataOperation = z.object({
     prerequisites: z.array(OverlayOperation).max(64),
     after: z.array(DeclarationId).max(256),
     fresh_volume_only: z.boolean(),
-    provenance: Provenance,
+    // Absent means the enclosing data mode's provenance applies.
+    provenance: Provenance.optional(),
 }).strict()
 
 const VendorDeclaration = z.object({
@@ -366,67 +388,73 @@ const VendorDeclaration = z.object({
     stub: z.object({ validates: z.array(DeclarationReason).min(1).max(256), rejection_probe: OverlayOperation, outage_probe: OverlayOperation }).strict().optional(),
 }).strict()
 
+const GeneratedVolumes = z.array(z.object({
+    id: DeclarationId, purpose: z.enum(['dependencies', 'product-data']),
+    install_policy: ResettableVolumeId.optional(), target: ContainerPath, provenance: Provenance,
+}).strict()).max(256)
+
+const DECISIONS_PATH = 'docs/cockpit/environment-decisions.md'
+const DECISION_SUBJECTS = ['service', 'volume', 'data-default', 'data-mode', 'restore', 'mount', 'port', 'vendor'] as const
+const DecisionEntries = z.array(z.object({
+    id: DeclarationId, subject: z.enum(DECISION_SUBJECTS),
+    subject_id: z.string().min(1).max(4096),
+    decided_on: z.string().date(), decision: DeclarationReason, rejected: z.array(DeclarationReason).min(1).max(64),
+    reason: DeclarationReason, reviewer: z.literal('consumer-maintainer'), provenance: Provenance,
+}).strict()).max(512)
+
 export const GeneratedEnvironment = z.object({
     compose_file: SafeRelativePath.max(4096),
     services: z.array(GeneratedService).min(1).max(256),
-    volumes: z.array(z.object({
-        id: DeclarationId, purpose: z.enum(['dependencies', 'product-data']),
-        install_policy: ResettableVolumeId.optional(), target: ContainerPath, provenance: Provenance,
-    }).strict()).max(256),
+    volumes: GeneratedVolumes.default([]),
+    // Absent means the stack has no product data step: `up` and `reset` skip it.
     data: z.object({
         volume: DeclarationId,
         default_mode: DataMode,
-        modes: z.array(z.object({ mode: DataMode, operations: z.array(DataOperation).min(1).max(256), probes: z.array(OverlayOperation).min(1).max(64), constraints_and_indexes: z.literal(true), provenance: Provenance }).strict()).length(3),
+        modes: z.array(z.object({ mode: DataMode, operations: z.array(DataOperation).min(1).max(256), probes: z.array(OverlayOperation).min(1).max(64), constraints_and_indexes: z.literal(true), provenance: Provenance }).strict()).min(1).max(3),
         fixtures: z.object({
             writer: z.literal('product-models'), stable_key: DeclarationReason, random_seed: z.string().min(1).max(256).optional(),
             sweep_scope: DeclarationReason, persona_source: SafeRelativePath, identity_owner: z.enum(['product', 'identity-provider']),
             persona_outputs: z.array(z.object({ path: SafeRelativePath, format: z.enum(['json', 'typescript']), reason: DeclarationReason }).strict()).max(64),
             volume_tag: DeclarationId, default_small: z.literal(true), pagination_warning: DeclarationReason, provenance: Provenance,
             volume_operations: z.array(OverlayOperation).min(1).max(256), volume_probes: z.array(OverlayOperation).min(1).max(64),
-        }).strict(),
+        }).strict().optional(),
         restore: z.object({
             rewrites: z.array(z.object({ category: DeclarationId, operation: OverlayOperation, reason: DeclarationReason }).strict()).max(256),
             untouched: z.array(DeclarationReason).min(1).max(256), provenance: Provenance,
-        }).strict(),
-    }).strict(),
-    vendors: z.array(VendorDeclaration).max(256),
+        }).strict().optional(),
+    }).strict().optional(),
+    vendors: z.array(VendorDeclaration).max(256).default([]),
+    // A structural subject without an entry is rendered as undecided rather than refused, so a
+    // small stack does not have to invent a decision record to load.
     decisions: z.object({
-        path: z.literal('docs/cockpit/environment-decisions.md'), ownership: z.literal('whole-file'),
-        entries: z.array(z.object({
-            id: DeclarationId, subject: z.enum(['service', 'volume', 'data-default', 'data-mode', 'restore', 'mount', 'port', 'vendor']),
-            subject_id: z.string().min(1).max(4096),
-            decided_on: z.string().date(), decision: DeclarationReason, rejected: z.array(DeclarationReason).min(1).max(64),
-            reason: DeclarationReason, reviewer: z.literal('consumer-maintainer'), provenance: Provenance,
-        }).strict()).min(1).max(512),
-    }).strict(),
+        path: z.literal(DECISIONS_PATH).default(DECISIONS_PATH), ownership: z.literal('whole-file').default('whole-file'),
+        entries: DecisionEntries.default([]),
+    }).strict().prefault({}),
 }).strict().superRefine((declaration, ctx) => {
     const unique = (values: readonly string[], path: (string | number)[]) => {
         if (hasDuplicate(values)) ctx.addIssue({ code: 'custom', path, message: 'declaration contains duplicate identities' })
     }
     const serviceIds = new Set(declaration.services.map((service) => service.id))
     const volumeIds = new Set(declaration.volumes.map((volume) => volume.id))
-    const vendorIds = new Set(declaration.vendors.map((vendor) => vendor.id))
     unique([...declaration.services.map((service) => service.id)], ['services'])
     unique([...declaration.volumes.map((volume) => volume.id)], ['volumes'])
     unique(declaration.vendors.map((vendor) => vendor.id), ['vendors'])
-    unique(declaration.data.modes.map((mode) => mode.mode), ['data', 'modes'])
     unique(declaration.decisions.entries.map((entry) => entry.id), ['decisions', 'entries'])
     unique(declaration.decisions.entries.map((entry) => `${entry.subject}:${entry.subject_id}`), ['decisions', 'entries'])
-    unique(declaration.data.fixtures.persona_outputs.map((output) => output.path), ['data', 'fixtures', 'persona_outputs'])
     unique(declaration.services.flatMap((service) => service.ports.map((port) => port.host_variable)), ['services', 'ports'])
     unique(declaration.vendors.flatMap((vendor) => [
         ...vendor.endpoints.map((endpoint) => endpoint.variable),
         ...(vendor.nonempty_variables ?? []),
         ...(vendor.egress_guard ? [vendor.egress_guard.flag] : []),
     ]), ['vendors'])
-    if (!declaration.volumes.some((volume) => volume.id === declaration.data.volume && volume.purpose === 'product-data')) ctx.addIssue({ code: 'custom', path: ['data', 'volume'], message: 'data requires a declared product-data volume' })
     const checkOperation = (operation: z.infer<typeof OverlayOperation>, path: (string | number)[]) => {
         if (operation.service !== undefined && !serviceIds.has(operation.service)) ctx.addIssue({ code: 'custom', path, message: 'operation references an undeclared service' })
     }
     for (const [index, service] of declaration.services.entries()) {
         const path = ['services', index]
         unique(service.profiles, [...path, 'profiles'])
-        unique(service.image.architectures, [...path, 'image', 'architectures'])
+        if ((service.image === undefined) === (service.build === undefined)) ctx.addIssue({ code: 'custom', path: [...path, 'image'], message: 'a generated service declares exactly one of image or build' })
+        if (service.image) unique(service.image.architectures, [...path, 'image', 'architectures'])
         unique(service.ports.map((port) => port.name), [...path, 'ports'])
         unique(service.mounts.map((mount) => mount.target), [...path, 'mounts'])
         unique(service.dependencies.map((dependency) => dependency.service), [...path, 'dependencies'])
@@ -437,10 +465,10 @@ export const GeneratedEnvironment = z.object({
         for (const mount of service.mounts) {
             if (mount.kind === 'volume' && !volumeIds.has(mount.source)) ctx.addIssue({ code: 'custom', path: [...path, 'mounts'], message: 'mount references an undeclared volume' })
         }
-        for (const probe of [service.health.probe, service.health.tool_probe]) {
+        for (const probe of [service.health.probe, ...(service.health.tool_probe ? [service.health.tool_probe] : [])]) {
             if (probe.location !== 'in-stack' || probe.service !== service.id) ctx.addIssue({ code: 'custom', path: [...path, 'health'], message: 'health probes must run in the image they measure' })
         }
-        for (const [name, operation] of Object.entries({ manifest_probe: service.image.manifest_probe, registry_auth_probe: service.image.registry_auth_probe, health_probe: service.health.probe, health_tool_probe: service.health.tool_probe })) {
+        for (const [name, operation] of Object.entries({ manifest_probe: service.image?.manifest_probe, registry_auth_probe: service.image?.registry_auth_probe, health_probe: service.health.probe, health_tool_probe: service.health.tool_probe })) {
             if (operation) checkOperation(operation, [...path, name])
         }
     }
@@ -462,7 +490,17 @@ export const GeneratedEnvironment = z.object({
             if (mounts.length === 0 || mounts.some((mount) => mount.target !== volume.target)) ctx.addIssue({ code: 'custom', path: ['volumes', index, 'target'], message: 'dependency volume requires a matching service mount target' })
         }
     }
-    for (const [index, mode] of declaration.data.modes.entries()) {
+    const data = declaration.data
+    if (data) {
+        unique(data.modes.map((mode) => mode.mode), ['data', 'modes'])
+        if (!declaration.volumes.some((volume) => volume.id === data.volume && volume.purpose === 'product-data')) ctx.addIssue({ code: 'custom', path: ['data', 'volume'], message: 'data requires a declared product-data volume' })
+        if (!data.modes.some(({ mode }) => mode === data.default_mode)) ctx.addIssue({ code: 'custom', path: ['data', 'default_mode'], message: 'the default data mode must be one of the declared modes' })
+        if (data.modes.some(({ mode }) => mode === 'seeded') && !data.fixtures) ctx.addIssue({ code: 'custom', path: ['data', 'fixtures'], message: 'a seeded data mode requires its fixtures declaration' })
+        // Restore rewrites run only in the restored mode; without it they would parse and do nothing.
+        if (data.modes.some(({ mode }) => mode === 'restored') !== (data.restore !== undefined)) ctx.addIssue({ code: 'custom', path: ['data', 'restore'], message: 'a restore declaration is required by, and only by, a restored data mode' })
+        if (data.fixtures) unique(data.fixtures.persona_outputs.map((output) => output.path), ['data', 'fixtures', 'persona_outputs'])
+    }
+    for (const [index, mode] of (data?.modes ?? []).entries()) {
         const ids = new Set(mode.operations.map((step) => step.id))
         unique(mode.operations.map((step) => step.id), ['data', 'modes', index, 'operations'])
         const completed = new Set<string>()
@@ -478,9 +516,9 @@ export const GeneratedEnvironment = z.object({
         if (!kinds.has('schema') || (mode.mode === 'empty' && [...kinds].some((kind) => kind !== 'schema')) || (mode.mode === 'seeded' && (!kinds.has('sweep') || !kinds.has('fixtures') || kinds.has('restore'))) || (mode.mode === 'restored' && !kinds.has('restore'))) ctx.addIssue({ code: 'custom', path: ['data', 'modes', index, 'operations'], message: 'data mode lacks its declared schema, seed or restore operations' })
         mode.probes.forEach((operation, i) => checkOperation(operation, ['data', 'modes', index, 'probes', i]))
     }
-    declaration.data.restore.rewrites.forEach((rewrite, i) => checkOperation(rewrite.operation, ['data', 'restore', 'rewrites', i]))
-    declaration.data.fixtures.volume_operations.forEach((operation, i) => checkOperation(operation, ['data', 'fixtures', 'volume_operations', i]))
-    declaration.data.fixtures.volume_probes.forEach((operation, i) => checkOperation(operation, ['data', 'fixtures', 'volume_probes', i]))
+    data?.restore?.rewrites.forEach((rewrite, i) => checkOperation(rewrite.operation, ['data', 'restore', 'rewrites', i]))
+    data?.fixtures?.volume_operations.forEach((operation, i) => checkOperation(operation, ['data', 'fixtures', 'volume_operations', i]))
+    data?.fixtures?.volume_probes.forEach((operation, i) => checkOperation(operation, ['data', 'fixtures', 'volume_probes', i]))
     for (const [index, vendor] of declaration.vendors.entries()) {
         const path = ['vendors', index]
         unique(vendor.endpoints.map((endpoint) => endpoint.variable), [...path, 'endpoints'])
@@ -497,25 +535,28 @@ export const GeneratedEnvironment = z.object({
         }
         vendor.shadow_files?.forEach((file, i) => checkOperation(file.probe, [...path, 'shadow_files', i]))
     }
-    const decisions = new Map<string, string[]>([
-        ['service', declaration.services.map((service) => service.id)],
-        ['volume', declaration.volumes.map((volume) => volume.id)],
-        ['data-default', [declaration.data.default_mode]],
-        ['data-mode', declaration.data.modes.map((mode) => mode.mode)],
-        ['restore', ['policy']],
-        ['mount', declaration.services.flatMap((service) => service.mounts.map((mount) => `${service.id}:${mount.kind}:${mount.source}:${mount.target}`))],
-        ['port', declaration.services.flatMap((service) => service.ports.map((port) => `${service.id}:${port.name}`))],
-        ['vendor', [...vendorIds]],
-    ])
+    const subjects = new Set(decisionSubjects(declaration).map(({ subject, subjectId }) => `${subject}:${subjectId}`))
     for (const [index, entry] of declaration.decisions.entries.entries()) {
-        if (!decisions.get(entry.subject)?.includes(entry.subject_id)) ctx.addIssue({ code: 'custom', path: ['decisions', 'entries', index, 'subject_id'], message: 'decision references an undeclared subject' })
-    }
-    for (const [subject, ids] of decisions) {
-        for (const id of ids) {
-            if (!declaration.decisions.entries.some((entry) => entry.subject === subject && entry.subject_id === id)) ctx.addIssue({ code: 'custom', path: ['decisions', 'entries'], message: 'every rendered structural choice and vendor requires one decision entry' })
-        }
+        if (!subjects.has(`${entry.subject}:${entry.subject_id}`)) ctx.addIssue({ code: 'custom', path: ['decisions', 'entries', index, 'subject_id'], message: 'decision references an undeclared subject' })
     }
 })
+
+export type DecisionSubject = Readonly<{ subject: typeof DECISION_SUBJECTS[number]; subjectId: string; service?: string }>
+
+/** Every structural choice the rendered stack makes, in decision-log order; each may or may not have an entry. */
+export function decisionSubjects(declaration: Pick<GeneratedEnvironment, 'services' | 'volumes' | 'data' | 'vendors'>): readonly DecisionSubject[] {
+    const subjects: DecisionSubject[] = [
+        ...declaration.services.map((service) => ({ subject: 'service' as const, subjectId: service.id, service: service.id })),
+        ...declaration.volumes.map((volume) => ({ subject: 'volume' as const, subjectId: volume.id })),
+        ...(declaration.data ? [{ subject: 'data-default' as const, subjectId: declaration.data.default_mode }] : []),
+        ...(declaration.data?.modes ?? []).map((mode) => ({ subject: 'data-mode' as const, subjectId: mode.mode })),
+        ...(declaration.data?.restore ? [{ subject: 'restore' as const, subjectId: 'policy' }] : []),
+        ...declaration.services.flatMap((service) => service.mounts.map((mount) => ({ subject: 'mount' as const, subjectId: `${service.id}:${mount.kind}:${mount.source}:${mount.target}`, service: service.id }))),
+        ...declaration.services.flatMap((service) => service.ports.map((port) => ({ subject: 'port' as const, subjectId: `${service.id}:${port.name}`, service: service.id }))),
+        ...declaration.vendors.map((vendor) => ({ subject: 'vendor' as const, subjectId: vendor.id })),
+    ]
+    return subjects.sort((left, right) => `${left.subject}:${left.subjectId}`.localeCompare(`${right.subject}:${right.subjectId}`))
+}
 
 export type GeneratedEnvironment = z.infer<typeof GeneratedEnvironment>
 export type DataMode = z.infer<typeof DataMode>
@@ -575,9 +616,9 @@ const SiblingGeneratedDerivation = z.object({
         `port defaults must not exceed ${STRUCTURED_INPUT_ENTRY_LIMIT} entries`,
     ),
     entrypoints: z.array(EntrypointDerivative).max(256),
-    volumes: GeneratedEnvironment.shape.volumes.optional(),
+    volumes: GeneratedVolumes.optional(),
     install_policies: z.array(InstallPolicy).max(256).optional(),
-    decisions: GeneratedEnvironment.shape.decisions.shape.entries,
+    decisions: DecisionEntries.min(1),
     provenance: Provenance,
 }).strict().superRefine((generated, ctx) => {
     const hostVariables = generated.service.ports.map((port) => port.host_variable)
@@ -805,7 +846,7 @@ export const Browser = z.object({
         'browser harness targets must be unique',
     ),
     images: z.object({ runner: BrowserImage.extend({ architectures: z.array(z.enum(['amd64', 'arm64'])).min(1).max(2).refine((values) => !hasDuplicate(values), 'browser image architectures must be unique').optional() }), mcp: BrowserImage }).strict(),
-    runner_health_measurement: GeneratedService.shape.health.shape.measurement.optional(),
+    runner_health_measurement: HealthMeasurement.optional(),
     resources: GeneratedService.shape.resources,
     project: z.object({
         manifest: GeneratedHostPath.optional(),

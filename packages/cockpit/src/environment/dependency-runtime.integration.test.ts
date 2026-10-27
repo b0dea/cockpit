@@ -363,7 +363,7 @@ describe('generated dependency runtime', () => {
                 : 'DEPENDENCY_RUNTIME_PAIRED_CONTROLS_INCOMPLETE',
             configSha256: sourceSha256,
             generation,
-            images: { glibcReferenceSha256: sha256(service.image.reference), muslReferenceSha256: sha256(muslImage) },
+            images: { glibcReferenceSha256: sha256(service.image!.reference), muslReferenceSha256: sha256(muslImage) },
             generatedAdmission: true,
             candidate,
             unmountedControl,

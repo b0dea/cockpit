@@ -31,7 +31,7 @@ export const observationDeclarations = Object.freeze([
     { id: 'external-dependencies', owner: mechanism.id, postures: ['external-dependencies'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.EXTERNAL_DEPENDENCIES_UNAVAILABLE, isIssued: isExternalDependencyObservation, issuedAt: externalDependencyObservationIssuedAt },
 ] as const)
 
-const VendorDeclaration = GeneratedEnvironment.shape.vendors.element
+const VendorDeclaration = GeneratedEnvironment.shape.vendors.unwrap().element
 type Vendor = typeof VendorDeclaration._output
 type Operation = Vendor['loader_probe']
 const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
