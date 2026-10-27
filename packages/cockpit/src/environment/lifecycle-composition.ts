@@ -930,7 +930,7 @@ export function createLifecycleCommandAdapters(
             portLeaseProjection: ports,
         // A compose-first stack reads its host ports from the [ports.bases] variables, so the lease
         // reaches Compose as those variables instead of the `${VAR:-default}` fallback.
-        } : !generated && ports ? { portLeaseProjection: ports } : undefined)
+        } : !generated ? { ownComposeFiles: true as const, ...(ports ? { portLeaseProjection: ports } : {}) } : undefined)
         if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
         const topologyPlan = createRuntimeTopologyPlan({

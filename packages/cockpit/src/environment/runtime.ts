@@ -298,7 +298,8 @@ export interface ComposeArtifact {
 
 export type RuntimeAdapterAuthority =
     | Readonly<{ generatedComposeAuthority: GeneratedComposeArtifactAuthority; portLeaseProjection?: PortLeaseProjection }>
-    | Readonly<{ portLeaseProjection: PortLeaseProjection }>
+    /** A compose-first stack's own files, which interpolate the lease and their own defaults. */
+    | Readonly<{ ownComposeFiles: true; portLeaseProjection?: PortLeaseProjection }>
 
 const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]*\}\}/
 
@@ -1050,12 +1051,14 @@ export function createRuntimeAdapter(
     const capturedAuthority = authority === undefined ? undefined
         : captureOwnValues(authority, ['generatedComposeAuthority'])
             ?? captureOwnValues(authority, ['generatedComposeAuthority', 'portLeaseProjection'])
-            ?? captureOwnValues(authority, ['portLeaseProjection'])
+            ?? captureOwnValues(authority, ['ownComposeFiles'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'portLeaseProjection'])
+    const ownComposeFiles = capturedAuthority?.ownComposeFiles === true
     const generatedComposeAuthority = capturedAuthority?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined
     const suppliedPortProjection = capturedAuthority?.portLeaseProjection as PortLeaseProjection | undefined
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
     // A compose-first stack has no cockpit-rendered artifact to authenticate, only its port lease.
-    if ((authority !== undefined && (!capturedAuthority || generatedComposeAuthority === undefined && suppliedPortProjection === undefined))
+    if ((authority !== undefined && (!capturedAuthority || generatedComposeAuthority === undefined && !ownComposeFiles))
         || (suppliedPortProjection !== undefined && portProjection === undefined)) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime artifact authority is malformed', 'runtime-input')
     }
@@ -1136,10 +1139,9 @@ export function createRuntimeAdapter(
                 sha256: source.sha256,
                 sourceSha256: input.labels.configSha256 ?? '',
             })
-        // Only a compose-first stack, which brings its lease and no generated authority, interpolates
-        // its own file; a generated file's tokens are admitted only through its authority.
-        const composeFirst = generatedComposeAuthority === undefined && portProjection !== undefined
-        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource && !(composeFirst && composeTokensResolved(source.source, generatedPortNames)))
+        // Only the cockpit's own Compose files, declared as such by readiness, interpolate; a
+        // generated file's tokens are admitted only through its authority.
+        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource && !(ownComposeFiles && composeTokensResolved(source.source, generatedPortNames)))
             || source.source.includes('\0')) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose artifact contains unresolved or unsafe data', source.reference)
         }

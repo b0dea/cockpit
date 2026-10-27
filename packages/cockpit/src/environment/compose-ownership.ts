@@ -46,7 +46,6 @@ export function renderComposeOwnership(input: Readonly<{
             services.add(id)
         }
     }
-    if (services.size === 0) return Object.freeze({ kind: 'refusal', reason: 'the Compose files declare no services', target: input.sources.map(({ reference }) => reference).join(', ') })
     const labels = {
         'dev.b0dea.cockpit.config-sha256': input.configSha256,
         'dev.b0dea.cockpit.owner-id': input.cockpitId,

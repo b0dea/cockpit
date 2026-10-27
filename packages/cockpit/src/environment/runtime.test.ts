@@ -1681,7 +1681,7 @@ fi
                 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256,
             } } } }, [], {
                 composeFiles: [ownFile], env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
-                authority: { portLeaseProjection: ownProjection },
+                authority: { ownComposeFiles: true, portLeaseProjection: ownProjection },
             })
             if (owned.admitted.kind !== 'complete') throw new Error(owned.admitted.reason)
             expect(projectRuntimeExecutionEnvironment(owned.admitted.topology)).toEqual({
@@ -1696,7 +1696,7 @@ fi
                 env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
                 labels: { stackId: stack, configSha256, batchId }, stackId: stack,
                 coldStartLimitMillis: 60_000, expectedMountSources: [],
-            }, { portLeaseProjection: projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })! })).toMatchObject({
+            }, { ownComposeFiles: true, portLeaseProjection: projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })! })).toMatchObject({
                 kind: 'refusal', diagnostics: [{ message: 'compose artifact contains unresolved or unsafe data' }],
             })
             rmSync(ownPath, { force: true })

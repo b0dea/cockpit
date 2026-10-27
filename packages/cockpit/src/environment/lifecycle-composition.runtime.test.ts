@@ -27,6 +27,18 @@ import {
     type RuntimeTopologyEvidence,
 } from './runtime.js'
 import { createLifecycleCompositionFixtureSupport } from '../../test-support/lifecycle-composition-fixture.js'
+import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
+
+// Stands in for `sync`: a compose_files stack runs only with the ownership override rendered from
+// its current Compose file and identity.
+async function publishComposeOwnership(checkout: string, context: { readonly stackId: string; readonly cockpitId: string; readonly source: { readonly sha256: string } }) {
+    const rendered = renderComposeOwnership({
+        sources: [{ reference: 'compose.yml', source: await readFile(join(checkout, 'compose.yml'), 'utf8') }],
+        stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
+    })
+    if (rendered.kind !== 'complete') throw new Error(rendered.reason)
+    await writeFile(join(checkout, COMPOSE_OWNERSHIP_FILE), rendered.bytes)
+}
 
 const run = promisify(execFile)
 const roots: string[] = []
@@ -106,6 +118,7 @@ describe('production lifecycle adapter composition', () => {
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
+        await publishComposeOwnership(candidate.checkout, loaded.result)
         await writeFile(candidate.composePath, [
             'services:',
             '  api:',
@@ -114,6 +127,7 @@ describe('production lifecycle adapter composition', () => {
             `      dev.b0dea.cockpit.config-sha256: ${loaded.result.source.sha256}`,
             '',
         ].join('\n'))
+        await publishComposeOwnership(candidate.checkout, loaded.result)
         await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({
             services: {
                 api: {
@@ -190,6 +204,7 @@ describe('production lifecycle adapter composition', () => {
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
+        await publishComposeOwnership(candidate.checkout, loaded.result)
         const labels = {
             'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
             'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
@@ -368,6 +383,7 @@ describe('production lifecycle adapter composition', () => {
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind).toBe('complete')
         if (loaded.kind !== 'complete') return
+        await publishComposeOwnership(candidate.checkout, loaded.result)
         await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({ services: { api: { labels: {
             'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
             'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
@@ -444,6 +460,7 @@ describe('production lifecycle adapter composition', () => {
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
+        await publishComposeOwnership(candidate.checkout, loaded.result)
         const labels = {
             'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
             'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,

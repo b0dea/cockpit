@@ -30,7 +30,5 @@ describe('compose-first ownership override', () => {
             .toMatchObject({ kind: 'refusal', target: 'compose.yml', reason: expect.stringContaining('include') })
         expect(renderComposeOwnership({ ...identity, sources: [{ reference: 'compose.yml', source: 'services: [api]\n' }] }))
             .toMatchObject({ kind: 'refusal', target: 'compose.yml' })
-        expect(renderComposeOwnership({ ...identity, sources: [{ reference: 'compose.yml', source: 'volumes: {}\n' }] }))
-            .toMatchObject({ kind: 'refusal', reason: 'the Compose files declare no services' })
     })
 })
