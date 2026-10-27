@@ -1551,6 +1551,25 @@ fi
             { ...topology, services: { api: { ...topology.services.api, labels: { ...topology.services.api.labels, 'dev.b0.cockpit.generation': 'bad' } } } },
             { ...topology, volumes: { dependencies: { name: '../escaped' } } },
         ]) expect((await topologyEvidence(mutation)).admitted.kind).toBe('unavailable')
+
+        // A generated service Compose builds from a local context has no pinned identity, and its first
+        // start includes the build, so the start is held to the declared cold start, not the command budget.
+        const { image: _pinned, ...unpinned } = topology.services.api
+        const built = { ...topology, services: { api: { ...unpinned, build: { context: directory, dockerfile: 'Dockerfile' } } } }
+        const builtEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
+        if (builtEvidence.kind !== 'complete') throw new Error(builtEvidence.reason)
+        expect(builtEvidence.topology.services[0]).toMatchObject({ id: 'api', image: null, generation })
+        const builtStart = createRuntimeServicePlan({ topology: builtEvidence.topology, service: 'api' })
+        if (builtStart.kind !== 'planned') throw new Error('built service plan unavailable')
+        expect(builtStart.start.timeoutMs).toBe(60_000)
+        const pinnedEvidence = (await topologyEvidence(topology, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
+        if (pinnedEvidence.kind !== 'complete') throw new Error(pinnedEvidence.reason)
+        const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
+        if (pinnedStart.kind !== 'planned') throw new Error('pinned service plan unavailable')
+        expect(pinnedStart.start.timeoutMs).toBe(10_000)
+        for (const build of [{ context: 'relative', dockerfile: 'Dockerfile' }, { context: directory }, { context: directory, dockerfile: 'Dockerfile', args: {} }]) {
+            expect((await topologyEvidence({ ...topology, services: { api: { ...unpinned, build } } })).admitted.kind).toBe('unavailable')
+        }
     })
 
     it('projects only the exact authenticated runtime environment used for topology admission', async () => {

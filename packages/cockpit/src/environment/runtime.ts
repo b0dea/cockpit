@@ -1422,6 +1422,15 @@ function namedVolumeMounts(
     return Object.freeze([...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
 }
 
+// Compose projects a generated build as an absolute local context with a Dockerfile name.
+function generatedBuild(value: unknown): boolean {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    const { context, dockerfile, ...rest } = value as Record<string, unknown>
+    return Object.keys(rest).length === 0 && typeof context === 'string' && isAbsolute(context)
+        && normalize(context) === context && localBuildContext(context)
+        && typeof dockerfile === 'string' && dockerfile.length > 0 && !dockerfile.includes('\0')
+}
+
 function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, activeProfiles: readonly string[]): {
     readonly services: readonly RuntimeTopologyService[]
     readonly order: readonly string[]
@@ -1472,9 +1481,13 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
             const generation = (labels as Record<string, unknown>)['dev.b0.cockpit.generation']
             const sourceSha256 = (labels as Record<string, unknown>)['dev.b0.cockpit.source-sha256']
             const image = service.image
+            // A generated service runs a digest-pinned image or one Compose builds from a local
+            // context; a built service has no pinned identity, so it carries no image here.
+            const built = image === undefined && generatedBuild(service.build)
             if (generated !== undefined && generated !== '1'
                 || generated === '1' && (typeof generation !== 'string' || !SHA256.test(generation)
-                    || sourceSha256 !== configSha256 || typeof image !== 'string' || !PINNED_IMAGE.test(image))) return undefined
+                    || sourceSha256 !== configSha256
+                    || !built && (typeof image !== 'string' || !PINNED_IMAGE.test(image)))) return undefined
             edgeCount += dependsOn.length + mounts.length + namedMounts.length
             if (edgeCount > MAX_TOPOLOGY_EDGES) return undefined
             byId.set(id, Object.freeze({
@@ -1482,7 +1495,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
                 dependsOn,
                 bindMountSources: mounts,
                 namedVolumeMounts: namedMounts,
-                image: generated === '1' ? image as string : null,
+                image: generated === '1' && !built ? image as string : null,
                 generation: generated === '1' ? generation as string : null,
                 sourceSha256: generated === '1' ? sourceSha256 as string : null,
                 healthcheck,
@@ -1843,8 +1856,13 @@ function runtimeServiceInitialSteps(
     service: RuntimeTopologyService,
     issuanceId: string,
 ): RuntimeServiceInitialSteps | undefined {
+    // Compose builds a generated service's image inside its first start, and the declared
+    // cold_start_seconds already bounds start through health, so a built service's start gets that
+    // bound instead of the ordinary command budget, which a first build outruns.
+    const built = typeof service.generation === 'string' && service.image === null
     const start = derivedComposeStep(
-        topologyContract.step,
+        built ? { ...topologyContract.step, timeoutMs: Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis) }
+            : topologyContract.step,
         `runtime:docker-compose:start:${service.id}`,
         'up',
         ['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', service.id],
