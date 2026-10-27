@@ -1416,6 +1416,13 @@ fi
         const budgetedStop = createRuntimeStopPlan({ topology: budgeted.admitted.topology, attempt: (await drainAuthority(budgeted)).authority })
         if (budgetedStop.kind !== 'planned') throw new Error(budgetedStop.reason)
         expect(budgetedStop.step.timeoutMs).toBe(20_000)
+        // Compose stops a dependent before its dependency, so a two-level stack pays the grace twice.
+        const layered = await topologyEvidence({ services: { api: {}, web: { depends_on: { api: {} } } } }, [], { timeoutMs: 10_000 })
+        if (layered.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
+        const layeredStop = createRuntimeStopPlan({ topology: layered.admitted.topology, attempt: (await drainAuthority(layered)).authority })
+        if (layeredStop.kind !== 'planned') throw new Error(layeredStop.reason)
+        // 10s budget + 2 x 10s grace, held to the 30s the fixture attempt remains valid.
+        expect(layeredStop.step.timeoutMs).toBeGreaterThan(25_000)
         const observation = createRuntimeStopObservationPlan({ plan: stop, outcome: await executeProbe(stop.step) })
         if (observation.kind !== 'planned') throw new Error(observation.reason)
         expect(createRuntimeStopObservationPlan({ plan: stop, outcome: await executeProbe(stop.step) }).kind).toBe('unavailable')

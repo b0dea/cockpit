@@ -1221,9 +1221,23 @@ const MAX_TOPOLOGY_SERVICES = 4_096
 const MAX_TOPOLOGY_EDGES = 16_384
 const MAX_OBSERVATION_WINDOW_MS = 300_000
 // `compose stop` waits up to each service's stop grace (Compose default 10s) before it kills a
-// process that ignores SIGTERM, which a shell or Node.js running as PID 1 does. A stop held to the
-// ordinary 10s command budget timed out on such a service and left the drain attempt for repair.
+// process that ignores SIGTERM, which a shell or Node.js running as PID 1 does. It stops dependents
+// before their dependencies, one dependency level at a time, so the grace is paid once per level. A
+// stop held to the ordinary 10s command budget timed out on such a service and left the drain
+// attempt for repair; one grace for a two-level stack timed out the same way.
 const COMPOSE_STOP_GRACE_MS = 10_000
+
+function dependencyLevels(services: ReadonlyMap<string, RuntimeTopologyService>): number {
+    const levels = new Map<string, number>()
+    const level = (id: string): number => {
+        const known = levels.get(id)
+        if (known !== undefined) return known
+        const value = 1 + Math.max(0, ...(services.get(id)?.dependsOn ?? []).map(level))
+        levels.set(id, value)
+        return value
+    }
+    return Math.max(1, ...[...services.keys()].map(level))
+}
 const SERVICE_ID = /^[a-z0-9][a-z0-9_.-]*$/
 const CONTAINER_ID = /^[a-f0-9]{64}$/
 const SHORT_CONTAINER_ID = /^[a-f0-9]{12}$/
@@ -3075,7 +3089,7 @@ export function createRuntimeStopPlan(input: {
             || now < Date.parse(attempt.committedAt) || now > Date.parse(attempt.validThrough)) return unavailableRuntimeStop()
         const remainingMs = Date.parse(attempt.validThrough) - now
         const step = derivedComposeStep(
-            { ...topologyContract.step, timeoutMs: topologyContract.step.timeoutMs + COMPOSE_STOP_GRACE_MS },
+            { ...topologyContract.step, timeoutMs: topologyContract.step.timeoutMs + COMPOSE_STOP_GRACE_MS * dependencyLevels(topologyContract.services) },
             `runtime:docker-compose:stop:${topologyContract.runtime.projectName}`,
             'stop',
             ['--progress', 'quiet', 'stop'],
