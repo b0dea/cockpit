@@ -236,6 +236,7 @@ describe('maintainer reference boundary', () => {
                 { code: 'REFERENCE_COPY_MISSING', target: 'docs/configuration-reference.md' },
                 { code: 'REFERENCE_COPY_MISSING', target: 'docs/command-list.md' },
                 { code: 'REFERENCE_COPY_MISSING', target: 'docs/capability-matrix.md' },
+                { code: 'REFERENCE_COPY_MISSING', target: 'skills/adopt-cockpit/SKILL.md' },
                 { code: 'REFERENCE_COPY_STALE', target: 'docs/troubleshooting.md' },
             ])
             const preview = await publishRepositoryReferences(`${root}/`, { dryRun: true })

@@ -167,6 +167,7 @@ async function referencePublication() {
         ['docs/configuration-reference.md', 'configuration\n'],
         ['docs/command-list.md', 'commands\n'],
         ['docs/capability-matrix.md', 'capabilities\n'],
+        ['skills/adopt-cockpit/SKILL.md', 'skill\n'],
     ] as const
     const sourceSha256 = digest(packageBytes)
     const generation = digest('reference-generation')
@@ -731,7 +732,7 @@ describe('generated publication transaction', () => {
         const result = await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true })
         expect(result).toMatchObject({ kind: 'complete', committedPaths: [
             'docs/capability-matrix.md', 'docs/cli-reference.md', 'docs/command-list.md', 'docs/configuration-reference.md',
-            'docs/troubleshooting.md', referenceLedgerPath,
+            'docs/troubleshooting.md', 'skills/adopt-cockpit/SKILL.md', referenceLedgerPath,
         ] })
         expect(await readFile(join(root, 'docs/troubleshooting.md'), 'utf8')).toBe(postimage)
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe('consumer estate remains foreign\n')

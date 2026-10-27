@@ -20,6 +20,7 @@ const IMPLEMENTATION_ROOTS = Object.freeze([
     'packages/cockpit/libexec/rulesync-generator.cjs',
     'packages/cockpit/src',
     'packages/cockpit/surfaces',
+    'packages/cockpit/src/references/adopt-cockpit.skill.md',
     'scripts/diagnostic-inventory.mjs',
     'scripts/diagnostic-inventory.d.mts',
     'scripts/docs-lint.mjs',
@@ -39,6 +40,7 @@ const SHIPPED_ASSETS = Object.freeze({
     ]),
     collection: 'packages/cockpit/surfaces/skills/collection.json',
     terminal: 'packages/cockpit/surfaces/skills/procedures/onboarding.md',
+    adoptSkillTemplate: 'packages/cockpit/src/references/adopt-cockpit.skill.md',
 })
 const TROUBLESHOOTING_PATH = 'docs/troubleshooting.md'
 
@@ -801,7 +803,8 @@ async function prepareRender(root, candidate, bootstrapOwners, troubleshooting) 
     const inventory = diagnosticInventoryFromSources([...sources.keys()], sources)
     const prepared = await owners.references.prepareCommittedCapabilityProjection(projectionInput(record))
     if (prepared?.kind !== 'complete') return { result: prepared ?? referenceRefusal('REFERENCE_OWNER_UNAVAILABLE', 'committed capability owner returned no result') }
-    const rendered = owners.references.renderReferences({ committed: prepared.projection, diagnostics: inventory, troubleshooting })
+    const adoptSkill = { template: textBlob(record, SHIPPED_ASSETS.adoptSkillTemplate), procedure: textBlob(record, SHIPPED_ASSETS.terminal) }
+    const rendered = owners.references.renderReferences({ committed: prepared.projection, diagnostics: inventory, troubleshooting, adoptSkill })
     if (rendered?.kind !== 'complete') return { result: rendered ?? referenceRefusal('REFERENCE_OWNER_UNAVAILABLE', 'reference renderer returned no result') }
     if (!await revalidateCommittedInputs(snapshot, owners)) return { result: referenceRefusal('REFERENCE_SOURCE_CHANGED', 'committed reference inputs changed during preparation') }
     return { snapshot, rendered, owners }

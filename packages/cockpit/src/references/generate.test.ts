@@ -22,10 +22,11 @@ const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex
 const begin = '<!-- cockpit:diagnostic-index:begin -->'
 const end = '<!-- cockpit:diagnostic-index:end -->'
 const prose = `# Troubleshooting\r\n\r\nKeep this human paragraph.\r\n${begin}\nold index\n${end}\r\n\r\nKeep the suffix.\r\n`
-const wholePaths = ['docs/cli-reference.md', 'docs/configuration-reference.md', 'docs/command-list.md', 'docs/capability-matrix.md']
+const wholePaths = ['docs/cli-reference.md', 'docs/configuration-reference.md', 'docs/command-list.md', 'docs/capability-matrix.md', 'skills/adopt-cockpit/SKILL.md']
 let skills: AdmittedSkillCollection
 let capabilities: GeneratedSurfaceSelftestProjection
 let committed: CommittedCapabilityProjection
+let adoptSkill: { template: string; procedure: string }
 
 async function shippedAssets() {
     const surfaceRoot = 'packages/cockpit/surfaces'
@@ -58,6 +59,7 @@ async function shippedAssets() {
 beforeAll(async () => {
     const surfaceRoot = 'packages/cockpit/surfaces/skills'
     const terminalBytes = await readFile(`${surfaceRoot}/procedures/onboarding.md`, 'utf8')
+    adoptSkill = { template: await readFile('packages/cockpit/src/references/adopt-cockpit.skill.md', 'utf8'), procedure: terminalBytes }
     const collectionBytes = await readFile(`${surfaceRoot}/collection.json`, 'utf8')
     const sources = (await Promise.all(['bootstrap', 'explain', 'fix'].map(async name => [
         { path: `skills/${name}/SKILL.md`, bytes: await readFile(`${surfaceRoot}/${name}.skill.md`, 'utf8') },
@@ -90,7 +92,7 @@ function input(troubleshooting = prose) {
         owners: new Map([['SYNTHETIC_FAILURE', new Set(['packages/cockpit/src/document/command.ts'])]]),
         remedies: new Map([['SYNTHETIC_FAILURE', new Set(['repair the synthetic input'])]]),
         commandOwners: new Map([['document', new Set(['packages/cockpit/src/document/command.ts'])]]) },
-        capabilities, guideCosts: [] }
+        capabilities, guideCosts: [], adoptSkill }
 }
 
 async function fixture() {
@@ -100,6 +102,7 @@ async function fixture() {
     const sourceSha256 = digest('synthetic source')
     await mkdir(join(root, 'docs'))
     await mkdir(join(root, '.cockpit'))
+    await mkdir(join(root, 'skills/adopt-cockpit'), { recursive: true })
     await writeFile(join(root, 'docs/troubleshooting.md'), prose)
     await Promise.all(wholePaths.map(path => writeFile(join(root, path), 'prior')))
     const blobs = new Map([...wholePaths.map(path => [path, 'prior'] as const), ['docs/troubleshooting.md', prose]])
@@ -138,7 +141,7 @@ async function fixture() {
 
 describe('reference generation', () => {
     it('renders captured repository sources for committed collection, displacement and entrypoints', () => {
-        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose })
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         expect(rendered.kind).toBe('complete')
         if (rendered.kind !== 'complete') return
         const configuration = rendered.files[1]!.bytes
@@ -153,7 +156,7 @@ describe('reference generation', () => {
     })
 
     it('emits generated reference files with exactly one terminal newline', () => {
-        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose })
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         expect(rendered.kind).toBe('complete')
         if (rendered.kind !== 'complete') return
         for (const file of rendered.files) expect(file.bytes, file.path).toMatch(/[^\n]\n$/)
@@ -180,24 +183,24 @@ describe('reference generation', () => {
         const prepared = await prepareCommittedCapabilityProjection(assets)
         expect(prepared.kind).toBe('complete')
         if (prepared.kind !== 'complete') return
-        const before = renderReferences({ committed: prepared.projection, diagnostics: input().diagnostics, troubleshooting: prose })
+        const before = renderReferences({ committed: prepared.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         assets.sourceAssets[0]!.path = 'foreign/collection.json'
         assets.sourceAssets[0]!.bytes = 'foreign bytes'
-        expect(renderReferences({ committed: prepared.projection, diagnostics: input().diagnostics, troubleshooting: prose })).toEqual(before)
+        expect(renderReferences({ committed: prepared.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })).toEqual(before)
     })
     it('derives committed capability strength from shipped bytes and refuses a changed guard contract', async () => {
         const assetInput = await shippedAssets()
         const prepared = await prepareCommittedCapabilityProjection(assetInput)
         expect(prepared.kind, JSON.stringify(prepared)).toBe('complete')
         if (prepared.kind !== 'complete') return
-        const rendered = renderReferences({ committed: prepared.projection, diagnostics: input().diagnostics, troubleshooting: prose })
+        const rendered = renderReferences({ committed: prepared.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
         if (rendered.kind !== 'complete') return
         const matrix = rendered.files.find(file => file.path === 'docs/capability-matrix.md')!.bytes
         expect(matrix).toContain('human_needed')
         expect(matrix).toContain('pending_evidence')
         expect(matrix).not.toContain('| enforced |')
-        expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose }).kind).toBe('refusal')
+        expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, skillSources: assetInput.skillSources.slice(2) })).kind).toBe('refusal')
         const unavailable = await prepareCommittedCapabilityProjection({ ...assetInput, adapters: assetInput.adapters.map(row => row.target === 'codexcli'
@@ -205,12 +208,12 @@ describe('reference generation', () => {
                 provenance: 'synthetic unavailable adapter', reason: 'native entry unavailable' } : row) })
         expect(unavailable.kind, JSON.stringify(unavailable)).toBe('complete')
         if (unavailable.kind !== 'complete') return
-        const changed = renderReferences({ committed: unavailable.projection, diagnostics: input().diagnostics, troubleshooting: prose })
+        const changed = renderReferences({ committed: unavailable.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         expect(changed.kind).toBe('complete')
         if (changed.kind === 'complete') expect(changed.files[3]!.bytes).toContain('| codexcli | guard-firing | n/a | unavailable | not_applicable | synthetic unavailable adapter |')
     })
 
-    it('derives exactly four deterministic references and one bounded region from real owners', () => {
+    it('derives exactly the whole-file references and one bounded region from real owners', () => {
         const first = renderReferences(input())
         expect(first).toEqual(renderReferences(input()))
         expect(first.kind, JSON.stringify(first)).toBe('complete')
@@ -234,6 +237,31 @@ describe('reference generation', () => {
         expect(first.troubleshooting.document.slice(first.troubleshooting.document.indexOf(end) + end.length)).toBe(prose.slice(prose.indexOf(end) + end.length))
         expect(validateTroubleshootingIndex(input().diagnostics, first.troubleshooting.bytes)).toEqual([])
         expect(first.files[2]!.bytes).toContain('documentation-pipeline')
+    })
+
+    it('copies shipped procedure sections into the adopt-cockpit skill and refuses a template every harness would not load', () => {
+        const rendered = renderReferences(input())
+        expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
+        if (rendered.kind !== 'complete') return
+        const skill = rendered.files.find(file => file.path === 'skills/adopt-cockpit/SKILL.md')!.bytes
+        expect(skill).toMatch(/^---\nname: adopt-cockpit\ndescription: "[^"\n]+"\n---\n/)
+        for (const name of ['Bootstrap', 'Create a local setup', 'Secret handling']) {
+            const start = adoptSkill.procedure.indexOf(`## ${name}\n`)
+            const next = adoptSkill.procedure.indexOf('\n## ', start + 1)
+            expect(skill).toContain(`#${adoptSkill.procedure.slice(start, next === -1 ? undefined : next).trimEnd()}`)
+        }
+        expect(skill).not.toContain('cockpit:procedure-section')
+
+        const changedProcedure = adoptSkill.procedure.replace('## Create a local setup\n\n', '## Create a local setup\n\nA changed shipped step.\n\n')
+        const followed = renderReferences({ ...input(), adoptSkill: { ...adoptSkill, procedure: changedProcedure } })
+        expect(followed.kind === 'complete' && followed.files.find(file => file.path === 'skills/adopt-cockpit/SKILL.md')!.bytes).toContain('A changed shipped step.')
+
+        const harnessKey = adoptSkill.template.replace('name: adopt-cockpit\n', 'name: adopt-cockpit\nallowed-tools: [Bash]\n')
+        expect(renderReferences({ ...input(), adoptSkill: { ...adoptSkill, template: harnessKey } })).toMatchObject({ kind: 'refusal' })
+        const missingSection = adoptSkill.template.replace('procedure-section Secret handling', 'procedure-section Absent section')
+        expect(renderReferences({ ...input(), adoptSkill: { ...adoptSkill, template: missingSection } })).toMatchObject({ kind: 'refusal' })
+        expect(renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill: { ...adoptSkill, procedure: changedProcedure } }))
+            .toMatchObject({ kind: 'refusal' })
     })
 
     it('joins the document command options, exits, diagnostics, configuration contract and remedy from owners', () => {
@@ -299,7 +327,7 @@ describe('reference generation', () => {
 
     it('publishes through the admitted transaction and performs no replacement on an identical render', async () => {
         const { root, publicationFor } = await fixture()
-        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose })
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         if (rendered.kind !== 'complete') throw new Error('render failed')
         const result = await writeReferences({ root, publication: await publicationFor(rendered), rendered }, { revalidate: async () => true })
         expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete' })
@@ -307,7 +335,7 @@ describe('reference generation', () => {
         expect(result.committed.map(file => file.path).sort()).toEqual([...wholePaths, 'docs/troubleshooting.md', '.cockpit/generated-reference-ownership.json'].sort())
         for (const file of result.committed) expect(digest(await readFile(join(root, file.path), 'utf8'))).toBe(file.sha256)
         const before = await lstat(join(root, wholePaths[0]!))
-        const again = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: rendered.troubleshooting.document })
+        const again = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: rendered.troubleshooting.document, adoptSkill })
         if (again.kind !== 'complete') throw new Error('second render failed')
         expect(await writeReferences({ root, publication: await publicationFor(again), rendered: again }, { revalidate: async () => true })).toMatchObject({ kind: 'complete', committed: [] })
         expect((await lstat(join(root, wholePaths[0]!))).ino).toBe(before.ino)
@@ -315,7 +343,7 @@ describe('reference generation', () => {
 
     it('keeps dry runs read-only and refuses a foreign prose change after render', async () => {
         const { root, publicationFor, prior } = await fixture()
-        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose })
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         if (rendered.kind !== 'complete') throw new Error('render failed')
         const publication = await publicationFor(rendered)
         const consumerLedger = 'synthetic consumer estate\n'
@@ -329,7 +357,7 @@ describe('reference generation', () => {
         expect((await writeReferences({ root, publication, rendered }, { revalidate: async () => true })).kind).toBe('refusal')
         expect(await readFile(join(root, 'docs/troubleshooting.md'), 'utf8')).toBe(changedProse)
         expect(await readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8')).toBe(consumerLedger)
-        const again = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: changedProse })
+        const again = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: changedProse, adoptSkill })
         if (again.kind !== 'complete') throw new Error('render failed')
         expect((await writeReferences({ root, publication: await publicationFor(again), rendered: again }, { revalidate: async () => true })).kind).toBe('complete')
         expect(await readFile(join(root, 'docs/troubleshooting.md'), 'utf8')).toBe(again.troubleshooting.document)
@@ -339,7 +367,7 @@ describe('reference generation', () => {
 
     it('refuses forged destinations and preserves all bytes after transaction failure', async () => {
         const { root, publicationFor, prior } = await fixture()
-        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose })
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
         if (rendered.kind !== 'complete') throw new Error('render failed')
         const publication = await publicationFor(rendered)
         const consumerRender = renderReferences(input())

@@ -83,6 +83,7 @@ const REFERENCE_FILE_PATHS = Object.freeze([
     'docs/configuration-reference.md',
     'docs/command-list.md',
     'docs/capability-matrix.md',
+    'skills/adopt-cockpit/SKILL.md',
 ] as const)
 const TROUBLESHOOTING_PATH = 'docs/troubleshooting.md'
 const REFERENCE_PATHS = Object.freeze([...REFERENCE_FILE_PATHS, TROUBLESHOOTING_PATH] as const)

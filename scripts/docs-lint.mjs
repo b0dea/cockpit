@@ -55,6 +55,7 @@ const EXECUTABLE_PREFIXES = [
     '.github/PULL_REQUEST_TEMPLATE/',
     '.opencode/',
     'packages/cockpit/surfaces/',
+    'skills/',
 ]
 const EXECUTABLE_PATHS = new Set(['.github/PULL_REQUEST_TEMPLATE.md'])
 const HUMAN_PREFIXES = ['.changeset/', 'docs/', 'examples/']
