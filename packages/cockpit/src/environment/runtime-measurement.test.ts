@@ -69,7 +69,8 @@ describe('runtime measurement recording', () => {
     it('appends exactly one supported row for the identified runtime, which then admits it', async () => {
         const host = await measuredHost()
         const probe: RuntimeMeasureProbe = async (request) => {
-            expect(request.env.DOCKER_HOST).toBe('unix:///synthetic/docker.sock')
+            // The selected context stays the probe's to resolve; only an operator's own DOCKER_HOST passes through.
+            expect(request.env.DOCKER_HOST).toBeUndefined()
             expect(request.image).toEqual({ reference: IMAGE_ID, id: IMAGE_ID })
             return verdict(true, request.executable.sha256)
         }

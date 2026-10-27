@@ -193,13 +193,14 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (git.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, git.reason, 'git')
     const cwd = dirname(configPath)
 
-    // The probe runs its lifecycle under an isolated HOME, where the Docker CLI cannot read the
-    // selected context and falls back to /var/run/docker.sock, which VM products (OrbStack, Colima)
-    // need not provide. Pin the probe to the socket of the context the operator selected instead.
+    // Refuse a remote endpoint before minutes of probing. The endpoint is reported, never forced on the
+    // probe: cockpit's owners hand Docker no HOME, so the CLI resolves the operator's selected context
+    // itself, and down and reset select by context name. Pinning DOCKER_HOST here would leave them
+    // resolving the "default" context instead.
     let dockerHost = input.env.DOCKER_HOST
     let endpointSource = 'DOCKER_HOST'
     if (dockerHost === undefined) {
-        const contextEnv = Object.freeze({ PATH: path, ...(input.env.HOME === undefined ? {} : { HOME: input.env.HOME }) })
+        const contextEnv = Object.freeze({ PATH: path })
         const context = await readDocker(dependencies.execute, dockerStep(docker.value, cwd, contextEnv, 'runtime:measure:context', ['context', 'show']))
         const endpoint = context.kind === 'complete'
             ? await readDocker(dependencies.execute, dockerStep(docker.value, cwd, contextEnv, 'runtime:measure:endpoint',
@@ -215,7 +216,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             `the Docker endpoint ${JSON.stringify(dockerHost)} (from ${endpointSource}) is not a local unix:// socket; only a local runtime can be measured`, endpointSource)
     }
-    const runtimeEnv = Object.freeze({ PATH: path, DOCKER_HOST: dockerHost })
+    const runtimeEnv = Object.freeze({ PATH: path, ...(input.env.DOCKER_HOST === undefined ? {} : { DOCKER_HOST: input.env.DOCKER_HOST }) })
 
     const observed = await observeDockerRuntime({ executable: docker.value, cwd, env: runtimeEnv, timeoutMs: STEP_TIMEOUT_MS }, dependencies.execute)
     if (observed.kind !== 'complete') return refused(observed.code, observed.reason, 'docker')
