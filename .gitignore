@@ -115,8 +115,12 @@ prd.md
 
 # ── Generated consumer roots ─────────────────────────────────────────────────
 # This source repository ships templates from packages/cockpit/surfaces. Rendering those
-# templates at the repository root is local output rather than source.
-/.agents/
-/.claude/
+# templates at the repository root is local output rather than source, so harness state is
+# ignored; the hand-authored contributor skills are the exception.
+# `.claude/skills` is a symlink to `.agents/skills`, so it is unignored as a path, not a directory.
+/.claude/*
+!/.claude/skills
 /.codex/
 /.opencode/
+/.agents/*
+!/.agents/skills/

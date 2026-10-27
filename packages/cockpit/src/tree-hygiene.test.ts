@@ -130,11 +130,23 @@ function treeContents(): Map<string, string> {
 
 const PRIVATE_ROOT_SURFACES = ['AGENTS.md', 'CLAUDE.md', '.agents', '.claude', '.codex', '.opencode'] as const
 
+// The contributor guide for agents and humans is the only repository-local tool configuration that
+// ships: the guide, its Claude import, and the hand-authored skills (`.claude/skills` is a symlink
+// to `.agents/skills`). Everything else under these roots stays private.
+const PUBLISHED_ROOT_SURFACES = ['AGENTS.md', 'CLAUDE.md', '.claude/skills'] as const
+const PUBLISHED_ROOT_TREES = ['.agents/skills'] as const
+
 function privateDevelopmentPaths(
     paths: readonly string[],
     roots: readonly string[] = PRIVATE_ROOT_SURFACES,
+    allowed: { files: readonly string[]; trees: readonly string[] } = {
+        files: PUBLISHED_ROOT_SURFACES, trees: PUBLISHED_ROOT_TREES,
+    },
 ): string[] {
-    return paths.filter((path) => roots.some((root) => path === root || path.startsWith(`${root}/`)))
+    return paths
+        .filter((path) => roots.some((root) => path === root || path.startsWith(`${root}/`)))
+        .filter((path) => !allowed.files.includes(path)
+            && !allowed.trees.some((tree) => path.startsWith(`${tree}/`)))
 }
 
 describe(`nothing consumer-identifying reaches the tracked tree (${COVERAGE})`, () => {
@@ -609,6 +621,14 @@ describe('the public repository boundary', () => {
 
     it('publishes no repository-local development configuration', () => {
         expect(privateDevelopmentPaths(trackedFiles())).toEqual([])
+        expect(privateDevelopmentPaths([
+            'AGENTS.md', 'CLAUDE.md', '.claude/skills', '.agents/skills/verify-harness-capability/SKILL.md',
+        ])).toEqual([])
+        const unpublished = [
+            '.claude/settings.json', '.claude/skills/x/SKILL.md',
+            '.codex/config.toml', '.opencode/opencode.json', '.agents/other.md', '.agents/skills',
+        ]
+        expect(privateDevelopmentPaths(unpublished)).toEqual(unpublished)
         const controls = [
             '.agent-runtime/state.json',
             'tools/workflow-engine/cache.json',
