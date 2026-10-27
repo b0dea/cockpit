@@ -20,6 +20,8 @@ export interface ReadOnlyAccess {
     readonly trees: readonly string[]
     /** Paths whose names or metadata the command reports, never their content. */
     readonly listings: readonly string[]
+    /** Paths that must exist, relative to `cwd`, for the command to be read-only. */
+    readonly requires?: readonly string[]
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
@@ -80,11 +82,13 @@ const GREP: OptionTable = {
     flags: set('--recursive', '--dereference-recursive', '--ignore-case', '--invert-match', '--word-regexp', '--line-regexp', '--count',
         '--files-with-matches', '--files-without-match', '--line-number', '--no-filename', '--with-filename', '--only-matching', '--quiet', '--silent',
         '--no-messages', '--fixed-strings', '--extended-regexp', '--basic-regexp', '--perl-regexp', '--null', '--text'),
-    values: set('-e', '--regexp', '-f', '--file', '-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count',
+    values: set('-e', '--regexp', '-f', '--file', '-A', '-B', '--after-context', '--before-context', '-m', '--max-count',
         '--include', '--exclude', '--exclude-dir'),
     fileValues: set('-f', '--file'),
+    countValues: set('-A', '-B', '--after-context', '--before-context', '-m', '--max-count'),
     // A misread optional value would swallow the next word, so a file operand would go uninspected.
-    attachedOnly: set('--color', '--colour'),
+    // BSD grep, the macOS default, takes `-C` and `--context` values only attached, unlike GNU grep.
+    attachedOnly: set('--color', '--colour', '--context'),
     cluster: /^-[iIvwxclLnhHoqsrRFEGPaZz]+$/,
 }
 // Hidden, ignored, compressed and symlink-following searches widen what is read past what the
@@ -97,6 +101,7 @@ const RG: OptionTable = {
         '--after-context', '--before-context', '--context', '-m', '--max-count', '-d', '--max-depth', '--max-filesize', '-M', '--max-columns',
         '--sort', '--sortr', '--color', '--colors'),
     fileValues: set('-f', '--file'),
+    countValues: set('-A', '-B', '-C', '--after-context', '--before-context', '--context', '-m', '--max-count', '-d', '--max-depth'),
     cluster: /^-[iSswxvnNlcFHIoqp]+$/,
 }
 const FD: OptionTable = {
@@ -145,6 +150,9 @@ function files(argv: readonly string[], table: OptionTable): Classified {
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
 
+// Git discovers an implicit bare repository in any directory holding HEAD, objects and refs, and runs
+// programs its config names, so read-only Git runs only where `.git` exists: discovery takes it before
+// the directory itself, and nothing under `.git` is agent-writable.
 function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     let index = 0
     let directory = cwd
@@ -156,13 +164,16 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     }
     const verb = argv[index++]
     const args = argv.slice(index)
-    if (verb === 'branch') return args.length === 0 || args.length === 1 && args[0] === '--list' ? { cwd: directory, reads: [], trees: [], listings: [] } : undefined
+    const requires = ['.git']
+    if (verb === 'branch') return args.length === 0 || args.length === 1 && args[0] === '--list' ? { cwd: directory, reads: [], trees: [], listings: [], requires } : undefined
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
-    // --output writes a file, and an external diff driver runs a program.
-    if (args.some(arg => /^--(?:output|ext-diff|textconv)(?:=|$)/.test(arg))) return undefined
+    // --output writes a file, an external diff driver runs a program, and --no-index prints any file.
+    if (args.some(arg => /^--(?:output|ext-diff|textconv|no-index)(?:=|$)/.test(arg))) return undefined
     // Revision operands that name a blob (`HEAD:path`) print content the path inspection cannot see.
     if (args.some(arg => !arg.startsWith('-') && arg.includes(':'))) return undefined
-    return { cwd: directory, reads: [], trees: [], listings: args.filter(arg => !arg.startsWith('-')) }
+    // Operands may be pathspecs whose content is printed, and a path outside the repository turns
+    // `git diff` into a file comparison, so every operand is inspected as a read.
+    return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires }
 }
 
 const COCKPIT_READ_VERBS = set('check', 'doctor')

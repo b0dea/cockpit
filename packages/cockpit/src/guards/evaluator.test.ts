@@ -449,19 +449,36 @@ describe('resolved guard evaluation', () => {
     })
 })
 
+// Both checkout roots are Git repositories in these synthetic facts.
+const withGit = ({ path, cwd }: { path: string; cwd: string }) => {
+    const resolved = posix.resolve(cwd, path)
+    return { ...inspect({ path, cwd }), identity: [root, other].some((checkout) => resolved === `${checkout}/.git`) ? '9:1' : null }
+}
+const decideInRepositories = (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy(), withGit)
+
 describe('built-in read-only profile', () => {
     it('allows exact read-only inspection commands and pipelines of them without a prompt', () => {
         for (const command of ['ls', 'ls -la src', 'pwd', 'cat README.md', 'cat -n README.md', 'head -n 20 src/a.ts', 'head -5 src/a.ts', 'tail -n5 src/a.ts',
             'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '*.ts' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
             'fd name src', "find src -name '*.ts' -type f", 'git status', 'git diff --stat', 'git log --oneline -5', 'git show HEAD',
             'git branch', 'git branch --list', 'git -C ../other status', 'cockpit check', 'cockpit doctor --json', 'cockpit --help',
-            'rg needle src | head -n 5', 'ls && pwd']) {
-            expect(decide(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
+            'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts']) {
+            expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
+    })
+
+    it('runs read-only Git only where the directory has its own .git', () => {
+        // A planted HEAD, objects, refs and config make any directory an implicit bare repository whose
+        // configuration Git would honour; discovery prefers a root's own `.git`, which is not agent-writable.
+        expect(decideInRepositories('git status', `${root}/planted`).decision).toBe('ask')
+        expect(decideInRepositories('git -C planted status').decision).toBe('ask')
+        expect(decide('git status').decision).toBe('ask')
+        expect(decideInRepositories('git status').decision).toBe('allow')
     })
 
     it('falls back to a prompt for every shape outside the exact read-only table', () => {
         for (const command of [
+            'git diff --no-index env/.secrets/token README.md',
             // Searches that reach a declared instance or the secrets root, or widen past ignore rules.
             'rg needle', 'grep -r needle .', 'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src',
             // Options that run programs or write files.
@@ -469,18 +486,20 @@ describe('built-in read-only profile', () => {
             'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src', 'tail -f src/a.ts',
             'git -c core.pager=cat log', 'git --git-dir=other log', 'git log --output=out.txt', 'git diff --output out.txt', 'git diff --ext-diff',
             'git show HEAD:config/active.instance', 'git branch topic', 'cockpit sync', 'cockpit check --unknown',
+            'git diff --no-index src/a.ts README.md', 'git diff -- .env.local', 'grep -C 5 needle src/a.ts', 'grep -A x needle src/a.ts',
             // Undeclared environment files, paths outside the roots, writes, wrappers and mixed chains.
             'cat .env.local', 'cat /etc/hosts', 'ls /tmp', 'cat src/a.ts > copy.txt', 'env ls', 'LANG=C ls', 'LS', 'ls; touch src/a.ts',
         ]) {
-            expect(decide(command).decision, command).toBe('ask')
+            expect(decideInRepositories(command).decision, command).toBe('ask')
         }
     })
 
     it('keeps reads of declared instances and secrets a hard denial under every spelling', () => {
         for (const command of ['cat config/active.instance', 'cat CONFIG/ACTIVE.INSTANCE', 'cat ./config/../config/active.instance',
             'head env/.secrets/token', 'wc -c < config/active.instance', 'grep needle config/active.instance',
-            'rg -f config/active.instance needle src', 'grep --color needle config/active.instance', 'ls && cat config/active.instance', 'cockpit check --config env/.secrets/token']) {
-            expect(decide(command), command).toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
+            'rg -f config/active.instance needle src', 'grep --color needle config/active.instance', 'ls && cat config/active.instance',
+            "grep --context '' env/.secrets/token", 'git log -p -- config/active.instance', 'git diff HEAD env/.secrets/token', 'cockpit check --config env/.secrets/token']) {
+            expect(decideInRepositories(command), command).toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
         }
         // A hard link carries the instance's identity under a spelling no normalisation equates.
         const linked = policy()

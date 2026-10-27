@@ -85,7 +85,12 @@ on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument
 `cockpit --help`; the [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each
 permitted option. Any other option falls back to the ordinary rules, including the ones that run
 programs or write files: `rg --pre`, `find -exec`, `find -delete`, `fd --exec`, `git -c`,
-`git --output` and `git --ext-diff`. A pipeline or chain is permitted only when every segment is.
+`git --output`, `git --ext-diff` and `git diff --no-index`. Options whose value is optional, such
+as `grep --context` on macOS, are accepted only in their attached `--option=value` form, so the
+next word can never be misread. Git runs read-only only in a directory with its own `.git`, because
+Git otherwise treats a directory holding `HEAD`, `objects` and `refs` as a repository and honours
+its configuration; Git operands are inspected as files whose content may be printed. A pipeline or
+chain is permitted only when every segment is.
 
 Every hard denial still applies first. Reading a declared instance or anything under `.secrets` is
 denied under every spelling the volume resolves to it, a hard link included. A path that is a

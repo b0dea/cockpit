@@ -362,6 +362,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (kind === 'read' && (below(secretRoot) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
             if (kind === 'tree' && (covers(secretRoot) || resolved.instances.some((item) => covers(item.path)))) safe = false
         }
+        for (const path of access.requires ?? []) {
+            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
+            if (!evidence || evidence.identity === null) safe = false
+        }
         for (const path of access.reads) visit(path, 'read')
         for (const path of access.trees) visit(path, 'tree')
         for (const path of access.listings) visit(path, 'listing')
