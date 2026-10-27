@@ -49,18 +49,21 @@ export interface GuardDecision {
     readonly reason: string
 }
 
-// An agent able to rewrite any of these can switch the guard off or run code when a harness starts:
-// the published guard transport, every harness registration that launches it, the manifest that
-// authenticates both, Claude's local settings, where `disableAllHooks` would switch the hook off, and
-// the generated Codex and OpenCode configurations. These spellings match the restriction expansion,
-// the guard application and the generated surface outputs.
+// An agent able to rewrite any of these can switch the guard off, grant itself commands or run code
+// when a harness starts: the published guard transport, every harness registration that launches it,
+// the manifest that authenticates both, Claude's local settings, where `disableAllHooks` would switch
+// the hook off, the generated MCP server declarations, the generated Codex and OpenCode configurations,
+// and the generated Codex command rules. These spellings match the restriction expansion, the guard
+// application and the generated surface outputs.
 const GUARD_CONTROL_FILES = [
     '.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json',
-    '.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', '.codex/config.toml',
+    '.claude/settings.json', '.claude/settings.local.json', '.mcp.json',
+    '.codex/hooks.json', '.codex/config.toml', '.codex/rules/rulesync.rules',
     'opencode.json', 'opencode.jsonc',
 ] as const
-// OpenCode loads every module in these directories as a plugin at start, so no file below them is data.
-const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins'] as const
+// OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
+// bundle carries its own MCP servers and hook registration, so no file below them is data.
+const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin'] as const
 const SECRETS_ROOT = 'env/.secrets'
 /** Root-relative paths whose identity every policy carries beside each instance's. */
 export const GUARD_ROOT_PROTECTIONS: readonly { readonly path: string; readonly type: 'file' | 'directory' }[] = Object.freeze([
