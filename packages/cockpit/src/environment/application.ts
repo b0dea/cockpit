@@ -708,21 +708,27 @@ type GeneratedCommandOutcome<T> = EnvironmentCommandOutcome<T> & {
     readonly progressEvidence?: readonly unknown[]
 }
 
+// Readiness adapters resolve to undefined when they cannot vouch for their evidence. When the
+// owner they consulted refused with its own diagnostics (an occupied port family, a held state
+// lock, a stopped runtime), they hand those to `refuse` instead: collapsing them into a generic
+// evidence refusal left the user with no hint of which port, lock or daemon to fix.
+export type ReadinessRefusal<T> = (diagnostics: readonly EnvironmentDiagnostic[]) => T
+
 interface LifecycleCommandAdapters {
     load(input: UpCommandInput | SleepCommandInput): Promise<EnvironmentCommandOutcome<LifecycleRunContext>>
     execute(step: ExecutionStep): Promise<ExecuteProbeOutcome>
-    withRuntimeReadiness<T>(context: LifecycleRunContext, use: (runtime: RuntimeReadiness) => Promise<T>, ports?: PortLeaseProjection): Promise<T | undefined>
+    withRuntimeReadiness<T>(context: LifecycleRunContext, use: (runtime: RuntimeReadiness) => Promise<T>, ports?: PortLeaseProjection, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
 }
 
 export interface UpCommandAdapters extends LifecycleCommandAdapters {
-    withMachineFloorReadiness?<T>(context: LifecycleRunContext, use: (observations: readonly EnvironmentObservation[]) => Promise<T>): Promise<T | undefined>
+    withMachineFloorReadiness?<T>(context: LifecycleRunContext, use: (observations: readonly EnvironmentObservation[]) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
     prepareGeneratedEnvironment?(context: LifecycleRunContext, ports: PortLeaseProjection): Promise<GeneratedApplicationProjection | undefined>
     completeGeneratedEnvironment?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<EnvironmentCommandOutcome<EnvironmentObservation>>
     completeGeneratedDependencies?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<GeneratedCommandOutcome<readonly EnvironmentObservation[]>>
     completeGeneratedData?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<EnvironmentCommandOutcome<DataModeExecutionResult | EnvironmentObservation>>
     completeGeneratedVendors?(context: LifecycleRunContext, runtime: RuntimeReadiness, services: readonly RuntimeServiceEvidence[], projection: GeneratedApplicationProjection): Promise<GeneratedCommandOutcome<EnvironmentObservation>>
-    withLifecycleStage<T>(context: LifecycleRunContext, use: (stage: LifecycleStageProjection) => Promise<T>): Promise<T | undefined>
-    withAcquiredPorts<T>(context: LifecycleRunContext, use: (ports: AcquiredPorts) => Promise<T>): Promise<T | undefined>
+    withLifecycleStage<T>(context: LifecycleRunContext, use: (stage: LifecycleStageProjection) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
+    withAcquiredPorts<T>(context: LifecycleRunContext, use: (ports: AcquiredPorts) => Promise<T>, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
 }
 
 export interface SleepCommandAdapters extends LifecycleCommandAdapters {}
@@ -757,9 +763,11 @@ export interface DestructiveObservation {
 
 interface DestructiveCommandAdapters {
     load(input: DownCommandInput | ResetCommandInput): Promise<EnvironmentCommandOutcome<DestructiveRunContext>>
-    observe(context: DestructiveRunContext): Promise<DestructiveObservation | undefined>
+    observe(context: DestructiveRunContext): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined>
     execute(step: ExecutionStep): Promise<ExecuteProbeOutcome>
 }
+
+export type DestructiveObservationRefusal = Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }>
 
 export interface DownCommandAdapters extends DestructiveCommandAdapters {}
 export interface ResetCommandAdapters extends DestructiveCommandAdapters {}
@@ -1933,6 +1941,12 @@ function lifecycleRefusal(
     }
 }
 
+function forwardedRefusal(
+    diagnostics: readonly EnvironmentDiagnostic[],
+): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
+    return { kind: 'refusal', status: 2, result: null, diagnostics }
+}
+
 const generatedBringupRuns = new WeakMap<LifecycleRunContext, GeneratedApplicationProjection>()
 const generatedBringupProgress = new WeakMap<LifecycleRunContext, GeneratedProgress>()
 
@@ -2203,15 +2217,17 @@ async function prepareGeneratedBringup(
             'generated lifecycle composition is unavailable', context.configPath)
     }
     let prepared: GeneratedApplicationProjection | undefined
+    let portRefusal: readonly EnvironmentDiagnostic[] | undefined
     try {
         prepared = await adapters.withAcquiredPorts(context, async (ports) => {
             if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) return undefined
             rememberAcquisition(ports.leaseResult)
             return adapters.prepareGeneratedEnvironment!(context, ports.projection)
-        })
+        }, (diagnostics) => { portRefusal = diagnostics; return undefined })
     }
     catch (error) { return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
         `generated publication failed: ${error instanceof Error ? error.message : String(error)}`, context.configPath) }
+    if (portRefusal) return forwardedRefusal(portRefusal)
     const projected = generatedApplicationProjection(prepared)
     if (!projected || projected.sourceSha256 !== context.source.sha256) {
         return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
@@ -2722,6 +2738,7 @@ async function executeUpRound(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'lifecycle, port or runtime readiness authority is unavailable', context.stackId,
     ) })
+    const refused: ReadinessRefusal<UpRoundResult> = (diagnostics) => ({ kind: 'complete', result: forwardedRefusal(diagnostics) })
     if (generatedBringupRuns.has(context)) {
         const earliest = Date.now()
         const expected = new Set<string>([
@@ -2739,7 +2756,7 @@ async function executeUpRound(
                     || Date.parse(observation.observed.observedAt) < earliest || Date.parse(observation.observed.observedAt) > now)) return undefined
             const failed = observations.find((observation) => !observationSatisfiesExpectation(observation))
             return failed ? lifecycleRefusal(failed.code, 'host capacity is below the declared floor', failed.source) : true
-        })
+        }, forwardedRefusal)
         if (floor !== true) return floor ? { kind: 'complete', result: floor } : unavailable()
         return await adapters.withLifecycleStage(context, async (stage) => await adapters.withAcquiredPorts(context, async (ports) => {
             if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) {
@@ -2750,8 +2767,8 @@ async function executeUpRound(
                 ) }
             }
             rememberAcquisition(ports.leaseResult)
-            return await adapters.withRuntimeReadiness(context, (runtime) => operate(runtime, stage, ports), ports.projection) ?? unavailable()
-        }) ?? unavailable()) ?? unavailable()
+            return await adapters.withRuntimeReadiness(context, (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
+        }, refused) ?? unavailable(), refused) ?? unavailable()
     }
     return await adapters.withRuntimeReadiness(context, async (runtime) => await adapters.withLifecycleStage(context, async (stage) =>
         await adapters.withAcquiredPorts(context, async (ports) => {
@@ -2764,7 +2781,7 @@ async function executeUpRound(
             }
             rememberAcquisition(ports.leaseResult)
             return operate(runtime, stage, ports)
-        }) ?? unavailable()) ?? unavailable()) ?? unavailable()
+        }, refused) ?? unavailable(), refused) ?? unavailable(), undefined, refused) ?? unavailable()
 }
 
 export async function runUp(
@@ -3075,7 +3092,7 @@ export async function runSleep(
             kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
             result: Object.freeze({ stackId: context.stackId, change: 'stopped' as const }),
         }
-    }, ports)
+    }, ports, forwardedRefusal)
     return result ?? lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'runtime readiness authority is unavailable',
@@ -3220,8 +3237,33 @@ function selectedObservation(
 async function observeDestructive(
     context: DestructiveRunContext,
     adapters: DestructiveCommandAdapters,
-): Promise<DestructiveObservation | undefined> {
-    return selectedObservation(context, await adapters.observe(context))
+): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined> {
+    const observed = await adapters.observe(context)
+    return observed && 'diagnostics' in observed ? observed : selectedObservation(context, observed)
+}
+
+// Before this run reserves a drain there is no attempt of its own to repair, so a missing
+// observation is an evidence failure. Reporting DRAIN_ATTEMPT_REPAIR_REQUIRED here sent the
+// operator of a stopped runtime looking for an interrupted attempt that did not exist.
+function destructivePreconditionRefusal(
+    context: DestructiveRunContext,
+    observed: DestructiveObservationRefusal | undefined,
+): Extract<DownCommandResult, { kind: 'refusal' }> {
+    return observed ?? lifecycleRefusal(
+        ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
+        'destructive preconditions (configuration, retained ports, runtime readiness or reclaim discovery) could not be observed; this run reserved no destructive attempt',
+        context.stackId,
+    )
+}
+
+// After a reservation the attempt is real and must be repaired; the owner's own diagnostics
+// still say why the observation failed.
+function destructiveRepairAfterObservation(
+    context: DestructiveRunContext,
+    observed: DestructiveObservationRefusal | undefined,
+): Extract<DownCommandResult, { kind: 'refusal' }> {
+    const repair = destructiveRepairRequired(context)
+    return observed ? destructiveRefusal(uniqueDiagnostics([...repair.diagnostics, ...observed.diagnostics])) : repair
 }
 
 async function publishDestructiveOutcome(
@@ -3304,7 +3346,7 @@ async function executeDestructivePlan(
             })]))
         }
         const postAction = await observeDestructive(context, adapters)
-        if (!postAction) return destructiveRepairRequired(context)
+        if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
         const reconciled = reconcileReclaimAction({
             authority: execution.authority,
             outcome,
@@ -3320,7 +3362,7 @@ async function executeDestructivePlan(
             break
         }
         const nextObservation = await observeDestructive(context, adapters)
-        if (!nextObservation) return destructiveRepairRequired(context)
+        if (!nextObservation || 'diagnostics' in nextObservation) return destructiveRepairAfterObservation(context, nextObservation)
         const next = purpose === 'down'
             ? await planTeardown({ ...nextObservation.down, expectedDiscoveryDigest: request.planDigest, continuation: reconciled.continuation })
             : await planReset({ ...nextObservation.reset, confirmationDigest: request.planDigest, continuation: reconciled.continuation })
@@ -3369,11 +3411,11 @@ async function prepareDown(
 ): Promise<{ observation: DestructiveObservation; preview: Extract<TeardownPlanResult, { kind: 'complete' }> }
     | Extract<DownCommandResult, { kind: 'refusal' }>> {
     const previewObservation = await observeDestructive(context, adapters)
-    if (!previewObservation) return destructiveRepairRequired(context)
+    if (!previewObservation || 'diagnostics' in previewObservation) return destructivePreconditionRefusal(context, previewObservation)
     const preview = await planTeardown(previewObservation.down)
     if (preview.kind !== 'complete') return destructiveRefusal(preview.diagnostics)
     const observation = await observeDestructive(context, adapters)
-    if (!observation) return destructiveRepairRequired(context)
+    if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(context, observation)
     return { observation, preview }
 }
 
@@ -3387,7 +3429,7 @@ export async function runDown(
     const prepared = await prepareDown(context, adapters)
     if ('diagnostics' in prepared) return prepared
     const projection = projectTeardownActionTargets(prepared.preview)
-    if (!projection) return destructiveRepairRequired(context)
+    if (!projection) return destructivePreconditionRefusal(context, undefined)
     const inspection = await inspectDestructiveDrainRecovery({
         namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, purpose: 'down',
     })
@@ -3435,10 +3477,10 @@ async function resetPreview(
     adapters: ResetCommandAdapters,
 ): Promise<ResetPreview | Extract<ResetCommandResult, { kind: 'refusal' }>> {
     const observation = await observeDestructive(context, adapters)
-    if (!observation) return destructiveRepairRequired(context)
+    if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(context, observation)
     const preview = await planReset(observation.reset)
     return preview.kind === 'preview' ? preview : preview.kind === 'refusal'
-        ? destructiveRefusal(preview.diagnostics) : destructiveRepairRequired(context)
+        ? destructiveRefusal(preview.diagnostics) : destructivePreconditionRefusal(context, undefined)
 }
 
 function publicResetPreview(context: DestructiveRunContext, preview: ResetPreview): Extract<ResetCommandResult, { kind: 'preview' }> {
@@ -3488,7 +3530,7 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
         message: decision === 'decline' ? 'reset was declined' : 'reset operator session is unavailable', target: 'reset',
     })]))
     const observation = await observeDestructive(session.context, session.adapters)
-    if (!observation) return destructiveRepairRequired(session.context)
+    if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(session.context, observation)
     if (session.preview.noop) {
         const noop = await planReset({
             ...observation.reset,
@@ -3496,7 +3538,7 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
             consent: session.preview.consent,
         })
         if (noop.kind !== 'complete' || !noop.noop || noop.actionAuthority !== null) {
-            return noop.kind === 'refusal' ? destructiveRefusal(noop.diagnostics) : destructiveRepairRequired(session.context)
+            return noop.kind === 'refusal' ? destructiveRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
         }
         const inspection = await inspectDestructiveDrainRecovery({
             namespace: session.context.namespace, stackId: session.context.stackId,
@@ -3594,6 +3636,7 @@ interface ObservationCommandAdapters {
     readonly load: (
         input: { readonly configPath: string },
         issue: (source: HealthObservationSourceInput) => HealthObservationSource | undefined,
+        refuse?: ReadinessRefusal<undefined>,
     ) => Promise<HealthObservationSource | undefined>
     readonly execute: (
         step: ExecutionStep,
@@ -4137,20 +4180,21 @@ function unavailableDoctor(
     message: string,
     surfaceOverrides: DoctorSurfaceOverrideInspection,
     freshness: DoctorFreshness,
+    forwarded?: readonly EnvironmentDiagnostic[],
 ): DoctorCommandResult {
     return Object.freeze({
         kind: 'complete', status: 0,
-        diagnostics: Object.freeze([applicationDiagnostic(code, message, 'preflight')]),
+        diagnostics: forwarded ?? Object.freeze([applicationDiagnostic(code, message, 'preflight')]),
         result: Object.freeze({
             verdict: 'unavailable', checks: Object.freeze([]), comparisons: Object.freeze([]), surfaceOverrides, freshness,
         }),
     })
 }
 
-function unavailablePreflight(message: string): PreflightCommandResult {
+function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {
     return Object.freeze({
         kind: 'blocked', status: 2,
-        diagnostics: Object.freeze([applicationDiagnostic(
+        diagnostics: forwarded ?? Object.freeze([applicationDiagnostic(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
             message,
             'preflight',
@@ -4167,8 +4211,9 @@ export async function runPreflight(
 ): Promise<PreflightCommandResult> {
     let health: HealthEvaluation
     try {
-        const source = await adapters.load(input, issueHealthObservationSource)
-        if (!source) return unavailablePreflight('preflight observation source is unavailable')
+        let refused: readonly EnvironmentDiagnostic[] | undefined
+        const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined })
+        if (!source) return unavailablePreflight('preflight observation source is unavailable', refused)
         const observed = prepareHealthObservation(input, source)
         if (!observed) return unavailablePreflight('preflight requires authenticated steady lifecycle evidence')
         health = await evaluateApplicationHealth(observed, adapters)
@@ -4204,13 +4249,15 @@ export async function runDoctor(
     let health: HealthEvaluation
     let doctor: ReturnType<typeof projectDoctor>
     try {
-        const source = await adapters.load(input, issueHealthObservationSource)
+        let refused: readonly EnvironmentDiagnostic[] | undefined
+        const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined })
         if (!source) {
             return unavailableDoctor(
                 ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
                 'doctor observation source is unavailable',
                 await surfaceOverrides,
                 await freshness,
+                refused,
             )
         }
         const observed = prepareHealthObservation(input, source)

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { runReset } from './application.js'
+import { runDown, runReset } from './application.js'
 import * as application from './application.js'
 import * as claims from './claims.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -247,6 +247,7 @@ describe('destructive command composition', () => {
         const dockerPath = join(root, 'docker')
         await writeFile(dockerPath, [
             '#!/bin/sh',
+            `if [ -f ${JSON.stringify(join(root, 'daemon-stopped'))} ]; then printf "Cannot connect to the Docker daemon\\n" >&2; exit 1; fi`,
             'if [ "$1" = "--host" ]; then shift 2; fi',
             'if [ "$1" = "version" ]; then printf "27.1.2\\n"; exit 0; fi',
             'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
@@ -342,7 +343,7 @@ describe('destructive command composition', () => {
         })
 
         const observation = await adapters.observe(destructive.result)
-        const runtime = observation && consumeRuntimeLifecycleProjection(observation.runtime)
+        const runtime = observation && !('diagnostics' in observation) ? consumeRuntimeLifecycleProjection(observation.runtime) : undefined
 
         expect(observation).toMatchObject({
             instance: { launcher: { stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId } },
@@ -378,6 +379,12 @@ describe('destructive command composition', () => {
         expect(inspectionCalls).toBe(12)
         expect(activeInspections).toBe(0)
         expect(maximumActiveInspections).toBeLessThanOrEqual(4)
+
+        await writeFile(join(root, 'daemon-stopped'), '')
+        const stoppedDown = await runDown({ configPath }, adapters)
+        await rm(join(root, 'daemon-stopped'))
+        expect(stoppedDown).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+        expect(JSON.stringify(stoppedDown)).not.toContain('DRAIN_ATTEMPT_REPAIR_REQUIRED')
 
         const preview = await runReset({ configPath }, adapters)
         expect(preview).toMatchObject({

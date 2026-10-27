@@ -30,12 +30,14 @@ import {
     issueLifecycleRunContext,
     withLifecycleConfiguration,
     type LifecycleRunContext,
+    type ReadinessRefusal,
     type SleepCommandAdapters,
     type UpCommandAdapters,
 } from './application.js'
 import {
     ENVIRONMENT_CODES,
     type EnvironmentCommandOutcome,
+    type EnvironmentDiagnostic,
     type ExecutionStep,
 } from './contract.js'
 import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
@@ -100,6 +102,14 @@ const LISTENER_CONCURRENCY = 16
 const MAX_TOPOLOGY_OBSERVATION_WINDOW_MS = 300_000
 const SAFE_DOCKER_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
+function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string): readonly EnvironmentDiagnostic[] {
+    return Object.freeze([Object.freeze({ severity: 'error' as const, code, message, target })])
+}
+
+function runtimeUnavailable(reason: string, target: string): readonly EnvironmentDiagnostic[] {
+    return ownerDiagnostics(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason, target)
+}
+
 export interface LifecycleCommandCompositionInput {
     readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
@@ -138,6 +148,7 @@ export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepC
     withMachineFloorReadiness<T>(
         context: LifecycleRunContext,
         use: (observations: readonly import('./contract.js').EnvironmentObservation[]) => Promise<T>,
+        refuse?: ReadinessRefusal<T>,
     ): Promise<T | undefined>
     withGeneratedRuntime<T>(
         context: LifecycleRunContext,
@@ -151,6 +162,7 @@ export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepC
         context: LifecycleRunContext,
         use: (runtime: LifecycleRuntimeReadiness) => Promise<T>,
         ports?: PortLeaseProjection,
+        refuse?: ReadinessRefusal<T>,
     ): Promise<T | undefined>
 }
 
@@ -795,7 +807,7 @@ export function createLifecycleCommandAdapters(
         return Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result })
     }
 
-    const withRuntimeReadiness: LifecycleCommandAdapterComposition['withRuntimeReadiness'] = async (context, use, ports) => {
+    const withRuntimeReadiness: LifecycleCommandAdapterComposition['withRuntimeReadiness'] = async (context, use, ports, refuse) => {
         let binding = bindings.get(context)
         if (!input || !binding) return undefined
         const generated = binding.config.environment.generated
@@ -816,7 +828,7 @@ export function createLifecycleCommandAdapters(
         const currentBinding = binding
         const env = runtimeEnvironment(input.env)
         const docker = await resolveDockerExecutable(env)
-        if (docker.state !== 'available') return undefined
+        if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
         let probeAuthority: RuntimeMeasurementProbeAuthority | undefined
         if (input.runtimeMeasurementProbeAuthority !== undefined) {
             try {
@@ -835,10 +847,10 @@ export function createLifecycleCommandAdapters(
             }, execute)
             : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
                 ?? Object.freeze({ kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' })
-        if (observed.kind !== 'complete') return undefined
+        if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId))
         const measured = admitRuntimeMeasurement(observed, currentBinding.config.environment.runtime_measurements)
         const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
-        if (measured.kind !== 'admitted' && !certifiedProbe) return undefined
+        if (measured.kind !== 'admitted' && !certifiedProbe) return refuse?.(ownerDiagnostics(measured.code, measured.reason, context.stackId))
         const measurementObservation = measured.kind === 'admitted'
             ? observeRuntimeMeasurement(measured, context.stackId) : undefined
         let artifacts: readonly ComposeArtifact[] | undefined
@@ -891,7 +903,7 @@ export function createLifecycleCommandAdapters(
             generatedComposeAuthority: generatedApplication.generatedComposeAuthority,
             portLeaseProjection: ports,
         } : undefined)
-        if (runtime.kind !== 'preview') return undefined
+        if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
         const topologyPlan = createRuntimeTopologyPlan({
             runtimePlan: runtime.plan,
@@ -968,7 +980,7 @@ export function createLifecycleCommandAdapters(
         return use(Object.freeze({ application, runtime }))
     }
 
-    const withMachineFloorReadiness: LifecycleCommandAdapterComposition['withMachineFloorReadiness'] = async (context, use) => {
+    const withMachineFloorReadiness: LifecycleCommandAdapterComposition['withMachineFloorReadiness'] = async (context, use, refuse) => {
         const binding = bindings.get(context)
         if (!input || !binding?.machineFloorAuthority || !binding.config.environment.machine) return undefined
         const env = runtimeEnvironment(input.env)
@@ -976,7 +988,8 @@ export function createLifecycleCommandAdapters(
             resolveDockerExecutable(env),
             resolveDiskCapacityExecutable(env),
         ])
-        if (docker.state !== 'available' || disk.state !== 'available') return undefined
+        if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
+        if (disk.state !== 'available') return refuse?.(runtimeUnavailable(disk.reason, context.stackId))
         const plan = createMachineFloorPlan({
             runtimeExecutable: docker.value,
             diskExecutable: disk.value,
@@ -985,7 +998,7 @@ export function createLifecycleCommandAdapters(
             timeoutMs: input.timeoutMs,
             authority: binding.machineFloorAuthority,
         })
-        if (plan.kind !== 'preview') return undefined
+        if (plan.kind !== 'preview') return plan.kind === 'refusal' ? refuse?.(plan.diagnostics) : undefined
         const evidence = collectMachineFloorEvidence(plan.plan, [
             await execute(plan.plan.steps[0]!),
             await execute(plan.plan.steps[1]!),
@@ -993,11 +1006,11 @@ export function createLifecycleCommandAdapters(
         return evidence ? use(observeHostCapacity({ evidence })) : undefined
     }
 
-    const withLifecycleStage: LifecycleCommandAdapterComposition['withLifecycleStage'] = async (context, use) => {
+    const withLifecycleStage: LifecycleCommandAdapterComposition['withLifecycleStage'] = async (context, use, refuse) => {
         if (!bindings.has(context)) return undefined
         const observedAt = new Date().toISOString()
         const resolved = await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt })
-        if (resolved.kind !== 'complete') return undefined
+        if (resolved.kind !== 'complete') return refuse?.(resolved.diagnostics)
         const projection = projectLifecycleStage({
             authority: resolved.authority,
             stackId: context.stackId,
@@ -1009,7 +1022,7 @@ export function createLifecycleCommandAdapters(
         return projection ? use(projection) : undefined
     }
 
-    const withAcquiredPorts: LifecycleCommandAdapterComposition['withAcquiredPorts'] = async (context, use) => {
+    const withAcquiredPorts: LifecycleCommandAdapterComposition['withAcquiredPorts'] = async (context, use, refuse) => {
         if (!bindings.has(context)) return undefined
         const now = new Date().toISOString()
         const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
@@ -1023,9 +1036,9 @@ export function createLifecycleCommandAdapters(
             listenerTimeoutMs,
             listenerEvidence: await listenerEvidence(context, now, listenerTimeoutMs),
         })
-        if (leaseResult.kind !== 'complete') return undefined
+        if (leaseResult.kind !== 'complete') return refuse?.(leaseResult.diagnostics)
         const entrypoints = deriveEntrypoints({ lease: leaseResult.lease, declarations: context.entrypointDerivatives })
-        if (entrypoints.kind !== 'complete') return undefined
+        if (entrypoints.kind !== 'complete') return refuse?.(entrypoints.diagnostics)
         const projection = projectPortLeaseResult({ leaseResult, entrypointResult: entrypoints })
         return projection ? use(Object.freeze({ leaseResult, projection })) : undefined
     }

@@ -242,6 +242,26 @@ describe('production health adapter composition', () => {
         expect(execute).not.toHaveBeenCalled()
     })
 
+    it('reports a malformed configuration from preflight and doctor instead of an unavailable source', async () => {
+        const candidate = await fixture()
+        await writeFile(candidate.configPath, '[cockpit\nname = "synthetic"\n')
+        const execute = vi.fn(executeProbe)
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: process.env.PATH, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, execute)
+
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+
+        expect(preflight).toMatchObject({ kind: 'blocked', result: { verdict: 'unavailable' },
+            diagnostics: [{ code: 'CONFIG_PARSE_INVALID', target: candidate.configPath }] })
+        expect(doctor).toMatchObject({ result: { verdict: 'unavailable' },
+            diagnostics: [{ code: 'CONFIG_PARSE_INVALID', target: candidate.configPath }] })
+        expect(execute).not.toHaveBeenCalled()
+    })
+
     it('rejects hostile public input without invoking its accessor', async () => {
         const candidate = await fixture()
         let reads = 0

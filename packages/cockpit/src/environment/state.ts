@@ -1236,12 +1236,18 @@ async function acquireLock(
         if (concurrentQuarantine) {
             const current = await lstat(namespace.paths.stateLock)
             createdLock = false
+            let leftover = ''
             if (current.isDirectory() && !current.isSymbolicLink() && sameNode(current, created)) {
-                await rmdir(namespace.paths.stateLock).catch(() => undefined)
+                try { await rmdir(namespace.paths.stateLock) }
+                catch (error) {
+                    // A lock directory this acquisition created but could not remove blocks every
+                    // later acquisition, so the operator must be told it exists.
+                    leftover = `; the lock directory this acquisition created at ${namespace.paths.stateLock} could not be removed: ${(error as Error).message}`
+                }
             }
             return refusal(
                 ENVIRONMENT_CODES.STATE_LOCKED,
-                'state lock release raced with acquisition and remains quarantined',
+                `state lock release raced with acquisition and remains quarantined${leftover}`,
                 concurrentQuarantine,
                 await quarantineRecovery(concurrentQuarantine),
             ) as Extract<StateResult<never>, { kind: 'refusal' }>
@@ -1549,19 +1555,33 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
         backoffMs = Math.min(backoffMs * 2, 50)
     }
     if (acquired.kind !== 'acquired') return acquired
-    let result: StateResult<T>
-    try { result = { kind: 'complete', value: await operation() } }
-    catch (error) {
-        result = refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            `scoped state operation failed: ${error instanceof Error ? error.message : 'unknown error'}`, binding.path)
-    }
+    // The operation is the caller's own work, not a state record: its exception is rethrown
+    // unchanged once the lock is released. Labelling it STATE_RECORD_MALFORMED sent the operator
+    // to inspect state that was never touched.
+    let outcome: { readonly kind: 'complete'; readonly value: T } | { readonly kind: 'thrown'; readonly error: unknown }
+    try { outcome = { kind: 'complete', value: await operation() } }
+    catch (error) { outcome = { kind: 'thrown', error } }
     try { await releaseLock(binding.path, acquired.ownerBytes, stableOptions.beforeRelease, stableOptions.beforeLockMetadata) }
     catch (error) {
         const release = error instanceof LockReleaseError ? error : undefined
-        return refusal(ENVIRONMENT_CODES.STATE_LOCKED, 'scoped state lock could not be released safely',
-            release?.target ?? binding.path, release?.recovery ?? 'inspect the recorded scoped lock owner before explicit reclamation')
+        const lockRecovery = release?.recovery ?? 'inspect the recorded scoped lock owner before explicit reclamation'
+        // As in transactState: completed work survives a failed release, so the caller can
+        // still act on it while the stuck lock is reported.
+        if (outcome.kind === 'complete') return {
+            kind: 'indeterminate',
+            code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
+            message: 'scoped state operation completed but its lock could not be released safely',
+            target: release?.target ?? binding.path,
+            recovery: lockRecovery,
+            value: outcome.value,
+        }
+        const cause = outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
+        return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
+            `scoped state operation failed (${cause}) and its lock could not be released safely`,
+            release?.target ?? binding.path, lockRecovery)
     }
-    return result
+    if (outcome.kind === 'thrown') throw outcome.error
+    return outcome
 }
 
 async function restoreOwnerEvidence(

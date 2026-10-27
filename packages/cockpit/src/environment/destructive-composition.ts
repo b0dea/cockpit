@@ -9,12 +9,13 @@ import {
     runSleep,
     runUp,
     type DestructiveObservation,
+    type DestructiveObservationRefusal,
     type DestructiveRunContext,
     type DownCommandAdapters,
     type LifecycleRunContext,
     type ResetCommandAdapters,
 } from './application.js'
-import { ENVIRONMENT_CODES, type EnvironmentCommandOutcome, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
 import { readActiveStackInventory } from './claims.js'
 import { resolveDockerExecutable, resolveExecutable, resolvePathRemovalExecutable,
     type ExecutableResolution, type ResolvedExecutable } from './executable.js'
@@ -183,6 +184,10 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
     } catch {
         return undefined
     }
+}
+
+function observationRefusal(diagnostics: readonly EnvironmentDiagnostic[]): DestructiveObservationRefusal {
+    return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics })
 }
 
 function refusal(target: string): EnvironmentCommandOutcome<DestructiveRunContext> {
@@ -362,10 +367,11 @@ export function createDestructiveCommandAdapters(
             if (destructive.kind === 'complete') issued.set(destructive.result, context)
             return destructive
         },
-        async observe(context: DestructiveRunContext): Promise<DestructiveObservation | undefined> {
+        async observe(context: DestructiveRunContext): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined> {
             const lifecycleContext = issued.get(context)
             if (!lifecycleContext) return undefined
             const loaded = await loadCockpitConfig(context.configPath)
+            if (loaded.kind === 'refusal') return loaded
             if (loaded.kind !== 'complete') return undefined
             const configuration = consumeLoadedConfigProjection(loaded.result)
             if (!configuration || !sameSource(context.source, configuration.source)) return undefined
@@ -376,14 +382,18 @@ export function createDestructiveCommandAdapters(
                 checkoutId: context.checkoutId,
                 config: context.ports,
             })
-            if (retained.kind !== 'complete') return undefined
+            if (retained.kind !== 'complete') return observationRefusal(retained.diagnostics)
             const entrypoints = deriveEntrypoints({
                 lease: retained.lease,
                 declarations: context.entrypointDerivatives,
             })
+            if (entrypoints.kind !== 'complete') return observationRefusal(entrypoints.diagnostics)
             const ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
             if (!ports) return undefined
-            const readiness = await lifecycle.withRuntimeReadiness(lifecycleContext, async (value) => value, ports)
+            let runtimeRefusal: DestructiveObservationRefusal | undefined
+            const readiness = await lifecycle.withRuntimeReadiness(lifecycleContext, async (value) => value, ports,
+                (diagnostics) => { runtimeRefusal = observationRefusal(diagnostics); return undefined })
+            if (runtimeRefusal) return runtimeRefusal
             if (!readiness) return undefined
             const coordinationAddress = context.namespace.paths.coordination(context.stackId)
             const stored = await readState(coordinationAddress)

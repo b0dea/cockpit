@@ -371,6 +371,25 @@ describe('destructive application contracts', () => {
         expect(JSON.stringify(result)).not.toMatch(/consent|continuation|authority|decide/)
     })
 
+    it.each([['down', runDown], ['reset', runReset]] as const)(
+        'reports an unobservable %s precondition as evidence, not as an attempt needing repair', async (_command, run) => {
+            const { configPath, context } = await destructiveFixture()
+            const reserve = vi.fn()
+            applicationOwners.claims.reserveDrain = reserve
+            const execute = vi.fn()
+
+            const result = await run({ configPath }, {
+                load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+                observe: async () => undefined,
+                execute,
+            })
+
+            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
+            expect(JSON.stringify(result)).not.toContain('DRAIN_ATTEMPT_REPAIR_REQUIRED')
+            expect(reserve).not.toHaveBeenCalled()
+            expect(execute).not.toHaveBeenCalled()
+        })
+
     it('keeps a declined operator session one-shot and performs no destructive work', async () => {
         const { configPath, context, instance } = await destructiveFixture()
         applicationOwners.reclaim.planReset = async () => Object.freeze({

@@ -31,9 +31,30 @@ import { bootstrapHolderId, checkoutId as deriveCheckoutId } from './identity.js
 
 const executeFile = promisify(execFile)
 
+// Acquisition re-checks for a release quarantine right after creating its lock directory; no
+// public seam opens between those two steps, so the race is staged inside mkdir itself.
+const lockAcquisitionControl = vi.hoisted(() => ({
+    afterLockCreated: undefined as undefined | ((lockPath: string) => Promise<void>),
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    const mkdir = (async (...args: Parameters<typeof actual.mkdir>) => {
+        const created = await actual.mkdir(...args)
+        const hook = lockAcquisitionControl.afterLockCreated
+        if (hook && String(args[0]).endsWith('/state.lock')) {
+            lockAcquisitionControl.afterLockCreated = undefined
+            await hook(String(args[0]))
+        }
+        return created
+    }) as typeof actual.mkdir
+    return { ...actual, mkdir, default: { ...actual, mkdir } }
+})
+
 const temporaryPaths: string[] = []
 
 afterEach(async () => {
+    lockAcquisitionControl.afterLockCreated = undefined
     await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
@@ -602,6 +623,51 @@ describe('transactState', () => {
         await expect(first).resolves.toEqual({ kind: 'complete', value: 'first' })
         await expect(withStateScopedLock(namespace, sameScope, { ownerId: holderB }, () => 'later'))
             .resolves.toEqual({ kind: 'complete', value: 'later' })
+    })
+
+    it('rethrows a scoped operation failure unchanged after releasing the lock', async () => {
+        const { namespace } = await selectedNamespace()
+        const scope = issueStateScopedLock(namespace, { owner: 'browser-worker', identity: 'c'.repeat(64) })!
+        const failure = new TypeError('synthetic operation failure')
+
+        await expect(withStateScopedLock(namespace, scope, { ownerId: holderA }, () => { throw failure }))
+            .rejects.toBe(failure)
+        await expect(withStateScopedLock(namespace, scope, { ownerId: holderB, contentionTimeoutMs: 0 }, () => 'next'))
+            .resolves.toEqual({ kind: 'complete', value: 'next' })
+    })
+
+    it('keeps a completed scoped result when its lock cannot be released', async () => {
+        const { namespace } = await selectedNamespace()
+        const scope = issueStateScopedLock(namespace, { owner: 'browser-worker', identity: 'c'.repeat(64) })!
+
+        const result = await withStateScopedLock(namespace, scope, {
+            ownerId: holderA,
+            beforeRelease: async () => { throw new Error('injected release failure') },
+        }, () => 'admitted')
+
+        expect(result).toMatchObject({
+            kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE, value: 'admitted',
+            recovery: expect.stringContaining('lock'),
+        })
+    })
+
+    it('names a lock directory it created but could not remove when a release quarantine races acquisition', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const lockPath = namespace.paths.stateLock
+        const quarantine = join(dirname(lockPath), '.state.lock.release-synthetic')
+        lockAcquisitionControl.afterLockCreated = async (created) => {
+            await mkdir(quarantine, { mode: 0o700 })
+            await writeFile(join(created, 'unexpected-entry'), 'occupied')
+        }
+        const update = vi.fn(() => claimRecord(0, 1))
+
+        const result = await transactState(namespace, address, { ownerId: holderA }, update)
+
+        expect(result).toMatchObject({
+            kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED, target: quarantine,
+            message: expect.stringContaining(`lock directory this acquisition created at ${lockPath} could not be removed`),
+        })
+        expect(update).not.toHaveBeenCalled()
     })
 
     it('rejects writes through legacy claim and lease addresses', async () => {

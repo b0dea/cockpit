@@ -178,6 +178,41 @@ describe('production lifecycle adapter composition', () => {
         }))
     })
 
+    it('reports the occupied port family from up instead of a generic evidence refusal', async () => {
+        const candidate = await fixture(1)
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        const labels = {
+            'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
+            'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+        }
+        await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({ services: { api: {
+            labels, volumes: [{ type: 'bind', source: join(candidate.checkout, 'siblings', 'api'), target: '/api' }],
+        } } }))
+
+        const listener = createServer()
+        listener.listen(61_230, '127.0.0.1')
+        await once(listener, 'listening')
+        let result: Awaited<ReturnType<typeof runUp>>
+        try {
+            result = await runUp({ configPath: candidate.configPath }, adapters)
+        } finally {
+            listener.close()
+            await once(listener, 'close')
+        }
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'PORT_FAMILY_COLLISION', message: expect.stringContaining('61230'),
+        }] })
+    })
+
     it('binds the public path and session identity and fails closed on unauthenticated runtime output', async () => {
         const candidate = await fixture()
         const execute = vi.fn(executeProbe)

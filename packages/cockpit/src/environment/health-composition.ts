@@ -535,11 +535,13 @@ export function createHealthCommandAdapters(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
     const input = captureInput(rawInput)
-    const load: HealthCommandAdapterComposition['load'] = async (command, issue) => {
+    const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse) => {
         const requestedPath = commandConfigPath(command)
         if (!input || typeof execute !== 'function' || typeof issue !== 'function'
             || requestedPath !== input.configPath) return undefined
         const loaded = await loadCockpitConfig(input.configPath)
+        // A malformed cockpit.toml is the user's to fix, so the loader's own diagnostics reach them.
+        if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return undefined
