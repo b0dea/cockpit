@@ -7,14 +7,14 @@
  * every child process crosses the supplied `execute`, which production binds to
  * `environment-exec/execute.ts`.
  */
-import { createHash, randomBytes } from 'node:crypto'
-import { constants } from 'node:fs'
-import { lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, unlink } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { loadCockpitConfig, readBoundedInput } from '../config/load.js'
+import { loadCockpitConfig } from '../config/load.js'
+import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
 import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
@@ -119,59 +119,21 @@ function exactlyOneRowAdded(base: unknown, next: unknown, row: Readonly<Record<s
 
 type AppendResult = Readonly<{ kind: 'complete' }> | Readonly<{ kind: 'refused'; outcome: RuntimeMeasureOutcome }>
 
-/**
- * Append through a sibling temporary file and an atomic rename, so a reader sees the old or the new
- * configuration and never half of one. The original's identity and digest are checked again just
- * before the rename: the probe runs for minutes, and an edit made meanwhile must not be overwritten.
- */
 async function appendRow(path: string, expectedSha256: string, baseConfig: unknown, row: Readonly<Record<string, string>>): Promise<AppendResult> {
-    const refuse = (code: string, message: string): AppendResult => ({ kind: 'refused', outcome: refused(code, message, path) })
-    const before = await lstat(path)
-    if (!before.isFile() || before.isSymbolicLink()) return refuse(ENVIRONMENT_CODES.CONFIG_UNREADABLE, 'cockpit.toml is not a regular file; nothing was written')
-    const read = await readBoundedInput(path)
-    if (read.kind !== 'complete') return refuse(ENVIRONMENT_CODES.CONFIG_UNREADABLE, 'cockpit.toml exceeds the input limit; nothing was written')
-    if (createHash('sha256').update(read.bytes).digest('hex') !== expectedSha256) {
-        return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
-            'cockpit.toml changed while the runtime was being measured; nothing was written. Re-run the measurement')
-    }
-    const original = read.bytes.toString('utf8')
-    const next = `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}\n${tomlRow(row)}`
-    const temporary = join(dirname(path), `.${basename(path)}.measure-${randomBytes(8).toString('hex')}`)
-    let created = false
-    try {
-        const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, before.mode & 0o777)
-        created = true
-        try { await handle.writeFile(next); await handle.sync() } finally { await handle.close() }
-        const candidate = await loadCockpitConfig(temporary)
-        if (candidate.kind !== 'complete') {
-            return refuse(candidate.diagnostics[0]?.code ?? ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-                `appending the row would leave cockpit.toml invalid (${candidate.diagnostics[0]?.message ?? 'unreadable'}); nothing was written. `
-                + `Add it to environment.runtime_measurements by hand: ${inlineRow(row)}`)
-        }
-        if (!exactlyOneRowAdded(baseConfig, candidate.result.config, row)) {
-            return refuse(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-                `appending the row would change more than one measurement row; nothing was written. Add it by hand: ${inlineRow(row)}`)
-        }
-        const current = await lstat(path)
-        const recheck = await readBoundedInput(path)
-        if (current.dev !== before.dev || current.ino !== before.ino || current.size !== before.size || current.mtimeMs !== before.mtimeMs
-            || recheck.kind !== 'complete' || createHash('sha256').update(recheck.bytes).digest('hex') !== expectedSha256) {
-            return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
-                'cockpit.toml changed while the row was being prepared; nothing was written. Re-run the measurement')
-        }
-        await rename(temporary, path)
-        created = false
-        const directory = await open(dirname(path), constants.O_RDONLY | constants.O_NOFOLLOW)
-        try { await directory.sync() } finally { await directory.close() }
-    } finally {
-        if (created) await unlink(temporary)
-    }
-    const written = await loadCockpitConfig(path)
-    if (written.kind !== 'complete' || !exactlyOneRowAdded(baseConfig, written.result.config, row)) {
-        return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
-            'the row was written, but re-reading cockpit.toml shows a change other than that one row; inspect the file before running up')
-    }
-    return { kind: 'complete' }
+    const written = await writeVerifiedConfig({
+        path, expectedSha256, temporaryTag: 'measure',
+        edit: (original) => `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}\n${tomlRow(row)}`,
+        isExactChange: (config) => exactlyOneRowAdded(baseConfig, config, row),
+        messages: {
+            changedBefore: 'cockpit.toml changed while the runtime was being measured; nothing was written. Re-run the measurement',
+            changedDuring: 'cockpit.toml changed while the row was being prepared; nothing was written. Re-run the measurement',
+            invalid: (reason) => `appending the row would leave cockpit.toml invalid (${reason}); nothing was written. `
+                + `Add it to environment.runtime_measurements by hand: ${inlineRow(row)}`,
+            notExact: `appending the row would change more than one measurement row; nothing was written. Add it by hand: ${inlineRow(row)}`,
+            writtenMismatch: 'the row was written, but re-reading cockpit.toml shows a change other than that one row; inspect the file before running up',
+        },
+    })
+    return written.kind === 'complete' ? written : { kind: 'refused', outcome: refused(written.code, written.message, path) }
 }
 
 export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies: RuntimeMeasureDependencies): Promise<RuntimeMeasureOutcome> {

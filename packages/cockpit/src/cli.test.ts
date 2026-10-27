@@ -269,6 +269,25 @@ describe('CLI help', () => {
         expect(result.stdout).toContain('--json')
     })
 
+    it('lists every sibling flag in `sibling --help` and routes add and remove to their handlers', async () => {
+        const help = await runInProcess(['sibling', '--help'])
+        expect(help.status).toBe(0)
+        for (const flag of ['--config', '--create', '--from', '--remote', '--dir', '--var', '--purpose', '--json']) expect(help.stdout).toContain(flag)
+
+        const seen: unknown[] = []
+        const sibling = async (request: unknown) => { seen.push(request); return { status: 0, result: null, diagnostics: [] } }
+        await runInProcess(['sibling', 'add', 'api', '--config', 'cockpit.toml', '--remote', 'https://git.invalid/a.git', '--dir', 'svc'], { sibling } as never)
+        await runInProcess(['sibling', 'remove', 'api', '--config', 'cockpit.toml'], { sibling } as never)
+        expect(seen).toEqual([
+            { operation: 'add', input: { configPath: 'cockpit.toml', slug: 'api', create: false, remote: 'https://git.invalid/a.git', dir: 'svc' } },
+            { operation: 'remove', input: { configPath: 'cockpit.toml', slug: 'api' } },
+        ])
+
+        const stray = await runInProcess(['sibling', 'remove', 'api', '--config', 'cockpit.toml', '--create'], { sibling } as never)
+        expect(stray.status).toBe(2)
+        expect(stray.stderr).toContain('--create belongs to sibling add')
+    })
+
     it('lists the commands for a bare invocation and points usage errors at --help', async () => {
         const bare = await runInProcess([])
         expect(bare.status).toBe(2)
@@ -362,6 +381,7 @@ describe('CLI help', () => {
             '  down                   Remove the selected generated runtime\n' +
             '  reset                  Preview or interactively approve an exact reset\n' +
             '  runtime                Measure the local container runtime (runtime measure) and record its support row\n' +
+            '  sibling                Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  preflight              Evaluate the authenticated environment gate\n' +
             '  doctor                 Report read-only environment diagnostics\n' +
             '  logs                   Collect bounded logs for one declared service\n' +

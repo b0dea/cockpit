@@ -112,6 +112,43 @@ identifier, whether it `started`, `resumed` or was `unchanged`, the entrypoints 
 ports, and, for services it started, the cold-start time against your configured limit. (This
 result shape is read from the source; the synthetic example has no runnable services.)
 
+## Add or remove a repository
+
+`sibling add` and `sibling remove` edit the `[[sibling]]` tables of `cockpit.toml` for you. They
+append or delete only that table, keep every comment and line elsewhere in the file, and refuse
+rather than write anything that is not exactly the intended change. Choose the form that matches
+where the repository is:
+
+```sh
+# a directory that already exists under the siblings root (acquire = "none")
+cockpit sibling add api --config ./cockpit.toml
+
+# a repository that does not exist yet: runs `git init` on an empty or missing path
+cockpit sibling add api --config ./cockpit.toml --create
+
+# a checkout elsewhere on disk: records its origin so `setup` clones a fresh copy
+cockpit sibling add api --config ./cockpit.toml --from ~/code/api
+
+# a known remote (acquire = "auto"); also records a remote for an existing acquire = "none" sibling
+cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git
+```
+
+`--dir <relative dir>` sets the directory under the siblings root (default: the slug), `--var <NAME>`
+the exported variable (default: the slug as `API_DIR`) and `--purpose "<text>"` the purpose line.
+A duplicate slug, directory or variable is refused by name. `--create` never creates a GitHub
+repository: it prints the `gh repo create` command to run and the `--remote` call that records
+the result. `--from` never moves, modifies or deletes the original checkout, and refuses one with
+no `origin` remote.
+
+```sh
+cockpit sibling remove api --config ./cockpit.toml
+```
+
+`remove` drops the table only if nothing else refers to the sibling (generated services, vendor
+endpoints, mounts, its exported variable). Otherwise it lists every reference and changes nothing.
+It never deletes the checkout or any generated file. After either command, run
+`cockpit sync --config ./cockpit.toml --dry-run` to see which generated files change.
+
 ## Run an agent inside the environment
 
 `session` is the everyday command. It runs `up`, keeps the stack held while your agent runs, and

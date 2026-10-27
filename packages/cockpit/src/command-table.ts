@@ -32,6 +32,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'runtime'
     | 'setup'
     | 'selftest'
+    | 'sibling'
     | 'session'
     | 'sleep'
     | 'sync'
@@ -281,6 +282,23 @@ export const commands = [
             config: { type: 'string' },
             image: { type: 'string' },
             write: { type: 'boolean', default: false },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'sibling',
+        summary: 'Add or remove a repository in cockpit.toml (sibling add, sibling remove)',
+        handler: 'sibling',
+        visibility: 'public',
+        ordinary: unavailable('sibling add and remove rewrite cockpit.toml'),
+        options: {
+            config: { type: 'string' },
+            create: { type: 'boolean', default: false },
+            from: { type: 'string' },
+            remote: { type: 'string' },
+            dir: { type: 'string' },
+            var: { type: 'string' },
+            purpose: { type: 'string' },
             json: { type: 'boolean', default: false },
         },
     },

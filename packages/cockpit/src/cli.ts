@@ -48,6 +48,7 @@ import { createHealthCommandAdapters } from './environment/health-composition.js
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
+import { runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
 import {
     issueSetupRunContext,
     setupEnvironment,
@@ -165,6 +166,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     'registry-resolve': RegistryResolveCommandInput
     reset: ResetCommandInput
     runtime: Readonly<{ configPath: string; image: string; write: boolean }>
+    sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: SiblingRemoveInput }>
     setup: SetupCommandInput
     selftest: Readonly<{
         configPath: string
@@ -604,6 +606,9 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             })
         },
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
+        sibling: (request) => request.operation === 'add'
+            ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
+            : runSiblingRemove(request.input),
         logs: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
@@ -938,6 +943,27 @@ async function decodeRequest(
         return { handler, input: { configPath: values.config, image: values.image, write: values.write === true } }
     }
 
+    if (handler === 'sibling') {
+        const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string }
+        const [operation, slug, ...extra] = parsed.positionals
+        const shape = 'cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"], or cockpit sibling remove <slug> --config <file>'
+        if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
+            return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
+        }
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (operation === 'remove') {
+            const stray = ['create', 'from', 'remote', 'dir', 'var', 'purpose'].find((name) => (values as Record<string, unknown>)[name] !== undefined && (values as Record<string, unknown>)[name] !== false)
+            if (stray) return usageOutcome('CLI_USAGE_INVALID', `sibling remove takes only --config and --json; --${stray} belongs to sibling add`, `--${stray}`)
+            return { handler, input: { operation, input: { configPath: values.config, slug } } }
+        }
+        return { handler, input: { operation, input: {
+            configPath: values.config, slug, create: values.create === true,
+            ...(values.from === undefined ? {} : { from: values.from }), ...(values.remote === undefined ? {} : { remote: values.remote }),
+            ...(values.dir === undefined ? {} : { dir: values.dir }), ...(values.var === undefined ? {} : { varName: values.var }),
+            ...(values.purpose === undefined ? {} : { purpose: values.purpose }),
+        } } }
+    }
+
     if (handler === 'baseline-record') {
         const values = parsed.values as { config?: string; interactive?: boolean; json?: boolean }
         if (parsed.positionals.length > 0) {
@@ -1056,6 +1082,7 @@ async function invokeHandler(
     if (request.handler === 'doctor') return handlers.doctor?.(request.input) ?? unavailable()
     if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
     if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
+    if (request.handler === 'sibling') return handlers.sibling?.(request.input) ?? unavailable()
     if (request.handler === 'baseline-record') return runBaselineOperatorApplication(request.input, {
         ...options,
         terminal: io.confirmBaseline !== undefined || io.stdin?.isTTY === true,
