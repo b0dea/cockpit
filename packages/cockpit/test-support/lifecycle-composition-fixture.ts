@@ -330,7 +330,8 @@ case "$1" in
         exit 0 ;;
     compose)
         if [ "$2" = version ]; then printf '2.39.2\\n'; exit 0; fi
-        if has stop "$@"; then : > ${shellQuote(stoppedPath)}; exit 0; fi
+        # Like Compose v2, stop reports progress on stderr unless it is told to be quiet.
+        if has stop "$@"; then : > ${shellQuote(stoppedPath)}; has quiet "$@" || printf ' Container app Stopped\\n' >&2; exit 0; fi
         if has config "$@"; then
             if has --no-env-resolution "$@"; then
                 printf '%s' ${shellQuote(JSON.stringify(dockerFixture.topology))}

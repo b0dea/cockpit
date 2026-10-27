@@ -600,7 +600,12 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const slept = await runSleep({ configPath }, freshLifecycle())
         const resumed = slept.kind === 'complete' ? await runUp({ configPath }, freshLifecycle()) : slept
         checks.recovery = slept.kind === 'complete' && resumed.kind === 'complete'
-        if (!checks.recovery) fail('the application lifecycle owner did not close interrupted recovery')
+        if (!checks.recovery) {
+            const refused = slept.kind === 'complete' ? resumed : slept
+            const diagnostics = refused.diagnostics.map(({ code, message }) => `${code}: ${message}`).join('; ')
+            fail(`the application lifecycle owner did not close interrupted recovery (${slept.kind === 'complete' ? 'resume' : 'sleep'}`
+                + `${diagnostics.length > 0 ? `: ${diagnostics}` : ''})`)
+        }
 
         const destructive = createDestructiveCommandAdapters({
             configPath, env: lifecycleEnvironment, sessionId: `runtime-probe-${batchId}`,

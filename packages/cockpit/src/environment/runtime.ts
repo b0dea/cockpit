@@ -3056,7 +3056,7 @@ export function createRuntimeStopPlan(input: {
             topologyContract.step,
             `runtime:docker-compose:stop:${topologyContract.runtime.projectName}`,
             'stop',
-            ['stop'],
+            ['--progress', 'quiet', 'stop'],
             OUTPUT_LIMIT_BYTES,
             reservation.generation,
             remainingMs,
