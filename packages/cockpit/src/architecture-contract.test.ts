@@ -6973,11 +6973,15 @@ describe('clean-checkout controls', () => {
     it('keeps four min/max full cells, two Node 24 compatibility cells and the separate Node 20 negative control', () => {
         const workflow = readFileSync(resolve(ROOT, '.github/workflows/ci.yml'), 'utf8')
         const supportedJob = /\n  test:\n(?<body>[\s\S]*?)(?=\n  runtime-floor-negative:)/.exec(workflow)?.groups?.body ?? ''
+        const hygieneJob = /\n  hygiene:\n(?<body>[\s\S]*?)(?=\n  test:)/.exec(workflow)?.groups?.body ?? ''
         const floorJob = /\n  runtime-floor-negative:\n(?<body>[\s\S]*)/.exec(workflow)?.groups?.body ?? ''
 
-        const cells = [...supportedJob.matchAll(/- \{ os: ([^,]+), node: '([^']+)', gate: ([^ }]+) \}/g)]
-            .map((match) => ({ os: match[1], node: match[2], gate: match[3] }))
-        expect(cells).toEqual([
+        // The matrix is one fromJSON expression with a pull-request list and a main list, so each
+        // list is read as data rather than matched line by line.
+        const [pullRequestCells, mainCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
+            .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string }[])
+                .map(({ os, node, gate }) => ({ os, node, gate })))
+        expect(mainCells).toEqual([
             { os: 'ubuntu-latest', node: '22.13.0', gate: 'full' },
             { os: 'macos-latest', node: '22.13.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
@@ -6985,13 +6989,21 @@ describe('clean-checkout controls', () => {
             { os: 'ubuntu-latest', node: '26', gate: 'full' },
             { os: 'macos-latest', node: '26', gate: 'full' },
         ])
+        // Pull requests keep both Node range edges and the Node 24 cell but pay for one macOS cell.
+        expect(pullRequestCells).toEqual([
+            { os: 'ubuntu-latest', node: '22.13.0', gate: 'full' },
+            { os: 'macos-latest', node: '22.13.0', gate: 'full' },
+            { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
+            { os: 'ubuntu-latest', node: '26', gate: 'full' },
+        ])
         expect(workflow).toContain('runtime-floor-negative:')
         expect(supportedJob).toContain('npm run build')
         expect(supportedJob).toContain("if: matrix.gate == 'full'")
         expect(supportedJob).toContain("if: matrix.gate == 'compatibility'")
         expect(supportedJob).toContain('run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.test.ts')
         expect(supportedJob).not.toMatch(/\bnpx\s+vitest\b|--(?:maxWorkers|minWorkers|pool|fileParallelism)\b/)
-        expect(supportedJob).toContain('npm run lint:docs')
+        // Documentation lint runs once in the hygiene job, which docs-only changes also reach.
+        expect(hygieneJob).toContain('npm run lint:docs')
         expect(floorJob).toContain("node-version: '20'")
         expect(floorJob).toContain('node20_status=$?')
         expect(floorJob).toContain('test "$node20_status" -ne 0')

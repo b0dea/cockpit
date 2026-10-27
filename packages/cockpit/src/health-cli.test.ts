@@ -60,8 +60,9 @@ describe('health CLI boundary', () => {
         )
 
         expect(status).toBe(expectedStatus)
+        // The owner's config refusal is forwarded rather than replaced by a generic evidence code.
         expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
+            diagnostics: [{ code: 'CONFIG_NOT_FOUND' }],
             result: { verdict: 'unavailable' },
         })
         expect(capture.output().stderr).toBe('')

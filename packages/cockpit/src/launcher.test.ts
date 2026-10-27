@@ -42,11 +42,8 @@ describe('the installed launcher runtime floor', () => {
         expect(result.error, `launcher child failed: ${result.error?.message}`).toBeUndefined()
         expect(result.status).toBe(0)
         expect(result.stdout).toContain('Usage: cockpit')
-        expect(JSON.parse(result.stderr)).toEqual({
-            result: null,
-            diagnostics: [],
-            invocation: { verb: 'help', durationMs: expect.any(Number), exitCode: 0, resolvedConfigPath: null },
-        })
+        // Human mode writes no invocation record; it is part of the --json envelope only.
+        expect(result.stderr).toBe('')
     })
 
     it('points at the package launcher rather than a test double', () => {

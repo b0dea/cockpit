@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createInvocationRecord } from './invocation.js'
 import { admitDiagnosticFix } from './fix-catalogue.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
 
@@ -86,11 +85,9 @@ describe('executable remedy catalogue', () => {
             env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` } })
         expect(executed.error).toBeUndefined()
         expect(executed.status, executed.stderr).toBe(0)
+        // Human mode prints only the warning; the invocation record belongs to the --json envelope.
         const lines = executed.stderr.match(/[^\n]*\n/g) ?? []
-        expect(lines).toHaveLength(2)
-        const record = JSON.parse(lines[1]!)
-        expect(record).toEqual({ result: null, diagnostics: [], invocation: createInvocationRecord(record.invocation) })
-        expect(record.invocation).toEqual({ verb: 'sync', durationMs: expect.any(Number), exitCode: executed.status, resolvedConfigPath: configPath })
+        expect(lines).toHaveLength(1)
         expect(lines[0]).toMatch(/^WARNING SURFACE_GENERATOR_TRUST_WARNING \[claudecode:\.claude\/settings\.json\]: [^\n]+\n$/)
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete', status: 0,
             diagnostics: [expect.objectContaining({ severity: 'warning', code: 'SURFACE_GENERATOR_TRUST_WARNING' })] })

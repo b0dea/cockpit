@@ -163,13 +163,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const refusal = spawnSync(process.execPath, [launcher, 'guard-evaluate', '--harness', 'claudecode'], { ...options, input: '{}' })
         expect(refusal.status).toBe(0)
         expect(JSON.parse(refusal.stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
-        const record = JSON.parse(refusal.stderr)
-        expect(refusal.stderr.split('\n')).toHaveLength(2)
-        expect(record).toEqual({ result: null, diagnostics: [], invocation: {
-            verb: 'guard-evaluate', durationMs: expect.any(Number), exitCode: refusal.status, resolvedConfigPath: null,
-        } })
-        expect(Number.isSafeInteger(record.invocation.durationMs)).toBe(true)
-        expect(record.invocation.durationMs).toBeGreaterThanOrEqual(0)
+        // Human mode keeps stderr for diagnostics; the invocation record lives only in the --json envelope.
+        expect(refusal.stderr).toBe('')
         expect(packedFiles().filter(path => path.endsWith('/guards/invocation-parser.js'))).toEqual(['dist/guards/invocation-parser.js'])
         expect(packedFiles().filter(path => path.endsWith('/guards/evaluator.js'))).toEqual(['dist/guards/evaluator.js'])
         for (const path of packedFiles().filter(path => path.startsWith('surfaces/') && /\.(md|json)$/.test(path))) {
@@ -707,6 +702,9 @@ it('runs installed init for each isolated target and refuses missing roots or br
                     toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json',
                     install: ['npm', 'ci'], load_probe: ['node', '--version'],
                 }])
+                // The interview now continues past the policy question, so the fourth question is
+                // reached; declining it leaves the target unwritten and the answers resumable.
+                if (question.field === 'environment.generated') return undefined
                 throw new Error(`unexpected installed init question: ${question.field}`)
             },
         }, {}, { env })
@@ -720,9 +718,10 @@ it('runs installed init for each isolated target and refuses missing roots or br
             expect(stderr).toContain('DOCUMENT_NO_RUNNABLE_PRODUCT')
             expect(questions).toEqual([])
         } else {
-            expect(status, stderr).toBe(0)
+            expect(status, stderr).toBe(2)
+            expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
             expect(questions.map(question => question.field)).toEqual([
-                'sibling', 'ports.bases', 'environment.install_policies',
+                'sibling', 'ports.bases', 'environment.install_policies', 'environment.generated',
             ])
             const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
                 cwd: root, env, encoding: 'utf8',

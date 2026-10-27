@@ -373,8 +373,8 @@ describe('observation application runners', () => {
         const doctor = await runDoctor(second.input, { load, execute })
 
         expect(load).toHaveBeenCalledTimes(2)
-        expect(load).toHaveBeenNthCalledWith(1, first.input, expect.any(Function))
-        expect(load).toHaveBeenNthCalledWith(2, second.input, expect.any(Function))
+        expect(load).toHaveBeenNthCalledWith(1, first.input, expect.any(Function), expect.any(Function))
+        expect(load).toHaveBeenNthCalledWith(2, second.input, expect.any(Function), expect.any(Function))
         expect(aggregate.mock.calls[0]?.[0]).toHaveLength(healthProducerNames.length)
         expect(aggregate.mock.calls[0]?.[1]).toBe(first.preflight)
         expect(aggregate.mock.calls[1]?.[0]).toHaveLength(healthProducerNames.length)
