@@ -290,6 +290,55 @@ The evidence words in this reference are deliberate:
 - **human_needed** means semantic product or vendor behavior still needs a maintainer review and
   has not been mechanically established.
 
+## Demo data, test users and roles
+
+This section is for whoever makes the local stack start with useful data and signed-in test users.
+cockpit runs the product's own seed, sweep and restore commands in a declared order and records
+what was applied. It never writes rows or creates identities itself. The product's writers already
+encode its invariants, and a second writer in cockpit would drift from them.
+
+**What to declare.** Under `[environment.generated.data]`, list the modes the stack supports, from
+`empty`, `seeded` and `restored`, and pick the `default_mode` that `cockpit up` applies. Each
+mode is an ordered list of operations. A seeded mode needs `fixtures`, which name a product-owned
+persona source. cockpit renders that source into typed persona outputs (JSON or TypeScript) for
+tests. [`examples/synthetic/cockpit.toml`](../examples/synthetic/cockpit.toml) declares all three
+modes.
+
+**Personas.** Give each test user a stable synthetic ID such as `auth-admin` or `auth-member`, its
+role and permissions, and one operation it must be allowed and one it must be denied. Stable IDs
+let a re-seed update the same rows instead of duplicating them. The allowed and denied pair is what
+proves the roles work, not only that a sign-in succeeded.
+
+**Fixture hygiene.** These rules come from seeders that broke in real use:
+
+- Seed through the product's own writers, not raw inserts, so derived fields and constraints hold.
+- A re-seed restores only the fields a fixture names. Name every field a test changes, or the next
+  run fails its own precondition. Unset fields rather than writing null.
+- Seed the settled state a test needs. Default column values can read as work in flight and
+  disable the interface.
+- Every mode keeps the schema's indexes and constraints (`constraints_and_indexes = true` is
+  required), so an empty stack still rejects the rows production would reject.
+- Adopt only provider objects that carry the synthetic namespace's ownership marker. Refuse any
+  other, naming the account, and never rewrite the roles of an identity people share.
+- A local stack receives no webhooks from an identity provider, so link the provider's ID to the
+  product row explicitly.
+- Prove a seeded credential by using it once. A placeholder passes every read-only check.
+- Clean up by ownership, never by time window.
+
+**Signed-in browser state.** Mint one state file per persona, serially, under the declared auth
+root (directory mode 0700, files 0600). Warm the application first, and wait for the provider's
+session to exist before saving the state. Mint again after any reseed or reset, because a reused
+session goes stale and fails in ways that look like product bugs. Name the files so that the reset
+patterns match them; a file outside those patterns survives a reset. The shipped onboarding
+procedure walks an agent through this, including a starter for one identity provider.
+
+| Symptom | Likely cause |
+| --- | --- |
+| Redirect loop or a wall of 401s across parallel workers | One provider session shared by several workers; mint per worker or run serially |
+| Bounced back to sign-in after a reseed | Stale state file; mint again |
+| Sign-in times out on the first run only | Cold application; warm it before minting |
+| Signed in but lands on a "no role" page | The role exists in the product database but not as a provider membership, or the reverse |
+
 ## Declare environment postures
 
 Declare how local requirements depend on addressing and authentication. For example:
