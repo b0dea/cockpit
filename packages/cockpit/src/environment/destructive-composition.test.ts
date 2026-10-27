@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -160,7 +160,7 @@ describe('destructive command composition', () => {
         expect(execute).not.toHaveBeenCalled()
     })
 
-    it('exposes only load, observe, and execute and cannot mint an operator reset session', async () => {
+    it('exposes only load, observe, observeReclaim, and execute and cannot mint an operator reset session', async () => {
         const adapters = createDestructiveCommandAdapters({
             configPath: '/tmp/cockpit.toml',
             env: { PATH: '/usr/bin:/bin', HOME: '/tmp' },
@@ -169,7 +169,7 @@ describe('destructive command composition', () => {
             dockerContext: 'default',
         }, vi.fn() as never)
 
-        expect(Object.keys(adapters).sort()).toEqual(['execute', 'load', 'observe'])
+        expect(Object.keys(adapters).sort()).toEqual(['execute', 'load', 'observe', 'observeReclaim'])
         expect(adapters).not.toHaveProperty('beginOperatorReset')
         expect(adapters).not.toHaveProperty('decide')
         expect(JSON.stringify(adapters)).not.toContain('continuation')
@@ -257,7 +257,7 @@ describe('destructive command composition', () => {
             'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then printf "2.39.2\\n"; exit 0; fi',
             'if [ "$1" = "info" ] && [ "$3" = "[{{json .OperatingSystem}},{{json .Name}},{{json .OSType}}]" ]; then printf \'%s\\n\' \'["Docker Desktop","docker-desktop","linux"]\'; exit 0; fi',
             'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
-            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " config "; then /bin/cat "$PWD/topology.json"; exit 0; fi',
+            'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " config "; then printf x >> "$PWD/topology-reads"; /bin/cat "$PWD/topology.json"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " up "; then /usr/bin/touch "$PWD/runtime-up"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " stop"; then /bin/rm -f "$PWD/runtime-up"; exit 0; fi',
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " ps --format json"; then if [ -f "$PWD/runtime-up" ]; then /bin/cat "$PWD/runtime.json"; fi; exit 0; fi',
@@ -376,6 +376,15 @@ describe('destructive command composition', () => {
         // Twelve volumes fit one inspection chunk, so Docker is asked once rather than once per volume.
         expect(inspectionCalls).toBe(1)
         expect(maximumActiveInspections).toBeLessThanOrEqual(4)
+
+        // A drain step re-reads reclaim evidence for the checkout root readiness measured, without
+        // measuring the runtime again.
+        const topologyReads = () => readFile(join(root, 'topology-reads'), 'utf8').then((text) => text.length, () => 0)
+        const readsBefore = await topologyReads()
+        const reclaimOnly = await adapters.observeReclaim!(destructive.result)
+        expect(reclaimOnly).toMatchObject({ down: { cwd: observation && 'down' in observation ? observation.down.cwd : '', discovery: { resources: expect.any(Array) } } })
+        expect(reclaimOnly).not.toHaveProperty('runtime')
+        expect(await topologyReads()).toBe(readsBefore)
 
         rejectOneInspection = true
         activeInspections = 0

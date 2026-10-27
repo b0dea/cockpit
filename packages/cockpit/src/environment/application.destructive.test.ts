@@ -724,6 +724,72 @@ describe('destructive application contracts', () => {
         expect(execute).not.toHaveBeenCalled()
     })
 
+    it('measures the runtime once and plans each next removal from the discovery that reconciled the last', async () => {
+        const { configPath, context, instance } = await destructiveFixture()
+        const failedRecord = persistFailedDestructiveRecord(context, 'down')
+        const observations: string[] = []
+        const reclaimObservation = () => {
+            const discovery = Object.freeze({ observation: observations.length })
+            return Object.freeze({
+                instance,
+                down: Object.freeze({ discovery, coordinationRecord: null }),
+                reset: Object.freeze({ discovery, coordinationRecord: null }),
+            }) as never
+        }
+        const discoveries: unknown[] = []
+        const plans: Record<string, unknown>[] = []
+        applicationOwners.reclaim.planTeardown = async (input) => {
+            plans.push(input as never)
+            return plans.length === 1 ? {
+                kind: 'complete', steps: [], actionAuthority: {}, remaining: 2, noop: false,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, continuation: null,
+            } as never : {
+                kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: {},
+            } as never
+        }
+        applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
+        const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
+        applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
+        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
+            topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
+        }) as never
+        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
+        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
+        applicationOwners.reclaim.redeemReclaimAction = async () => ({ step: { id: 'reclaim' }, authority: {} }) as never
+        const continuation = Object.freeze({})
+        let reconciliations = 0
+        applicationOwners.reclaim.reconcileReclaimAction = ({ discovery }) => {
+            discoveries.push(discovery)
+            reconciliations += 1
+            return { kind: 'complete', continuation: reconciliations === 1 ? continuation : null, authority: {} } as never
+        }
+        applicationOwners.reclaim.consumeReclaimCompleted = () => ({}) as never
+        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
+        applicationOwners.claims.finalizeDrainOutcome = () => true
+
+        const result = await runDown({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            observe: async () => {
+                observations.push('runtime')
+                return resetObservation(instance, failedRecord)
+            },
+            observeReclaim: async () => {
+                observations.push('reclaim')
+                return reclaimObservation()
+            },
+            execute: async () => ({ kind: 'complete' }) as never,
+        })
+
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        // Preview, plan, then one discovery per removal: the runtime is measured once, and no
+        // removal is followed by a second discovery before the next one is planned.
+        expect(observations).toEqual(['runtime', 'reclaim', 'reclaim', 'reclaim'])
+        expect(plans).toHaveLength(3)
+        expect(plans[2]!.discovery).toBe(discoveries[0])
+        expect(plans[2]).toMatchObject({ continuation, coordinationRecord: failedRecord, expectedDiscoveryDigest: request.planDigest })
+    })
+
     it('uses recovered failed-action authority without trying to recover the same epoch twice', async () => {
         const { configPath, context, instance } = await destructiveFixture()
         const failedRecord = persistFailedDestructiveRecord(context, 'reset')

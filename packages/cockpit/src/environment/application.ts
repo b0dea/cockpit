@@ -815,9 +815,14 @@ export interface DestructiveObservation {
     readonly reset: Omit<PlanResetInput, 'confirmationDigest' | 'consent' | 'continuation' | 'recoveryAuthority'>
 }
 
+/** The evidence a step of an already-reserved drain re-reads: no runtime readiness, no ports. */
+export type DestructiveReclaimObservation = Pick<DestructiveObservation, 'instance' | 'down' | 'reset'>
+
 interface DestructiveCommandAdapters {
     load(input: DownCommandInput | ResetCommandInput): Promise<EnvironmentCommandOutcome<DestructiveRunContext>>
     observe(context: DestructiveRunContext): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined>
+    /** Reclaim evidence only, after `observe` measured the runtime for the same context. */
+    observeReclaim?(context: DestructiveRunContext): Promise<DestructiveReclaimObservation | DestructiveObservationRefusal | undefined>
     execute(step: ExecutionStep): Promise<ExecuteProbeOutcome>
 }
 
@@ -3314,10 +3319,10 @@ async function loadDestructiveContext(
     return loaded
 }
 
-function selectedObservation(
+function selectedObservation<Observation extends DestructiveReclaimObservation>(
     context: DestructiveRunContext,
-    observation: DestructiveObservation | undefined,
-): DestructiveObservation | undefined {
+    observation: Observation | undefined,
+): Observation | undefined {
     if (!observation) return undefined
     try {
         const selected = selectDestructiveInstance(observation.instance)
@@ -3333,6 +3338,17 @@ async function observeDestructive(
     adapters: DestructiveCommandAdapters,
 ): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined> {
     const observed = await adapters.observe(context)
+    return observed && 'diagnostics' in observed ? observed : selectedObservation(context, observed)
+}
+
+// Each removal is proven by a fresh discovery, but re-measuring the runtime and re-listing the
+// daemon twice per removal made `down` take minutes on a busy shared daemon. A reserved drain's
+// steps re-read only reclaim evidence, and one discovery both reconciles a removal and plans the next.
+async function observeDestructiveReclaim(
+    context: DestructiveRunContext,
+    adapters: DestructiveCommandAdapters,
+): Promise<DestructiveReclaimObservation | DestructiveObservationRefusal | undefined> {
+    const observed = adapters.observeReclaim ? await adapters.observeReclaim(context) : await adapters.observe(context)
     return observed && 'diagnostics' in observed ? observed : selectedObservation(context, observed)
 }
 
@@ -3439,7 +3455,7 @@ async function executeDestructivePlan(
                 message: 'destructive action did not start', target: context.stackId,
             })]))
         }
-        const postAction = await observeDestructive(context, adapters)
+        const postAction = await observeDestructiveReclaim(context, adapters)
         if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
         const reconciled = reconcileReclaimAction({
             authority: execution.authority,
@@ -3455,11 +3471,16 @@ async function executeDestructivePlan(
             plan = Object.freeze({ ...plan, actionAuthority: null, continuation: null, remaining: 0 })
             break
         }
-        const nextObservation = await observeDestructive(context, adapters)
-        if (!nextObservation || 'diagnostics' in nextObservation) return destructiveRepairAfterObservation(context, nextObservation)
+        // The discovery that reconciled this removal plans the next; only the coordination record
+        // moved since, by the outcome just published, so it is read again.
+        const coordination = await readState(context.namespace.paths.coordination(context.stackId))
+        if (coordination.kind !== 'complete') return destructiveRepairRequired(context)
         const next = purpose === 'down'
-            ? await planTeardown({ ...nextObservation.down, expectedDiscoveryDigest: request.planDigest, continuation: reconciled.continuation })
-            : await planReset({ ...nextObservation.reset, confirmationDigest: request.planDigest, continuation: reconciled.continuation })
+            ? await planTeardown({ ...postAction.down, coordinationRecord: coordination.value,
+                expectedDiscoveryDigest: request.planDigest, continuation: reconciled.continuation })
+            : await planReset({ ...postAction.reset, coordinationRecord: coordination.value,
+                expectedCoordinationRevision: coordination.value.revision,
+                confirmationDigest: request.planDigest, continuation: reconciled.continuation })
         if (next.kind !== 'complete') return next.kind === 'refusal'
             ? destructiveRefusal(next.diagnostics) : destructiveRepairRequired(context)
         plan = next
@@ -3502,15 +3523,21 @@ function matchesPersistedDrainRequest(
 async function prepareDown(
     context: DestructiveRunContext,
     adapters: DestructiveCommandAdapters,
-): Promise<{ observation: DestructiveObservation; preview: Extract<TeardownPlanResult, { kind: 'complete' }> }
-    | Extract<DownCommandResult, { kind: 'refusal' }>> {
+): Promise<{
+    runtime: DestructiveObservation['runtime']
+    ports: DestructiveObservation['ports']
+    observation: DestructiveReclaimObservation
+    preview: Extract<TeardownPlanResult, { kind: 'complete' }>
+} | Extract<DownCommandResult, { kind: 'refusal' }>> {
     const previewObservation = await observeDestructive(context, adapters)
     if (!previewObservation || 'diagnostics' in previewObservation) return destructivePreconditionRefusal(context, previewObservation)
     const preview = await planTeardown(previewObservation.down)
     if (preview.kind !== 'complete') return destructiveRefusal(preview.diagnostics)
-    const observation = await observeDestructive(context, adapters)
+    // The plan needs a discovery after the preview's consent; the runtime the preview measured
+    // seconds ago still stands for planning the drain.
+    const observation = await observeDestructiveReclaim(context, adapters)
     if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(context, observation)
-    return { observation, preview }
+    return { runtime: previewObservation.runtime, ports: previewObservation.ports, observation, preview }
 }
 
 export async function runDown(
@@ -3531,8 +3558,8 @@ export async function runDown(
     const persistedRequest = inspection.kind === 'recoverable' ? inspection.request : undefined
     const basis = destructivePlanningBasis(persistedRequest)
     const lifecycle = planDown({
-        runtime: prepared.observation.runtime,
-        ports: prepared.observation.ports,
+        runtime: prepared.runtime,
+        ports: prepared.ports,
         reclaim: projection,
         operationGeneration: basis.generation,
         runtimeStopValidForMs: basis.runtimeStopValidForMs,

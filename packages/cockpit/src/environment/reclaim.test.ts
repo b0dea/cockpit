@@ -1152,7 +1152,9 @@ describe('reset planning', () => {
                     if (committed.kind !== 'complete') throw new Error('teardown progress commit unavailable')
                     expect(finalizeDrainOutcome({ authority: success, publication: committed,
                         address: selected.value.paths.coordination(stackId) })).toBe(true)
-                    const nextDiscovery = await authenticatedDiscovery(root, [remaining])
+                    // The discovery that reconciled the first removal plans the second, as `down` does;
+                    // the other modes plan from a discovery taken after the publication.
+                    const nextDiscovery = mode === 'two-action-success' ? postDiscovery : await authenticatedDiscovery(root, [remaining])
                     const nextPlan = await planTeardown({
                         ...common, coordinationRecord: committed.value, discovery: nextDiscovery,
                         executable: runtimeByDiscovery.get(nextDiscovery)!, selectionAuthority: selectionByDiscovery.get(nextDiscovery),

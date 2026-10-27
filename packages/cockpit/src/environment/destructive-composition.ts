@@ -10,6 +10,7 @@ import {
     runUp,
     type DestructiveObservation,
     type DestructiveObservationRefusal,
+    type DestructiveReclaimObservation,
     type DestructiveRunContext,
     type DownCommandAdapters,
     type LifecycleRunContext,
@@ -361,6 +362,70 @@ export function createDestructiveCommandAdapters(
     })
     const lifecycle = createLifecycleCommandAdapters(lifecycleInput, execute)
     const issued = new WeakMap<DestructiveRunContext, LifecycleRunContext>()
+    // The checkout root runtime readiness resolved for each context, so a reclaim-only
+    // observation reuses it instead of re-measuring the runtime.
+    const readinessRoots = new WeakMap<DestructiveRunContext, string>()
+
+    // Config, coordination and reclaim discovery, the evidence each destructive step re-reads.
+    const observeReclaimTargets = async (
+        context: DestructiveRunContext,
+        configuration: NonNullable<ReturnType<typeof consumeLoadedConfigProjection>>,
+        cwd: string,
+    ): Promise<DestructiveReclaimObservation | DestructiveObservationRefusal | undefined> => {
+        const coordinationAddress = context.namespace.paths.coordination(context.stackId)
+        const stored = await readState(coordinationAddress)
+        if (stored.kind !== 'complete') return undefined
+        const reclaim = await observeReclaim(input, context, cwd, execute)
+        if (!reclaim) return undefined
+        if ('diagnostics' in reclaim) return reclaim
+        // Policy rows select installers. They do not identify an instantiated cache or
+        // its owning root, so treating their logical volume names as cache authority
+        // could authorize deletion of unrelated data.
+        const declaredCacheIds = Object.freeze([])
+        const dependencyCaches = Object.freeze([])
+        const common = Object.freeze({
+            stackId: context.stackId,
+            cockpitId: context.cockpitId,
+            configSha256: context.source.sha256,
+            coordinationRecord: stored.value,
+            coordinationAddress,
+            requesterHolderId: context.holderId,
+            declaredCacheIds,
+            discovery: reclaim.discovery,
+            cwd,
+            env: executionEnvironment(input.env),
+            timeoutMs: input.timeoutMs,
+            selectionAuthority: reclaim.selectionAuthority,
+        })
+        return Object.freeze({
+            instance: context.instance,
+            down: Object.freeze({
+                ...common,
+                executable: reclaim.runtimeExecutable.value,
+                dependencyCaches,
+                pathExecutable: reclaim.pathExecutable.value,
+            }),
+            reset: Object.freeze({
+                ...common,
+                expectedCoordinationRevision: stored.value.revision,
+                resettableVolumes: Object.freeze([...configuration.config.environment.resettable_volumes]),
+                generatedHostPaths: Object.freeze(configuration.config.environment.generated_host_paths.map((declaration) => Object.freeze({
+                    root: cwd,
+                    path: resolve(cwd, declaration),
+                    declaration,
+                }))),
+                runtimeExecutable: reclaim.runtimeExecutable.value,
+                pathExecutable: reclaim.pathExecutable.value,
+            }),
+        })
+    }
+    const currentConfiguration = async (context: DestructiveRunContext) => {
+        const loaded = await loadCockpitConfig(context.configPath)
+        if (loaded.kind === 'refusal') return loaded
+        if (loaded.kind !== 'complete') return undefined
+        const configuration = consumeLoadedConfigProjection(loaded.result)
+        return configuration && sameSource(context.source, configuration.source) ? configuration : undefined
+    }
 
     return Object.freeze({
         async load(request: { readonly configPath: string }) {
@@ -393,11 +458,8 @@ export function createDestructiveCommandAdapters(
         async observe(context: DestructiveRunContext): Promise<DestructiveObservation | DestructiveObservationRefusal | undefined> {
             const lifecycleContext = issued.get(context)
             if (!lifecycleContext) return undefined
-            const loaded = await loadCockpitConfig(context.configPath)
-            if (loaded.kind === 'refusal') return loaded
-            if (loaded.kind !== 'complete') return undefined
-            const configuration = consumeLoadedConfigProjection(loaded.result)
-            if (!configuration || !sameSource(context.source, configuration.source)) return undefined
+            const configuration = await currentConfiguration(context)
+            if (!configuration || 'diagnostics' in configuration) return configuration
             const retained = await observeRetainedPortFamily({
                 namespace: context.namespace,
                 stackId: context.stackId,
@@ -418,54 +480,19 @@ export function createDestructiveCommandAdapters(
                 (diagnostics) => { runtimeRefusal = observationRefusal(diagnostics); return undefined })
             if (runtimeRefusal) return runtimeRefusal
             if (!readiness) return undefined
-            const coordinationAddress = context.namespace.paths.coordination(context.stackId)
-            const stored = await readState(coordinationAddress)
-            if (stored.kind !== 'complete') return undefined
-            const reclaim = await observeReclaim(input, context, readiness.topology.cwd, execute)
-            if (!reclaim) return undefined
-            if ('diagnostics' in reclaim) return reclaim
-            // Policy rows select installers. They do not identify an instantiated cache or
-            // its owning root, so treating their logical volume names as cache authority
-            // could authorize deletion of unrelated data.
-            const declaredCacheIds = Object.freeze([])
-            const dependencyCaches = Object.freeze([])
-            const common = Object.freeze({
-                stackId: context.stackId,
-                cockpitId: context.cockpitId,
-                configSha256: context.source.sha256,
-                coordinationRecord: stored.value,
-                coordinationAddress,
-                requesterHolderId: context.holderId,
-                declaredCacheIds,
-                discovery: reclaim.discovery,
-                cwd: readiness.topology.cwd,
-                env: executionEnvironment(input.env),
-                timeoutMs: input.timeoutMs,
-                selectionAuthority: reclaim.selectionAuthority,
-            })
-            return Object.freeze({
-                instance: context.instance,
-                runtime: readiness.lifecycle,
-                ports,
-                down: Object.freeze({
-                    ...common,
-                    executable: reclaim.runtimeExecutable.value,
-                    dependencyCaches,
-                    pathExecutable: reclaim.pathExecutable.value,
-                }),
-                reset: Object.freeze({
-                    ...common,
-                    expectedCoordinationRevision: stored.value.revision,
-                    resettableVolumes: Object.freeze([...configuration.config.environment.resettable_volumes]),
-                    generatedHostPaths: Object.freeze(configuration.config.environment.generated_host_paths.map((declaration) => Object.freeze({
-                        root: readiness.topology.cwd,
-                        path: resolve(readiness.topology.cwd, declaration),
-                        declaration,
-                    }))),
-                    runtimeExecutable: reclaim.runtimeExecutable.value,
-                    pathExecutable: reclaim.pathExecutable.value,
-                }),
-            })
+            readinessRoots.set(context, readiness.topology.cwd)
+            const targets = await observeReclaimTargets(context, configuration, readiness.topology.cwd)
+            if (!targets || 'diagnostics' in targets) return targets
+            return Object.freeze({ ...targets, runtime: readiness.lifecycle, ports })
+        },
+        // Runtime readiness proves the runtime the plan was made for; the steps of a drain that
+        // plan already reserved need only fresh reclaim evidence against the same checkout root.
+        async observeReclaim(context: DestructiveRunContext): Promise<DestructiveReclaimObservation | DestructiveObservationRefusal | undefined> {
+            const cwd = readinessRoots.get(context)
+            if (!issued.has(context) || cwd === undefined) return undefined
+            const configuration = await currentConfiguration(context)
+            if (!configuration || 'diagnostics' in configuration) return configuration
+            return observeReclaimTargets(context, configuration, cwd)
         },
         execute,
     })

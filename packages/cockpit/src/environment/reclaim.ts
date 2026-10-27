@@ -88,6 +88,10 @@ const consumedTeardownContinuations = new WeakSet<object>()
 const teardownReconciliations = new WeakMap<object, TeardownReconciliationAuthority>()
 const consumedTeardownReconciliations = new WeakSet<object>()
 const consumedExecutionReceipts = new WeakSet<object>()
+// A reconciliation discovery that proved one action of a continuing drain, kept for that drain's
+// next plan. It started after the action finished, so it is as fresh as a second discovery would
+// be; re-listing the whole daemon between every action is what made `down` take minutes.
+const reconciledContinuationDiscoveries = new WeakMap<object, DiscoveryAuthority>()
 const pendingResetActions = new WeakMap<object, PendingResetAction>()
 const pendingTeardownActions = new WeakMap<object, PendingTeardownAction>()
 const consumedPendingTeardownActions = new WeakSet<object>()
@@ -1282,8 +1286,11 @@ function sameRuntimeAuthority(
     env: Readonly<Record<string, string>>,
     selection: DockerSelection,
     currentSelection?: DockerSelectionAuthority,
+    continuation?: unknown,
 ): DiscoveryAuthority | undefined {
     const authority = discoveryAuthorities.get(discovery)
+    const reconciled = continuation !== null && typeof continuation === 'object'
+        && authority !== undefined && reconciledContinuationDiscoveries.get(continuation) === authority
     const safeEnv = safeEnvironment(env)
     return authority !== undefined && safeEnv !== undefined
         && JSON.stringify([authority.executable, authority.cwd, authority.env, authority.selection]) === JSON.stringify([executable, cwd, safeEnv, selection])
@@ -1291,7 +1298,7 @@ function sameRuntimeAuthority(
             === JSON.stringify([executable, cwd, safeEnv, selection])
             && Date.parse(currentSelection.startedAt) >= Date.parse(authority.finishedAt)
             && Date.now() >= Date.parse(currentSelection.finishedAt) && Date.now() - Date.parse(currentSelection.finishedAt) <= 30_000)
-        && authority.receipts.every((receipt) => !consumedDiscoveryReceipts.has(receipt))
+        && (reconciled || authority.receipts.every((receipt) => !consumedDiscoveryReceipts.has(receipt)))
         ? authority : undefined
 }
 
@@ -1602,8 +1609,12 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             const completedRemainAbsent = continued.targetIdentities
                 .filter(({ targetId }) => completedTargetIds.has(targetId))
                 .every((identity) => targetIsAbsent(identity, discovery.resources))
+            // The discovery that reconciled this continuation's last action predates only the
+            // publication of that same outcome, which changes no runtime state.
+            const reconciled = continuedAuthority !== undefined
+                && reconciledContinuationDiscoveries.get(continuation as object) === continuedAuthority
             if (continuedAuthority === undefined || Date.parse(continuedAuthority.startedAt) <= Date.parse(continued.issuedAt)
-                || Date.parse(continuedAuthority.startedAt) <= Date.parse(input.coordinationRecord!.updatedAt)
+                || !reconciled && Date.parse(continuedAuthority.startedAt) <= Date.parse(input.coordinationRecord!.updatedAt)
                 || !completedRemainAbsent || remainingIdentities === undefined
                 || !sameTargetProjections(remainingIdentities, continued.targetIdentities, remainingTargetIds)) {
                 return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, 'reset continuation no longer matches the remaining consented target set', 'reset-continuation')
@@ -1674,7 +1685,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 .every((identity) => targetIsAbsent(identity, discovery.resources)))
             && coldObservedIdentities !== undefined
             && sameTargetProjections(coldObservedIdentities, coldIdentities, coldRemainingTargetIds!)
-        const authority = sameRuntimeAuthority(discovery, runtimeExecutable, input.cwd, env, selection, currentSelection)
+        const authority = sameRuntimeAuthority(discovery, runtimeExecutable, input.cwd, env, selection, currentSelection, continuation)
         const followsPersistedFailure = coldTargetsMatch
             && Date.parse(authority?.startedAt ?? '') > Date.parse(coldRecovery!.freshAfter)
         if (!admittedDiscoveries.has(discovery) || authority === undefined
@@ -1712,7 +1723,10 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         const actionAuthority = Object.freeze({ kind: 'reset-action-authority' })
         consumeAuthority(authority)
         consumedSelectionAuthorities.add(currentSelectionToken as object)
-        if (continuation !== undefined) consumedContinuations.add(continuation as object)
+        if (continuation !== undefined) {
+            consumedContinuations.add(continuation as object)
+            reconciledContinuationDiscoveries.delete(continuation as object)
+        }
         const receipt = Object.freeze({ kind: 'reset-continuation', digest: digestValue([digest, target.kind, target.identity]) })
         const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? Object.freeze(actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
         const removedTargetIds = coldTargetsMatch ? Object.freeze(coldCompletedTargetIds!) : continued === undefined
@@ -1870,8 +1884,10 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             const completedRemainAbsent = continued.targetIdentities
                 .filter(({ targetId }) => completedTargetIds.has(targetId))
                 .every((identity) => targetIsAbsent(identity, discovery.resources))
+            const reconciled = continuedAuthority !== undefined
+                && reconciledContinuationDiscoveries.get(inputContinuation as object) === continuedAuthority
             if (continuedAuthority === undefined || Date.parse(continuedAuthority.startedAt) <= Date.parse(continued.issuedAt)
-                || Date.parse(continuedAuthority.startedAt) <= Date.parse(input.coordinationRecord!.updatedAt)
+                || !reconciled && Date.parse(continuedAuthority.startedAt) <= Date.parse(input.coordinationRecord!.updatedAt)
                 || !completedRemainAbsent || remainingIdentities === undefined
                 || !sameTargetProjections(remainingIdentities, continued.targetIdentities, remainingTargetIds)) {
                 return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown continuation no longer matches the remaining consented resources', 'teardown-continuation')
@@ -1910,7 +1926,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             currentCoordination = current!
         }
         const first = actionable[0]
-        const authority = sameRuntimeAuthority(discovery, executable, input.cwd, input.env, selection, currentSelection)
+        const authority = sameRuntimeAuthority(discovery, executable, input.cwd, input.env, selection, currentSelection, inputContinuation)
         const coldReclaimTargetIds = coldRecovery === undefined ? undefined
             : [...coldRecovery.completed, coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
         const coldCompletedTargetIds = coldRecovery?.completed.map(({ targetId }) => targetId)
@@ -1963,7 +1979,10 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if (step !== undefined) {
             consumeAuthority(authority!)
             consumedSelectionAuthorities.add(currentSelectionToken as object)
-            if (inputContinuation !== undefined) consumedTeardownContinuations.add(inputContinuation as object)
+            if (inputContinuation !== undefined) {
+                consumedTeardownContinuations.add(inputContinuation as object)
+                reconciledContinuationDiscoveries.delete(inputContinuation as object)
+            }
         }
         const actionAuthority = step === undefined || first === undefined ? null : Object.freeze({ kind: 'teardown-action-authority' })
         const continuation = step === undefined || first === undefined ? null
@@ -2530,6 +2549,7 @@ export function reconcileReclaimAction(input: {
     }) satisfies ReclaimCompleted
     const settled = settleReclaimDrainSuccess({ authority: pending.execution, fact })
     if (!settled) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim completion authority is unavailable', 'reclaim-reconciliation')
+    if (expectedRemainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, discoveryAuthority)
     const resultAuthority = Object.freeze({})
     issuedReclaimCompleted.set(resultAuthority, settled)
     return Object.freeze({
