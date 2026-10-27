@@ -10,6 +10,7 @@ import type { SurfaceMergeResult } from './merge.js'
 import type { McpCollectionOutcome } from './mcp.js'
 import type { ProjectionPlanResult } from './projection.js'
 import type { RestrictionExpansionResult } from './restrictions.js'
+import { stripDevelopmentMarkers } from './development-markers.js'
 import {
     captureOpenCodeRootMembers,
     classifySurfaceOwnership,
@@ -295,7 +296,7 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
 
 export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const captured = snapshotGeneratedJson(input)
-    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'browserRunner', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
+    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'browserRunner', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
     if (!object(captured) || !exact(captured, required) || !Array.isArray(captured.configuredHarnesses)
         || !Array.isArray(captured.customHarnesses) || !Array.isArray(captured.sourceEvidence)
         || !object(captured.merge) || captured.merge.kind !== 'complete' || !Array.isArray(captured.merge.surfaces)
@@ -390,6 +391,11 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         return refuse('SURFACE_INPUT_INVALID', 'testing tier guide lost its bounded load-cost proof')
     }
 
+    if (captured.instructions !== null && (typeof captured.instructions !== 'string' || captured.instructions.length === 0
+        || Buffer.byteLength(captured.instructions) > 65_536)) {
+        return refuse('SURFACE_INPUT_INVALID', 'consumer instructions must be absent or a bounded non-empty string')
+    }
+
     const evidence = captured.sourceEvidence.length <= 512 && captured.sourceEvidence.every(validEvidence)
         && new Set(captured.sourceEvidence.map(row => JSON.stringify(row))).size === captured.sourceEvidence.length
         ? captured.sourceEvidence as unknown as SurfaceInputEvidence[] : undefined
@@ -444,7 +450,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     for (const candidate of captured.generated.files) {
         if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
             || !configuredSet.has(candidate.target) || !validFileFields(candidate)) return refuse('SURFACE_INPUT_INVALID', 'generated surface output is malformed')
-        const contribution = { harnesses: [candidate.target], scope: 'always' as const, capability: 'instructed' as const, bytes: candidate.bytes as string }
+        const contribution = { harnesses: [candidate.target], scope: 'always' as const, capability: 'instructed' as const, bytes: stripDevelopmentMarkers(candidate.bytes as string) }
         add(MARKDOWN_PATHS.has(candidate.path as string) ? markdown : whole, candidate.path as string, contribution)
     }
     if (browser && Array.isArray(browser.files)) for (const candidate of browser.files) {
@@ -454,18 +460,22 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         }
         const path = candidate.path as string
         const contribution = { harnesses: [candidate.target as string], scope: 'always' as const,
-            capability: 'instructed' as const, bytes: candidate.bytes as string }
+            capability: 'instructed' as const, bytes: stripDevelopmentMarkers(candidate.bytes as string) }
         if (path.endsWith('/skills/browser/SKILL.md')) {
             add(whole, path, contribution)
-            add(whole, `${path.slice(0, -'SKILL.md'.length)}references/browser.md`, { ...contribution, bytes: captured.browserReference as string })
+            add(whole, `${path.slice(0, -'SKILL.md'.length)}references/browser.md`, { ...contribution, bytes: stripDevelopmentMarkers(captured.browserReference as string) })
         } else if (['.mcp.json', '.codex/config.toml', 'opencode.jsonc'].includes(path)) {
             if (browserMcp.has(path)) return refuse('SURFACE_PATH_CONFLICT', 'browser emitted duplicate native MCP output', path)
             browserMcp.set(path, contribution)
         } else return refuse('SURFACE_INPUT_INVALID', 'browser emitted an unsupported physical path', path)
     }
+    const instructionPaths = [['claudecode', 'CLAUDE.md'], ['codexcli', 'AGENTS.md'], ['opencode', 'AGENTS.md']] as const
+    if (typeof captured.instructions === 'string') for (const [target, path] of instructionPaths) {
+        add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: captured.instructions })
+    }
     if (testing && tierGuide && nativeHooks) {
-        for (const [target, path] of [['claudecode', 'CLAUDE.md'], ['codexcli', 'AGENTS.md'], ['opencode', 'AGENTS.md']] as const) {
-            add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: tierGuide.bytes as string })
+        for (const [target, path] of instructionPaths) {
+            add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: stripDevelopmentMarkers(tierGuide.bytes as string) })
         }
         const hooks = nativeHooks
         if (hooks.kind === 'complete') {
@@ -605,7 +615,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         if (generatorRows.length > 1 && new Set(generatorRows.map(row => object(row) ? row.bytes : undefined)).size !== 1) {
             return refuse('SURFACE_PATH_CONFLICT', 'shared generator instruction bases diverge', path)
         }
-        const base = generatorRows.length > 0 && object(generatorRows[0]) ? generatorRows[0].bytes as string : ''
+        const base = generatorRows.length > 0 && object(generatorRows[0]) ? stripDevelopmentMarkers(generatorRows[0].bytes as string) : ''
         const additions = contributions.filter(row => row.bytes !== base).map(row => row.bytes)
         const body = [base.replace(/\n+$/, ''), ...new Set(additions)].filter(Boolean).join('\n') + '\n'
         const harnesses = sorted(contributions.flatMap(row => row.harnesses))

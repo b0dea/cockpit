@@ -33,6 +33,7 @@ function input() {
         browserReference: null,
         browserRunner: null,
         testing: null,
+        instructions: null,
         customHarnesses: [], customReceipts: [], sourceEvidence: [],
     }
 }

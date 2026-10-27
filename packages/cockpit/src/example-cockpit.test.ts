@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,6 +56,34 @@ function copyExample(name: string) {
     execFileSync('git', ['-C', join(root, 'repositories/app'), 'add', '.gitignore', 'package.json', 'package-lock.json', 'probe.mjs'])
     execFileSync('git', ['-C', join(root, 'repositories/app'), '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'synthetic fixture'])
     return root
+}
+
+// Everything an agent session can load from a synced cockpit: the shared guides and every
+// generated skill, agent and settings directory.
+function loadableFiles(root: string): Map<string, string> {
+    const files = new Map<string, string>()
+    const visit = (relative: string) => {
+        for (const entry of readdirSync(join(root, relative), { withFileTypes: true })) {
+            const path = join(relative, entry.name)
+            if (entry.isDirectory()) visit(path)
+            else if (entry.isFile()) files.set(path, readFileSync(join(root, path), 'utf8'))
+        }
+    }
+    for (const directory of ['.claude', '.agents', '.opencode', '.codex']) if (existsSync(join(root, directory))) visit(directory)
+    for (const guide of ['AGENTS.md', 'CLAUDE.md']) files.set(guide, readFileSync(join(root, guide), 'utf8'))
+    return files
+}
+
+// Cockpit's own maintenance markers must never reach a consumer: they cost context in every
+// session and describe cockpit's docs, not the consumer's product.
+function expectNoDevelopmentMarkers(root: string) {
+    for (const [path, text] of loadableFiles(root)) {
+        expect(text, path).not.toMatch(/cockpit:verified|SHIPPED SURFACE/)
+    }
+}
+
+function stackCommands(text: string) {
+    return text.match(/cockpit (?:up|down|session|doctor|preflight)\b/g) ?? []
 }
 
 function inventory(readme: string) {
@@ -193,6 +221,29 @@ describe('the public synthetic cockpit', () => {
         expect(check.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'GENERATED_DECISIONS_UNDECIDED' }))
     })
 
+    it('opens the generated guide with what the cockpit is, how to work in it and the rules with their reasons', () => {
+        const root = join(scratch, 'minimal-guide')
+        cpSync(join(repositoryRoot, 'examples/minimal'), root, { recursive: true })
+        execFileSync('git', ['init', '--quiet', root])
+        const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+        expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
+        const guide = readFileSync(join(root, 'AGENTS.md'), 'utf8')
+        expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe(guide)
+        const headings = [...guide.matchAll(/^# (.+)$/gm)].map(match => match[1])
+        expect(headings).toEqual(['What this is', 'How to work here', 'Rules and why', 'Skills', 'Testing tiers'])
+        // Facts come from cockpit.toml: the cockpit name and each sibling's directory, purpose and acquire mode.
+        expect(guide).toContain('`tinya` cockpit')
+        expect(guide).toContain('| `api` | Tiny api | none: already on disk |')
+        expect(guide).toContain('cockpit session -- <command>')
+        expect(guide).toContain('cockpit sync --dry-run')
+        expect(guide).toContain('cockpit test-run --select <kind>:<value>')
+        expect(guide).toContain('database hosts: not declared')
+        expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
+        for (const skill of ['bootstrap', 'explain', 'fix']) expect(guide).toMatch(new RegExp(`- \`${skill}\`: Use when `))
+        expect(guide.split('\n').length).toBeLessThanOrEqual(60)
+        expectNoDevelopmentMarkers(root)
+    })
+
     it('rejects undocumented or machine-local command dependencies', () => {
         const exampleRoot = join(repositoryRoot, 'examples/synthetic')
         const readme = readFileSync(join(exampleRoot, 'README.md'), 'utf8')
@@ -256,6 +307,11 @@ describe('cockpits without a generated environment', () => {
         expect(existsSync(join(root, '.claude/skills/bootstrap/SKILL.md'))).toBe(true)
         expect(existsSync(join(root, 'AGENTS.md'))).toBe(true)
         expect(existsSync(join(root, 'env'))).toBe(false)
+        const guide = readFileSync(join(root, 'AGENTS.md'), 'utf8')
+        expect(guide).toContain('`handbook` cockpit')
+        expect(guide).toContain('| `docs` | Design notes and decision records |')
+        expect(stackCommands(guide)).toEqual([])
+        expectNoDevelopmentMarkers(root)
         expect(sync!.response.result.changes.map((change: { path: string }) => change.path)).not.toContain('compose.generated.yml')
         expect(up!.status).toBe(2)
         expect(up!.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])

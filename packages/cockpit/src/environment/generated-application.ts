@@ -61,6 +61,7 @@ import {
     type NativeFragmentSet,
     type SurfaceInputEvidence,
 } from '../surfaces/render.js'
+import { renderConsumerInstructions } from '../surfaces/consumer-instructions.js'
 import { expandRestrictions, type GuardHandlerIdentity } from '../surfaces/restrictions.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
@@ -523,6 +524,13 @@ const consumedBootstrapStatePublications = new WeakSet<object>()
 export function inspectBrowserDebuggerPreparation(value: unknown, runtime: BrowserRuntimeProjection): BrowserDebuggerPreparation | undefined {
     return value !== null && typeof value === 'object' && issuedBrowserDebuggerPreparations.get(value) === runtime
         ? value as BrowserDebuggerPreparation : undefined
+}
+
+function skillDescription(bytes: string): string | undefined {
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(bytes)?.[1]
+    if (front === undefined) return undefined
+    const description = (parseDocument(front).toJS({ maxAliasCount: 0 }) as { description?: unknown } | null)?.description
+    return typeof description === 'string' ? description : undefined
 }
 
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
@@ -2194,7 +2202,22 @@ async function prepareSurfaces(
     const nativeGrants = nativeFragmentSet(generated, projection.grants, nativePaths(grantTargets))
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const runnerAsset = asset('scripts/browser-runner.sh')
-    const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions,
+    const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/browser/SKILL.md')) === true
+    const instructions = renderConsumerInstructions({
+        name: config.cockpit.name,
+        configFile: relative(prepared.root, prepared.configPath),
+        siblings: config.sibling.map(row => ({ dir: row.dir, purpose: row.purpose, acquire: row.acquire })),
+        hasStack: config.environment.generated !== undefined || config.environment.compose_files.length > 0,
+        guards: { hostedDbHosts: config.guards.hosted_db_hosts, vendorEndpointHosts: config.guards.vendor_endpoint_hosts,
+            protectedBranches: config.guards.protected_branches },
+        skills: [
+            ...merge.surfaces.filter(surface => surface.feature === 'skills').flatMap(surface => surface.sources
+                .filter(source => /^skills\/[^/]+\/SKILL\.md$/.test(source.path))
+                .map(source => ({ name: source.path.split('/')[1]!, description: skillDescription(source.bytes) }))),
+            ...(browserSkillRendered ? [{ name: 'browser', description: skillDescription(asset('skills/browser.skill.md').bytes) }] : []),
+        ],
+    })
+    const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
         browserRunner: browser && prepared.workEnvironment.browser && Object.hasOwn(prepared.workEnvironment.browser, 'endpoint')
             ? { path: runnerAsset.path, bytes: runnerAsset.bytes, sha256: runnerAsset.sha256 } : null,

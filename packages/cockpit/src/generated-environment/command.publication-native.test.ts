@@ -292,7 +292,10 @@ native_hooks = { install = "inspect" }
                 expect(Object.keys(codex.mcp_servers).sort()).toEqual(variant.remote && variant.preapproved
                     ? ['playwright', 'unrelated'] : ['unrelated'])
                 expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.remote)
-                const browserReference = await readFile(resolve('packages/cockpit/surfaces/references/browser.md'), 'utf8')
+                // The shipped reference carries a docs-verification marker that is stripped from consumer output.
+                const browserReference = (await readFile(resolve('packages/cockpit/surfaces/references/browser.md'), 'utf8'))
+                    .replace(/^<!-- cockpit:verified version=\S+ -->\n\n/m, '')
+                expect(browserReference).not.toContain('cockpit:verified')
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
                     const path = join(fixture.root, prefix, 'skills/browser/references/browser.md')
                     if (variant.remote && (prefix !== '.agents' || variant.preapproved)) expect(await readFile(path, 'utf8')).toBe(browserReference)
