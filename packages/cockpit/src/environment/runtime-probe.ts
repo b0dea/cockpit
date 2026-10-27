@@ -12,6 +12,7 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { readActiveStackInventory } from './claims.js'
 import { readState } from './state.js'
+import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
 
 export const mechanism = {
@@ -263,22 +264,27 @@ const composeArgs = (input: RuntimeProbeRequest, projectName: string, file: stri
     'compose', '--project-directory', input.cwd, '--file', file, '--project-name', projectName,
 ]
 
-async function inventory(run: ProbeRunner['run'], scope: string, label?: string): Promise<Readonly<Record<string, readonly string[]>> | undefined> {
-    const filter = label === undefined ? [] : ['--filter', `label=${label}`]
-    const commands = [
-        ['containers', ['ps', '-aq', ...filter]],
-        ['volumes', ['volume', 'ls', '-q', ...filter]],
-        ['networks', ['network', 'ls', '-q', ...filter]],
-        ['images', ['image', 'ls', '--no-trunc', '--quiet']],
-    ] as const
-    const result: Record<string, readonly string[]> = {}
-    const outcomes = await Promise.all(commands.map(async ([kind, args]) => [kind, await run(`${scope}:${kind}`, args)] as const))
+// The daemon is often shared with other stacks, so the inventory covers only what this probe can
+// own: anything carrying its owner label or its Compose project label. Compose labels everything it
+// creates for a project, including an implicit default network the owner label never reaches.
+async function inventory(run: ProbeRunner['run'], scope: string, labels: readonly string[]): Promise<Readonly<Record<string, readonly string[]>> | undefined> {
+    const commands = labels.flatMap((label, index) => {
+        const filter = ['--filter', `label=${label}`]
+        return [
+            ['containers', `${index}`, ['ps', '-aq', ...filter]],
+            ['volumes', `${index}`, ['volume', 'ls', '-q', ...filter]],
+            ['networks', `${index}`, ['network', 'ls', '-q', ...filter]],
+            ['images', `${index}`, ['image', 'ls', '--no-trunc', '--quiet', ...filter]],
+        ] as const
+    })
+    const found: Record<string, Set<string>> = { containers: new Set(), volumes: new Set(), networks: new Set(), images: new Set() }
+    const outcomes = await Promise.all(commands.map(async ([kind, index, args]) => [kind, await run(`${scope}:${kind}:${index}`, args)] as const))
     for (const [kind, outcome] of outcomes) {
         const text = decode(outcome)
         if (text === undefined) return undefined
-        result[kind] = Object.freeze([...new Set(text === '' ? [] : text.split('\n').filter(Boolean))].sort())
+        for (const id of text.split('\n').filter(Boolean)) found[kind]!.add(id)
     }
-    return Object.freeze(result)
+    return Object.freeze(Object.fromEntries(Object.entries(found).map(([kind, ids]) => [kind, Object.freeze([...ids].sort())])))
 }
 
 async function exactCleanup(run: ProbeRunner['run'], owned: Readonly<Record<string, readonly string[]>>): Promise<boolean> {
@@ -339,6 +345,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const projectName = `cockpit-probe-${batchId}`
     const ownerLabel = `dev.b0dea.cockpit.probe=${batchId}`
     const ownerLabelName = 'dev.b0dea.cockpit.probe'
+    const probeScope = Object.freeze([ownerLabel, `com.docker.compose.project=${projectName}`])
     const siblingsRoot = join(input.cwd, 'siblings')
     const siblingPath = join(siblingsRoot, 'probe')
     const homePath = join(dirname(input.cwd), `runtime-home-${batchId}`)
@@ -385,6 +392,11 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     let ownerCleanup: (() => Promise<void>) | undefined
     let ownerCleanupAttempted = false
     let ownerTimedOut = false
+    // Owner refusals behind a failed check, so an incomplete verdict names what the owner said.
+    const refusals: string[] = []
+    const noteRefusal = (step: string, outcome: { readonly kind: string; readonly diagnostics: readonly { readonly code: string; readonly message: string }[] }) => {
+        if (outcome.kind === 'refusal') refusals.push(`${step}: ${outcome.diagnostics.map(({ code, message }) => `${code}: ${message}`).join('; ') || 'refused'}`)
+    }
     const ownerStages: Record<string, string> = {}
     const executeOwnerStep = async (step: ExecutionStep, stepDeadline: number): Promise<ExecuteProbeOutcome> => {
         if (Date.now() + step.timeoutMs > stepDeadline) {
@@ -440,11 +452,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             && (dockerHost === undefined || endpoint === dockerHost)
         if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
 
-        pre = await inventory(execute.run, 'pre')
-        const preOwned = await inventory(execute.run, 'pre-owned', ownerLabel)
-        const preProject = decode(await execute.run('pre-project', ['ps', '-aq', '--filter', `label=com.docker.compose.project=${projectName}`]))
-        if (!pre || !preOwned || ['containers', 'volumes', 'networks'].some((kind) => preOwned[kind]!.length > 0)
-            || preProject === undefined || preProject !== '') fail('the disposable namespace collided with pre-existing runtime state')
+        pre = await inventory(execute.run, 'pre', probeScope)
+        if (!pre || Object.values(pre).some((ids) => ids.length > 0)) fail('the disposable namespace collided with pre-existing runtime state')
         collisionFree = true
         const image = decode(await execute.run('image-precondition', ['image', 'inspect', input.image.reference, '--format', '{{.Id}}']))
         checks.imagePreexisting = image === input.image.id
@@ -469,7 +478,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const freshLifecycle = () => createLifecycleCommandAdapters({
             configPath, env: operationEnvironment, sessionId: `runtime-probe-${batchId}`, timeoutMs: Math.min(input.timeoutMs, 30_000),
             activeProfiles: ['runtime_probe'],
-            runtimeMeasurementProbeAuthority: issueRuntimeMeasurementProbeAuthority(runtime),
+            // A resume reads runtime readiness more than once, and each authority admits one reading.
+            runtimeMeasurementProbeAuthority: () => issueRuntimeMeasurementProbeAuthority(runtime),
         }, ownerExecute)
         const lifecycle = freshLifecycle()
         const loadedContext = await lifecycle.load({ configPath })
@@ -480,6 +490,15 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 : 'the production lifecycle owner could not authenticate the disposable checkout')
         }
         const context = loadedContext.result
+        // Bring-up starts from the lifecycle history that `setup` writes; the probe's sibling is
+        // acquire = "none" and already present, so it records the same `started` transition instead
+        // of running setup. Without it the first up passes and every resume refuses.
+        const started = await recordLifecycleStarted({
+            namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, observedAt: new Date().toISOString(),
+        })
+        if (started.kind === 'refusal') {
+            throw new RuntimeProbeFailure(`the disposable checkout's lifecycle history could not be started (${started.diagnostics[0]?.message ?? 'refused'})`)
+        }
         preClaims = stateSnapshot(await readActiveStackInventory(context.namespace))
         preLease = stateSnapshot(await readState(context.namespace.paths.lease(context.stackId)))
         const labels = {
@@ -497,6 +516,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             }, cleanupOwnerExecute)
             const down = await runDown({ configPath }, destructive)
             checks.teardown = down.kind === 'complete'
+            noteRefusal('down', down)
             const [postClaims, postLease] = await Promise.all([
                 readActiveStackInventory(context.namespace),
                 readState(context.namespace.paths.lease(context.stackId)),
@@ -516,7 +536,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             '      - type: volume', '        source: probe_data', '        target: /data',
             '    networks: [probe_net]',
             '  profile_control:', `    image: ${JSON.stringify(input.image.reference)}`, '    command: ["sh", "-c", "while :; do sleep 3600; done"]',
-            '    profiles: ["runtime_probe"]', '    labels:', ...labelLines,
+            '    profiles: ["runtime_probe"]', '    networks: [probe_net]', '    labels:', ...labelLines,
             '    healthcheck:', '      test: ["CMD", "sh", "-c", "kill -0 1"]', '      interval: 1s', '      timeout: 1s', '      retries: 10',
             'volumes:', '  probe_data:', `    name: ${JSON.stringify(volumeName)}`, '    labels:', ...labelLines,
             'networks:', '  probe_net:', `    name: ${JSON.stringify(`${projectName}-network`)}`, '    labels:', ...labelLines, '',
@@ -555,7 +575,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 ? `the application lifecycle owner refused the live candidate (${diagnostics}; stages=${stages})`
                 : 'the application lifecycle owner did not start the live candidate')
         }
-        const owned = await inventory(execute.run, 'created', ownerLabel)
+        const owned = await inventory(execute.run, 'created', [ownerLabel])
         checks.ownership = owned !== undefined && owned.containers.length === 2 && owned.volumes.length === 1 && owned.networks.length === 1
         if (!checks.ownership) fail('created identities did not carry the complete ownership label')
         const containerId = decode(await execute.run('probe-container', [
@@ -615,6 +635,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         }, ownerExecute)
         const reset = await runReset({ configPath }, destructive)
         checks.resetPreview = reset.kind === 'preview' && !reset.result.noop
+        noteRefusal('reset preview', reset)
         await ownerCleanup()
         checks.configuredHostPathTeardown = await readFile(join(generatedPath, 'owned')).then(() => false, () => true)
     } catch (error) {
@@ -625,16 +646,16 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 if (ownerCleanup && !ownerCleanupAttempted) {
                     try { await ownerCleanup() } catch { checks.teardown = false }
                 }
-                let survivors = await inventory(cleanupExecute.run, 'post-owned', ownerLabel)
+                let survivors = await inventory(cleanupExecute.run, 'post-owned', probeScope)
                 for (let attempt = 0; attempt < 2 && survivors
                     && ['containers', 'volumes', 'networks'].some((kind) => survivors![kind]!.length > 0); attempt += 1) {
                     checks.teardown = false
                     await exactCleanup(cleanupExecute.run, survivors)
-                    survivors = await inventory(cleanupExecute.run, `post-fallback-${attempt + 1}`, ownerLabel)
+                    survivors = await inventory(cleanupExecute.run, `post-fallback-${attempt + 1}`, probeScope)
                 }
                 ownedSurvivors = Object.freeze(survivors === undefined ? ['inventory-unavailable']
                     : Object.entries(survivors).flatMap(([kind, ids]) => kind === 'images' ? [] : ids.map((id) => `${kind}:${id}`)).sort())
-                const post = pre === undefined ? undefined : await inventory(cleanupExecute.run, 'post')
+                const post = pre === undefined ? undefined : await inventory(cleanupExecute.run, 'post', probeScope)
                 resourcesEqual = pre !== undefined && post !== undefined && inventoriesEqual(pre, post)
                 changedResourceKinds = pre !== undefined && post !== undefined ? inventoryDifferences(pre, post) : Object.freeze(['inventory-unavailable'])
             } catch {
@@ -662,7 +683,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         && ownedSurvivors.length === 0 && resourcesEqual && claimsEqual && leasesEqual
     if (!complete) {
         const missing = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name).join(',') || 'none'
-        const reason = failureReason ?? `the installed runtime cell remained incomplete (checks=${missing}; survivors=${ownedSurvivors.length}; changedResources=${changedResourceKinds.join(',') || 'none'})`
+        const reason = failureReason ?? `the installed runtime cell remained incomplete (checks=${missing}; survivors=${ownedSurvivors.length}; changedResources=${changedResourceKinds.join(',') || 'none'}${refusals.length > 0 ? `; ${refusals.join('; ')}` : ''})`
         return unavailable(input, reason, execute.timedOut() || cleanupExecute.timedOut() || ownerTimedOut, evidence, brokenControl)
     }
     const supportedRuntimeVersion = runtimeVersion
