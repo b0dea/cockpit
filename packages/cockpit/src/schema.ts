@@ -632,7 +632,9 @@ export const Sibling = z
         // different names for one repository, and every one of them is load-bearing
         // somewhere.
         slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
-        dir: z.string().min(1),
+        // Relative to the siblings root and resolved without further checks by several
+        // consumers, so the schema is where a hostile cockpit.toml is stopped.
+        dir: SafeRelativePath,
         // Absent exactly when nothing is cloned. Never derived from `dir`: a directory is
         // named for local convenience, a remote for whatever the org called it.
         remote: z.string().min(1).optional(),
@@ -655,7 +657,7 @@ export const Sibling = z
         // to the live files — never copies, which are stale the moment the sibling edits its
         // own guide and report nothing. Defaulted rather than required: most repositories use
         // one or both of these, and one that does not is a row that says so.
-        guides: z.array(z.string().min(1)).default(['CLAUDE.md', 'AGENTS.md']),
+        guides: z.array(SafeRelativePath).default(['CLAUDE.md', 'AGENTS.md']),
         // Printed when the checkout is missing, so it says what the absence costs.
         purpose: z.string().min(1),
         environment_files: z.array(EnvironmentFile).optional(),

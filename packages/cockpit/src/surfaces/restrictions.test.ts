@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, symlink, writeFile, realpath } from 'node:fs/promises'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stringify } from 'smol-toml'
 import { encodeOwnershipManifest } from './ownership.js'
@@ -101,7 +101,7 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const source = stringify({ cockpit: { name: 'synthetic-restrictions', siblings_root: dirname(canonical) },
         sibling: roots.map((path, index) => {
             const files = instances.filter(row => (row.root ?? canonical) === path).map(row => ({ template: `${row.path}.example`, instance: row.path }))
-            return { slug: `repo-${index}`, dir: path, mount: 'always', acquire: 'none', var: `REPO_${index}_DIR`, purpose: 'Synthetic checkout',
+            return { slug: `repo-${index}`, dir: relative(dirname(canonical), path), mount: 'always', acquire: 'none', var: `REPO_${index}_DIR`, purpose: 'Synthetic checkout',
                 ...(files.length ? { environment_files: files } : {}) }
         }),
         guards: { hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches], ask_is_deny_on: [...value.policy.ask_is_deny_on] },

@@ -154,6 +154,18 @@ describe('consumer surface declarations', () => {
         expect(parsed.surfaces).toEqual({ overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'] })
     })
 
+    // A cloned repository's cockpit.toml is hostile input: `dir` is resolved under the siblings
+    // root and each guide is joined onto it before being projected into the agent-visible tree.
+    it.each(['../escape', '/etc', '..', '.', 'a/../../b', 'a\\b'])('rejects sibling dir %j', (dir) => {
+        const sibling = { slug: 'app', dir, mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }
+        expect(CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} } }).success).toBe(false)
+    })
+
+    it.each(['../../../secret', '/etc/passwd', 'docs/../../secret', 'docs\\..\\secret'])('rejects sibling guide %j', (guide) => {
+        const sibling = { slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source', guides: [guide] }
+        expect(CockpitConfig.safeParse({ cockpit: { name: 'synthetic' }, sibling: [sibling], ports: { bases: {} } }).success).toBe(false)
+    })
+
     it.each(['yaml', 'javascript', 'js', 'toml'])('rejects %s-qualified Markdown frontmatter', (language) => {
         expect(SurfaceOverlay.safeParse({
             name: 'synthetic-agent',
