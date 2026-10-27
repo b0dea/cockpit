@@ -39,7 +39,7 @@ function fixture() {
     mkdirSync(join(root, 'internal'))
     writeFileSync(runner, `
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 const scenario = process.env.COCKPIT_RUNNER_SCENARIO
 const report = process.argv.find(argument => argument.startsWith('--outputFile.json='))?.split('=', 2)[1]
@@ -77,13 +77,14 @@ const result = { numTotalTests: assertions.length, numPassedTests: 1, numFailedT
   fileMode: invocationTemp ? statSync(join(invocationTemp.fixture, 'retained-on-interrupt.txt')).mode & 0o777 : null,
   invocationMode: invocationTemp ? statSync(invocationTemp.root).mode & 0o777 : null }
 if (scenario === 'nonzero') process.exit(7)
+const finished = (name, state) => appendFileSync(process.env.COCKPIT_TEST_PROGRESS_FILE,
+  JSON.stringify({ file: join(process.cwd(), name), state }) + '\\n')
 if (scenario === 'partial-failure') {
-  const files = process.argv.slice(3).filter(argument => argument.endsWith('.test.ts'))
-  result.testResults = [{ name: join(process.cwd(), files[0]), status: 'passed', assertionResults: assertions },
-    { name: join(process.cwd(), files[1]), status: 'failed', assertionResults: [] }]
-  writeFileSync(report, JSON.stringify(result))
+  finished('a.test.ts', 'passed')
+  finished('b.test.ts', 'failed')
   process.exit(1)
 }
+if (scenario === 'hang') finished('a.test.ts', 'passed')
 if (scenario === 'unexpected-skip') {
   result.numPassedTests = 0
   result.numPendingTests += 1
@@ -278,6 +279,27 @@ describe('bounded test runner', () => {
         ])
     })
 
+    it('records each finished test module in the progress file named by the environment', async () => {
+        const { default: ImmediateFailureReporter } = await import(pathToFileURL(IMMEDIATE_FAILURE_REPORTER).href)
+        const { root } = fixture()
+        const progress = join(root, 'progress.jsonl')
+        const reporter = new ImmediateFailureReporter()
+        const module = (moduleId: string, state: string, ok: boolean) => ({ moduleId, state: () => state, ok: () => ok })
+        process.env.COCKPIT_TEST_PROGRESS_FILE = progress
+        try {
+            reporter.onTestModuleEnd(module('/synthetic/a.test.ts', 'passed', true))
+            reporter.onTestModuleEnd(module('/synthetic/b.test.ts', 'failed', false))
+            reporter.onTestModuleEnd(module('/synthetic/c.test.ts', 'skipped', true))
+        } finally {
+            delete process.env.COCKPIT_TEST_PROGRESS_FILE
+        }
+        expect(readFileSync(progress, 'utf8').trim().split('\n').map(line => JSON.parse(line))).toEqual([
+            { file: '/synthetic/a.test.ts', state: 'passed' },
+            { file: '/synthetic/b.test.ts', state: 'failed' },
+            { file: '/synthetic/c.test.ts', state: 'failed' },
+        ])
+    })
+
     it('refuses duration overrides that could exceed the repository deadline', async () => {
         const { root } = fixture()
         const run = (options: Record<string, number>) => spawnSync(process.execPath, ['--input-type=module', '-e',
@@ -367,7 +389,7 @@ process.exitCode = await runTestsCli([], {
         expect(readFileSync(join(root, '.vitest-reports', partialFile), 'utf8')).toBe('b.test.ts\nc.test.ts\n')
         expect(partial.stderr).toContain(`npm test -- $(cat .vitest-reports/${partialFile})`)
 
-        // A run cut off by the deadline writes no report, so every selected file is unfinished.
+        // A run cut off by the deadline writes no JSON report; the progress record still excludes a.test.ts.
         rmSync(join(root, '.vitest-reports'), { recursive: true })
         process.env.COCKPIT_RUNNER_SCENARIO = 'hang'
         process.env.COCKPIT_RUNNER_PID_PATH = join(root, 'deadline-descendant.pid')
@@ -385,7 +407,7 @@ process.exitCode = await runTestsCli(${JSON.stringify(selected)}, {
             expect(deadline.status, deadline.stderr).toBe(2)
             expect(deadline.stderr).toContain('complete test run exceeded its 13 minute 45 second execution deadline')
             const [deadlineFile] = remainingFiles()
-            expect(readFileSync(join(root, '.vitest-reports', deadlineFile), 'utf8')).toBe('a.test.ts\nb.test.ts\nc.test.ts\n')
+            expect(readFileSync(join(root, '.vitest-reports', deadlineFile), 'utf8')).toBe('b.test.ts\nc.test.ts\n')
             expect(deadline.stderr).toContain(`npm test -- $(cat .vitest-reports/${deadlineFile})`)
         } finally {
             if (alive(descendant)) process.kill(descendant, 'SIGKILL')

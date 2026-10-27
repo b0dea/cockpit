@@ -375,24 +375,18 @@ function validateReport(reportPath, filtered, complete, root) {
     }
 }
 
-// A run cut off by the deadline leaves no JSON report, so everything selected counts as unfinished.
-// A report that exists but cannot be read also lists everything, and says so, rather than guessing.
-function unfinishedFiles(root, selected, reportPath) {
+// The reporter appends one line per finished test file, so this holds under a deadline kill too.
+// A line that cannot be parsed fails the listing loudly rather than being skipped.
+function unfinishedFiles(root, selected, progressPath) {
     const files = [...new Set(selected)].filter(path => existsSync(resolve(root, path)) && lstatSync(resolve(root, path)).isFile())
-    if (!existsSync(reportPath)) return files
-    let passed
-    try {
-        const report = JSON.parse(readFileSync(reportPath, 'utf8'))
-        passed = new Set(report.testResults.filter(result => result.status === 'passed').map(result => result.name))
-    } catch (error) {
-        console.error(`TEST_RUN_REMAINING_REPORT_UNREADABLE: listing every selected file as unfinished (${error instanceof Error ? error.message : String(error)})`)
-        return files
-    }
+    if (!existsSync(progressPath)) return files
+    const passed = new Set(readFileSync(progressPath, 'utf8').split('\n').filter(Boolean)
+        .map(line => JSON.parse(line)).filter(entry => entry.state === 'passed').map(entry => entry.file))
     return files.filter(path => !passed.has(resolve(root, path)))
 }
 
-function writeRemaining(root, reportDirectory, id, selected, reportPath) {
-    const remaining = unfinishedFiles(root, selected, reportPath)
+function writeRemaining(root, id, selected, progressPath) {
+    const remaining = unfinishedFiles(root, selected, progressPath)
     if (remaining.length === 0) return
     const relativePath = `.vitest-reports/remaining-${id}.txt`
     writeFileSync(resolve(root, relativePath), `${remaining.join('\n')}\n`)
@@ -410,6 +404,7 @@ export async function runTestsCli(argv, options = {}) {
     const reportDirectory = resolve(root, '.vitest-reports')
     const runId = `${process.pid}-${Date.now()}`
     const reportPath = resolve(reportDirectory, `results-${runId}.json`)
+    const progressPath = resolve(reportDirectory, `progress-${runId}.jsonl`)
     const latestReportPath = resolve(reportDirectory, 'latest.json')
     let selectedFiles = []
     let child
@@ -465,7 +460,7 @@ export async function runTestsCli(argv, options = {}) {
             }
             child = spawn(process.execPath, ['--input-type=module', '-e', TEST_SUPERVISOR_PROGRAM, ...arguments_], {
                 cwd: root,
-                env: { ...process.env, TMPDIR: invocationTemp.path, TMP: invocationTemp.path, TEMP: invocationTemp.path },
+                env: { ...process.env, COCKPIT_TEST_PROGRESS_FILE: progressPath, TMPDIR: invocationTemp.path, TMP: invocationTemp.path, TEMP: invocationTemp.path },
                 detached: true,
                 stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
             })
@@ -571,10 +566,11 @@ export async function runTestsCli(argv, options = {}) {
         if (observationInterval) clearInterval(observationInterval)
         for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler)
         if (selectedFiles.length > 0) try {
-            writeRemaining(root, reportDirectory, runId, selectedFiles, reportPath)
+            writeRemaining(root, runId, selectedFiles, progressPath)
         } catch (error) {
             console.error(`TEST_RUN_REMAINING_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`)
         }
+        rmSync(progressPath, { force: true })
         if (existsSync(reportPath)) renameSync(reportPath, latestReportPath)
         else rmSync(reportPath, { force: true })
     }
