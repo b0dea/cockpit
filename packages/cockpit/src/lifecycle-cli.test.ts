@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createInvocationRecord } from './invocation.js'
 import { commands } from './command-table.js'
 import { runCli, type CliIo } from './cli.js'
 
@@ -197,10 +196,7 @@ describe('lifecycle CLI composition', () => {
         expect(decide).toHaveBeenCalledOnce()
         expect(decide).toHaveBeenCalledWith(decision)
         expect(capture.output().stdout).toBe('')
-        const record = JSON.parse(capture.output().stderr)
-        expect(record).toEqual({ result: null, diagnostics: [], invocation: createInvocationRecord(record.invocation) })
-        expect(record.invocation).toEqual({ verb: 'reset', durationMs: expect.any(Number), exitCode: status, resolvedConfigPath: '/synthetic/cockpit.toml' })
-        expect(capture.output().stderr.split('\n')).toHaveLength(2)
+        expect(capture.output().stderr).toBe('')
         expect(JSON.stringify(capture.output())).not.toMatch(/continuation|authority|decide/)
     })
 
@@ -219,12 +215,9 @@ describe('lifecycle CLI composition', () => {
             expect(decide).toHaveBeenCalledExactlyOnceWith('decline')
             expect(decide).not.toHaveBeenCalledWith('approve')
             expect(capture.output().stdout).toBe('')
-            const lines = capture.output().stderr.trimEnd().split('\n')
-            const envelope = JSON.parse(lines.pop()!)
-            expect(envelope).toEqual({ result: null, diagnostics: [], invocation: createInvocationRecord(envelope.invocation) })
-            expect(envelope.invocation).toEqual({ verb, durationMs: expect.any(Number), exitCode: status, resolvedConfigPath: '/synthetic/cockpit.toml' })
-            if (throws) expect(lines.join('\n')).toContain('CLI_INTERNAL_ERROR')
-            else expect(lines).toEqual([])
+            expect(capture.output().stderr).not.toContain('"invocation"')
+            if (throws) expect(capture.output().stderr).toContain('CLI_INTERNAL_ERROR')
+            else expect(capture.output().stderr).toBe('')
         }
     })
 

@@ -1050,10 +1050,11 @@ function hasDecisionSyntax(source: string): boolean {
             (status: number, outcome?: CommandOutcome): number => {
                 const exitCode = status === EXIT_CODES.success ? EXIT_CODES.success
                     : status === EXIT_CODES.cancelled ? EXIT_CODES.cancelled : EXIT_CODES.failure
-                const invocation = createInvocationRecord({ verb, durationMs: Math.floor(performance.now() - startedAt),
-                    exitCode, resolvedConfigPath })
-                if (outcome) io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
-                else io.stderr.write(renderJsonResponse({ result: null, diagnostics: [], invocation }))
+                if (outcome) {
+                    const invocation = createInvocationRecord({ verb, durationMs: Math.floor(performance.now() - startedAt),
+                        exitCode, resolvedConfigPath })
+                    io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
+                }
                 return exitCode
             }`.replace(/\s/g, '')
     let violation = false

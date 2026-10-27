@@ -20,6 +20,9 @@ interface HumanReviewContext {
     readonly outcome: HumanReviewOutcome
 }
 
+// Command-line mistakes (as opposed to failed work) get a pointer to the relevant --help.
+const USAGE_ERROR_CODE = /^CLI_(?:USAGE_INVALID|UNKNOWN_COMMAND|COMMAND_REQUIRED)$|_(?:DUPLICATE|UNSUPPORTED)$/
+
 function escapeForTerminal(value: string): string {
     return value.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, (character) => {
         if (/[\u0080-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/.test(character)) {
@@ -66,6 +69,7 @@ export function renderHumanDiagnostics(
     diagnostics: readonly Diagnostic[],
     review?: HumanReviewContext,
     fixContext?: FixContext,
+    usageHint?: string,
 ): string {
     if (review) {
         const { command, outcome } = review
@@ -78,6 +82,11 @@ export function renderHumanDiagnostics(
             return changes.length === 0 ? 'No generated changes.\n'
                 : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
         }
+        if (command === 'logs' && 'records' in outcome.result && Array.isArray(outcome.result.records)) {
+            const records = outcome.result.records as readonly { timestamp: unknown; stream: unknown; message: unknown }[]
+            return records.length === 0 ? 'No log records.\n'
+                : `${records.map(record => escapeForTerminal(`${String(record.timestamp)} ${String(record.stream)} ${String(record.message)}`)).join('\n')}\n`
+        }
         if (command === 'selftest' || command === 'upgrade' || command === 'doctor' || command === 'init' || command === 'compare') {
             return `${terminalSafeJson(outcome.result, 2)}\n`
         }
@@ -85,6 +94,7 @@ export function renderHumanDiagnostics(
     }
     if (diagnostics.length === 0) return ''
     const projected = projectDiagnostics(diagnostics, fixContext)
+    const hint = usageHint !== undefined && diagnostics.some(({ code }) => USAGE_ERROR_CODE.test(code)) ? usageHint : ''
     return `${projected.diagnostics
         .map((diagnostic) => {
             const target = diagnostic.target ? ` [${escapeForTerminal(diagnostic.target)}]` : ''
@@ -93,7 +103,7 @@ export function renderHumanDiagnostics(
                 .map(row => ` Guidance: ${escapeForTerminal(row.text)}`).join('')
             return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}: ${escapeForTerminal(diagnostic.message)}${fix}${guidance}`
         })
-        .join('\n')}\n`
+        .join('\n')}\n${hint}`
 }
 
 export function renderJsonResponse(outcome: {

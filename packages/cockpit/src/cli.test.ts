@@ -16,16 +16,10 @@ import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/con
 import type { SetupResult } from './environment/setup.js'
 import { commands, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 
-function invocationDiagnostics(stderr: string, exitCode: number, verb: string, resolvedConfigPath: string | null = null): string {
-    const lines = stderr.match(/[^\n]*\n|[^\n]+$/g) ?? []
-    const records = lines.filter(line => line.startsWith('{"result":null,"diagnostics":[],"invocation":'))
-    expect(records).toHaveLength(1)
-    const envelope = JSON.parse(records[0]!)
-    expect(Object.keys(envelope).sort()).toEqual(['diagnostics', 'invocation', 'result'])
-    expect(envelope).toEqual({ result: null, diagnostics: [], invocation: createInvocationRecord(envelope.invocation) })
-    expect(envelope.invocation).toEqual({ verb, durationMs: expect.any(Number), exitCode, resolvedConfigPath })
-    expect(envelope.invocation.durationMs).toBeLessThan(60_000)
-    return lines.filter(line => line !== records[0]).join('')
+// Human-mode runs publish no invocation record; it exists only in the --json envelope on stdout.
+function humanStderr(stderr: string): string {
+    expect(stderr).not.toContain('"invocation"')
+    return stderr
 }
 
 function jsonInvocation(stdout: string, exitCode: number, verb: string, resolvedConfigPath: string | null) {
@@ -36,18 +30,18 @@ function jsonInvocation(stdout: string, exitCode: number, verb: string, resolved
     return envelope.invocation
 }
 
-describe('actual invocation publication', () => {
+describe('invocation publication', () => {
     it.each([
         [['--help'], 'help', 0], [['--version'], 'version', 0],
         [[], 'unknown', 2], [['unknown'], 'unknown', 2],
         [['unsafe\u202e'], 'unknown', 2], [['check', '--unknown'], 'check', 2],
         [['guard-evaluate', '--harness', 'claudecode'], 'guard-evaluate', 0],
         [['guard-evaluate', '--harness', 'codexcli'], 'guard-evaluate', 2],
-    ] as const)('publishes one matching subprocess invocation for %j', (args, verb, exitCode) => {
+    ] as const)('publishes no invocation record on stderr for %j', (args, verb, exitCode) => {
         const native = args[2] === 'codexcli'
         const result = run([...args], native ? { COCKPIT_GUARD_TRANSPORT: '1' } : {})
         expect(result.status).toBe(exitCode)
-        const diagnostics = invocationDiagnostics(result.stderr, exitCode, verb)
+        const diagnostics = humanStderr(result.stderr)
         if (verb === 'help') expect(result.stdout).toContain('Usage: cockpit')
         else if (verb === 'version') expect(result.stdout).toBe('@b0dea/cockpit 0.0.0 (Node >=22; source development)\n')
         else if (verb === 'guard-evaluate') {
@@ -64,15 +58,17 @@ describe('actual invocation publication', () => {
     it('retains artifact bytes and uses floored monotonic elapsed milliseconds', async () => {
         let stdout = '', stderr = ''
         const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
+        const document = async () => ({ status: 0, result: null, diagnostics: [], artifact: 'exact artifact bytes\n' })
         const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(10.25).mockReturnValueOnce(19.99)
         try {
-            const status = await runCli(['document', '--registry', 'synthetic.sh'], io, { document: async () => ({
-                status: 0, result: null, diagnostics: [], artifact: 'exact artifact bytes\n',
-            }) })
+            const status = await runCli(['document', '--registry', 'synthetic.sh'], io, { document })
             expect(status).toBe(0)
             expect(stdout).toBe('exact artifact bytes\n')
-            expect(invocationDiagnostics(stderr, status, 'document')).toBe('')
-            expect(JSON.parse(stderr).invocation.durationMs).toBe(9)
+            expect(humanStderr(stderr)).toBe('')
+            stdout = ''
+            clock.mockReset().mockReturnValueOnce(10.25).mockReturnValueOnce(19.99)
+            await runCli(['document', '--registry', 'synthetic.sh', '--json'], io, { document })
+            expect(JSON.parse(stdout).invocation.durationMs).toBe(9)
         } finally { clock.mockRestore() }
     })
 
@@ -93,7 +89,7 @@ describe('actual invocation publication', () => {
                 expect(stderr).toBe('')
             } else {
                 expect(stdout).toBe('')
-                expect(invocationDiagnostics(stderr, status, 'check')).toContain('CLI_USAGE_INVALID')
+                expect(humanStderr(stderr)).toContain('CLI_USAGE_INVALID')
             }
         }
     })
@@ -121,7 +117,7 @@ describe('actual invocation publication', () => {
                 expect(envelope.diagnostics).toEqual(behavior === 'success' ? [] : [expect.objectContaining({ code })])
             } else {
                 expect(stdout).toBe('')
-                const diagnostics = invocationDiagnostics(stderr, status, 'check', resolve('cockpit.toml'))
+                const diagnostics = humanStderr(stderr)
                 if (behavior === 'success') expect(diagnostics).toBe('')
                 else expect(diagnostics).toContain(code)
             }
@@ -140,7 +136,7 @@ describe('closed ordinary invocation metadata', () => {
         const result = run(['guard-evaluate', '--harness', 'claudecode'])
         expect(result.status).toBe(0)
         expect(JSON.parse(result.stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
-        expect(invocationDiagnostics(result.stderr, result.status!, 'guard-evaluate')).toBe('')
+        expect(humanStderr(result.stderr)).toBe('')
         const help = run(['--help'])
         expect(help.stdout).not.toContain('guard-evaluate')
     })
@@ -257,6 +253,82 @@ function run(args: string[], env: Readonly<Record<string, string>> = {}) {
 }
 
 describe('CLI help', () => {
+    async function runInProcess(args: string[], overrides: Parameters<typeof runCli>[2] = {}) {
+        let stdout = '', stderr = ''
+        const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
+        const status = await runCli(args, io, overrides)
+        return { status, stdout, stderr }
+    }
+
+    it.each([['--help'], ['-h']])('prints a command usage and its options for `check %s` and exits 0', async (flag) => {
+        const result = await runInProcess(['check', flag])
+
+        expect(result).toMatchObject({ status: 0, stderr: '' })
+        expect(result.stdout).toContain('Usage: cockpit check [options]')
+        expect(result.stdout).toContain('--config <value>')
+        expect(result.stdout).toContain('--json')
+    })
+
+    it('lists the commands for a bare invocation and points usage errors at --help', async () => {
+        const bare = await runInProcess([])
+        expect(bare.status).toBe(2)
+        expect(bare.stderr).toContain('Commands:')
+        expect(bare.stderr).toContain('CLI_COMMAND_REQUIRED')
+
+        const bad = await runInProcess(['check', '--unknown'])
+        expect(bad.status).toBe(2)
+        expect(bad.stderr).toContain("Run 'cockpit check --help' for usage.")
+    })
+
+    it('names the TOML position and the failing schema paths when the configuration is rejected', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-config-cause-'))
+        try {
+            const malformed = join(directory, 'malformed.toml')
+            writeFileSync(malformed, 'name = \n[cockpit\n')
+            const parse = await runInProcess(['check', '--config', malformed, '--json'])
+            expect(JSON.parse(parse.stdout).diagnostics[0]).toMatchObject({ code: 'CONFIG_PARSE_INVALID', message: expect.stringMatching(/line 1, column \d+/) })
+
+            const unknown = join(directory, 'unknown.toml')
+            writeFileSync(unknown, 'cockpit = 1\n')
+            const schema = await runInProcess(['check', '--config', unknown, '--json'])
+            expect(JSON.parse(schema.stdout).diagnostics[0]).toMatchObject({ code: 'CONFIG_SCHEMA_INVALID', message: expect.stringContaining('cockpit: ') })
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
+    it('reports the thrown error name and message from a failing handler', async () => {
+        const result = await runInProcess(['check', '--config', 'cockpit.toml'], {
+            check: async () => { throw new TypeError('synthetic handler failure') },
+        })
+
+        expect(result.status).toBe(2)
+        expect(result.stderr).toContain('CLI_INTERNAL_ERROR')
+        expect(result.stderr).toContain('TypeError: synthetic handler failure')
+    })
+
+    it('refuses document --output with --json instead of exiting 0 without writing', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-document-output-'))
+        try {
+            const destination = join(directory, 'out.toml')
+            const result = await runInProcess(['document', '--registry', 'synthetic.sh', '--output', destination, '--json'], {
+                document: async () => ({ status: 0, result: null, diagnostics: [], artifact: 'document bytes\n', destination }),
+            })
+
+            expect(result.status).toBe(2)
+            expect(JSON.parse(result.stdout).diagnostics[0]).toMatchObject({ code: 'DOCUMENT_OUTPUT_JSON_UNSUPPORTED', target: '--output' })
+            expect(existsSync(destination)).toBe(false)
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
+    it('prints the collected log records in human mode', async () => {
+        const record = { timestamp: '2026-01-01T00:00:00Z', stream: 'stdout', message: 'synthetic log line' }
+        const result = await runInProcess(['logs', '--config', 'cockpit.toml', '--service', 'app'], {
+            logs: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { json: false, records: [record] } }),
+        })
+
+        expect(result.status).toBe(0)
+        expect(result.stdout).toBe('2026-01-01T00:00:00Z stdout synthetic log line\n')
+    })
+
     it.each(['registry', 'output'])('refuses duplicate document --%s options before accessing files', (option) => {
         const result = run(['document', `--${option}=first`, `--${option}`, 'second', '--json'])
 
@@ -313,7 +385,7 @@ describe('CLI help', () => {
             '  browser-debugger       Prepare an explicitly requested browser debugger\n' +
             '  test-run               Run a declared product gate with honest selection\n',
         )
-        expect(invocationDiagnostics(result.stderr, result.status!, 'help')).toBe('')
+        expect(humanStderr(result.stderr)).toBe('')
     })
 
     it('reads installed package provenance without invoking Git', () => {
@@ -321,7 +393,7 @@ describe('CLI help', () => {
 
         expect(result.status).toBe(0)
         expect(result.stdout).toBe('@b0dea/cockpit 0.0.0 (Node >=22; source development)\n')
-        expect(invocationDiagnostics(result.stderr, result.status!, 'version')).toBe('')
+        expect(humanStderr(result.stderr)).toBe('')
     })
 })
 
@@ -402,7 +474,7 @@ describe('generated environment process contract', () => {
 
         const human = captureIo()
         expect(await runCli([command, '--config=cockpit.toml'], human.io, { [command]: handler })).toBe(0)
-        expect({ ...human.output(), stderr: invocationDiagnostics(human.output().stderr, 0, command, resolve('cockpit.toml')) })
+        expect({ ...human.output(), stderr: humanStderr(human.output().stderr) })
             .toEqual({ stdout: '', stderr: 'INFO GENERATED_CURRENT: generated files are current\n' })
         expect(calls).toEqual([{ configPath: 'cockpit.toml' }, { configPath: 'cockpit.toml' }])
     })
@@ -1043,7 +1115,7 @@ describe('setup process contract', () => {
         })
         expect(status).toBe(0)
         expect(existsSync(marker)).toBe(false)
-        expect({ ...capture.output(), stderr: invocationDiagnostics(capture.output().stderr, status, 'setup', resolve('cockpit.toml')) })
+        expect({ ...capture.output(), stderr: humanStderr(capture.output().stderr) })
             .toEqual({ stdout: '', stderr: '' })
     })
 
@@ -1061,7 +1133,7 @@ describe('setup process contract', () => {
         const refusal = { kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'SETUP_PATH_TYPE_INVALID', message: 'synthetic refusal' }], result: null } as const
         const human = captureIo()
         expect(await runCli(['setup', '--config', 'cockpit.toml'], human.io, { setup: async () => refusal })).toBe(2)
-        expect({ ...human.output(), stderr: invocationDiagnostics(human.output().stderr, 2, 'setup', resolve('cockpit.toml')) })
+        expect({ ...human.output(), stderr: humanStderr(human.output().stderr) })
             .toEqual({ stdout: '', stderr: 'ERROR SETUP_PATH_TYPE_INVALID: synthetic refusal\n' })
         const json = captureIo()
         expect(await runCli(['setup', '--config', 'cockpit.toml', '--json'], json.io, { setup: async () => refusal })).toBe(2)
@@ -1374,7 +1446,7 @@ describe('registry-resolve process contract', () => {
 
         expect(status).toBe(0)
         expect(received).toEqual({ registry: 'registry.sh', siblingsRoot: '../siblings', adoption: 'adoption.state' })
-        expect({ ...capture.output(), stderr: invocationDiagnostics(capture.output().stderr, status, 'registry-resolve') })
+        expect({ ...capture.output(), stderr: humanStderr(capture.output().stderr) })
             .toEqual({ stdout: "COCKPIT_REGISTRY_FORMAT='1'\n", stderr: '' })
     })
 
@@ -1488,7 +1560,7 @@ describe('terminal-safe diagnostics', () => {
                 expect(await runCli(['guard-evaluate', '--harness', 'claudecode'], io, {}, { env: {} })).toBe(0)
                 expect(JSON.parse(stdout)).toEqual({ decision: 'unavailable', reason: expect.any(String) })
                 expect(stdout.split('\n')).toHaveLength(2)
-                expect(invocationDiagnostics(stderr, 0, 'guard-evaluate')).toBe('')
+                expect(humanStderr(stderr)).toBe('')
                 expect(projector).toHaveBeenCalledTimes(1)
             } finally { projector.mockRestore() }
         }
@@ -1811,7 +1883,7 @@ describe('work command routing', () => {
         expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
         expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
         expect(stdout).toBe('')
-        expect(invocationDiagnostics(stderr, 0, 'work-accept', resolve('cockpit.toml'))).toBe('')
+        expect(humanStderr(stderr)).toBe('')
         begin.mockClear(); decide.mockClear(); confirm.mockClear()
         expect(await runCli(['work-accept', '--config', 'cockpit.toml', '--work-order', 'WO-001', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: { CI: '1' } })).toBe(2)
         expect(begin).not.toHaveBeenCalled(); expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()

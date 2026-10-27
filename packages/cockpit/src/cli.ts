@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commands, internalCommands, isWorkHandler, resolveOrdinaryInvocation, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commands, internalCommands, isWorkHandler, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
@@ -619,6 +619,18 @@ function renderHelp(): string {
     return ['Usage: cockpit <command> [options]', '', 'Commands:', ...commandLines, ''].join('\n')
 }
 
+function renderCommandHelp(definition: CommandDefinition): string {
+    const optionLines = Object.entries(definition.options).map(([name, option]) => {
+        const usage = option.type === 'string' ? `--${name} <value>` : `--${name}`
+        const fallback = option.default === undefined || option.default === false ? '' : ` (default: ${String(option.default)})`
+        return [usage, fallback.trim()] as const
+    })
+    const width = Math.max(...optionLines.map(([usage]) => usage.length), '-h, --help'.length)
+    return [`Usage: cockpit ${definition.name} [options]`, '', definition.summary, '', 'Options:',
+        ...optionLines.map(([usage, note]) => `  ${usage.padEnd(width)}  ${note}`.trimEnd()),
+        `  ${'-h, --help'.padEnd(width)}  Show this help`, ''].join('\n')
+}
+
 function renderVersion(): string {
     return `${installedPackageMetadata.name} ${installedPackageMetadata.version} (Node ${installedPackageMetadata.engines.node}; source ${installedPackageMetadata.cockpitSourceRevision})\n`
 }
@@ -1124,13 +1136,15 @@ export async function runCli(
         ?? (commandArgs.length === 0 && commandName === '--help' ? 'help'
             : commandArgs.length === 0 && commandName === '--version' ? 'version' : 'unknown')
     let resolvedConfigPath: string | null = null
+    // The invocation record is part of the --json envelope on stdout; human-mode runs publish no record.
     const finish = (status: number, outcome?: CommandOutcome): number => {
         const exitCode = status === EXIT_CODES.success ? EXIT_CODES.success
             : status === EXIT_CODES.cancelled ? EXIT_CODES.cancelled : EXIT_CODES.failure
-        const invocation = createInvocationRecord({ verb, durationMs: Math.floor(performance.now() - startedAt),
-            exitCode, resolvedConfigPath })
-        if (outcome) io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
-        else io.stderr.write(renderJsonResponse({ result: null, diagnostics: [], invocation }))
+        if (outcome) {
+            const invocation = createInvocationRecord({ verb, durationMs: Math.floor(performance.now() - startedAt),
+                exitCode, resolvedConfigPath })
+            io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
+        }
         return exitCode
     }
     if (internal) {
@@ -1197,6 +1211,13 @@ export async function runCli(
     const operators: OperatorHandlers = { ...defaultOperatorHandlers(runtime), ...handlerOverrides }
     const optionTerminator = commandArgs.indexOf('--')
     const optionArgs = commandArgs.slice(0, optionTerminator === -1 ? commandArgs.length : optionTerminator)
+    if (definition && optionArgs.some(arg => arg === '--help' || arg === '-h')) {
+        io.stdout.write(renderCommandHelp(definition))
+        return finish(EXIT_CODES.success)
+    }
+    // Resolved before dispatch: the publication tail below may only forward outcomes, not decide anything.
+    const usageHint = definition ? `Run 'cockpit ${definition.name} --help' for usage.\n`
+        : commandName ? `Run 'cockpit --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
 
@@ -1213,6 +1234,9 @@ export async function runCli(
         ['registry', 'output'].some((name) => optionCount(optionArgs, name) > 1)
     ) {
         outcome = usageOutcome('DOCUMENT_OPTION_DUPLICATE', 'each document input or output may be supplied only once')
+    } else if (definition.handler === 'document' && jsonRequested && optionCount(optionArgs, 'output') > 0) {
+        // --json never writes files; without this refusal --output was dropped silently and the run exited 0.
+        outcome = usageOutcome('DOCUMENT_OUTPUT_JSON_UNSUPPORTED', '--json prints the result envelope and does not write --output; drop one of the two options', '--output')
     } else if (definition.handler === 'registry-resolve' && optionCount(optionArgs, 'output') > 0) {
         outcome = usageOutcome('REGISTRY_OUTPUT_UNSUPPORTED', 'registry-resolve writes artifact bytes to stdout', '--output')
     } else if (
@@ -1263,10 +1287,10 @@ export async function runCli(
                         json: parsed.values.json === true,
                         ci: (runtime.env ?? process.env).CI,
                     }, io)
-                } catch {
+                } catch (error) {
                     outcome = usageOutcome(
                         'CLI_INTERNAL_ERROR',
-                        `the "${definition.handler}" command failed unexpectedly`,
+                        `the "${definition.handler}" command failed unexpectedly (${error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error value thrown'})`,
                         definition.handler,
                     )
                 }
@@ -1274,10 +1298,10 @@ export async function runCli(
             if (!parsed.values.json) {
                 try {
                     outcome = await executeOutcome(outcome)
-                } catch {
+                } catch (error) {
                     outcome = usageOutcome(
                         'CLI_INTERNAL_ERROR',
-                        `the "${definition.handler}:output" operation failed unexpectedly`,
+                        `the "${definition.handler}:output" operation failed unexpectedly (${error instanceof Error ? `${error.name}: ${error.message}` : 'non-Error value thrown'})`,
                         `${definition.handler}:output`,
                     )
                 }
@@ -1290,7 +1314,7 @@ export async function runCli(
     }
     if (outcome!.artifact && !outcome!.destination) io.stdout.write(outcome!.artifact)
     io.stdout.write(renderHumanDiagnostics([], { command: commandName, outcome: outcome! }))
-    io.stderr.write(renderHumanDiagnostics(outcome!.diagnostics, undefined, outcome!.fixContext))
+    io.stderr.write(renderHumanDiagnostics(outcome!.diagnostics, undefined, outcome!.fixContext, usageHint))
     return finish(outcome!.status)
 }
 

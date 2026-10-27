@@ -96,8 +96,9 @@ enforcement. See [harness surfaces](harness-surfaces.md) for the wider surface e
 
 ## Command completion and operator decline
 
-Public CLI outcomes carry a bounded invocation record with the command name, floored monotonic
-duration in milliseconds, resolved configuration path when present, and one exit status:
+Public CLI outcomes in `--json` mode carry a bounded invocation record with the command name, floored
+monotonic duration in milliseconds, resolved configuration path when present, and one exit status.
+Human-mode runs print no record; the process exit code is the status:
 
 | Exit | CLI meaning |
 | --- | --- |

@@ -299,6 +299,23 @@ export async function observeConfigSource(inputPath: string): Promise<ConfigSour
         : observed.source
 }
 
+// smol-toml's message embeds a source excerpt; keep only the reason and position so file content is not echoed.
+function tomlErrorSummary(error: unknown): string {
+    if (!(error instanceof Error)) return 'unknown parse failure'
+    const reason = error.message.split('\n', 1)[0]!
+    const { line, column } = error as Error & { line?: unknown; column?: unknown }
+    return typeof line === 'number' && typeof column === 'number' ? `${reason} (line ${line}, column ${column})` : reason
+}
+
+const SCHEMA_ISSUES_SHOWN = 3
+
+function schemaIssueSummary(issues: readonly { path: readonly PropertyKey[]; message: string }[]): string {
+    const shown = issues.slice(0, SCHEMA_ISSUES_SHOWN)
+        .map(issue => `${issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.')}: ${issue.message}`)
+    const more = issues.length - shown.length
+    return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`
+}
+
 function refusal(code: RefusalCode, message: string, target: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
     const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target }
     return { kind: 'refusal', status: 2, diagnostics: [diagnostic], result: null }
@@ -332,13 +349,14 @@ export async function loadCockpitConfig(
     let parsed: unknown
     try {
         parsed = parse(source)
-    } catch {
-        return refusal(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, 'cockpit configuration is not valid TOML', path)
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `cockpit configuration is not valid TOML: ${tomlErrorSummary(error)}`, path)
     }
 
     const validated = CockpitConfig.safeParse(parsed)
     if (!validated.success) {
-        return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'cockpit configuration does not match the schema', path)
+        return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
+            `cockpit configuration does not match the schema: ${schemaIssueSummary(validated.error.issues)}`, path)
     }
 
     const reconstructed = CockpitConfig.safeParse(snapshotJson(validated.data))
