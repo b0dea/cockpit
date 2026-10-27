@@ -21,7 +21,7 @@ import {
 export const mechanism = {
     id: 'surface-render',
     module: 'packages/cockpit/src/surfaces/render.ts',
-    exports: ['surfaceModelSha256', 'renderSurfaceSet'],
+    exports: ['surfaceModelSha256', 'renderSurfaceSet', 'composeHookSettings'],
 } as const
 
 export type SurfaceInputEvidence =
@@ -158,34 +158,51 @@ function frontmatter(base: string, fragment: string): string | undefined {
     return `${base.slice(0, close)}\n${fragment}${base.slice(close + 1)}`
 }
 
-function hookJson(contributions: readonly Contribution[]): string | undefined {
+export type HookSettingsComposition =
+    | Readonly<{ kind: 'complete'; value: Record<string, unknown> }>
+    | Readonly<{ kind: 'refusal'; key: string; reason: 'malformed' | 'divergent' }>
+
+/**
+ * The composition rule for a hook-registration settings file with several producers: every
+ * PreToolUse row is kept once, and every other top-level key and hook event must agree exactly.
+ * A refusal names the key so the producer that disagrees can be found.
+ */
+export function composeHookSettings(values: readonly unknown[]): HookSettingsComposition {
     const result: Record<string, unknown> = {}
     const hookEvents: Record<string, unknown> = {}
     const rows: unknown[] = []
-    for (const contribution of contributions) {
-        let parsed: unknown
-        try { parsed = JSON.parse(contribution.bytes) } catch { return undefined }
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    const refusal = (key: string, reason: 'malformed' | 'divergent'): HookSettingsComposition => ({ kind: 'refusal', key, reason })
+    for (const parsed of values) {
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return refusal('(root)', 'malformed')
         const value = parsed as Record<string, unknown>
         const hooks = value.hooks
-        if (hooks !== undefined && (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks))) return undefined
+        if (hooks !== undefined && (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks))) return refusal('hooks', 'malformed')
         const pre = hooks === undefined ? [] : (hooks as Record<string, unknown>).PreToolUse ?? []
-        if (!Array.isArray(pre)) return undefined
+        if (!Array.isArray(pre)) return refusal('hooks.PreToolUse', 'malformed')
         rows.push(...pre)
         for (const [key, item] of Object.entries(value)) {
             if (key === 'hooks') continue
-            if (Object.hasOwn(result, key) && JSON.stringify(result[key]) !== JSON.stringify(item)) return undefined
+            if (Object.hasOwn(result, key) && JSON.stringify(result[key]) !== JSON.stringify(item)) return refusal(key, 'divergent')
             result[key] = item
         }
         for (const [key, item] of Object.entries(hooks as Record<string, unknown> | undefined ?? {})) {
             if (key === 'PreToolUse') continue
-            if (Object.hasOwn(hookEvents, key) && JSON.stringify(hookEvents[key]) !== JSON.stringify(item)) return undefined
+            if (Object.hasOwn(hookEvents, key) && JSON.stringify(hookEvents[key]) !== JSON.stringify(item)) return refusal(`hooks.${key}`, 'divergent')
             hookEvents[key] = item
         }
     }
     const unique = [...new Map(rows.map(row => [JSON.stringify(row), row])).values()]
     result.hooks = { ...hookEvents, PreToolUse: unique }
-    return `${JSON.stringify(result, null, 2)}\n`
+    return { kind: 'complete', value: result }
+}
+
+function hookJson(contributions: readonly Contribution[]): string | undefined {
+    const values: unknown[] = []
+    for (const contribution of contributions) {
+        try { values.push(JSON.parse(contribution.bytes)) } catch { return undefined }
+    }
+    const composed = composeHookSettings(values)
+    return composed.kind === 'complete' ? `${JSON.stringify(composed.value, null, 2)}\n` : undefined
 }
 
 function customReceipts(

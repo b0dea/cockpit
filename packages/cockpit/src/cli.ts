@@ -86,6 +86,7 @@ import {
     prepareSelectedBootstrapSurface, resumeSelectedBootstrapSurface, applySelectedBootstrapSurface,
     checkGeneratedEnvironment,
     syncGeneratedEnvironment,
+    adoptAndSyncGeneratedEnvironment,
     runSyncOperatorCommand,
     type GeneratedEnvironmentCommandInput,
 } from './generated-environment/command.js'
@@ -183,6 +184,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     sleep: SleepCommandInput
     sync: GeneratedEnvironmentCommandInput & Readonly<{
         dryRun?: boolean
+        adopt?: readonly string[]
         authorizeStaleRemoval?: (
             request: GeneratedStaleRemovalApprovalRequest,
         ) => Promise<GeneratedStaleRemovalApproval | undefined>
@@ -535,10 +537,12 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         compare: ({ decideReset, ...input }) => comparisonCommand(input, { env, ...(decideReset ? { decideReset } : {}) }),
         'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand(input, defaultSetupAdapters),
-        sync: ({ authorizeStaleRemoval, ...input }) => syncGeneratedEnvironment(
-            input,
-            authorizeStaleRemoval ? { authorizeStaleRemoval } : {},
-        ),
+        sync: ({ authorizeStaleRemoval, adopt, ...input }) => adopt
+            ? adoptAndSyncGeneratedEnvironment({ configPath: input.configPath, adopt })
+            : syncGeneratedEnvironment(
+                input,
+                authorizeStaleRemoval ? { authorizeStaleRemoval } : {},
+            ),
         check: async input => {
             const outcome = await checkGeneratedEnvironment(input)
             return { ...outcome, result: outcome.report
@@ -862,13 +866,17 @@ async function decodeRequest(
     }
 
     if (handler === 'sync') {
-        const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean }
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean; adopt?: string[] }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'sync accepts named inputs only')
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (values['dry-run'] && values.interactive) {
             return usageOutcome('CLI_USAGE_INVALID', 'sync --dry-run and --interactive are mutually exclusive', '--interactive')
         }
-        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}) } }
+        if (values.adopt && (values['dry-run'] || values.interactive)) {
+            return usageOutcome('CLI_USAGE_INVALID', 'sync --adopt moves files and records them in cockpit.toml, so it cannot be a dry run or interactive; a refused adoption is rolled back', '--adopt')
+        }
+        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}),
+            ...(values.adopt ? { adopt: Object.freeze([...values.adopt]) } : {}) } }
     }
 
     if (handler === 'selftest') {
@@ -1329,7 +1337,7 @@ export async function runCli(
         outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, 'the setup config may be supplied only once', '--config')
     } else if (
         definition.handler !== 'document' && definition.handler !== 'registry-resolve' && definition.handler !== 'setup'
-        && Object.keys(definition.options).some((name) => name !== 'json' && optionCount(optionArgs, name) > 1)
+        && Object.entries(definition.options).some(([name, option]) => name !== 'json' && !('multiple' in option && option.multiple === true) && optionCount(optionArgs, name) > 1)
     ) {
         outcome = usageOutcome('CLI_USAGE_INVALID', `each ${definition.name} option may be supplied only once`)
     } else {

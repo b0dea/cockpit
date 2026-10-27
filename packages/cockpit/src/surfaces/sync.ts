@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { ADOPTABLE_SURFACE_PATHS } from './contract.js'
 import {
     classifySurfaceOwnership,
     removeSharedOwnership,
@@ -171,6 +172,9 @@ export function planSurfaceChanges(input: unknown): SurfaceChangePlanResult {
             if (rendered.bytes !== current.bytes) writes.push({ kind: 'write', path: desired.path, desired, postimage: rendered.bytes,
                 preimage: { identity: current.identity, sha256: current.sha256 } })
             continue
+        }
+        if (current.kind !== 'missing' && !previous && (ADOPTABLE_SURFACE_PATHS as readonly string[]).includes(desired.path)) {
+            return refuse(`existing surface is unmanaged; to keep the settings it holds, adopt it: cockpit sync --config <file> --adopt ${desired.path}`, desired.path)
         }
         if (current.kind !== 'missing' && (!previous || !priorMatchesObserved(previous, current))) return refuse('existing surface is unmanaged or changed', desired.path)
         writes.push({ kind: 'write', path: desired.path, desired,

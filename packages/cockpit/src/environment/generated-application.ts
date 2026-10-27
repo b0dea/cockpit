@@ -31,6 +31,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { deriveRegistry, type DerivedRegistry } from '../registry-derivation.js'
 import { SURFACE_FEATURES, SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../surfaces/contract.js'
+import { mergeAdoptedSurface } from '../surfaces/adoption.js'
 import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from '../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations, type ActiveSurfaceOverride, type SurfaceUpgradeFinding } from '../surfaces/merge.js'
 import { collectMcpDeclarations, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration } from '../surfaces/mcp.js'
@@ -211,6 +212,8 @@ interface PreparedEnvironment {
     readonly sourceEvidence: readonly SurfaceInputEvidence[]
     readonly sourceRoots: readonly SourceRootIdentity[]
     readonly customSources: readonly CustomSourceIdentity[]
+    // The team's adopted harness settings copies a merged surface was rendered from.
+    readonly adoptedSources: readonly AdoptedSourceIdentity[]
     readonly nativeHookPolicySource?: Readonly<{ path: string; sha256: string; identity: PersonaSourceIdentity }>
     readonly surfaceAssets: readonly SurfaceAssetIdentity[]
     readonly warnings: readonly SurfaceGenerationWarning[]
@@ -299,6 +302,12 @@ interface SourceRootIdentity {
     readonly slug: string
     readonly root: string
     readonly identity: DirectoryIdentity
+}
+
+interface AdoptedSourceIdentity {
+    readonly path: string
+    readonly sha256: string
+    readonly identity: PersonaSourceIdentity
 }
 
 interface CustomSourceIdentity {
@@ -904,6 +913,9 @@ async function prepareStackSurfaces(
         return refuse('SURFACE_INPUT_INVALID', 'stack scope requires one authenticated selected bootstrap surface', 'bootstrap')
     }
     const target = targets[0] as SurfaceTarget
+    if (prepared.registry.config.surfaces.adopted.length > 0) {
+        return refuse('SURFACE_ADOPTION_REFUSED', 'a stack-scope cockpit renders no harness settings files to merge adopted settings into', 'surfaces.adopted')
+    }
     const assets = await selectedBootstrapAssets(prepared.node, adapters)
     if (!assets) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets could not be authenticated', 'bootstrap')
     const byPath = new Map(assets.map(asset => [asset.path, asset]))
@@ -1383,6 +1395,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         sourceEvidence: Object.freeze([]),
         sourceRoots: Object.freeze([]),
         customSources: Object.freeze([]),
+        adoptedSources: Object.freeze([]),
         surfaceAssets: Object.freeze([]),
         warnings: Object.freeze([]),
         registry: derived.result,
@@ -2188,7 +2201,9 @@ async function prepareSurfaces(
         testing: Object.freeze({ tierGuide, nativeHooks }),
         customHarnesses: config.surfaces.harnesses, customReceipts, sourceEvidence: evidence })
     if (rendered.kind !== 'complete') return refuse(rendered.diagnostic.code, rendered.diagnostic.message, rendered.diagnostic.target)
-    for (const entry of rendered.entries) if (entry.kind === 'symlink') {
+    const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
+    if ('status' in adopted) return adopted
+    for (const entry of adopted.entries) if (entry.kind === 'symlink') {
         const offset = relative(entry.source.root, entry.source.path)
         const destinationTarget = resolve(prepared.root, dirname(entry.path), entry.target)
         if (offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset) || destinationTarget !== entry.source.path
@@ -2197,7 +2212,7 @@ async function prepareSurfaces(
             return refuse('SURFACE_STATE_CONFLICT', 'a projected symlink target is not bound to its authenticated sibling source', entry.path)
         }
     }
-    const bound = bindSurfaceOwnershipIdentity(rendered.entries, prepared.cockpitId)
+    const bound = bindSurfaceOwnershipIdentity(adopted.entries, prepared.cockpitId)
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
     const surfaceEntries = Object.freeze([...bound.entries, ...bundleEntries]
         .sort((left, right) => compareCodeUnits(left.path, right.path)))
@@ -2255,10 +2270,55 @@ async function prepareSurfaces(
             missing: Object.freeze([...observedGuides.missing].sort(compareCodeUnits)),
         }),
         sourceEvidence: Object.freeze(evidence), sourceRoots: Object.freeze(sourceRoots), customSources: Object.freeze(customSources),
+        adoptedSources: adopted.sources,
         ...(explicitNativeHooks ? { nativeHookPolicySource: explicitNativeHooks.source } : {}),
         surfaceAssets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => Object.freeze({ path, sha256: digest, identity }))),
         workApplication,
         warnings: Object.freeze([...rendered.warnings]) })
+}
+
+const ADOPTED_HARNESS = Object.freeze({ '.claude/settings.json': 'claudecode', '.codex/config.toml': 'codexcli', '.codex/hooks.json': 'codexcli' } as const)
+
+/**
+ * Replace each adopted harness settings file in the rendered set with the merge of the team's
+ * adopted copy and cockpit's rendering. The copy is read through the same anchored reader as every
+ * other input and recorded, so publication refuses if it changes before the write.
+ */
+async function mergeAdoptedSurfaces(
+    prepared: PreparedEnvironment,
+    entries: readonly SurfaceDesiredEntry[],
+    configuredHarnesses: readonly string[],
+    adapters: GeneratedEnvironmentCommandAdapters,
+): Promise<Readonly<{ entries: readonly SurfaceDesiredEntry[]; sources: readonly AdoptedSourceIdentity[] }> | RefusalOutcome> {
+    const rows = prepared.registry.config.surfaces.adopted
+    if (rows.length === 0) return Object.freeze({ entries, sources: Object.freeze([]) })
+    const merged = [...entries]
+    const sources: AdoptedSourceIdentity[] = []
+    for (const row of rows) {
+        const read = await readAnchoredFile(prepared.root, row.source, MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
+        if (read.kind !== 'complete') return refuse('SURFACE_ADOPTION_REFUSED',
+            `the adopted copy of ${row.path} is ${read.kind === 'missing' ? 'missing' : 'not a bounded regular file'}; restore ${row.source} or remove its [[surfaces.adopted]] row`, row.source)
+        let bytes: string
+        try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch {
+            return refuse('SURFACE_ADOPTION_REFUSED', `the adopted copy ${row.source} is not UTF-8 text`, row.source)
+        }
+        const index = merged.findIndex(entry => entry.path === row.path)
+        const current = index < 0 ? undefined : merged[index]!
+        if (current && current.kind !== 'file') return refuse('SURFACE_ADOPTION_REFUSED', `cockpit does not render ${row.path} as a whole file`, row.path)
+        const result = mergeAdoptedSurface(row.path, bytes, current?.bytes)
+        if (result.kind !== 'complete') return refuse(result.diagnostic.code, result.diagnostic.message, result.diagnostic.target)
+        const harness = ADOPTED_HARNESS[row.path]
+        if (!configuredHarnesses.includes(harness)) return refuse('SURFACE_ADOPTION_REFUSED', `${row.path} belongs to ${harness}, which this cockpit does not configure`, row.path)
+        const entry: SurfaceDesiredEntry = current
+            ? Object.freeze({ ...current, bytes: result.bytes, sha256: sha256(result.bytes) })
+            : Object.freeze({ kind: 'file', path: row.path, harnesses: [harness] as [string], scope: 'always', capability: 'instructed', writer: 'cockpit',
+                schemaVersion: 1, ownership: 'whole-file', bytes: result.bytes, sha256: sha256(result.bytes) })
+        if (index < 0) merged.push(entry)
+        else merged[index] = entry
+        sources.push(Object.freeze({ path: row.source, sha256: read.sha256, identity: read.identity }))
+    }
+    merged.sort((left, right) => compareCodeUnits(left.path, right.path))
+    return Object.freeze({ entries: Object.freeze(merged), sources: Object.freeze(sources) })
 }
 
 function mergedAdapters(overrides: Partial<GeneratedEnvironmentCommandAdapters>): GeneratedEnvironmentCommandAdapters {
@@ -2329,9 +2389,11 @@ async function inputSourcesCurrent(
             ...prepared.customSources.map(source => Object.freeze({ path: source.path, maxBytes: source.maxBytes, action: 'read-file' as const })),
             ...(prepared.nativeHookPolicySource ? [Object.freeze({ path: prepared.nativeHookPolicySource.path,
                 maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })] : []),
+            ...prepared.adoptedSources.map(source => Object.freeze({ path: source.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const })),
         ], prepared.node, adapters, deadline)
+        const adoptedOffset = prepared.customSources.length + 1 + (prepared.nativeHookPolicySource ? 1 : 0)
         if ((deadline !== undefined && Date.now() >= deadline) || !reads || reads.kind !== 'complete'
-            || reads.results.length !== prepared.customSources.length + 1 + (prepared.nativeHookPolicySource ? 1 : 0)) return false
+            || reads.results.length !== adoptedOffset + prepared.adoptedSources.length) return false
         const source = reads.results[0]!
         const expected = prepared.personaSourceIdentity
         const localCurrent = source.kind === 'complete' && source.sha256 === prepared.personaSource.sha256
@@ -2349,6 +2411,11 @@ async function inputSourcesCurrent(
                 return read.kind === 'complete' && read.sha256 === prepared.nativeHookPolicySource.sha256
                     && sourceIdentity(read.identity) === sourceIdentity(prepared.nativeHookPolicySource.identity)
             })())
+            && prepared.adoptedSources.every((adopted, index) => {
+                const read = reads.results[adoptedOffset + index]!
+                return read.kind === 'complete' && read.sha256 === adopted.sha256
+                    && sourceIdentity(read.identity) === sourceIdentity(adopted.identity)
+            })
         if (!localCurrent) return false
         const assetReads = prepared.surfaceAssets.length === 0
             ? Object.freeze({ kind: 'complete' as const, results: Object.freeze([]) })
@@ -2380,6 +2447,7 @@ async function ownedInputOverlap(
         ...prepared.sourceEvidence.filter((row): row is Extract<SurfaceInputEvidence, { kind: 'mcp' }> => row.kind === 'mcp')
             .map(evidence => resolve(evidence.root, evidence.path)),
         ...prepared.customSources.map(source => resolve(prepared.root, source.path)),
+        ...prepared.adoptedSources.map(source => resolve(prepared.root, source.path)),
     ]
     const requiredPresentPaths = new Set(presentInputPaths)
     const missingGuidePaths = new Set(prepared.guideSources.missing)
@@ -2585,6 +2653,15 @@ function planObservedSurfaces(
     return Object.freeze({ kind: 'complete', actions: Object.freeze(actions) })
 }
 
+/** A hand edit to a merged adopted file belongs in its adopted copy; say so where the conflict is reported. */
+function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Readonly<{ code: string; message: string; target?: string }>): RefusalOutcome {
+    const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
+        ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
+    return refuse(diagnostic.code, adopted
+        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, delete ${adopted.path}, and run cockpit sync --config <file>`
+        : diagnostic.message, diagnostic.target)
+}
+
 function surfaceMutations(
     actions: readonly SurfaceChange[],
     raw: ReadonlyMap<string, AnchoredEntry>,
@@ -2760,7 +2837,7 @@ async function preparePublication(
         'GENERATED_STALE_ARTIFACT_DRIFT', 'a generated whole-file path is unmanaged, changed, or unsafe', environment.path,
     ) })
     const plan = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
-    if (plan.kind !== 'complete') return refuse(plan.diagnostic.code, plan.diagnostic.message, plan.diagnostic.target)
+    if (plan.kind !== 'complete') return surfacePlanRefusal(prepared, plan.diagnostic)
     const surface = surfaceMutations(plan.actions, surfaceState.raw, prepared.compactSurfacePaths)
     if (!surface) return refuse('SURFACE_STATE_CONFLICT', 'surface change plan could not be admitted', 'surfaces')
     const all = [...environment.mutations, ...surface]
@@ -2984,7 +3061,7 @@ async function checkCanonicalGeneratedEnvironment(
         }
     }
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
-    if (comparison.kind !== 'complete') return refuse(comparison.diagnostic.code, comparison.diagnostic.message, comparison.diagnostic.target)
+    if (comparison.kind !== 'complete') return surfacePlanRefusal(prepared, comparison.diagnostic)
     const drift = comparison.actions.map(action => action.path)
     if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run cockpit sync --config <file>')
     if (ownership.bytes !== encodeOwnershipManifest(prepared).bytes) return refuse(

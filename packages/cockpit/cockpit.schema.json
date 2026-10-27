@@ -10475,6 +10475,92 @@
               "claudecode-plugin"
             ]
           }
+        },
+        "adopted": {
+          "default": [],
+          "maxItems": 3,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "enum": [
+                  ".claude/settings.json",
+                  ".codex/config.toml",
+                  ".codex/hooks.json"
+                ]
+              },
+              "source": {
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "pattern": "^(?!.*(?:^|\\/)(?:\\.git|internal|node_modules)(?:\\/|$)).+$"
+                  }
+                ]
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "adopted_on": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                  },
+                  "observed_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "declared",
+                      "measured",
+                      "inferred"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "pattern": "\\S"
+                  },
+                  "confirmed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "source",
+                  "kind",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "path",
+              "source",
+              "sha256",
+              "adopted_on",
+              "provenance"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -10637,6 +10723,18 @@
       "rule": "unique_when_emitted"
     },
     {
+      "path": "surfaces.adopted[].path",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.adopted[].source",
+      "rule": "equals_cockpit/adopted/<path>"
+    },
+    {
+      "path": "surfaces.adopted[].provenance.kind",
+      "rule": "declared"
+    },
+    {
       "path": "environment.generated",
       "rule": "unique_declaration_identities"
     },
@@ -10781,6 +10879,18 @@
     {
       "path": "surfaces.harnesses[].capabilities[].spelling",
       "rule": "unique_when_emitted"
+    },
+    {
+      "path": "surfaces.adopted[].path",
+      "rule": "unique"
+    },
+    {
+      "path": "surfaces.adopted[].source",
+      "rule": "equals_cockpit/adopted/<path>"
+    },
+    {
+      "path": "surfaces.adopted[].provenance.kind",
+      "rule": "declared"
     },
     {
       "path": "environment.generated",

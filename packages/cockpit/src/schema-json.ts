@@ -137,6 +137,9 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.harnesses[].name', rule: 'unique' },
         { path: 'surfaces.harnesses[].features', rule: 'exact_capability_feature_set' },
         { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
+        { path: 'surfaces.adopted[].path', rule: 'unique' },
+        { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
+        { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
     ]
     schema['x-cockpit-editor-limitations'] = [
         { path: 'sibling[].environment_files[].instance', rule: 'unique' },
@@ -161,6 +164,9 @@ export function renderCockpitSchema(): string {
         { path: 'surfaces.harnesses[].name', rule: 'unique' },
         { path: 'surfaces.harnesses[].features', rule: 'exact_capability_feature_set' },
         { path: 'surfaces.harnesses[].capabilities[].spelling', rule: 'unique_when_emitted' },
+        { path: 'surfaces.adopted[].path', rule: 'unique' },
+        { path: 'surfaces.adopted[].source', rule: 'equals_cockpit/adopted/<path>' },
+        { path: 'surfaces.adopted[].provenance.kind', rule: 'declared' },
     ]
 
     // Editors cannot enforce cross-row identities or arithmetic; the loader owns these checks.

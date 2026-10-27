@@ -4,7 +4,7 @@ import { parseDocument } from 'yaml'
 import { browserProxyAuthorityMatches } from './browser/proxy.js'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
-import { SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
+import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
 
 export const mechanism = {
     id: 'configuration-schema',
@@ -48,6 +48,7 @@ export const mechanism = {
         'SurfaceOverrideReference',
         'SurfaceDeclaration',
         'SurfaceOverlay',
+        'SurfaceAdoption',
         'CustomHarnessCapability',
         'CustomHarness',
         'Surfaces',
@@ -1041,6 +1042,24 @@ export const SurfaceOverlay = SurfaceDeclaration.safeExtend({
     feature: z.enum(['rules', 'subagents', 'skills', 'hooks']),
 })
 
+// A team's own harness settings file that cockpit moved under cockpit/adopted/ and merges with its
+// rendering. `sha256` records the bytes that were moved; it is a record for review, not a lock:
+// the adopted copy is consumer-owned, and the next sync re-merges whatever it holds.
+export const SurfaceAdoption = z.object({
+    path: z.enum(ADOPTABLE_SURFACE_PATHS),
+    source: SurfacePath,
+    sha256: SurfaceSha256,
+    adopted_on: z.string().date(),
+    provenance: Provenance,
+}).strict().superRefine((row, ctx) => {
+    if (row.source !== `${ADOPTED_SURFACE_ROOT}/${row.path}`) {
+        ctx.addIssue({ code: 'custom', path: ['source'], message: `an adopted surface is kept at ${ADOPTED_SURFACE_ROOT}/<path>` })
+    }
+    if (row.provenance.kind !== 'declared') {
+        ctx.addIssue({ code: 'custom', path: ['provenance', 'kind'], message: 'an adopted surface is declared by the team that owns it' })
+    }
+})
+
 const HarnessMechanism = z.object({
     module: SurfacePath,
     export: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/).max(128),
@@ -1095,7 +1114,11 @@ export const Surfaces = z.object({
     overlays: z.array(SurfaceOverlay).max(256).default([]),
     harnesses: z.array(CustomHarness).max(64).default([]),
     bundles: z.array(z.enum(SURFACE_BUNDLE_FORMATS)).max(SURFACE_BUNDLE_FORMATS.length).default([]),
+    adopted: z.array(SurfaceAdoption).max(ADOPTABLE_SURFACE_PATHS.length).default([]),
 }).strict().superRefine((surfaces, ctx) => {
+    if (hasDuplicate(surfaces.adopted.map((row) => row.path))) {
+        ctx.addIssue({ code: 'custom', path: ['adopted'], message: 'each harness settings file is adopted at most once' })
+    }
     if (hasDuplicate(surfaces.overlays.map((overlay) => overlay.name))) {
         ctx.addIssue({ code: 'custom', path: ['overlays'], message: 'overlay names must be unique' })
     }
@@ -1304,6 +1327,7 @@ export type SurfaceSource = z.infer<typeof SurfaceSource>
 export type SurfaceOverrideReference = z.infer<typeof SurfaceOverrideReference>
 export type SurfaceDeclaration = z.infer<typeof SurfaceDeclaration>
 export type SurfaceOverlay = z.infer<typeof SurfaceOverlay>
+export type SurfaceAdoption = z.infer<typeof SurfaceAdoption>
 export type CustomHarnessCapability = z.infer<typeof CustomHarnessCapability>
 export type CustomHarness = z.infer<typeof CustomHarness>
 export type Surfaces = z.infer<typeof Surfaces>

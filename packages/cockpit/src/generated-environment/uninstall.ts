@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
 import { loadCockpitConfig, observeConfigSource } from '../config/load.js'
@@ -8,6 +10,7 @@ import { readActiveStackInventory } from '../environment/claims.js'
 import { ENVIRONMENT_CODES, snapshotGeneratedJson, type HolderId } from '../environment/contract.js'
 import { checkoutId, cockpitId, stackId } from '../environment/identity.js'
 import { abortStateTransaction, snapshotStateNamespace, transactState, type StateNamespace } from '../environment/state.js'
+import { SURFACE_FILE_MAX_BYTES } from '../surfaces/contract.js'
 import { classifyGeneratedPaths, parseOwnershipManifest, projectGeneratedPathFacts, removeSharedOwnership, type OwnershipManifest } from '../surfaces/ownership.js'
 import { observeSiblingGuides } from '../surfaces/projection.js'
 import { admitPublicationPlan, expectedState, nodeAuthority, readAnchoredBatches, readAnchoredFile, runPublicationPlan,
@@ -101,6 +104,23 @@ async function remove(
         const owned = manifest.manifest
         const authority = { root, cockpitId: cockpit, configPath: loaded.result.source.path }
         const mutations: PublicationMutation[] = []
+        // An adopted harness settings file goes back to the team's own bytes instead of disappearing.
+        // The transaction only ever removes an owned whole file, so the merged file is removed there
+        // and the team's bytes are created afterwards, exclusively, once the path is no longer owned.
+        const adopted = new Map<string, Readonly<{ source: string; bytes: Buffer; sha256: string }>>()
+        if (mode === 'uninstall') for (const row of loaded.result.config.surfaces.adopted) {
+            const copy = await readAnchoredFile(root, row.source, SURFACE_FILE_MAX_BYTES, node, adapters)
+            if (copy.kind !== 'complete') return abortStateTransaction(refuse('SURFACE_ADOPTION_REFUSED',
+                `uninstall restores ${row.path} from ${row.source}, which is ${copy.kind === 'missing' ? 'missing' : 'not a bounded regular file'}; restore it or remove its [[surfaces.adopted]] row`, row.source))
+            adopted.set(row.path, Object.freeze({ source: row.source, bytes: copy.bytes, sha256: copy.sha256 }))
+        }
+        const adoptedCurrent = async (deadline?: number): Promise<boolean> => {
+            for (const copy of adopted.values()) {
+                const current = await readAnchoredFile(root, copy.source, SURFACE_FILE_MAX_BYTES, node, adapters, 'read-file', deadline)
+                if (current.kind !== 'complete' || current.sha256 !== copy.sha256) return false
+            }
+            return true
+        }
         if (mode === 'uninstall') {
             if (!await siblingSourcesCurrent(root, owned)) return abortStateTransaction(refuse('GENERATED_STALE_ARTIFACT_DRIFT', 'owned sibling identity or confinement is unknown', 'surfaces'))
             const reads = await readAnchoredBatches(root, owned.entries.map(entry => ({ path: entry.path, action: 'read-entry', maxBytes: MAX_GENERATED_BYTES })), node, adapters)
@@ -134,8 +154,22 @@ async function remove(
             if (deadline !== undefined && Date.now() >= deadline || await inventory()) return false
             const current = await adapters.observeSource(loaded.result.source.path)
             return current.state === 'available' && current.sha256 === loaded.result.source.sha256
-                && (mode === 'forget' || await siblingSourcesCurrent(root, owned))
+                && (mode === 'forget' || await siblingSourcesCurrent(root, owned) && await adoptedCurrent(deadline))
         } })
+        if (mode === 'uninstall' && request.dryRun !== true && outcome.kind === 'complete') {
+            for (const [path, copy] of adopted) {
+                try {
+                    await mkdir(dirname(join(root, path)), { recursive: true })
+                    await writeFile(join(root, path), copy.bytes, { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode: 0o644 })
+                } catch (error) {
+                    // Already holding exactly the team's bytes (cockpit never published over them) is the intended end state.
+                    if ((error as NodeJS.ErrnoException).code === 'EEXIST'
+                        && createHash('sha256').update(await readFile(join(root, path))).digest('hex') === copy.sha256) continue
+                    return abortStateTransaction(refuse('SURFACE_ADOPTION_REFUSED',
+                        `cockpit's files were removed, but ${path} could not be restored from ${copy.source} (${error instanceof Error ? error.message : String(error)}); copy ${copy.source} to ${path} by hand`, path))
+                }
+            }
+        }
         return abortStateTransaction(outcome)
     })
     if ('aborted' in locked) return locked.value

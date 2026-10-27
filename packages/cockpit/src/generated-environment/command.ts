@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline/promises'
 import type { Diagnostic } from '../diagnostics.js'
 import type { PortLeaseProjection } from '../environment/ports.js'
 import { runSyncOperatorApplication } from '../environment/operator-application.js'
+import { runSyncAdoption, type SyncAdoptionInput, type SyncAdoptionOutcome } from './adopt.js'
 import {
     checkGeneratedEnvironment as check,
     prepareGeneratedEnvironmentCurrentness as prepareCurrentness,
@@ -44,7 +45,7 @@ export type {
 export const mechanism = {
     id: 'generated-environment-command',
     module: 'packages/cockpit/src/generated-environment/command.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'applyGeneratedEnvironmentRepair', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'syncGeneratedEnvironment', 'checkGeneratedEnvironment', 'runSyncOperatorCommand'],
+    exports: ['prepareGeneratedEnvironmentCurrentness', 'applyGeneratedEnvironmentRepair', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'syncGeneratedEnvironment', 'adoptAndSyncGeneratedEnvironment', 'checkGeneratedEnvironment', 'runSyncOperatorCommand'],
 } as const
 
 export function prepareSelectedBootstrapSurface(
@@ -88,6 +89,11 @@ export function syncGeneratedEnvironment(
     portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
     return synchronize(input, adapters, portLease)
+}
+
+/** `sync --adopt`: record the adoption, then run the ordinary sync that renders the merge. */
+export function adoptAndSyncGeneratedEnvironment(input: SyncAdoptionInput): Promise<SyncAdoptionOutcome> {
+    return runSyncAdoption(input, request => synchronize(request))
 }
 
 export function checkGeneratedEnvironment(

@@ -174,7 +174,7 @@ describe('closed ordinary invocation metadata', () => {
             ['document'], ['document', '.', '--registry', 'registry.sh'], ['document', '.', '--output', 'out.toml'], ['document', '.', 'other'],
             ['document', '../escape'], ['document', '--registry', '/outside/registry'],
             ['registry-resolve', '--registry', 'registry.sh'], ['registry-resolve', '.', '--registry', 'registry.sh', '--siblings-root', '.', '--adoption', 'adoption'],
-            ['sync', '--interactive'], ['sync', '--interactive=false'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
+            ['sync', '--interactive'], ['sync', '--interactive=false'], ['sync', '--adopt', '.claude/settings.json'], ['selftest'], ['selftest', '--probe-specifications', 'probe', '--interactive'],
             ['upgrade', '--release-evidence', 'release'], ['upgrade', '--release-evidence-sha256', 'a'.repeat(64)],
             ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'A'.repeat(64)],
             ['upgrade', '--release-evidence', 'release', '--release-evidence-sha256', 'a'.repeat(63)],

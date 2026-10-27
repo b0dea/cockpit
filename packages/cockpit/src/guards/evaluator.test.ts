@@ -268,7 +268,8 @@ describe('resolved guard evaluation', () => {
         for (const path of ['.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json', '.claude/settings.json',
             '.claude/settings.local.json', '.mcp.json', '.codex/hooks.json', '.codex/config.toml', '.codex/rules/rulesync.rules',
             'opencode.json', 'opencode.jsonc', '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
-            '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json']) {
+            '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json',
+            'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
                 payload('apply_patch', { command: `*** Begin Patch\n*** Update File: template\n*** Move to: ${path}\n@@\n-a\n+b\n*** End Patch` }),

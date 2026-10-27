@@ -152,7 +152,7 @@ describe('consumer surface declarations', () => {
             ports: { bases: {} },
             surfaces: { overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'] },
         })
-        expect(parsed.surfaces).toEqual({ overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'] })
+        expect(parsed.surfaces).toEqual({ overlays: [surfaceDeclaration], harnesses: [customHarness], bundles: ['claudecode-plugin'], adopted: [] })
     })
 
     // A cloned repository's cockpit.toml is hostile input: `dir` is resolved under the siblings
@@ -244,7 +244,7 @@ describe('consumer surface declarations', () => {
             sibling: [{ slug: 'app', dir: 'app', mount: 'none', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }],
             ports: { bases: {} },
         })
-        expect(parsed.surfaces).toEqual({ overlays: [], harnesses: [], bundles: [] })
+        expect(parsed.surfaces).toEqual({ overlays: [], harnesses: [], bundles: [], adopted: [] })
     })
 })
 

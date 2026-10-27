@@ -54,12 +54,14 @@ export interface GuardDecision {
 // the manifest that authenticates both, Claude's local settings, where `disableAllHooks` would switch
 // the hook off, the generated MCP server declarations, the generated Codex and OpenCode configurations,
 // and the generated Codex command rules. These spellings match the restriction expansion, the guard
-// application and the generated surface outputs.
+// application and the generated surface outputs. An adopted copy of a registration or configuration
+// file is merged into it on the next sync, so it is a control too.
 const GUARD_CONTROL_FILES = [
     '.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json',
     '.claude/settings.json', '.claude/settings.local.json', '.mcp.json',
     '.codex/hooks.json', '.codex/config.toml', '.codex/rules/rulesync.rules',
     'opencode.json', 'opencode.jsonc',
+    'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
 // bundle carries its own MCP servers and hook registration, so no file below them is data.

@@ -8,7 +8,7 @@ export const mechanism = {
     exports: [
         'SURFACE_TARGETS', 'SURFACE_FEATURES', 'SURFACE_FILE_MAX_BYTES', 'SURFACE_OUTPUT_MAX_BYTES',
         'SURFACE_OUTPUT_MAX_FILES', 'SURFACE_BUNDLE_FORMATS', 'captureSurfaceBatch', 'captureSurfaceBundleBatch',
-        'bundleSurfaceFiles', 'surfaceSourcesMatchFeature',
+        'bundleSurfaceFiles', 'surfaceSourcesMatchFeature', 'ADOPTABLE_SURFACE_PATHS', 'ADOPTED_SURFACE_ROOT',
     ],
 } as const
 
@@ -16,6 +16,12 @@ export const SURFACE_TARGETS = Object.freeze(['claudecode', 'codexcli', 'opencod
 export const SURFACE_FEATURES = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 export const SURFACE_BUNDLE_FORMATS = Object.freeze(['claudecode-plugin'] as const)
 export const SURFACE_FILE_MAX_BYTES = 65_536
+// The harness settings files cockpit renders whole and a team may already keep its own copy of.
+// Adoption moves the team's bytes under ADOPTED_SURFACE_ROOT and renders a merge of both; every
+// other surface path is either cockpit's alone or already shares a marked region.
+export const ADOPTABLE_SURFACE_PATHS = Object.freeze(['.claude/settings.json', '.codex/config.toml', '.codex/hooks.json'] as const)
+export type AdoptableSurfacePath = typeof ADOPTABLE_SURFACE_PATHS[number]
+export const ADOPTED_SURFACE_ROOT = 'cockpit/adopted'
 export const SURFACE_OUTPUT_MAX_BYTES = 4_194_304
 export const SURFACE_OUTPUT_MAX_FILES = 256
 export type SurfaceTarget = typeof SURFACE_TARGETS[number]

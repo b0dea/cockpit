@@ -171,10 +171,12 @@ export const commands = [
         summary: 'Synchronize canonical generated environment files',
         handler: 'sync',
         visibility: 'public',
-        ordinary: ordinary('sync', { ...configured, 'dry-run': flag }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive']), values: Object.freeze([]) }) }),
+        // Adoption rewrites cockpit.toml and moves a team's harness settings, so it is never an ordinary agent invocation.
+        ordinary: ordinary('sync', { ...configured, 'dry-run': flag }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']), values: Object.freeze([]) }) }),
         options: {
             config: { type: 'string' },
             'dry-run': { type: 'boolean', default: false },
+            adopt: { type: 'string', multiple: true },
             interactive: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
