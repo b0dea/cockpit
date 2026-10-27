@@ -40,6 +40,23 @@ describe('inferred interview answers', () => {
         expect(JSON.stringify(result)).not.toMatch(/hunter2|abc123/)
     })
 
+    it('asks which non-local host each database or vendor variable names, from template names only', async () => {
+        const root = estate({
+            'api/.env.example': 'DATABASE_URL=postgres://user:hunter2@db.internal/app\nLOG_LEVEL=debug\n',
+            'api/.env.staging.example': 'STRIPE_API_BASE=https://vendor.invalid/v1\n',
+            'api/.env': 'ANALYTICS_DB_URL=never-read\n',
+        })
+        const result = await deriveInferredFacts({ root, repositories: api })
+        const guards = result.facts.filter(fact => fact.fields.includes('guards'))
+        expect(guards).toEqual([
+            expect.objectContaining({ target: 'guards.hosted_db_hosts', value: expect.objectContaining({ variable: 'DATABASE_URL',
+                ask: expect.stringContaining('production, staging, shared') }), provenance: expect.objectContaining({ source: 'api/.env.example' }) }),
+            expect.objectContaining({ target: 'guards.vendor_endpoint_hosts', value: expect.objectContaining({ variable: 'STRIPE_API_BASE' }),
+                provenance: expect.objectContaining({ source: 'api/.env.staging.example' }) }),
+        ])
+        expect(JSON.stringify(result)).not.toMatch(/hunter2|db\.internal|vendor\.invalid|ANALYTICS_DB_URL/)
+    })
+
     it('proposes compose-first for an existing Compose file and workflow services with their images', async () => {
         const root = estate({
             'api/compose.yml': 'services:\n  api:\n    build: .\n',

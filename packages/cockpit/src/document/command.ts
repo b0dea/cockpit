@@ -6,7 +6,7 @@ import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } fro
 import type { Diagnostic } from '../diagnostics.js'
 import { snapshotJson } from '../environment/contract.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
-import { CockpitConfig, GeneratedEnvironment, InstallPolicy, configurationDefaults } from '../schema.js'
+import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
 import { renderCompleteDocument, renderIncompleteDocument, type Attribution, type DocumentModel } from './render.js'
@@ -93,7 +93,7 @@ export interface DocumentCommandInput {
 }
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
-    | 'environment.install_policies' | 'environment.generated' | 'configuration.defaults'
+    | 'environment.install_policies' | 'environment.generated' | 'environment.machine' | 'guards' | 'configuration.defaults'
 export interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
     readonly field: DocumentConfigurationField
@@ -546,7 +546,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
         || typeof record.sourceObservationSha256 !== 'string' || !SHA256.test(record.sourceObservationSha256)
         || record.classification !== undefined && !['one-sibling', 'incomplete-multi-repository',
             'no-runnable-product', 'ready-multi-repository'].includes(record.classification as string)
-        || !Array.isArray(record.answers) || record.answers.length > 7) return undefined
+        || !Array.isArray(record.answers) || record.answers.length > 9) return undefined
     const answers: DocumentConfigurationAnswer[] = []
     for (const value of record.answers) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -573,8 +573,13 @@ const QUESTION_WHY = {
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
     policies: 'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands',
     generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer { "compose_files": ["compose.yml"] }',
+    machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements, so cockpit proposes them only from the product\'s own files and never invents them',
+    guards: 'name the database hosts and live vendor API hosts of every non-local environment the product has (production, staging, shared dev or QA): cockpit runs only locally, so the guard denies agent commands that reach them; answer { "hosted_db_hosts": [], "vendor_endpoint_hosts": [] } to record that none exists',
     defaults: 'confirm the exact surfaced inferred and schema-default values before completing the document',
 } as const
+
+const GUARD_HOST_FIELDS = ['guards.hosted_db_hosts', 'guards.vendor_endpoint_hosts'] as const
+const NO_GUARD_HOSTS_DECISION = 'the operator stated that no non-local environment (production, staging, shared) has a database or live vendor host for the guard to deny'
 
 const runnableWhy = (gaps: EstateClassificationResult['gaps']) =>
     `resolve the exact current runnable gaps: ${gaps.map(gap => `${gap.field} from ${gap.source}`).join('; ')}`
@@ -598,7 +603,10 @@ export function plannedGreenfieldQuestions(input: Readonly<{
         ...(surfacesOnly ? [] : [
             { field: 'environment.install_policies' as const, why: QUESTION_WHY.policies },
             { field: 'environment.generated' as const, why: QUESTION_WHY.generated },
+            { field: 'environment.machine' as const, why: QUESTION_WHY.machine },
         ]),
+        // Asked even with nothing to run: the guard governs the agent's commands, not the runtime.
+        { field: 'guards' as const, why: QUESTION_WHY.guards },
         { field: 'configuration.defaults' as const, why: QUESTION_WHY.defaults },
     ])
 }
@@ -919,11 +927,47 @@ function completeConfigurationDocument(
             environment = { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data }
         }
         answerIndex += 1
+
+        // Every runtime command refuses a declared runtime with no floor, so a configuration that
+        // declares one is incomplete until the operator states it. Nothing proposes it: Compose
+        // deploy.resources limits are per-container ceilings that most files omit, and docker info
+        // reports this machine's capacity, not what the product needs.
+        const machineQuestion = configurationQuestion(context, 'environment.machine', QUESTION_WHY.machine)
+        const machineRead = readConfigurationAnswer(configuration.answers, answerIndex, machineQuestion)
+        if (machineRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, machineQuestion)
+        if (machineRead.kind === 'refusal') return machineRead.outcome
+        const parsedMachine = MachineFloor.safeParse(machineRead.value)
+        if (!parsedMachine.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed machine floor does not match the schema: ${issueSummary(parsedMachine.error)}`, machineQuestion.field)
+        environment = { ...environment, machine: parsedMachine.data }
+        answerIndex += 1
     }
+
+    // Left as schema defaults, both lists are empty and the guard denies nothing by host, which no
+    // one would notice; so the hosts are an explicit answer, and an explicit empty one is a decision.
+    const guardQuestion = configurationQuestion(context, 'guards', QUESTION_WHY.guards)
+    const guardRead = readConfigurationAnswer(configuration.answers, answerIndex, guardQuestion)
+    if (guardRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+        attributions, gaps: [] }, destination, guardQuestion)
+    if (guardRead.kind === 'refusal') return guardRead.outcome
+    const guardAnswer = guardRead.value
+    const parsedGuards = guardAnswer && typeof guardAnswer === 'object' && !Array.isArray(guardAnswer)
+        && Object.keys(guardAnswer).sort().join(',') === 'hosted_db_hosts,vendor_endpoint_hosts'
+        ? Guards.safeParse({ ...defaults.guards, ...guardAnswer }) : undefined
+    if (!parsedGuards?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+        `the operator-confirmed guard hosts must be exactly { hosted_db_hosts, vendor_endpoint_hosts }${parsedGuards
+            ? `: ${issueSummary(parsedGuards.error)}` : ''}`, guardQuestion.field)
+    for (const target of GUARD_HOST_FIELDS) {
+        const index = attributions.findIndex(row => row.target === target)
+        if (index >= 0) attributions.splice(index, 1)
+    }
+    const noGuardHosts = parsedGuards.data.hosted_db_hosts.length === 0 && parsedGuards.data.vendor_endpoint_hosts.length === 0
+    answerIndex += 1
 
     const candidate = CockpitConfig.safeParse({ ...defaults, cockpit: { ...defaults.cockpit, name,
         ...(greenfieldEstate ? { siblings_root: '.' } : {}), ...(stackScope ? { scope: 'stack' } : {}) },
-        sibling: siblingRows, ports: parsedPorts.data, environment })
+        sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)
     if (configuration.classification === 'one-sibling' && candidate.data.sibling.length !== 1
@@ -950,8 +994,12 @@ function completeConfigurationDocument(
     if (configuration.answers.length !== answerIndex) return refusal('DOCUMENT_CONFIGURATION_ANSWER_EXTRA',
         'configuration completion received an answer for no current question')
 
-    const artifact = renderCompleteDocument(candidate.data, schemaDirective(destination))
+    const artifact = renderCompleteDocument(candidate.data, schemaDirective(destination),
+        noGuardHosts ? [`guards: ${NO_GUARD_HOSTS_DECISION}; list those hosts under [guards] once one exists`] : [])
     const diagnostics = diagnosticsFor(attributions, [])
+    if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
+        message: `${NO_GUARD_HOSTS_DECISION}, so the guard denies no command by host`,
+        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run cockpit sync once a non-local environment exists' })
     if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
         fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run cockpit sync' })

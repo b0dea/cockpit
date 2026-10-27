@@ -28,6 +28,8 @@ const portlessGeneratedDeclaration = structuredClone(generatedDeclaration) as {
 portlessGeneratedDeclaration.services[0]!.ports = []
 portlessGeneratedDeclaration.decisions.entries = portlessGeneratedDeclaration.decisions.entries
     .filter(entry => entry.subject !== 'port')
+const machineFloor = { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
+const guardHosts = { hosted_db_hosts: ['db.staging.example.invalid'], vendor_endpoint_hosts: ['api.vendor.example.invalid'] }
 const scratch: string[] = []
 
 function temporaryPath(name: string) {
@@ -403,6 +405,10 @@ describe('public estate observation', () => {
         })
         configuration.answers.push(answerQuestion(pending.question!, generatedDeclaration))
         pending = await documentObservedCommand({ root: canonical, configuration })
+        configuration.answers.push(answerQuestion(pending.question!, machineFloor))
+        pending = await documentObservedCommand({ root: canonical, configuration })
+        configuration.answers.push(answerQuestion(pending.question!, guardHosts))
+        pending = await documentObservedCommand({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, {
             confirmed: true, sha256: pending.question!.expectedSha256,
         }))
@@ -758,19 +764,27 @@ describe('operator-confirmed document completion', () => {
         } })
         expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
         const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
-        const defaults = await documentCommand({ ...input, configuration: {
+        const machine = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer],
+        } })
+        const machineAnswer = answer(machine.question!, machineFloor)
+        const guards = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const guardAnswer = answer(guards.question!, guardHosts)
+        const defaults = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: {
             field: 'configuration.defaults', expectedSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         } })
         expect(defaults.diagnostics.some(item => item.code === 'DOCUMENT_DEFAULT')).toBe(true)
         const complete = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, confirmDefaults(defaults.question!)],
+            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)],
         } })
 
         expect(complete).toMatchObject({ kind: 'complete', status: 0, question: null })
-        expect(CockpitConfig.safeParse(parseToml(complete.artifact!)).success).toBe(true)
+        expect(CockpitConfig.parse(parseToml(complete.artifact!)).guards).toMatchObject(guardHosts)
         const configPath = temporaryPath('cockpit.toml')
         writeFileSync(configPath, complete.artifact!)
         expect(await loadCockpitConfig(configPath)).toMatchObject({ kind: 'complete', status: 0 })
@@ -785,15 +799,28 @@ describe('operator-confirmed document completion', () => {
         const generated = await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer, policyAnswer] } })
         expect(generated.question!.why).toContain('compose_files')
         const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
-        const defaults = await documentCommand({ ...input, configuration: {
+        // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
+        // product requirement: it is asked, never defaulted.
+        const machine = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, composeAnswer] } })
+        expect(machine).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.machine' } })
+        expect(await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer, policyAnswer,
+            composeAnswer, answer(machine.question!, { runtime_memory_mb: 2048 })] } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('machine floor') }] })
+        const machineAnswer = answer(machine.question!, machineFloor)
+        const guards = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer] } })
+        const guardAnswer = answer(guards.question!, guardHosts)
+        const defaults = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, guardAnswer] } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const complete = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, confirmDefaults(defaults.question!)] } })
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)] } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
-        const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; generated?: unknown } }
+        const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; generated?: unknown; machine?: unknown } }
         expect(document.environment.compose_files).toEqual(['compose.yml'])
         expect(document.environment.generated).toBeUndefined()
+        expect(document.environment.machine).toEqual(machineFloor)
 
         const empty = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, answer(generated.question!, { compose_files: [] })] } })
@@ -830,13 +857,21 @@ describe('operator-confirmed document completion', () => {
         } })
         expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
         const generatedAnswer = answer(generated.question!, portlessGeneratedDeclaration)
-        const defaults = await documentCommand({ ...base, configuration: {
+        const machine = await documentCommand({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer],
+        } })
+        const machineAnswer = answer(machine.question!, machineFloor)
+        const guards = await documentCommand({ ...base, configuration: {
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const guardAnswer = answer(guards.question!, guardHosts)
+        const defaults = await documentCommand({ ...base, configuration: {
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const complete = await documentCommand({ ...base, configuration: {
             ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, confirmDefaults(defaults.question!)],
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)],
         } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         expect(parseToml(complete.artifact!)).toMatchObject({
@@ -881,8 +916,16 @@ describe('operator-confirmed document completion', () => {
             sourceObservationSha256, answers: [valid, policyAnswer],
         } })
         const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
-        const defaults = await documentCommand({ ...input, configuration: {
+        const machine = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer],
+        } })
+        const machineAnswer = answer(machine.question!, machineFloor)
+        const guards = await documentCommand({ ...input, configuration: {
+            sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const guardAnswer = answer(guards.question!, guardHosts)
+        const defaults = await documentCommand({ ...input, configuration: {
+            sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
         } })
         const cases = [
             [{ ...valid, questionId: `question:${'b'.repeat(64)}` }],
@@ -894,7 +937,7 @@ describe('operator-confirmed document completion', () => {
                 .toMatchObject({ kind: 'refusal', status: 2 })
         }
         expect(await documentCommand({ ...input, configuration: { sourceObservationSha256,
-            answers: [valid, policyAnswer, generatedAnswer, confirmDefaults(defaults.question!), valid] } }))
+            answers: [valid, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!), valid] } }))
             .toMatchObject({ kind: 'refusal', status: 2,
                 diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
 
@@ -916,13 +959,21 @@ describe('operator-confirmed document completion', () => {
             sourceObservationSha256, answers: [portAnswer, policyAnswer],
         } })
         const generatedAnswer = answer(generated.question!, registryGeneratedDeclaration)
-        const defaults = await documentCommand({ ...input, configuration: {
+        const machine = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer],
+        } })
+        const machineAnswer = answer(machine.question!, machineFloor)
+        const guards = await documentCommand({ ...input, configuration: {
+            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const guardAnswer = answer(guards.question!, guardHosts)
+        const defaults = await documentCommand({ ...input, configuration: {
+            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const changed = answer(defaults.question!, { confirmed: true, sha256: 'f'.repeat(64) })
         expect(await documentCommand({ ...input, configuration: {
-            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, changed],
+            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, changed],
         } })).toMatchObject({ kind: 'refusal', status: 2 })
     })
 
@@ -933,7 +984,7 @@ describe('operator-confirmed document completion', () => {
             const configuration = { sourceObservationSha256, ...(classification ? { classification } : {}), answers: [] as ReturnType<typeof answer>[] }
             let pending = await documentCommand({ root: estateRoot, configuration })
             for (const value of [generatedConfig.sibling, { APP_HOST_PORT: 4100 },
-                generatedConfig.environment.install_policies, generatedDeclaration]) {
+                generatedConfig.environment.install_policies, generatedDeclaration, machineFloor, guardHosts]) {
                 configuration.answers.push(answer(pending.question!, value))
                 pending = await documentCommand({ root: estateRoot, configuration })
             }
@@ -959,11 +1010,22 @@ describe('operator-confirmed document completion', () => {
             configuration.answers.push(answer(pending.question!, value))
             pending = await documentCommand({ root: estateRoot, configuration })
         }
+        // The guard governs the agent's commands whether or not anything runs, so the hosts are asked
+        // here too; an explicit empty answer is kept as a recorded decision, not a silent default.
+        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'guards', why: expect.stringContaining('production, staging, shared') } })
+        expect(await documentCommand({ root: estateRoot, configuration: { ...configuration, answers: [...configuration.answers,
+            answer(pending.question!, { hosted_db_hosts: [] })] } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID' }] })
+        configuration.answers.push(answer(pending.question!, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }))
+        pending = await documentCommand({ root: estateRoot, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        expect(pending.diagnostics.map(row => row.target)).not.toContain('guards.hosted_db_hosts')
         configuration.answers.push(confirmDefaults(pending.question!))
         const completed = await documentCommand({ root: estateRoot, configuration })
         expect(completed).toMatchObject({ kind: 'complete', status: 0 })
         expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED' }))
+        expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE' }))
+        expect(completed.artifact).toMatch(/^# Decision: guards: the operator stated that no non-local environment/m)
         const parsed = CockpitConfig.parse(parseToml(completed.artifact!))
         expect(parsed.environment.generated).toBeUndefined()
         expect(parsed.environment.compose_files).toEqual([])

@@ -698,6 +698,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
                     var: `${repository.slug.toUpperCase()}_DIR`, purpose: `Synthetic ${repository.slug} service`,
                 })))
                 if (question.field === 'ports.bases') return '{}'
+                if (question.field === 'guards') return JSON.stringify({ hosted_db_hosts: [], vendor_endpoint_hosts: [] })
                 if (question.field === 'environment.install_policies') return JSON.stringify([{
                     toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json',
                     install: ['npm', 'ci'], load_probe: ['node', '--version'],
@@ -717,7 +718,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
         if (classification === 'no-runnable-product') {
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
-            expect(questions.map(question => question.field)).toEqual(['sibling', 'ports.bases', 'configuration.defaults'])
+            expect(questions.map(question => question.field)).toEqual(['sibling', 'ports.bases', 'guards', 'configuration.defaults'])
             // The interactive answers are persisted, so a caller with no terminal finishes the same
             // init from the printed digests alone: it must not need a second interview.
             const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
@@ -764,13 +765,14 @@ it('runs installed init for each isolated target and refuses missing roots or br
     const answersFile = join(packScratch, 'headless-answers.toml')
     writeFileSync(answersFile, [
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
-        'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', ''].join('\n'))
+        'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
+        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', ''].join('\n'))
     const run = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', headless, '--target', 'opencode', ...args, '--json'],
         { cwd: headless, env, encoding: 'utf8' })
     const first = run()
     expect(first.status, first.stderr).toBe(0)
     const listed = JSON.parse(first.stdout).result
-    expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['sibling', 'ports.bases', 'configuration.defaults'])
+    expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['sibling', 'ports.bases', 'guards', 'configuration.defaults'])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
     ])

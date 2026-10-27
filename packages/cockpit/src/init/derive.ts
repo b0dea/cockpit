@@ -2,8 +2,8 @@
 // and attributing each proposed value to its source; it must not decide or write anything. Every
 // fact is inferred: init surfaces it with its source and the operator confirms it, because a
 // config that looks complete but holds guesses is the failure cockpit exists to prevent.
-// Deliberately cheap and exact: Dockerfile, .env.example names, Compose files and CI service
-// containers. Orchestrator manifests are not parsed; their shape is too varied to read reliably.
+// Deliberately cheap and exact: Dockerfile, env template variable names, Compose files and CI
+// service containers. Orchestrator manifests are not parsed; their shape is too varied to read reliably.
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -48,6 +48,13 @@ const MAX_WORKFLOWS = 32
 const COMPOSE_NAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SIBLING_SLUG = /^[a-z][a-z0-9-]*$/
+// .env.example, .env.staging.example, .env.sample, .env.production.template and the like: files
+// meant to be committed, so their names are safe to read. Their values never are.
+const ENV_TEMPLATE = /^\.env(?:\.[A-Za-z0-9_-]+)*\.(?:example|sample|template)$/
+const MAX_ENV_TEMPLATES = 16
+// Names only suggest; the human says which host of which non-local environment each points at.
+const DATABASE_VARIABLE = /(?:^|_)(?:DATABASE|DB|POSTGRES(?:QL)?|PG|MYSQL|MARIADB|MONGO(?:DB)?|REDIS)(?:_[A-Z0-9]+)*_(?:URL|URI|DSN|HOST)$|^(?:DATABASE_URL|PGHOST|MONGO_URL|REDIS_URL)$/
+const VENDOR_VARIABLE = /_(?:API_)?(?:BASE|BASE_URL|URL|ENDPOINT|HOST)$/
 
 type Read = { kind: 'absent' } | { kind: 'skipped'; reason: string } | { kind: 'text'; text: string }
 
@@ -179,12 +186,34 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                     value: parsed.ports, provenance: { kind: 'inferred', source,
                         reason: 'the final stage of the Dockerfile EXPOSEs these container ports' } })
             }
-            const env = await read(directory.path, '.env.example')
-            if (env !== undefined) {
-                const names = envNames(env)
-                if (names.length > 0) facts.push({ fields: ['environment.generated'], target: `${slug}.env_names`, value: names,
-                    provenance: { kind: 'inferred', source: relative(directory.path, '.env.example'),
-                        reason: 'these variable names appear in .env.example; their values are never read' } })
+        }
+        let templates: string[] = []
+        try { templates = (await readdir(join(input.root, directory.path))).filter(name => ENV_TEMPLATE.test(name)).sort() }
+        catch (error) {
+            skipped.push({ source: directory.path === '' ? '.' : directory.path,
+                reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
+        }
+        if (templates.length > MAX_ENV_TEMPLATES) {
+            skipped.push({ source: directory.path === '' ? '.' : directory.path,
+                reason: `holds more than ${MAX_ENV_TEMPLATES} env template files; only the first ${MAX_ENV_TEMPLATES} were read` })
+            templates = templates.slice(0, MAX_ENV_TEMPLATES)
+        }
+        for (const template of templates) {
+            const text = await read(directory.path, template)
+            if (text === undefined) continue
+            const source = relative(directory.path, template)
+            const names = envNames(text)
+            if (slug !== undefined && template === '.env.example' && names.length > 0) facts.push({ fields: ['environment.generated'],
+                target: `${slug}.env_names`, value: names,
+                provenance: { kind: 'inferred', source, reason: 'these variable names appear in .env.example; their values are never read' } })
+            for (const name of names) {
+                const target = DATABASE_VARIABLE.test(name) ? 'guards.hosted_db_hosts'
+                    : VENDOR_VARIABLE.test(name) ? 'guards.vendor_endpoint_hosts' : undefined
+                if (target === undefined) continue
+                facts.push({ fields: ['guards'], target, value: { variable: name,
+                    ask: `which host does ${name} point at in each non-local environment (production, staging, shared)?` },
+                    provenance: { kind: 'inferred', source,
+                        reason: `the variable name ${name} suggests ${target === 'guards.hosted_db_hosts' ? 'a database' : 'a vendor API endpoint'}; its value was never read, so the host comes from the human` } })
             }
         }
         for (const name of COMPOSE_NAMES) {

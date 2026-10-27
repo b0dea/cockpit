@@ -141,11 +141,14 @@ describe('init operator command', () => {
                 ...(expectedSha256 ? { expectedSha256 } : {}) } } })
         const noTerminal: InitCommandIo = { terminal: false, confirm: async () => { throw new Error('asked a terminal') },
             writeArtifact: async () => undefined }
-        const answers = { sibling: [{ slug: 'app' }], ports: { bases: {} }, environment: { install_policies: [], compose_files: ['compose.yml'] } }
+        const machine = { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
+        const guards = { hosted_db_hosts: ['db.staging.example.invalid'], vendor_endpoint_hosts: [] }
+        const answers = { sibling: [{ slug: 'app' }], ports: { bases: {} },
+            environment: { install_policies: [], compose_files: ['compose.yml'], machine }, guards }
         const walk = (given: string[]) => {
             const sent: string[] = []
             const questions = [asking('sibling'), asking('ports.bases'), asking('environment.install_policies'),
-                asking('environment.generated'), asking('configuration.defaults', defaultsDigest)]
+                asking('environment.generated'), asking('environment.machine'), asking('guards'), asking('configuration.defaults', defaultsDigest)]
             const application = async (input: { accepted: boolean; greenfieldAnswer?: { bytes: string } }) => {
                 if (!input.accepted) return pending()
                 if (input.greenfieldAnswer) sent.push(input.greenfieldAnswer.bytes)
@@ -162,7 +165,8 @@ describe('init operator command', () => {
                 noTerminal, application)
             expect(outcome.kind).toBe('complete')
             expect(sent).toEqual([
-                '[{"slug":"app"}]', '{}', '[]', '{"compose_files":["compose.yml"]}', JSON.stringify({ confirmed: true, sha256: defaultsDigest }),
+                '[{"slug":"app"}]', '{}', '[]', '{"compose_files":["compose.yml"]}', JSON.stringify(machine), JSON.stringify(guards),
+                JSON.stringify({ confirmed: true, sha256: defaultsDigest }),
             ])
         })
 

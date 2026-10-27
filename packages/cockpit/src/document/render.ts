@@ -59,6 +59,7 @@ export function renderIncompleteDocument(model: DocumentModel, schemaDirective: 
     ].join('')
 }
 
-export function renderCompleteDocument(config: CockpitConfig, schemaDirective: string): string {
-    return `#:schema ${schemaDirective}\n${emitToml(config)}`
+/** Decisions are comments: the schema has no field for them, and the reader of the file needs them. */
+export function renderCompleteDocument(config: CockpitConfig, schemaDirective: string, decisions: readonly string[] = []): string {
+    return `#:schema ${schemaDirective}\n${decisions.map(decision => `# Decision: ${decision}\n`).join('')}${emitToml(config)}`
 }
