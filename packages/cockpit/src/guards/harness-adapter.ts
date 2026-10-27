@@ -25,7 +25,7 @@ export interface GuardTransportPlan {
     readonly cwd: string
     readonly argv: readonly ['guard-evaluate', '--harness', SurfaceTarget]
     readonly stdin: string
-    readonly timeoutMs: 5000
+    readonly timeoutMs: 20000
     readonly stdoutBytes: 65536
     readonly stderrBytes: 65536
 }
@@ -88,8 +88,11 @@ export function planGuardTransport(input: unknown): GuardTransportPlan | GuardTr
         || !absolute(value.handler) || !absolute(value.cwd) || !text(value.stdin, GUARD_INPUT_LIMITS.inputBytes)) {
         return Object.freeze({ kind: 'refusal', code: 'GUARD_TRANSPORT_INVALID', message: 'Guard transport requires a resolved handler, canonical cwd and bounded stdin.' })
     }
+    // The handler is a second Node process started per tool call. Five seconds was exceeded by Node
+    // start-up alone on a loaded developer machine, which failed closed and blocked every tool call;
+    // twenty stays well inside the harnesses' own hook timeouts.
     const plan: GuardTransportPlan = Object.freeze({ kind: 'complete', target: value.target, executable: value.handler, cwd: value.cwd,
-        argv: Object.freeze([...GUARD_HANDLER_ARGV, '--harness', value.target] as const), stdin: value.stdin, timeoutMs: 5000, stdoutBytes: 65536, stderrBytes: 65536 })
+        argv: Object.freeze([...GUARD_HANDLER_ARGV, '--harness', value.target] as const), stdin: value.stdin, timeoutMs: 20000, stdoutBytes: 65536, stderrBytes: 65536 })
     plans.add(plan)
     return plan
 }

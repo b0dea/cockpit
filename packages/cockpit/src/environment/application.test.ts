@@ -535,7 +535,7 @@ describe('pending guard policy construction', () => {
                 const outcome = await executeProbe(step)
                 if (step.id !== 'guard-handler') return outcome
                 dispatched = true
-                expect(step).toMatchObject({ timeoutMs: 5000, stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536 })
+                expect(step).toMatchObject({ timeoutMs: 20000, stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536 })
                 return { ...outcome }
             },
         })

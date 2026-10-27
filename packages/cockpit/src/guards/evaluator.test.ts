@@ -207,7 +207,7 @@ describe('resolved guard evaluation', () => {
             mkdirSync(hooks)
             const git = (cwd: string, argv: string[], input?: string) => {
                 const result = spawnSync('git', ['-c', `core.hooksPath=${hooks}`, ...argv], {
-                    cwd, input, encoding: 'utf8', timeout: 5_000, maxBuffer: 65_536,
+                    cwd, input, encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
                     env: { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
                         GIT_AUTHOR_NAME: 'Synthetic', GIT_AUTHOR_EMAIL: 'synthetic@example.test', GIT_COMMITTER_NAME: 'Synthetic', GIT_COMMITTER_EMAIL: 'synthetic@example.test' },
                 })
@@ -426,7 +426,7 @@ describe('resolved guard evaluation', () => {
                 // Functions observe builtins without replacing their output or shell expansion semantics.
                 const prelude = 'printf() { record printf "$@"; builtin printf "$@"; }\ncat() { record cat "$@"; command cat "$@"; }\n'
                 const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-O', 'expand_aliases', '-c', prelude + command], {
-                    cwd: directory, env: { PATH: `${bin}:/usr/bin:/bin`, GUARD_CALL_LOG: log }, encoding: 'utf8', timeout: 5_000, maxBuffer: 65_536,
+                    cwd: directory, env: { PATH: `${bin}:/usr/bin:/bin`, GUARD_CALL_LOG: log }, encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
                 })
                 expect(result.error).toBeUndefined()
                 expect(result.stderr).toBe('')

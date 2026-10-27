@@ -249,7 +249,7 @@ describe('one-row generated surface integration', () => {
                 cwd: fixture.root,
                 input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: fixture.root,
                     tool_input: { file_path: join(fixture.root, 'worker', path), content: 'synthetic replacement' } }),
-                encoding: 'utf8', timeout: 5000, maxBuffer: 65_536,
+                encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
             })
             expect(guarded.error).toBeUndefined()
             expect(guarded.status, guarded.stderr).toBe(0)

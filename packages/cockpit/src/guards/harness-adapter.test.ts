@@ -92,7 +92,7 @@ describe('bounded staged guard transport', () => {
         expect(GUARD_HANDLER_ARGV).toEqual(['guard-evaluate'])
         expect(plan).toEqual({ kind: 'complete', target: 'codexcli', executable: '/workspace/bin/cockpit', cwd,
             argv: ['guard-evaluate', '--harness', 'codexcli'], stdin: payload,
-            timeoutMs: 5000, stdoutBytes: 65536, stderrBytes: 65536 })
+            timeoutMs: 20000, stdoutBytes: 65536, stderrBytes: 65536 })
         expect(Object.isFrozen(plan)).toBe(true)
         const response = { exitCode: 0, signal: null, stdout: JSON.stringify({ decision: 'deny', reason: 'Protected branch.' }), stderr: '' }
         expect(completeGuardTransport(plan, response).decision).toBe('deny')
