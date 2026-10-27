@@ -701,6 +701,10 @@ describe('lifecycle application contracts', () => {
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
             kind: 'complete', value: { value: { holderId: context.holderId, completedServices: [{ service: 'api', containerId }] } },
         })
+        // Without setup, the first up's progress still carries durable history, so a resume reads
+        // its stage instead of refusing lifecycle data without history.
+        expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))
+            .toMatchObject({ kind: 'complete', authority: { stage: 'bootstrap' } })
     })
 
     it.each([

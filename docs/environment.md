@@ -270,7 +270,9 @@ rather than a failure. Duplicate, future-dated, stale, or sensitive entries refu
 Mechanical coverage does not establish that a business decision is correct; that semantic review
 remains `human_needed`.
 
-Bring-up starts from lifecycle history written by `setup`. It completes current generated-runtime
+Bring-up starts from lifecycle history: `setup` writes `started`, and so does the first `up` on a
+stack that has neither lifecycle data nor history, so `setup` is not required first. Lifecycle data
+without history is refused as lost history. Bring-up completes current generated-runtime
 inspection, dependencies, data, and vendors through the owner callbacks
 `completeGeneratedEnvironment`, `completeGeneratedDependencies`, `completeGeneratedData`, and
 `completeGeneratedVendors`. Only then does it publish `seeded`. A refusal preserves exact applied,

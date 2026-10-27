@@ -55,6 +55,7 @@ import {
 import {
     decodeLifecycleRecord,
     recordLifecycleSeeded,
+    recordLifecycleStarted,
     resolveLifecycleStage,
     type CurrentLifecycleRecord,
     type GeneratedLifecycleReplay,
@@ -2675,6 +2676,16 @@ async function executeUpRound(
                 ...(stored?.value.generatedProgress ? { generatedProgress: stored.value.generatedProgress } : {}) } : {}),
         })
         if (!stored || forceReset || stored.value.holderId !== context.holderId && !completedCoTenant) {
+            // The first lifecycle data starts its durable history, as `setup` does (an existing
+            // `started` is unchanged), so lifecycle data without history keeps meaning that history
+            // was lost. Publishing data alone let a first `up` pass and every resume refuse.
+            if (!stored) {
+                const started = await recordLifecycleStarted({ namespace: context.namespace, stackId: context.stackId,
+                    holderId: context.holderId, observedAt: new Date().toISOString() })
+                if (started.kind === 'refusal') return { kind: 'complete' as const, result: {
+                    kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: started.diagnostics,
+                } }
+            }
             const publication = await publishLifecycleRecord(
                 context,
                 stored?.record ?? null,

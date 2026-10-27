@@ -12,7 +12,6 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { readActiveStackInventory } from './claims.js'
 import { readState } from './state.js'
-import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
 
 export const mechanism = {
@@ -490,15 +489,6 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 : 'the production lifecycle owner could not authenticate the disposable checkout')
         }
         const context = loadedContext.result
-        // Bring-up starts from the lifecycle history that `setup` writes; the probe's sibling is
-        // acquire = "none" and already present, so it records the same `started` transition instead
-        // of running setup. Without it the first up passes and every resume refuses.
-        const started = await recordLifecycleStarted({
-            namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, observedAt: new Date().toISOString(),
-        })
-        if (started.kind === 'refusal') {
-            throw new RuntimeProbeFailure(`the disposable checkout's lifecycle history could not be started (${started.diagnostics[0]?.message ?? 'refused'})`)
-        }
         preClaims = stateSnapshot(await readActiveStackInventory(context.namespace))
         preLease = stateSnapshot(await readState(context.namespace.paths.lease(context.stackId)))
         // The candidate carries the same ownership set generated stacks carry. Reclaim admits a
