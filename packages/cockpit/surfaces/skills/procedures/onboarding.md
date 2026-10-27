@@ -27,8 +27,8 @@ the interview will ask, each with its inferred values and the file each came fro
 file keyed by field, show the human that file and the preview digest, and only then re-run with
 `--accept-preview` and `--answers`. The run stops at `configuration.defaults`; once the human has read
 the surfaced defaults, add `--accept-defaults` with the digest the run printed. Each digest binds
-consent to the bytes the human saw, so never copy one from anywhere but the latest pending run; run
-`cockpit init --help` for the flags. The step is done when the result reports
+consent to the bytes the human saw, so never copy one from anywhere but the latest pending run; ask
+init for `--help` to list its flags. The step is done when the result reports
 `environment-verified`. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
@@ -51,7 +51,7 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
 1. Read what the repository already states, without running or changing anything: the manifests and
    lockfiles for the runtime and entrypoint, CI workflows for the services they start, deployment
    files for the ports and variable names they inject, and the code for its health endpoint.
-   `cockpit init --json` already proposes several of these under `interview.outstanding`; reuse them
+   The init preview from **Bootstrap** already proposes several of these under `interview.outstanding`; reuse them
    rather than re-deriving. Done when you hold a list of entrypoint and runtime, ports, environment
    variable names, backing services with images, and a health endpoint, each with the file it came from.
 2. Record variable names only. Values belong to the secret owner; see **Secret handling**. Done when
@@ -67,11 +67,13 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    repository is a product change, so ask the human first and show the exact path and contents.
    Without that authorisation, declare an environment cockpit renders itself and leave the product
    untouched. Done when either the human approved that specific file or no product file was written.
-6. Finish the configuration with `cockpit init`, or `cockpit sync` then `cockpit check` on an
-   existing one. Done when `cockpit check --config cockpit.toml --json` exits 0. Where a runtime is
-   declared, run `cockpit runtime measure --config cockpit.toml --write`, then
-   `cockpit up --config cockpit.toml` or `cockpit session --config cockpit.toml -- <agent command>`,
-   and report the actual result. Done when the stack reports healthy, or you have named what stopped it.
+6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
+   `cockpit sync --config cockpit.toml` then `cockpit check --config cockpit.toml --json`. Done when
+   the check exits 0. Where a runtime is declared, measure it with
+   `cockpit runtime measure --config cockpit.toml --image <local-image> --write`, using an image
+   already on this machine because the probe never pulls. Then start the stack with
+   `cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
+   Report the actual result. Done when the stack reports healthy, or you have named what stopped it.
 
 ## Secret handling
 

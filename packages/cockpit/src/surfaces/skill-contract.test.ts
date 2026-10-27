@@ -350,6 +350,7 @@ describe('shipped onboarding commands', () => {
             const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256 }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [], nextCommand: 'accept exact preview' } } },
                 document: handler, sync: handler, check: handler, doctor: handler, up: handler, preflight: handler, logs: handler,
+                runtime: handler,
             })
             expect(status, `${argv.join(' ')}: ${output}`).toBe(0)
             expect(invoked, argv.join(' ')).toBe(true)
