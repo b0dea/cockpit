@@ -36,7 +36,7 @@ const printf = (value: string) => expected('printf', [value])
 const wrapper = (...values: string[]): InvocationWord[] => values.map((value) => ({ role: 'wrapper-option-value', value }))
 const definition = (...values: string[]) => expected(null, [], values.map((value) => ({ role: 'definition', value })))
 const here = (body: string) => expected('cat', [], [{ role: 'redirect-target', value: 'END' }, { role: 'heredoc-body', value: body }])
-const redirect = (executable: string, argv: string[], target: string) => ({ ...expected(executable, argv, [{ role: 'redirect-target', value: target }]), redirects: [{ target, write: true }] })
+const redirect = (executable: string, argv: string[], target: string) => ({ ...expected(executable, argv, [{ role: 'redirect-target', value: target }]), redirects: [{ target, write: true, truncate: true }] })
 const defined = 'Unsupported executable or defined command invocation.'
 const dynamic = 'Dynamic command construction is unsupported.'
 interface CapturePair { candidate: readonly ParsedInvocation[] | string; control: readonly ParsedInvocation[] }

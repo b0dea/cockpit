@@ -15,8 +15,8 @@ describe('guard invocation capture', () => {
     it.each(invocationCorpus)('captures or explicitly refuses $name', (row) => {
         expect(parseGuardInput(shellPayload(row.candidate))).toEqual(typeof row.capture.candidate === 'string'
             ? { status: 'unavailable', reason: row.capture.candidate }
-            : { status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.candidate, paths: [] })
-        expect(parseGuardInput(shellPayload(row.control))).toEqual({ status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.control, paths: [] })
+            : { status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.candidate, paths: [], removed: [] })
+        expect(parseGuardInput(shellPayload(row.control))).toEqual({ status: 'parsed', tool: 'Bash', cwd: '/workspace/project', invocations: row.capture.control, paths: [], removed: [] })
     })
 
     it('keeps wrapper values, assignments, redirects, comments and heredocs out of argv', () => {
@@ -101,7 +101,7 @@ describe('guard invocation capture', () => {
 
     it('distinguishes adjacent descriptor numbers from numeric arguments', () => {
         expect(parseGuardInput(shellPayload('printf ok 2> errors 1>&2'))).toMatchObject({
-            status: 'parsed', invocations: [{ argv: ['ok'], redirects: [{ target: 'errors', write: true }] }],
+            status: 'parsed', invocations: [{ argv: ['ok'], redirects: [{ target: 'errors', write: true, truncate: true }] }],
         })
         expect(parseGuardInput(shellPayload('printf 2 > errors'))).toMatchObject({ status: 'parsed', invocations: [{ argv: ['2'] }] })
     })
@@ -129,6 +129,6 @@ describe('guard invocation capture', () => {
         const edit = (path: string) => ({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: '/workspace/project', tool_input: { file_path: path, content: 'ok' } })
         expect(parseGuardInput(edit('é'.repeat(2048))).status).toBe('parsed')
         expect(parseGuardInput(edit('é'.repeat(2048) + 'x')).status).toBe('unavailable')
-        expect(parseGuardInput({ ...patch(1), tool_input: { command: '*** Begin Patch\n*** Update File: old\n*** Move to: new\n@@\n-a\n+b\n*** End Patch' } })).toMatchObject({ status: 'parsed', paths: ['old', 'new'] })
+        expect(parseGuardInput({ ...patch(1), tool_input: { command: '*** Begin Patch\n*** Update File: old\n*** Move to: new\n@@\n-a\n+b\n*** End Patch' } })).toMatchObject({ status: 'parsed', paths: ['old', 'new'], removed: ['old'] })
     })
 })

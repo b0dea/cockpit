@@ -579,6 +579,9 @@ export async function prepareGuardEvaluationPolicy(
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new Error('guard policy exceeds restriction root or instance bounds')
             for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
+            // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
+            const configPath = join(canonicalRoot, basename(loaded.source.path))
+            protect(canonicalRoot, configPath, 'file', 'configuration')
             for (const [path, before] of identities) {
                 const after = lstatSync(path)
                 if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
@@ -586,7 +589,7 @@ export async function prepareGuardEvaluationPolicy(
                     throw new Error('guard policy root or instance identity changed during construction')
                 }
             }
-            const policy = Object.freeze({ canonicalRoot,
+            const policy = Object.freeze({ canonicalRoot, configPath,
                 allowedRoots: Object.freeze([...allowedRoots]), instances: Object.freeze(instances),
                 protectedIdentities: Object.freeze([...protectedIdentities.values()]),
                 protectedBranches: Object.freeze([...config.guards.protected_branches]),

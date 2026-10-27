@@ -381,6 +381,11 @@ describe('restriction expansion', () => {
             .toContain('permissionDecision":"deny')
         expect(runGuard(result, bash('git push origin main')).stdout)
             .toContain('permissionDecision":"deny')
+        // Read-only inspection passes the installed route without a prompt; reading the instance does not.
+        expect(runGuard(result, bash('ls -la && git status'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(JSON.parse(runGuard(result, bash('cat env/service.env')).stdout)).toMatchObject({ hookSpecificOutput: {
+            permissionDecision: 'deny', permissionDecisionReason: 'Refusing to read a declared environment instance or secrets directory into the agent context.',
+        } })
 
         const hostChanged = complete(expandRestrictions(await input({ policy: {
             ...baseInput.policy, hosted_db_hosts: ['archive.example.test'],

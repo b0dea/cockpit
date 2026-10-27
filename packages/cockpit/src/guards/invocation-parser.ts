@@ -18,7 +18,8 @@ export interface ParsedInvocation {
     readonly cwd: string
     readonly wrapped: boolean
     readonly words: readonly InvocationWord[]
-    readonly redirects: readonly { readonly target: string; readonly write: boolean }[]
+    /** `truncate` marks `>` and `>|`, which empty an existing file before anything is written. */
+    readonly redirects: readonly { readonly target: string; readonly write: boolean; readonly truncate: boolean }[]
 }
 export type GuardParseResult = {
     readonly status: 'parsed'
@@ -26,6 +27,8 @@ export type GuardParseResult = {
     readonly cwd: string
     readonly invocations: readonly ParsedInvocation[]
     readonly paths: readonly string[]
+    /** Patch targets deleted, or moved away from, as opposed to edited in place. */
+    readonly removed: readonly string[]
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -148,7 +151,7 @@ const reserved = new Set(['if', 'then', 'else', 'fi', 'for', 'while', 'until', '
 
 function invocation(tokens: Token[], cwd: string, definitions: Set<string>): ParsedInvocation {
     const words: InvocationWord[] = []
-    const redirectPaths: { target: string; write: boolean }[] = []
+    const redirectPaths: { target: string; write: boolean; truncate: boolean }[] = []
     const args: Token[] = []
     for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i]
@@ -161,7 +164,7 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
             if (!target || target.kind !== 'word' || target.dynamic) refuse('Missing or dynamic redirect target.')
             words.push({ role: 'redirect-target', value: target.value })
             if (!token.value.startsWith('<<') && !['>&', '<&'].includes(token.value)) {
-                redirectPaths.push({ target: path(target.value), write: token.value !== '<' })
+                redirectPaths.push({ target: path(target.value), write: token.value !== '<', truncate: token.value === '>' || token.value === '>|' })
             } else if (['>&', '<&'].includes(token.value) && !/^(?:\d+|-)$/.test(target.value)) refuse('Unsupported descriptor redirect.')
         } else if (token.kind !== 'word') refuse('Unsupported shell operator.')
         else args.push(token)
@@ -289,15 +292,18 @@ function parseShell(command: string, cwd: string): ParsedInvocation[] {
     return result
 }
 
-function patchPaths(command: string): string[] {
+function patchPaths(command: string): { paths: string[]; removed: string[] } {
     const lines = command.trimEnd().split('\n')
     if (lines.shift() !== '*** Begin Patch' || lines.pop() !== '*** End Patch') refuse('Malformed patch envelope.')
     const paths: string[] = []
+    const removed: string[] = []
     let update = false
     for (const line of lines) {
         const header = /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/.exec(line)
         if (header) {
             if (header[1] === 'Move to' && !update) refuse('Patch move lacks an update source.')
+            if (header[1] === 'Move to') removed.push(paths.at(-1)!)
+            if (header[1] === 'Delete File') removed.push(path(header[2]))
             paths.push(path(header[2]))
             update = header[1] === 'Update File'
         } else if (!paths.length || !(line.startsWith('+') || line.startsWith('-') || line.startsWith(' ') || line.startsWith('@@') || line === '*** End of File' || line === '')) {
@@ -305,7 +311,7 @@ function patchPaths(command: string): string[] {
         }
     }
     if (!paths.length) refuse('Patch has no targets.')
-    return paths
+    return { paths, removed }
 }
 
 function captureBytes(input: Uint8Array): Uint8Array {
@@ -346,6 +352,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
         const tool = captured.tool_name
         const fields = captured.tool_input
         let paths: string[] = []
+        let removed: string[] = []
         let invocations: ParsedInvocation[] = []
         if (tool === 'Bash' || tool === 'apply_patch') {
             // Native Bash calls carry execution options beside the command; they are type-checked
@@ -357,7 +364,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             if (!keys(fields, ['command'], Object.keys(options)) || !text(fields.command) || !fields.command
                 || Object.entries(options).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
             if (tool === 'Bash') invocations = parseShell(fields.command, cwd)
-            else paths = patchPaths(fields.command)
+            else ({ paths, removed } = patchPaths(fields.command))
         } else if (tool === 'Edit' || tool === 'Write') {
             if (!keys(fields, ['file_path'], tool === 'Edit' ? ['old_string', 'new_string', 'replace_all'] : ['content'])
                 || !text(fields.file_path)) refuse('Malformed file payload.')
@@ -373,7 +380,7 @@ export function parseGuardInput(input: unknown): GuardParseResult {
             Object.freeze(item.redirects)
             Object.freeze(item)
         }
-        const result = Object.freeze({ status: 'parsed' as const, tool, cwd, paths: Object.freeze(paths), invocations: Object.freeze(invocations) })
+        const result = Object.freeze({ status: 'parsed' as const, tool, cwd, paths: Object.freeze(paths), removed: Object.freeze(removed), invocations: Object.freeze(invocations) })
         parsedInputs.add(result)
         return result
     } catch (error) {

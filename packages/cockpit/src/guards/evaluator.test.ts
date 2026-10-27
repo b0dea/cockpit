@@ -16,13 +16,13 @@ const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 're
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
 type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
 function protectedIdentities(instances: readonly { path: string }[], known: IdentityFacts = {}) {
-    return [...instances.map((item) => item.path), ...GUARD_ROOT_PROTECTIONS.map((item) => `${root}/${item.path}`)]
+    return [...instances.map((item) => item.path), `${root}/cockpit.toml`, ...GUARD_ROOT_PROTECTIONS.map((item) => `${root}/${item.path}`)]
         .map((path) => ({ path, ...(known[path] ?? { identity: null, ancestors: [] }) }))
 }
 const candidate = (executable: string, argv: string[], cwd = root) => ({ executable, argv, cwd })
 function policy() {
     return {
-        canonicalRoot: root, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }], protectedIdentities: protectedIdentities([{ path: instance }]),
+        canonicalRoot: root, configPath: `${root}/cockpit.toml`, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }], protectedIdentities: protectedIdentities([{ path: instance }]),
         protectedBranches: ['main', 'release/stable'], hostedDatabaseHosts: ['db.example.test', '*.database.example.test'], vendorHosts: ['api.vendor.example.test'],
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
         projectCommands: [
@@ -71,10 +71,10 @@ describe('resolved guard evaluation', () => {
     it.each(invocationCorpus)('refuses the executable $name candidate and permits its distinct control', (row) => {
         const configured = policy()
         const parsed = parseGuardInput(shellPayload(row.control))
-        expect(parsed).toEqual({ status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.control, paths: [] })
+        expect(parsed).toEqual({ status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.control, paths: [], removed: [] })
         const refused = parseGuardInput(shellPayload(row.candidate))
         expect(refused).toEqual(typeof row.capture.candidate === 'string' ? { status: 'unavailable', reason: row.capture.candidate }
-            : { status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.candidate, paths: [] })
+            : { status: 'parsed', tool: 'Bash', cwd: root, invocations: row.capture.candidate, paths: [], removed: [] })
         for (const item of row.capture.control) {
             if (item.executable) configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: item.executable, argv: [...item.argv] })
         }
@@ -446,5 +446,95 @@ describe('resolved guard evaluation', () => {
                 executable: item.executable, argv: item.argv, cwd: directory, host: null,
             })))
         } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+})
+
+describe('built-in read-only profile', () => {
+    it('allows exact read-only inspection commands and pipelines of them without a prompt', () => {
+        for (const command of ['ls', 'ls -la src', 'pwd', 'cat README.md', 'cat -n README.md', 'head -n 20 src/a.ts', 'head -5 src/a.ts', 'tail -n5 src/a.ts',
+            'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '*.ts' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',
+            'fd name src', "find src -name '*.ts' -type f", 'git status', 'git diff --stat', 'git log --oneline -5', 'git show HEAD',
+            'git branch', 'git branch --list', 'git -C ../other status', 'cockpit check', 'cockpit doctor --json', 'cockpit --help',
+            'rg needle src | head -n 5', 'ls && pwd']) {
+            expect(decide(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
+        }
+    })
+
+    it('falls back to a prompt for every shape outside the exact read-only table', () => {
+        for (const command of [
+            // Searches that reach a declared instance or the secrets root, or widen past ignore rules.
+            'rg needle', 'grep -r needle .', 'rg --hidden needle src', 'rg -uu needle src', 'grep -R needle src',
+            // Options that run programs or write files.
+            'rg --pre cat needle src', 'rg --pre=cat needle src', 'rg --hostname-bin cat needle src', 'rg -z needle src',
+            'find src -exec cat src/a.ts ;', 'find src -delete', 'fd -x cat name src', 'fd --exec cat name src', 'tail -f src/a.ts',
+            'git -c core.pager=cat log', 'git --git-dir=other log', 'git log --output=out.txt', 'git diff --output out.txt', 'git diff --ext-diff',
+            'git show HEAD:config/active.instance', 'git branch topic', 'cockpit sync', 'cockpit check --unknown',
+            // Undeclared environment files, paths outside the roots, writes, wrappers and mixed chains.
+            'cat .env.local', 'cat /etc/hosts', 'ls /tmp', 'cat src/a.ts > copy.txt', 'env ls', 'LANG=C ls', 'LS', 'ls; touch src/a.ts',
+        ]) {
+            expect(decide(command).decision, command).toBe('ask')
+        }
+    })
+
+    it('keeps reads of declared instances and secrets a hard denial under every spelling', () => {
+        for (const command of ['cat config/active.instance', 'cat CONFIG/ACTIVE.INSTANCE', 'cat ./config/../config/active.instance',
+            'head env/.secrets/token', 'wc -c < config/active.instance', 'grep needle config/active.instance',
+            'rg -f config/active.instance needle src', 'grep --color needle config/active.instance', 'ls && cat config/active.instance', 'cockpit check --config env/.secrets/token']) {
+            expect(decide(command), command).toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
+        }
+        // A hard link carries the instance's identity under a spelling no normalisation equates.
+        const linked = policy()
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], { [instance]: { identity: '7:9', ancestors: ['7:1', '7:2'] } })
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            return { status: 'resolved', path: resolved, symlink: false, identity: resolved.endsWith('/notes.txt') ? '7:9' : null, ancestors: [] }
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('cat notes.txt')), linked, facts).decision).toBe('deny')
+        // A symlink is never evidence of what is read, so it is not read-only.
+        const symlinked = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            return resolved.endsWith('/link') ? { status: 'resolved', path: resolved, symlink: true } : inspect({ path, cwd })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('cat link')), policy(), symlinked).decision).toBe('ask')
+    })
+
+    it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {
+        for (const command of ['printf x > .git/config', 'printf x > .GIT/Config', 'printf x > ../other/.git/hooks/fsmonitor']) {
+            expect(decide(command).reason, command).toBe('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
+        }
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '.git/config', content: '[core]' } }), policy(), inspect).decision).toBe('deny')
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '.gitignore', content: 'x' } }), policy(), inspect).decision).toBe('allow')
+    })
+})
+
+describe('cockpit structure protection', () => {
+    const removal = 'Refusing to delete, rename or truncate cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
+    const patch = (body: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: root,
+        tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` } }), policy(), inspect)
+
+    it('denies deleting, renaming or truncating the configuration or the ownership manifest', () => {
+        for (const command of ['rm cockpit.toml', 'rm -f ./cockpit.toml', 'unlink COCKPIT.TOML', 'mv cockpit.toml old.toml', 'mv -t archive cockpit.toml',
+            'git rm cockpit.toml', 'git rm --cached cockpit.toml', 'git mv cockpit.toml old.toml', 'rm .cockpit/generated-environment-ownership.json',
+            'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', 'printf x > cockpit.toml', 'npm test; rm cockpit.toml']) {
+            expect(decide(command), command).toEqual({ decision: 'deny', reason: removal })
+        }
+        expect(patch('*** Delete File: cockpit.toml')).toEqual({ decision: 'deny', reason: removal })
+        expect(patch('*** Update File: cockpit.toml\n*** Move to: old.toml\n@@\n-a\n+b')).toEqual({ decision: 'deny', reason: removal })
+        // The same identity under another spelling, such as a hard link, is the same file.
+        const linked = policy()
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], { [`${root}/cockpit.toml`]: { identity: '7:5', ancestors: ['7:1'] } })
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            return { status: 'resolved', path: resolved, symlink: false, identity: resolved.endsWith('/alias.toml') ? '7:5' : null, ancestors: [] }
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('rm alias.toml')), linked, facts)).toEqual({ decision: 'deny', reason: removal })
+    })
+
+    it('keeps editing the configuration and removing ordinary files outside the boundary', () => {
+        expect(patch('*** Update File: cockpit.toml\n@@\n-a\n+b').decision).toBe('allow')
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: 'cockpit.toml', content: '[cockpit]' } }), policy(), inspect).decision).toBe('allow')
+        for (const command of ['rm src/a.ts', 'mv old.toml cockpit.toml', 'rm -rf /tmp/scratch', 'printf x >> cockpit.toml']) {
+            expect(decide(command).decision, command).toBe('ask')
+        }
     })
 })

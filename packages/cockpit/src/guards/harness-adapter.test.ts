@@ -4,7 +4,7 @@ import { parseGuardInput, GUARD_INPUT_LIMITS } from './invocation-parser.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
 
 const cwd = '/workspace/product'
-const protectedIdentities = GUARD_ROOT_PROTECTIONS.map(({ path }) => ({ path: `${cwd}/${path}`, identity: null, ancestors: [] }))
+const protectedIdentities = [...GUARD_ROOT_PROTECTIONS.map(({ path }) => `${cwd}/${path}`), `${cwd}/cockpit.toml`].map(path => ({ path, identity: null, ancestors: [] }))
 const payload = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: 'git push origin HEAD:main' } })
 const unsafeReasonCharacters = Array.from({ length: 160 }, (_, code) => code)
     .filter((code) => code < 32 || code >= 127)
@@ -36,7 +36,7 @@ describe('closed native guard representation', () => {
 
     it('keeps the real evaluator hard denial despite an exact grant on every harness', () => {
         const decision = evaluateGuard(parseGuardInput(payload), {
-            canonicalRoot: cwd, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
+            canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', 'HEAD:main'] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
         expect(decision.decision).toBe('deny')
@@ -54,7 +54,7 @@ describe('closed native guard representation', () => {
     it.each(['HEAD', '@'])('adapts the real unresolved push %s to a prompt or no-prompt denial despite an exact grant', (source) => {
         const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: `git push origin ${source}` } }
         const decision = evaluateGuard(parseGuardInput(input), {
-            canonicalRoot: cwd, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
+            canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', source] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
         for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {

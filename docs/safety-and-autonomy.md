@@ -17,7 +17,7 @@ The [command table](../packages/cockpit/src/command-table.ts),
 
 | Outcome | Meaning |
 | --- | --- |
-| `allow` | Evaluation completed without a harder boundary; executable invocations match exact permitted profiles. |
+| `allow` | Evaluation completed without a harder boundary; executable invocations match exact permitted profiles or the built-in read-only profile. |
 | `ask` | A human decision is required. This grants no authority by itself. |
 | `deny` | A hard boundary forbids the request, even with an exact grant. |
 | `unavailable` | Cockpit could not authenticate or safely evaluate the request. No authority is granted. |
@@ -53,6 +53,14 @@ also denied. Executable use of a declared hosted database or vendor host is deni
 boundaries. Matching examines executable, argument, and environment-assignment-value roles;
 redirects, heredocs, comments, and definitions do not count as executable host use.
 
+Deleting, renaming or truncating the configuration file or
+`.cockpit/generated-environment-ownership.json` is a hard denial, through `rm`, `unlink`, `mv`,
+`git rm`, `git mv`, `find -delete`, a patch delete or move, or a `>` redirect, and so is removing a
+directory that contains either. Every later guarded call reads both files, so losing one holds the
+agent until a human restores it. Editing the configuration in place stays permitted; the edit
+takes effect only after a human runs `sync`. Writing anywhere under a `.git` directory is also a hard
+denial, because Git configuration chooses programs that read-only Git commands run.
+
 Pushes to declared protected branches are hard denials. This includes explicit protected
 destinations and `git push --all` or `git push --mirror` when protected branches are declared. Missing or unresolved
 destinations, including ambiguous source-only revisions, symbolic aliases, and wildcards, require
@@ -68,6 +76,23 @@ failure, and exceeded limits also produce `unavailable`. The
 [invocation parser](../packages/cockpit/src/guards/invocation-parser.ts) captures bounded input once;
 the evaluator accepts only its issued parser product. A reconstructed lookalike has no authority.
 
+### Read-only commands
+
+A built-in read-only profile lets agents inspect the checkout without a prompt, which matters most
+on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument shapes of `ls`,
+`pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `fd`, `find`, `git status`, `git diff`, `git log`,
+`git show`, `git branch` with no argument or `--list`, `cockpit check`, `cockpit doctor` and
+`cockpit --help`; the [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each
+permitted option. Any other option falls back to the ordinary rules, including the ones that run
+programs or write files: `rg --pre`, `find -exec`, `find -delete`, `fd --exec`, `git -c`,
+`git --output` and `git --ext-diff`. A pipeline or chain is permitted only when every segment is.
+
+Every hard denial still applies first. Reading a declared instance or anything under `.secrets` is
+denied under every spelling the volume resolves to it, a hard link included. A path that is a
+symlink, lies outside the configured roots, or is an undeclared `.env*` file falls back to a
+prompt, as does a search whose tree contains an instance or the secrets directory, since the guard
+cannot see which files the search would read.
+
 ## Native adapter behavior
 
 The [transport and adapter owner](../packages/cockpit/src/guards/harness-adapter.ts) translates a
@@ -76,8 +101,8 @@ decision without adding grants or weakening hard boundaries:
 | Harness | Translation and adapter exit |
 | --- | --- |
 | Claude Code | Allow, ask, and deny exit 0; ask and deny are carried in native decision JSON. |
-| Codex CLI | Ask becomes deny. Allow and deny exit 0; deny is carried in native decision JSON. |
-| OpenCode | Ask becomes deny. Allow exits 0; every non-allow decision exits 2. |
+| Codex CLI | Ask becomes deny, because Codex hooks have no prompt tier, and a decision a human cannot be shown must not let the call run. Allow and deny exit 0; deny is carried in native decision JSON. |
+| OpenCode | Ask becomes deny, for the same reason: its plugin hook can only throw or continue. Allow exits 0; every non-allow decision exits 2. |
 
 Unavailable or malformed decisions exit 2 on every target. Adapter exit 0 alone therefore does
 not mean permission was granted.

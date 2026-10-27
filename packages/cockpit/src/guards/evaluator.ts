@@ -5,6 +5,7 @@ import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
+import { classifyReadOnlyInvocation, type ReadOnlyAccess } from './read-only.js'
 
 export const mechanism = {
     id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts', exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'guardIdentity'],
@@ -29,6 +30,8 @@ export interface GuardProtectedIdentity {
 }
 export interface GuardEvaluationPolicy {
     readonly canonicalRoot: string
+    /** The configuration every guarded call reads; deleting it strands the agent. */
+    readonly configPath: string
     readonly allowedRoots: readonly string[]
     readonly instances: readonly { readonly name: string; readonly path: string }[]
     readonly protectedIdentities: readonly GuardProtectedIdentity[]
@@ -41,7 +44,7 @@ export interface GuardEvaluationPolicy {
 export interface PathInspectionRequest {
     readonly path: string
     readonly cwd: string
-    readonly operation: 'cwd' | 'write' | 'stage'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'remove'
 }
 /** The application supplies current, symlink-aware facts; the evaluator performs no I/O. */
 export type PathInspection = (request: PathInspectionRequest) => unknown
@@ -118,8 +121,8 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'cockpitInvocations', 'projectCommands'])
-        || !canonical(p.canonicalRoot) || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'cockpitInvocations', 'projectCommands'])
+        || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
         || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)) return undefined
     const roots = p.allowedRoots
@@ -133,7 +136,7 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
         || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
             || item.identity !== null && !identity(item.identity) || !Array.isArray(item.ancestors) || !item.ancestors.every(identity))) return undefined
     // A policy that omits an identity would silently fall back to spellings, so coverage is exact.
-    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string),
+    const expected = new Set([...p.instances.map((item) => (item as JsonSnapshotObject).path as string), p.configPath as string,
         ...GUARD_ROOT_PROTECTIONS.map((item) => `${p.canonicalRoot}/${item.path}`)])
     const carried = new Set(p.protectedIdentities.map((item) => (item as JsonSnapshotObject).path as string))
     if (carried.size !== p.protectedIdentities.length || carried.size !== expected.size || [...expected].some((path) => !carried.has(path))) return undefined
@@ -180,6 +183,33 @@ function gitInvocation(invocation: ParsedInvocation): GitInvocation | undefined 
         } else return { verb: '', args: [], cwd, uncertain: true }
     }
     return { verb: args[cursor++] ?? '', args: args.slice(cursor), cwd, uncertain }
+}
+
+const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash'])
+
+/** Paths an invocation deletes or renames away; undefined when it does neither. */
+function removedOperands(invocation: ParsedInvocation, git: GitInvocation | undefined): { readonly cwd: string; readonly paths: readonly string[] } | undefined {
+    if (invocation.executable === null) return undefined
+    const name = posix.basename(invocation.executable)
+    const positionals = (args: readonly string[]) => {
+        const end = args.indexOf('--')
+        return [...(end < 0 ? args : args.slice(0, end)).filter((arg) => !arg.startsWith('-')), ...(end < 0 ? [] : args.slice(end + 1))]
+    }
+    // `mv a b` renames a; `mv -t dir a b` moves every operand.
+    const sources = (args: readonly string[]) => {
+        const operands = positionals(args)
+        return args.some((arg) => arg === '-t' || arg.startsWith('--target-directory')) ? operands : operands.slice(0, -1)
+    }
+    if (REMOVERS.has(name)) return { cwd: invocation.cwd, paths: positionals(invocation.argv) }
+    if (name === 'mv') return { cwd: invocation.cwd, paths: sources(invocation.argv) }
+    if (name === 'find' && invocation.argv.includes('-delete')) {
+        const roots = []
+        for (const arg of invocation.argv) { if (arg.startsWith('-') || arg === '!' || arg === '(') break; roots.push(arg) }
+        return { cwd: invocation.cwd, paths: roots.length ? roots : ['.'] }
+    }
+    if (git?.verb === 'rm') return { cwd: git.cwd, paths: positionals(git.args) }
+    if (git?.verb === 'mv') return { cwd: git.cwd, paths: sources(git.args) }
+    return undefined
 }
 
 function pushDecision(args: readonly string[], branches: readonly string[]): GuardDecision | undefined {
@@ -234,11 +264,35 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const secretDenial = deny('Refusing mutation or staging below a secrets directory.')
     const instanceDenial = deny('Refusing mutation or staging of a declared environment instance.')
     const controlDenial = deny('Refusing mutation of the guard, its hook registration or its ownership manifest.')
+    const gitMetadataDenial = deny('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
+    const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
+    const manifestPath = absolute(GUARD_CONTROL_FILES[1])
+    const structural = [resolved.configPath, manifestPath]
+    const structuralDenial = deny(`Refusing to delete, rename or truncate ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
     let pending: GuardDecision | undefined
     let hardDeny: GuardDecision | undefined
     const hold = (decision: GuardDecision) => {
         if (decision.decision === 'deny') hardDeny = decision
         else if (!pending || decision.decision === 'unavailable') pending = decision
+    }
+    // Identity facts for inspected evidence: the leaf itself, everything above it, and what it covers.
+    const evidenceFacts = (evidence: JsonSnapshotObject) => {
+        const leaf = evidence.identity as string | null
+        const chain = [...evidence.ancestors as string[], ...(leaf === null ? [] : [leaf])]
+        return {
+            is: (path: string) => leaf !== null && identityOf(path) === leaf,
+            below: (path: string) => { const protectedIdentity = identityOf(path); return protectedIdentity !== null && chain.includes(protectedIdentity) },
+            covers: (path: string) => leaf !== null && chainOf(path).includes(leaf),
+        }
+    }
+    const resolvedEvidence = (request: PathInspectionRequest): JsonSnapshotObject | undefined => {
+        let evidence: JsonSnapshot | undefined
+        try { evidence = snapshotJson(inspect(Object.freeze(request))) }
+        catch { return undefined }
+        const lexical = posix.resolve(request.cwd, request.path)
+        return record(evidence) && keys(evidence, ['status', 'path', 'symlink', 'identity', 'ancestors']) && evidence.status === 'resolved'
+            && evidence.path === lexical && evidence.symlink === false && (evidence.identity === null || identity(evidence.identity))
+            && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
     const inspectPath = (request: PathInspectionRequest) => {
@@ -260,6 +314,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || staging && within(fold(item.path), folded))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path))
             || controlDirectories.some((path) => within(folded, fold(path))))) hold(controlDenial)
+        if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
         catch { hold(unavailable('Guard path inspection failed.')); return }
@@ -272,16 +327,49 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (!mutating) return
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
-        const leaf = evidence.identity
-        const chain = [...evidence.ancestors as string[], ...(leaf === null ? [] : [leaf])]
-        const is = (path: string) => leaf !== null && identityOf(path) === leaf
-        const below = (path: string) => { const protectedIdentity = identityOf(path); return protectedIdentity !== null && chain.includes(protectedIdentity) }
-        const covers = (path: string) => leaf !== null && chainOf(path).includes(leaf)
+        const { is, below, covers } = evidenceFacts(evidence)
         if (below(secretRoot) || staging && covers(secretRoot)) hold(secretDenial)
         if (resolved.instances.some((item) => is(item.path) || staging && covers(item.path))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below))) hold(controlDenial)
     }
+    // Removal is a hard boundary on the two files every guarded call reads. Missing or escaped
+    // evidence never softens a decision here: the spelling check alone already denies.
+    const inspectRemoval = (path: string, cwd: string) => {
+        if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return
+        const lexical = posix.resolve(cwd, path)
+        if (structural.some((target) => within(fold(target), fold(lexical)))) { hold(structuralDenial); return }
+        if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
+        const evidence = resolvedEvidence({ path, cwd, operation: 'remove' })
+        if (evidence && structural.some(evidenceFacts(evidence).covers)) hold(structuralDenial)
+    }
+    // A read-only command is allowed only when every path it touches is evidenced inside the
+    // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
+    const inspectReadOnly = (access: ReadOnlyAccess): boolean => {
+        let safe = true
+        const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
+            const lexical = posix.resolve(access.cwd, path)
+            if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes || !resolved.allowedRoots.some((root) => within(lexical, root))) { safe = false; return }
+            pathCount++
+            const folded = fold(lexical)
+            const protectedRead = folded.split('/').includes('.secrets') || resolved.instances.some((item) => folded === fold(item.path))
+            if (kind === 'read' && protectedRead) hold(readDenial)
+            // An undeclared `.env*` file is not a known instance, but it is not known to be data either.
+            if (kind === 'read' && /^\.env/.test(posix.basename(folded))) safe = false
+            if (kind === 'tree' && [secretRoot, ...resolved.instances.map((item) => item.path)].some((path) => within(fold(path), folded))) safe = false
+            const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
+            if (!evidence) { safe = false; return }
+            const { is, below, covers } = evidenceFacts(evidence)
+            if (kind === 'read' && (below(secretRoot) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
+            if (kind === 'tree' && (covers(secretRoot) || resolved.instances.some((item) => covers(item.path)))) safe = false
+        }
+        for (const path of access.reads) visit(path, 'read')
+        for (const path of access.trees) visit(path, 'tree')
+        for (const path of access.listings) visit(path, 'listing')
+        return safe
+    }
+    const readOnly = new Set<ParsedInvocation>()
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
+    for (const path of input.removed) inspectRemoval(path, input.cwd)
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })
     for (const invocation of input.invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
@@ -293,9 +381,15 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
         for (const redirect of invocation.redirects) {
+            // A control file's own denial names the stronger boundary, so it is held last.
+            if (redirect.truncate) inspectRemoval(redirect.target, invocation.cwd)
             if (redirect.write) inspectPath({ path: redirect.target, cwd: invocation.cwd, operation: 'write' })
         }
         const git = gitInvocation(invocation)
+        const removed = removedOperands(invocation, git)
+        for (const path of removed?.paths ?? []) inspectRemoval(path, removed!.cwd)
+        const access = classifyReadOnlyInvocation(invocation)
+        if (access && inspectReadOnly(access)) readOnly.add(invocation)
         if (!git) continue
         inspectPath({ path: git.cwd, cwd: invocation.cwd, operation: 'cwd' })
         if (git.uncertain) hold(ask('Git execution context is not an exact resolved profile.'))
@@ -332,7 +426,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (invocation.executable === null) continue
         const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
             && cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, i) => word === invocation.argv[i])
-        if (!resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
+        if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
             && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) return ask('Invocation does not match an exact permitted profile.')
     }
     return allowed
