@@ -1,0 +1,35 @@
+# A cockpit that runs its own Compose file. There is no [environment.generated]: cockpit
+# publishes the agent surfaces and checks compose.yml, and Compose owns the stack.
+[cockpit]
+name = "duo"
+siblings_root = "."
+
+[[sibling]]
+slug = "api"
+dir = "api"
+mount = "always"
+acquire = "none"
+var = "API_DIR"
+purpose = "Tiny JSON api"
+
+[[sibling]]
+slug = "web"
+dir = "web"
+mount = "always"
+acquire = "none"
+var = "WEB_DIR"
+purpose = "Tiny web front end"
+
+[ports.bases]
+API_HOST_PORT = 4200
+WEB_HOST_PORT = 4300
+
+[environment]
+compose_files = ["compose.yml"]
+
+# Runtime commands refuse to start on a machine below this floor.
+[environment.machine]
+runtime_memory_mb = 512
+runtime_cpus = 1
+free_disk_mb = 1024
+cold_start_seconds = 120

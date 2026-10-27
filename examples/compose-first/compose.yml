@@ -1,0 +1,15 @@
+# Every published host port comes from a [ports.bases] variable, so parallel stacks do not collide.
+services:
+  api:
+    build: ${API_DIR:-./api}
+    ports: ["${API_HOST_PORT:-4200}:3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 5s
+  web:
+    build: ${WEB_DIR:-./web}
+    ports: ["${WEB_HOST_PORT:-4300}:3000"]
+    depends_on: [api]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 5s

@@ -20,6 +20,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['README.md', [sourceInstall, operator]],
     ['docs/adoption.md', [operator, operator]],
     ['docs/contributing/style.md', [developer]],
+    ['docs/environment.md', [runtime]],
     ['docs/getting-started.md', [sourceInstall, operator, operator, operator, runtime, runtime]],
     ['docs/harness-surfaces.md', [operator]],
     ['docs/parallel-run.md', [operator, runtime, operator]],
@@ -29,6 +30,8 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
     ['examples/synthetic/README.md', [sourceInstall, executed, operator, executed, runtime]],
     ['examples/minimal/README.md', [executed]],
+    ['examples/docs-only/README.md', [executed]],
+    ['examples/compose-first/README.md', [executed]],
 ])
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
@@ -209,6 +212,8 @@ describe('the public synthetic cockpit', () => {
         const classified = publicShellInventory(documents)
         expect(classified.filter(row => row.kind === 'unclassified')).toEqual([])
         expect(classified.filter(row => row.kind === 'executed')).toEqual([
+            { path: 'examples/compose-first/README.md', block: 1, ...executed },
+            { path: 'examples/docs-only/README.md', block: 1, ...executed },
             { path: 'examples/minimal/README.md', block: 1, ...executed },
             { path: 'examples/synthetic/README.md', block: 2, ...executed },
             { path: 'examples/synthetic/README.md', block: 4, ...executed },
@@ -218,7 +223,84 @@ describe('the public synthetic cockpit', () => {
         const planted = new Map(documents)
         planted.set('docs/environment.md', `${planted.get('docs/environment.md')}\n\`\`\`sh\ncockpit unknown-command\n\`\`\`\n`)
         expect(publicShellInventory(planted).filter(row => row.kind === 'unclassified')).toContainEqual({
-            path: 'docs/environment.md', block: 1, kind: 'unclassified', reason: 'shell block and classification table differ',
+            path: 'docs/environment.md', block: 2, kind: 'unclassified', reason: 'shell block and classification table differ',
         })
+    })
+})
+
+describe('cockpits without a generated environment', () => {
+    function copyPlainExample(example: string, name: string) {
+        const root = join(scratch, name)
+        cpSync(join(repositoryRoot, 'examples', example), root, { recursive: true })
+        execFileSync('git', ['init', '--quiet', root])
+        return root
+    }
+
+    function syncedComposeFirst(name: string) {
+        const root = copyPlainExample('compose-first', name)
+        const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+        expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
+        return root
+    }
+
+    it('publishes and checks only the surfaces of a docs-only cockpit and refuses to run it', () => {
+        const root = copyPlainExample('docs-only', 'docs-only')
+        const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
+        expect(executable.map(argv => argv[1])).toEqual(['sync', 'check', 'up'])
+        const [sync, check, up] = executable.map(argv => run(root, argv))
+        for (const result of [sync!, check!]) {
+            expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
+            expect(result.stderr).toBe('')
+        }
+        expect(existsSync(join(root, '.claude/skills/bootstrap/SKILL.md'))).toBe(true)
+        expect(existsSync(join(root, 'AGENTS.md'))).toBe(true)
+        expect(existsSync(join(root, 'env'))).toBe(false)
+        expect(sync!.response.result.changes.map((change: { path: string }) => change.path)).not.toContain('compose.generated.yml')
+        expect(up!.status).toBe(2)
+        expect(up!.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        const doctor = run(root, ['cockpit', 'doctor', '--config', 'cockpit.toml', '--json'])
+        expect(doctor.response.result.verdict).toBe('unavailable')
+        expect(doctor.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        expect(doctor.response.result.declarations).toContainEqual(expect.objectContaining({ subject: 'runtime', state: 'not-declared' }))
+    })
+
+    it('owns the surfaces of a compose-first cockpit, leaves its Compose file alone and passes check', () => {
+        const root = copyPlainExample('compose-first', 'compose-first')
+        const compose = readFileSync(join(root, 'compose.yml'), 'utf8')
+        const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
+        expect(executable.map(argv => argv[1])).toEqual(['sync', 'check'])
+        const [, check] = executable.map(argv => {
+            const result = run(root, argv)
+            expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
+            return result
+        })
+        const ownership = JSON.parse(readFileSync(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8'))
+        const owned = ownership.entries.map((entry: { path: string }) => entry.path)
+        expect(owned).toContain('.claude/skills/bootstrap/SKILL.md')
+        expect(owned).toContain('.cockpit/guards/bash-guard.sh')
+        expect(owned.filter((path: string) => !path.startsWith('.') && !/^(?:AGENTS|CLAUDE)\.md$|^opencode\.jsonc$/.test(path))).toEqual([])
+        expect(readFileSync(join(root, 'compose.yml'), 'utf8')).toBe(compose)
+        expect(check!.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
+    })
+
+    it('fails check on a published host port that no ports.bases variable leases', () => {
+        const root = syncedComposeFirst('compose-first-port')
+        const path = join(root, 'compose.yml')
+        writeFileSync(path, readFileSync(path, 'utf8').replace('"${WEB_HOST_PORT:-4300}:3000"', '"4300:3000"'))
+        const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(check.status).toBe(2)
+        expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
+    })
+
+    it('warns, without failing check, that a service with no healthcheck is ready once running', () => {
+        const root = syncedComposeFirst('compose-first-health')
+        const path = join(root, 'compose.yml')
+        const [api, web] = readFileSync(path, 'utf8').split('  web:\n')
+        writeFileSync(path, `${api}  web:\n${web!.slice(0, web!.indexOf('    healthcheck:'))}`)
+        const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(check.status, `${check.stdout}\n${check.stderr}`).toBe(0)
+        expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'warning', code: 'COMPOSE_HEALTHCHECK_MISSING', target: 'compose:web' }))
     })
 })

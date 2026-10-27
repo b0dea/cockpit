@@ -70,7 +70,7 @@ import {
 } from './environment/contract.js'
 import { loadCockpitConfig, observeConfigSource } from './config/load.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
-import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted } from './environment/lifecycle-stage.js'
@@ -1220,7 +1220,8 @@ export async function runCli(
             response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), payload, harness, cwd: process.cwd(), transport: !reply,
                 askIsDeny: (runtime.env ?? process.env).COCKPIT_ASK_IS_DENY === '1' }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
-                resolveGit: () => resolveGitExecutable({ PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin' }),
+                resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
+                resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
                 execute: executeProbe,
             })
         } catch {

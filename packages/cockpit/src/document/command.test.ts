@@ -899,12 +899,22 @@ describe('operator-confirmed document completion', () => {
             diagnostics: [{ code: 'DOCUMENT_DEFAULT_CONFIRMATION_INVALID' }] })
     })
 
-    it('does not scaffold a no-runnable estate into a complete configuration', async () => {
+    it('completes a no-runnable estate as a surfaces-only configuration that states no runtime is declared', async () => {
         const estateRoot = temporaryPath('empty-product')
         mkdirSync(estateRoot)
-        expect(await documentCommand({ root: estateRoot, configuration: {
-            sourceObservationSha256, classification: 'no-runnable-product', answers: [],
-        } })).toMatchObject({ kind: 'refusal', status: 2,
-            diagnostics: [expect.objectContaining({ code: 'DOCUMENT_NO_RUNNABLE_PRODUCT' })] })
+        const configuration = { sourceObservationSha256, classification: 'no-runnable-product' as const, answers: [] as ReturnType<typeof answer>[] }
+        let pending = await documentCommand({ root: estateRoot, configuration })
+        for (const value of [generatedConfig.sibling, {}]) {
+            configuration.answers.push(answer(pending.question!, value))
+            pending = await documentCommand({ root: estateRoot, configuration })
+        }
+        expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        configuration.answers.push(confirmDefaults(pending.question!))
+        const completed = await documentCommand({ root: estateRoot, configuration })
+        expect(completed).toMatchObject({ kind: 'complete', status: 0 })
+        expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED' }))
+        const parsed = CockpitConfig.parse(parseToml(completed.artifact!))
+        expect(parsed.environment.generated).toBeUndefined()
+        expect(parsed.environment.compose_files).toEqual([])
     })
 })

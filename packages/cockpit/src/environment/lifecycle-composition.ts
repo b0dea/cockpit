@@ -40,6 +40,7 @@ import {
     type EnvironmentDiagnostic,
     type ExecutionStep,
 } from './contract.js'
+import { declaredRuntime, runtimeNotDeclared } from './declaration.js'
 import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import { observeHostCapacity } from './host-observation.js'
 import type { GeneratedObservationRuntime } from './generated-stack.js'
@@ -416,6 +417,8 @@ export function createLifecycleCommandAdapters(
         }
         const loaded = await loadCockpitConfig(input.configPath)
         if (loaded.kind === 'refusal') return loaded
+        if (declaredRuntime(loaded.result.config.environment) === 'none') return Object.freeze({ kind: 'refusal' as const,
+            status: 2 as const, result: null, diagnostics: Object.freeze([runtimeNotDeclared(loaded.result.source.path)]) })
         const git = await resolveGitExecutable(input.env as Readonly<Record<string, string>>)
         if (git.state !== 'available') return refusal(loaded.result.source.path, git.reason)
         const observedAt = new Date().toISOString()
@@ -906,7 +909,7 @@ export function createLifecycleCommandAdapters(
             coldStartLimitMillis: machine.cold_start_seconds * 1_000,
             expectedMountSources,
             activeProfiles,
-        }, generatedApplication && ports ? {
+        }, generatedApplication?.generatedComposeAuthority && ports ? {
             generatedComposeAuthority: generatedApplication.generatedComposeAuthority,
             portLeaseProjection: ports,
         } : undefined)

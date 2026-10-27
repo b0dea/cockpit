@@ -502,9 +502,14 @@ export async function runInitApplication(
     const checked = await adapters.check({ configPath: destination })
     if (checked.status !== 0) return ownerRefusal(checked, 'draft-observed', projection)
     const preflight = await adapters.preflight({ configPath: destination })
-    if (preflight.status !== 0) return ownerRefusal(preflight, 'draft-observed', projection)
+    // A surfaces-only cockpit has no runtime to preflight. Its refusal is the verified state, and is
+    // reported as information so the operator still reads that no runtime is declared.
+    const runtimeAbsent = preflight.status !== 0 && preflight.diagnostics.length > 0
+        && preflight.diagnostics.every(row => row.code === 'ENVIRONMENT_NOT_DECLARED')
+    if (preflight.status !== 0 && !runtimeAbsent) return ownerRefusal(preflight, 'draft-observed', projection)
     const verified = await persist(namespace, address, input, projection, adapters, 'environment-verified', current)
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
-        diagnostics: preflight.diagnostics, result: result('environment-verified', projection, nextCommand('environment-verified')) }
+        diagnostics: runtimeAbsent ? preflight.diagnostics.map(row => ({ ...row, severity: 'info' as const })) : preflight.diagnostics,
+        result: result('environment-verified', projection, nextCommand('environment-verified')) }
 }

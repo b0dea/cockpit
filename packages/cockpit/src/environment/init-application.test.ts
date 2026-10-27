@@ -108,11 +108,6 @@ function interviewDocument(destination: string, fields: readonly string[] = ['si
                 message: 'operator answers cannot contain sensitive fields' }],
             result: null, artifact: null, destination: null,
         }
-        if (input.configuration?.classification === 'no-runnable-product') return {
-            kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'DOCUMENT_NO_RUNNABLE_PRODUCT',
-                message: 'build enough product to run before scaffolding a cockpit configuration' }],
-            result: null, artifact: null, destination: null,
-        }
         const index = input.configuration?.answers.length ?? 0
         if (index < fields.length) {
             const id = `question:${createHash('sha256').update(`${input.configuration?.sourceObservationSha256}:${index}`).digest('hex')}` as const
@@ -184,6 +179,18 @@ describe('init application', () => {
         const complete = await runInitApplication(accepted, f.adapters)
         expect(complete).toEqual(expect.objectContaining({ kind: 'complete', status: 0, artifact: null, destination: null }))
         expect(f.calls).toEqual(['resume', 'prepare', 'document', 'validate', 'sync', 'check', 'preflight'])
+    })
+
+    it('completes a surfaces-only cockpit whose preflight reports only that no runtime is declared', async () => {
+        const f = fixture()
+        const accepted = { ...f.input, accepted: true, acceptedPreviewSha256: digest('3') }
+        await runInitApplication(accepted, f.adapters)
+        f.setDestination({ kind: 'available', sha256: '010fb9b6053c7bfa4b9936cf8c372cc028feddd5bf4b848f65de048f198c1a3e' })
+        const notDeclared = { severity: 'error' as const, code: 'ENVIRONMENT_NOT_DECLARED', message: 'synthetic: no runtime is declared' }
+        const completed = await runInitApplication(accepted, { ...f.adapters, preflight: async () => ({
+            kind: 'blocked', status: 2, diagnostics: [notDeclared], result: { verdict: 'unavailable' } }) })
+        expect(completed).toMatchObject({ kind: 'complete', status: 0, result: { stage: 'environment-verified' },
+            diagnostics: [{ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED', message: notDeclared.message }] })
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
@@ -304,9 +311,7 @@ describe('init application', () => {
         const outcome = first.result?.question ? await runInitApplication({ ...accepted, greenfieldAnswer: {
             questionId: first.result.question.id, bytes: '[]', provenance: 'operator-confirmed',
         } }, adapters) : first
-        expect(outcome).toMatchObject(classification === 'no-runnable-product'
-            ? { kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_NO_RUNNABLE_PRODUCT' }] }
-            : { kind: 'artifact', result: { stage: 'draft-prepared' } })
+        expect(outcome).toMatchObject({ kind: 'artifact', result: { stage: 'draft-prepared' } })
         expect(f.calls).not.toContain('sync')
         expect(f.calls).not.toContain('preflight')
     })

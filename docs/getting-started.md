@@ -76,7 +76,8 @@ read from them: commands, images, health checks and the port map. Each accepted 
 where it came from, and a changed repository invalidates earlier answers instead of reusing
 them. Re-running the same command resumes where it stopped. A single repository gets stack
 scope: the environment without the multi-repository registry and guide projection. A directory
-with nothing runnable is refused by name.
+with nothing runnable gets a surfaces-only configuration with no `[environment]`, and `init` says
+that no runtime is declared; see [Environment modes](environment.md#environment-modes).
 
 Review the port map, the generated environment declaration and the defaults before accepting
 the configuration.

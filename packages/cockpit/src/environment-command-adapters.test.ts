@@ -352,7 +352,7 @@ else if (args.includes('exec')) {
                 coldStartLimitMillis: 60_000, expectedMountSources, ports: [effectivePort], projectName: 'synthetic', env: {}, timeoutMs: 5_000,
                 labels: { stackId: stack, configSha256: synced.result.application.sourceSha256, batchId },
                 composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: composePath, source: compose, sha256: composeSha256 }] },
-                { generatedComposeAuthority: synced.result.application.generatedComposeAuthority, portLeaseProjection })
+                { generatedComposeAuthority: synced.result.application.generatedComposeAuthority!, portLeaseProjection })
             if (runtime.kind !== 'preview') throw new Error(`generated health runtime was refused: ${JSON.stringify(runtime)}`)
             expect(labels['dev.b0dea.cockpit.stack-id']).toBe(stack)
             const planned = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack,
@@ -598,6 +598,7 @@ else if (args.includes('exec')) {
                     installedProducer: Object.freeze({ package: '@b0dea/cockpit', version: '0.0.0', sourceRevision: 'development' }),
                     release: Object.freeze({ kind: 'unknown', reason: 'synthetic offline fixture' }),
                 }),
+                declarations: Object.freeze([]),
             }),
             diagnostics: Object.freeze([]),
         }) satisfies DoctorCommandResult

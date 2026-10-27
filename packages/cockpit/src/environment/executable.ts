@@ -6,8 +6,12 @@ import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
 export const mechanism = {
     id: 'resolved-executable-identity',
     module: 'packages/cockpit/src/environment/executable.ts',
-    exports: ['resolvedExecutable', 'resolvedDockerExecutable', 'resolvedGitExecutable', 'isResolvedExecutable', 'isResolvedDockerExecutable', 'isResolvedGitExecutable', 'resolveExecutable', 'resolveExecutablePath', 'resolveDiskCapacityExecutable', 'resolveDockerExecutable', 'resolveGitExecutable', 'resolvePathRemovalExecutable'],
+    exports: ['GUARD_EXECUTABLE_SEARCH_PATH', 'resolvedExecutable', 'resolvedDockerExecutable', 'resolvedGitExecutable', 'isResolvedExecutable', 'isResolvedDockerExecutable', 'isResolvedGitExecutable', 'resolveExecutable', 'resolveExecutablePath', 'resolveDiskCapacityExecutable', 'resolveDockerExecutable', 'resolveGitExecutable', 'resolvePathRemovalExecutable'],
 } as const
+
+// A guard runs inside the agent's hook with an environment the agent controls, so the tools it
+// observes with are found on this fixed search path rather than the inherited PATH.
+export const GUARD_EXECUTABLE_SEARCH_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
 
 export interface ResolvedExecutable {
     readonly canonicalPath: string

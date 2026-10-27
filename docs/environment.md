@@ -24,6 +24,34 @@ Reduce an oversized input; raising an output or subprocess limit does not change
 is `null` for that gap. A skipped registry row emits nothing, because its repository scope may
 have been lost. `registry-resolve` emits sourceable shell data only from validated input.
 
+## Environment modes
+
+`[environment]` is optional, and what it declares decides which commands have anything to run.
+
+| Declares | Mode | `sync` and `check` | Runtime commands |
+|---|---|---|---|
+| neither `compose_files` nor `generated` | surfaces only | publish and drift-check the harness surfaces | refuse with `ENVIRONMENT_NOT_DECLARED` |
+| `environment.compose_files` | compose first | the surfaces, plus `check` reads the Compose topology | run the declared Compose files |
+| `[environment.generated]` | generated | the surfaces and the rendered stack | run the rendered Compose file |
+
+`generated` wins when both are declared. The harness surfaces are the instructions, skills,
+guards, permissions, evaluator and work orders; every mode publishes and owns them. The runtime
+commands are `up`, `sleep`, `session`, `down`, `reset`, `preflight`, `logs` and `runtime measure`.
+`doctor` reports the runtime as not declared rather than healthy, and its `declarations` result
+lists resource ceilings, data modes and vendor guards as not declared outside a generated stack.
+[`examples/docs-only`](../examples/docs-only/README.md) and
+[`examples/compose-first`](../examples/compose-first/README.md) show the first two modes.
+
+In compose-first mode `check` reads the topology through `docker compose config`, without
+interpolation, and refuses with `COMPOSE_TOPOLOGY_UNAVAILABLE` when Docker cannot produce it:
+
+- a published host port not written as a `[ports.bases]` variable, such as `"${API_HOST_PORT}:3000"`,
+  fails with `COMPOSE_PORT_NOT_LEASED`, because the same number collides across worktrees and
+  parallel stacks;
+- a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
+  is then treated as ready;
+- an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
+
 ## Sibling and template paths
 
 `sync` and `check` require each declared sibling directory to exist inside the siblings root,
@@ -402,7 +430,9 @@ a Compose file escaped the declared root, referred to a remote file, was not saf
 contained a remote or unsupported build, include, or extends source. Replace it with a confined,
 digest-matched local Compose file and supported local build contexts.
 `RUNNING_CHECKOUT_MISMATCH` means the running stack belongs to a different checkout; select the
-owning checkout instead of reusing its runtime.
+owning checkout instead of reusing its runtime. `ENVIRONMENT_NOT_DECLARED` means the configuration
+declares no runtime; add `environment.compose_files` or `[environment.generated]` as described in
+[Environment modes](#environment-modes).
 
 ### Reset, reclaim, and baselines
 

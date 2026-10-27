@@ -703,8 +703,9 @@ it('runs installed init for each isolated target and refuses missing roots or br
                     install: ['npm', 'ci'], load_probe: ['node', '--version'],
                 }])
                 // The interview now continues past the policy question, so the fourth question is
-                // reached; declining it leaves the target unwritten and the answers resumable.
-                if (question.field === 'environment.generated') return undefined
+                // reached; declining it leaves the target unwritten and the answers resumable. A
+                // surfaces-only interview has no environment questions and reaches the defaults instead.
+                if (question.field === 'environment.generated' || question.field === 'configuration.defaults') return undefined
                 throw new Error(`unexpected installed init question: ${question.field}`)
             },
         }, {}, { env })
@@ -714,9 +715,9 @@ it('runs installed init for each isolated target and refuses missing roots or br
         }
         expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
         if (classification === 'no-runnable-product') {
-            expect(status).toBe(2)
-            expect(stderr).toContain('DOCUMENT_NO_RUNNABLE_PRODUCT')
-            expect(questions).toEqual([])
+            expect(status, stderr).toBe(2)
+            expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
+            expect(questions.map(question => question.field)).toEqual(['sibling', 'ports.bases', 'configuration.defaults'])
         } else {
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')

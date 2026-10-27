@@ -680,10 +680,9 @@ function completeConfigurationDocument(
     const configuration = configurationInput(input.configuration)
     if (!configuration) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         'configuration completion requires bounded source-bound operator-confirmed answers')
-    if (configuration.classification === 'no-runnable-product') return refusal(
-        'DOCUMENT_NO_RUNNABLE_PRODUCT',
-        'build enough product to run before scaffolding a cockpit configuration',
-    )
+    // Nothing runnable is no reason to withhold agent surfaces. Such a cockpit declares no runtime,
+    // so the interview skips every environment question and the result says that runtime is absent.
+    const surfacesOnly = configuration.classification === 'no-runnable-product'
     if (configuration.classification === 'incomplete-multi-repository' && estateGaps.length === 0) return refusal(
         'DOCUMENT_ESTATE_INCOMPLETE',
         'resolve every named repository runnable gap before scaffolding a cockpit configuration',
@@ -764,7 +763,7 @@ function completeConfigurationDocument(
     }
 
     const runnableResolutions = new Map<string, Readonly<{ runnable: boolean; service?: string; command?: readonly string[] }>>()
-    if (estateGaps.length > 0) {
+    if (!surfacesOnly && estateGaps.length > 0) {
         const slugs = estateGaps.map(gap => /^([a-z][a-z0-9-]{0,63})\.runnable$/.exec(gap.field)?.[1])
         if (slugs.some(slug => !slug) || new Set(slugs).size !== slugs.length) return refusal(
             'DOCUMENT_ESTATE_GAPS_INVALID', 'the current estate runnable gaps are malformed or duplicated')
@@ -821,53 +820,56 @@ function completeConfigurationDocument(
         `the operator-confirmed port bases do not match the schema: ${issueSummary(parsedPorts.error)}`, portQuestion.field)
     answerIndex += 1
 
-    const policyQuestion = configurationQuestion(context, 'environment.install_policies',
-        'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands')
-    const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
-    if (policyRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-        attributions, gaps: [] }, destination, policyQuestion)
-    if (policyRead.kind === 'refusal') return policyRead.outcome
-    const parsedPolicies = InstallPolicy.array().max(256).safeParse(policyRead.value)
-    if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-        `the operator-confirmed dependency install protocols do not match the schema: ${issueSummary(parsedPolicies.error)}`,
-        policyQuestion.field)
-    answerIndex += 1
+    let environment = defaults.environment
+    if (!surfacesOnly) {
+        const policyQuestion = configurationQuestion(context, 'environment.install_policies',
+            'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands')
+        const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
+        if (policyRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, policyQuestion)
+        if (policyRead.kind === 'refusal') return policyRead.outcome
+        const parsedPolicies = InstallPolicy.array().max(256).safeParse(policyRead.value)
+        if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed dependency install protocols do not match the schema: ${issueSummary(parsedPolicies.error)}`,
+            policyQuestion.field)
+        answerIndex += 1
 
-    const generatedQuestion = configurationQuestion(context, 'environment.generated',
-        'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance')
-    const generatedRead = readConfigurationAnswer(configuration.answers, answerIndex, generatedQuestion)
-    if (generatedRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-        attributions, gaps: [] }, destination, generatedQuestion)
-    if (generatedRead.kind === 'refusal') return generatedRead.outcome
-    const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
-    if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-        `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
-        generatedQuestion.field)
-    let runnableWitnesses = 0
-    for (const disposition of estateRunnable) {
-        const services = parsedGenerated.data.services.filter(service => service.sibling === disposition.slug)
-        const resolution = runnableResolutions.get(disposition.slug)
-        const runnable = disposition.disposition === 'confirmed' || resolution?.runnable === true
-        const witnessMatches = resolution?.runnable === true
-            ? services.filter(service => service.id === resolution.service
-                && JSON.stringify(service.command) === JSON.stringify(resolution.command)).length
-            : 0
-        if (runnable ? services.length === 0 || resolution?.runnable === true && witnessMatches !== 1 : services.length !== 0) {
-            return refusal('DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH',
-                'the generated environment does not match the operator-confirmed runnable dispositions', generatedQuestion.field)
+        const generatedQuestion = configurationQuestion(context, 'environment.generated',
+            'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance')
+        const generatedRead = readConfigurationAnswer(configuration.answers, answerIndex, generatedQuestion)
+        if (generatedRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, generatedQuestion)
+        if (generatedRead.kind === 'refusal') return generatedRead.outcome
+        const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
+        if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed generated environment does not match the schema or omits required provenance: ${issueSummary(parsedGenerated.error)}`,
+            generatedQuestion.field)
+        let runnableWitnesses = 0
+        for (const disposition of estateRunnable) {
+            const services = parsedGenerated.data.services.filter(service => service.sibling === disposition.slug)
+            const resolution = runnableResolutions.get(disposition.slug)
+            const runnable = disposition.disposition === 'confirmed' || resolution?.runnable === true
+            const witnessMatches = resolution?.runnable === true
+                ? services.filter(service => service.id === resolution.service
+                    && JSON.stringify(service.command) === JSON.stringify(resolution.command)).length
+                : 0
+            if (runnable ? services.length === 0 || resolution?.runnable === true && witnessMatches !== 1 : services.length !== 0) {
+                return refusal('DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH',
+                    'the generated environment does not match the operator-confirmed runnable dispositions', generatedQuestion.field)
+            }
+            if (runnable) runnableWitnesses += 1
         }
-        if (runnable) runnableWitnesses += 1
+        if (estateRunnable.length > 0 && runnableWitnesses === 0) {
+            return refusal('DOCUMENT_NO_RUNNABLE_PRODUCT',
+                'the observed and operator-confirmed estate contains no runnable product', generatedQuestion.field)
+        }
+        answerIndex += 1
+        environment = { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data }
     }
-    if (estateRunnable.length > 0 && runnableWitnesses === 0) {
-        return refusal('DOCUMENT_NO_RUNNABLE_PRODUCT',
-            'the observed and operator-confirmed estate contains no runnable product', generatedQuestion.field)
-    }
-    answerIndex += 1
 
     const candidate = CockpitConfig.safeParse({ ...defaults, cockpit: { ...defaults.cockpit, name,
         ...(greenfieldEstate ? { siblings_root: '.' } : {}), ...(stackScope ? { scope: 'stack' } : {}) },
-        sibling: siblingRows, ports: parsedPorts.data,
-        environment: { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data } })
+        sibling: siblingRows, ports: parsedPorts.data, environment })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)
     if (configuration.classification === 'one-sibling' && candidate.data.sibling.length !== 1
@@ -897,6 +899,9 @@ function completeConfigurationDocument(
 
     const artifact = renderCompleteDocument(candidate.data, schemaDirective(destination))
     const diagnostics = diagnosticsFor(attributions, [])
+    if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
+        message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
+        fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run cockpit sync' })
     if (!destination) diagnostics.unshift({ severity: 'info', code: 'DOCUMENT_STDOUT_TARGET',
         message: 'stdout bytes are intended for the canonical cockpit.toml location; arbitrary redirection has no schema-location guarantee',
         target: '<cockpit-root>/cockpit.toml' })

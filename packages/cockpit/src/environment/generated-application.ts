@@ -70,8 +70,10 @@ import {
 } from '../generated-environment/transaction.js'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
 import type { ResolvedExecutable } from './executable.js'
-import { resolveExecutablePath, resolveGitExecutable } from './executable.js'
+import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, stackId } from './identity.js'
+import { assessComposeTopology, observeComposeTopology } from './compose-topology.js'
+import { declaredRuntime } from './declaration.js'
 import {
     admitGeneratedObservation,
     createGeneratedObservationExecution,
@@ -189,8 +191,9 @@ interface PreparedEnvironment {
     readonly personaSource: Readonly<{ path: string; sha256: string }>
     readonly personaSourceIdentity: PersonaSourceIdentity
     readonly generation: string
-    readonly rendered: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
-    readonly generatedComposeAuthority: GeneratedComposeArtifactAuthority
+    // Present only when environment.generated is declared; a surfaces-only or compose-first cockpit renders no stack.
+    readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
+    readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
     readonly generated: readonly OwnedBytes[]
     readonly persona: readonly OwnedBytes[]
     readonly owned: readonly OwnedBytes[]
@@ -217,7 +220,7 @@ interface PreparedEnvironment {
     readonly workApplication?: WorkApplicationAuthorityRecord
     readonly browserRunner?: BrowserRunnerAuthority
     readonly portLease?: PortLeaseProjection
-    readonly inspection: Readonly<{ kind: 'passed' }>
+    readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
     readonly guardHandler?: GuardHandlerIdentity
     readonly now: string
@@ -328,7 +331,8 @@ export interface GeneratedApplicationProjection {
     readonly generatedPaths: readonly GeneratedPathFact[]
     readonly sourceSha256: string
     readonly generation: string
-    readonly generatedComposeAuthority: GeneratedComposeArtifactAuthority
+    /** Absent when no generated environment is declared; there is then no cockpit-rendered Compose file to authenticate. */
+    readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
     readonly profiles: readonly string[]
     readonly mounts: readonly string[]
     readonly activeSurfaceOverrides: readonly ActiveSurfaceOverride[]
@@ -479,8 +483,8 @@ const WORK_ASSETS = Object.freeze([
 ] as const)
 type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof WORK_ASSETS[number]
 interface GeneratedApplicationRecord {
-    readonly rendered: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
-    readonly inspection: Readonly<{ kind: 'passed' }>
+    readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
+    readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
     readonly workApplication?: WorkApplicationAuthorityRecord
 }
@@ -558,20 +562,19 @@ function complete(
         generatedPaths: generatedPaths.facts,
         sourceSha256: prepared.sourceSha256,
         generation: prepared.generation,
-        generatedComposeAuthority: prepared.generatedComposeAuthority,
+        ...(prepared.generatedComposeAuthority ? { generatedComposeAuthority: prepared.generatedComposeAuthority } : {}),
         surfaceSelftest: prepared.surfaceSelftest,
         activeSurfaceOverrides: prepared.activeSurfaceOverrides,
         changedOverrideOriginals: prepared.changedOverrideOriginals,
-        profiles: Object.freeze([...prepared.rendered.replay.profiles]),
-        mounts: Object.freeze([...prepared.rendered.replay.mounts]),
+        profiles: Object.freeze([...prepared.rendered?.replay.profiles ?? []]),
+        mounts: Object.freeze([...prepared.rendered?.replay.mounts ?? []]),
         inspection: Object.freeze({
-            kind: prepared.inspection.kind,
+            kind: 'passed' as const,
             files: Object.freeze(prepared.owned.map(({ path, sha256: digest }) => Object.freeze({ path, sha256: digest, ownership: 'whole-file' as const }))),
         }),
     })
     issuedApplicationProjections.set(application, Object.freeze({
-        rendered: prepared.rendered,
-        inspection: prepared.inspection,
+        ...(prepared.rendered && prepared.inspection ? { rendered: prepared.rendered, inspection: prepared.inspection } : {}),
         node: prepared.node,
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
     }))
@@ -599,8 +602,8 @@ function generatedPathFacts(prepared: PreparedEnvironment, applicability: 'decla
     const declarations: GeneratedPathDeclaration[] = [
         ...prepared.generated.map(file => ({ producer: 'generated-environment' as const, applicability,
             entry: manifest.entries.find(entry => entry.path === file.path)! })),
-        { producer: 'generated-environment' as const, applicability,
-            entry: manifest.entries.find(entry => entry.path === SECRET_IGNORE_PATH)! },
+        ...prepared.owned.filter(file => file.path === SECRET_IGNORE_PATH).map(file => ({ producer: 'generated-environment' as const, applicability,
+            entry: manifest.entries.find(entry => entry.path === file.path)! })),
         ...prepared.persona.map(file => ({ producer: 'environment-data-plane' as const, applicability,
             entry: manifest.entries.find(entry => entry.path === file.path)! })),
         ...prepared.surfaces.map(file => ({ producer: 'surface-render' as const, applicability,
@@ -958,7 +961,7 @@ function generatedApplicationRuntimeAuthority(
     const captured = ownRecord(input)
     const runtime = captured ? ownRecord(captured.runtime) : undefined
     const hostExecutables = runtime?.hostExecutables === undefined ? {} : ownRecord(runtime.hostExecutables)
-    if (!record || !captured || !exactKeys(captured, ['runtime', 'topology']) || !runtime || !hostExecutables
+    if (!record?.rendered || !captured || !exactKeys(captured, ['runtime', 'topology']) || !runtime || !hostExecutables
         || Object.hasOwn(hostExecutables, 'node')) return undefined
     return projectGeneratedRuntimeAuthority({
         rendered: record.rendered,
@@ -1000,7 +1003,7 @@ export async function observeGeneratedApplication(
         ? issuedApplicationProjections.get(application)
         : undefined
     const authority = generatedApplicationRuntimeAuthority(application, input)
-    if (!record || !authority || typeof execute !== 'function') return undefined
+    if (!record?.rendered || !record.inspection || !authority || typeof execute !== 'function') return undefined
     const admissions = []
     for (const observation of record.rendered.observations) {
         const execution = createGeneratedObservationExecution({ authority, observation })
@@ -1239,12 +1242,14 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const derived = deriveRegistry(loaded.result.config)
     if (derived.kind !== 'complete') return refuse(derived.code, derived.message, loaded.result.source.path)
     const config = derived.result.config
+    // Without a generated declaration nothing environment-shaped is rendered or owned here: the
+    // cockpit either runs its own Compose files or declares no runtime, and still gets its surfaces.
     const declaration = config.environment.generated
-    if (!declaration) return refuse(
+    if (!declaration && workEnvironment.browser && Object.hasOwn(workEnvironment.browser, 'endpoint')) return refuse(
         'GENERATED_DECLARATION_MISSING',
-        'the configuration does not declare a generated environment',
-        loaded.result.source.path,
-        'add environment.generated before using sync or check',
+        'a remote browser runner is rendered into the generated environment, and this configuration declares none',
+        'browser',
+        'declare [environment.generated] for the runner, or remove browser.endpoint',
     )
     const root = dirname(loaded.result.source.path)
     const authenticatedSiblings = await authenticateSiblingRoots(root, derived.result.config)
@@ -1268,7 +1273,8 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'the current Node executable could not be authenticated',
         process.execPath,
     )
-    const browserRunner = await projectBrowserRunner(workEnvironment, declaration, config.ports.bases, root, node, adapters)
+    const browserRunner = declaration
+        ? await projectBrowserRunner(workEnvironment, declaration, config.ports.bases, root, node, adapters) : undefined
     if (browserRunner && 'kind' in browserRunner) return refuse('GENERATED_DECLARATION_INVALID', browserRunner.message, 'browser')
     const projectedRunner = browserRunner && !('kind' in browserRunner) ? browserRunner : undefined
     const inspectedPorts = suppliedPorts ?? (projectedRunner
@@ -1279,7 +1285,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'configured remote browser publication requires an authenticated current port lease',
         'browser',
     )
-    const rendered = renderGeneratedEnvironment({
+    const rendered = declaration ? renderGeneratedEnvironment({
         declaration,
         sourceSha256: loaded.result.source.sha256,
         generation,
@@ -1289,18 +1295,18 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         siblingDirectories: Object.fromEntries([...siblingRoots.siblings].map(([slug, sibling]) =>
             [slug, relative(root, sibling.root) || '.'])),
         ...(projectedRunner ? { browserRunner: { service: projectedRunner.service } } : {}),
-    })
-    if (rendered.kind !== 'complete') return refuse(rendered.code, rendered.reason, loaded.result.source.path)
-    const generatedComposeAuthority = projectGeneratedComposeArtifactAuthority(rendered)
-    if (!generatedComposeAuthority) return refuse(
+    }) : undefined
+    if (rendered && rendered.kind !== 'complete') return refuse(rendered.code, rendered.reason, loaded.result.source.path)
+    const generatedComposeAuthority = rendered && projectGeneratedComposeArtifactAuthority(rendered)
+    if (rendered && !generatedComposeAuthority) return refuse(
         'GENERATED_RENDER_UNAUTHENTICATED',
         'the generated Compose authority could not be issued',
         loaded.result.source.path,
     )
-    const generated = Object.freeze(rendered.manifest.map(({ path, bytes, sha256: digest }) => Object.freeze({ path, bytes, sha256: digest })))
+    const generated = Object.freeze((rendered?.manifest ?? []).map(({ path, bytes, sha256: digest }) => Object.freeze({ path, bytes, sha256: digest })))
     // The anchored source read pins the publication root's identity for the whole sync. A stack
     // without fixtures has no persona source, so the configuration file itself is the anchor.
-    const fixtures = declaration.data?.fixtures
+    const fixtures = declaration?.data?.fixtures
     const sourcePath = fixtures?.persona_source ?? relative(root, loaded.result.source.path)
     const sourceTarget = await safePath(root, sourcePath, false)
     if (!sourceTarget) return refuse(
@@ -1312,7 +1318,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     if (!source) {
         return refuse('GENERATED_PERSONA_SOURCE_UNAVAILABLE', 'the declared persona source is unreadable', sourcePath)
     }
-    const persona = fixtures ? projectPersonaOutputs(
+    const persona = fixtures && declaration ? projectPersonaOutputs(
         declaration,
         { path: sourcePath, bytes: source.bytes },
         (output, bytes) => renderPersona(output.format, bytes),
@@ -1323,9 +1329,11 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         bytes: Buffer.from(output.bytesBase64, 'base64').toString('utf8'),
         sha256: output.sha256,
     }))
-    const secretIgnore = Object.freeze({ path: SECRET_IGNORE_PATH, bytes: SECRET_IGNORE_BYTES, sha256: sha256(SECRET_IGNORE_BYTES) })
+    // The secrets directory holds the generated stack's resolver material; without one there is none to keep out of Git.
+    const secretFiles = declaration
+        ? [Object.freeze({ path: SECRET_IGNORE_PATH, bytes: SECRET_IGNORE_BYTES, sha256: sha256(SECRET_IGNORE_BYTES) })] : []
     const secretRoot = resolve(root, dirname(SECRET_IGNORE_PATH))
-    try {
+    if (declaration) try {
         const status = await lstat(secretRoot)
         if (!status.isDirectory() || status.isSymbolicLink() || (status.mode & 0o777) !== 0o700) {
             return refuse('GENERATED_PATH_UNSAFE', 'the central secrets directory must be a mode-0700 non-symbolic directory', dirname(SECRET_IGNORE_PATH))
@@ -1335,7 +1343,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             return refuse('GENERATED_PATH_UNSAFE', 'the central secrets directory could not be authenticated', dirname(SECRET_IGNORE_PATH))
         }
     }
-    const owned = Object.freeze([...generated, ...personaFiles, secretIgnore].sort((left, right) => compareCodeUnits(left.path, right.path)))
+    const owned = Object.freeze([...generated, ...personaFiles, ...secretFiles].sort((left, right) => compareCodeUnits(left.path, right.path)))
     if (new Set(owned.map(({ path }) => path)).size !== owned.length
         || owned.some(({ path }) => path === OWNERSHIP_PATH)
         || owned.some(({ path }) => [loaded.result.source.path, sourceTarget].includes(resolve(root, path)))) {
@@ -1348,12 +1356,12 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     }
     const producedAt = (adapters.now ?? (() => new Date().toISOString()))()
     const now = producedAt.slice(0, 10)
-    const canonical = inspectGeneratedEnvironment({
+    const canonical = rendered && inspectGeneratedEnvironment({
         rendered,
         candidates: generated.map(({ path, bytes }) => ({ path, bytes })),
         now,
     })
-    if (canonical.kind !== 'passed') return refuse(canonical.code, canonical.reason, canonical.target)
+    if (canonical && canonical.kind !== 'passed') return refuse(canonical.code, canonical.reason, canonical.target)
     return Object.freeze({
         root,
         cockpitId: currentCockpit,
@@ -1362,8 +1370,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         personaSource: Object.freeze({ path: sourcePath, sha256: persona.source.sha256 }),
         personaSourceIdentity: source.identity,
         generation,
-        rendered,
-        generatedComposeAuthority,
+        ...(rendered && generatedComposeAuthority && canonical ? { rendered, generatedComposeAuthority, inspection: canonical } : {}),
         generated,
         persona: Object.freeze(personaFiles),
         owned,
@@ -1383,7 +1390,6 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         workEnvironment,
         ...(projectedRunner ? { browserRunner: projectedRunner.authority } : {}),
         ...(inspectedPorts ? { portLease: inspectedPorts } : {}),
-        inspection: canonical,
         node,
         now,
         producedAt,
@@ -1809,7 +1815,7 @@ async function prepareSurfaces(
     manifest?: OwnershipManifest,
 ): Promise<PreparedEnvironment | RefusalOutcome> {
     const config = prepared.registry.config
-    const profiles = [...prepared.rendered.replay.profiles]
+    const profiles = [...prepared.rendered?.replay.profiles ?? []]
     const selected = config.sibling.filter(row => row.mount === 'always'
         || row.mount.startsWith('profile:') && profiles.includes(row.mount.slice('profile:'.length)))
     const requiredSlugs = new Set([...selected.map(row => row.slug), ...prepared.registry.mcpSources.map(row => row.slug)])
@@ -2825,7 +2831,7 @@ export async function prepareGeneratedEnvironmentCurrentness(
     const outcome = 'status' in publication ? publication : await checkCanonicalGeneratedEnvironment(input, prepared, adapters)
     const authority = prepared && 'plan' in publication
         ? issueRepairAuthority({ prepared, plan: publication.plan, adapters }) : undefined
-    const decisions = prepared && undecidedGeneratedDecisions(prepared.rendered)
+    const decisions = prepared?.rendered && undecidedGeneratedDecisions(prepared.rendered)
     return Object.freeze({
         outcome,
         changes: 'plan' in publication ? publication.plan.changes : Object.freeze([]),
@@ -2958,8 +2964,9 @@ async function checkCanonicalGeneratedEnvironment(
             return refuse('GENERATED_ARTIFACT_MISSING', 'owned generated artifact became unreadable', file.path, 'run cockpit sync --config <file>')
         }
     }
-    const inspected = inspectGeneratedEnvironment({ rendered: prepared.rendered, candidates: generatedCandidates, now: prepared.now })
-    if (inspected.kind !== 'passed') return refuse(inspected.code, inspected.reason, inspected.target, 'run cockpit sync --config <file>')
+    const inspected = prepared.rendered
+        && inspectGeneratedEnvironment({ rendered: prepared.rendered, candidates: generatedCandidates, now: prepared.now })
+    if (inspected && inspected.kind !== 'passed') return refuse(inspected.code, inspected.reason, inspected.target, 'run cockpit sync --config <file>')
     for (const [personaIndex, file] of prepared.persona.entries()) {
         const index = prepared.generated.length + personaIndex
         const read = canonicalReads?.kind === 'complete' ? canonicalReads.results[index]
@@ -2992,19 +2999,46 @@ async function checkCanonicalGeneratedEnvironment(
     return complete('check', prepared)
 }
 
+// A cockpit running its own Compose files owns that topology, so check reads it as Compose resolves
+// it and reports what would break parallel stacks; a generated stack was rendered to avoid all of it.
+async function composeTopologyDiagnostics(configPath: string, sourceSha256: string): Promise<readonly Diagnostic[]> {
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return Object.freeze([{ severity: 'error' as const,
+        code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }])
+    const config = loaded.result.config
+    if (declaredRuntime(config.environment) !== 'compose') return Object.freeze([])
+    const env = { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST, DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
+        DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH }
+    const [docker, node] = await Promise.all([resolveDockerExecutable({ PATH: env.PATH ?? '' }), nodeAuthority()])
+    const observed = docker.state !== 'available' ? Object.freeze({ kind: 'unavailable' as const, reason: docker.reason })
+        : !node ? Object.freeze({ kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' })
+            : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,
+                projectName: config.cockpit.name, docker: docker.value, node, env }, executeProbe)
+    if (observed.kind !== 'complete') return Object.freeze([{ severity: 'error' as const, code: 'COMPOSE_TOPOLOGY_UNAVAILABLE',
+        message: `check could not read the declared Compose topology, so its ports, healthchecks and images are unverified: ${observed.reason}`,
+        target: config.environment.compose_files.join(', '),
+        fix: 'install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files' }])
+    return assessComposeTopology(observed.services, Object.keys(config.ports.bases))
+}
+
 export async function checkGeneratedEnvironment(
     input: GeneratedEnvironmentCommandInput,
     portLease?: PortLeaseProjection,
 ): Promise<GeneratedEnvironmentCommandOutcome> {
     const currentness = await prepareGeneratedEnvironmentCurrentness(input, {}, portLease)
     const undecided = currentness.decisions
+    const topology = currentness.outcome.kind === 'complete'
+        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256) : []
     const diagnostics = currentness.outcome.kind === 'complete' && undecided && undecided.undecided > 0
         ? Object.freeze([...currentness.outcome.diagnostics, {
             severity: 'info' as const, code: 'GENERATED_DECISIONS_UNDECIDED', target: undecided.path,
             message: `${undecided.undecided} structural subject${undecided.undecided === 1 ? ' has' : 's have'} no decision entry and ${undecided.undecided === 1 ? 'is' : 'are'} listed as undecided: ${undecided.subjects.join(', ')}; record each under environment.generated.decisions.entries when it is decided`,
         }])
-        : currentness.outcome.diagnostics
-    return Object.freeze({ ...currentness.outcome, diagnostics, fixContext: currentness.fixContext, report: Object.freeze({
+        : Object.freeze([...currentness.outcome.diagnostics, ...topology])
+    const outcome = topology.some(row => row.severity === 'error')
+        ? Object.freeze({ kind: 'refusal' as const, artifact: null, destination: null, result: null, status: 2 as const, diagnostics })
+        : Object.freeze({ ...currentness.outcome, diagnostics })
+    return Object.freeze({ ...outcome, fixContext: currentness.fixContext, report: Object.freeze({
         storedProducer: currentness.storedProducer, currentProducer: currentness.currentProducer,
         repair: proposeGeneratedEnvironmentRepair(currentness),
         ...(undecided ? { decisions: undecided } : {}),

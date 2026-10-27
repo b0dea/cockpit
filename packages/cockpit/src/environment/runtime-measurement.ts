@@ -17,6 +17,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
+import { declaredRuntime, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { admitRuntimeMeasurement, observeDockerRuntime } from './runtime.js'
 import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
@@ -141,6 +142,8 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
     const configPath = loaded.result.source.path
     const config = loaded.result.config
+    if (declaredRuntime(config.environment) === 'none') return Object.freeze({ status: 2, result: null,
+        diagnostics: Object.freeze([runtimeNotDeclared(configPath)]) })
     if (input.image.length === 0 || input.image.length > 256 || input.image.startsWith('-') || /[\s\u0000-\u001f\u007f]/.test(input.image)) {
         return refused('CLI_USAGE_INVALID', '--image must name one local image reference or ID', '--image')
     }

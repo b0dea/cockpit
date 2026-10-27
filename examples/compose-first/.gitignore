@@ -1,0 +1,8 @@
+# The README commands write generated outputs here; only the declaration, compose.yml and siblings are tracked.
+/*
+!/.gitignore
+!/README.md
+!/cockpit.toml
+!/compose.yml
+!/api/
+!/web/

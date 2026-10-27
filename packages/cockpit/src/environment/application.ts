@@ -30,7 +30,7 @@ import {
     snapshotJson,
 } from './contract.js'
 import { gitEnvironment, type SetupObservation, type SetupResult } from './setup.js'
-import { resolvedExecutable, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolvedExecutable, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
 import { evaluateGuard, type GuardDecision, type GuardEvaluationPolicy, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { resolveOrdinaryInvocation } from '../command-table.js'
@@ -62,6 +62,8 @@ import {
     type LifecycleRecordValue,
 } from './lifecycle-stage.js'
 import { generatedApplicationProjection, prepareGeneratedEnvironmentCurrentness, type GeneratedApplicationProjection, type GeneratedEnvironmentCurrentness } from './generated-application.js'
+import { observeComposeTopology } from './compose-topology.js'
+import { declaredRuntime, RuntimeNotDeclaredError } from './declaration.js'
 import type { ReleaseFreshness } from '../freshness.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import type { ActiveSurfaceOverride, SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -240,7 +242,31 @@ export interface GuardEvaluationApplicationAdapters {
     readonly loadConfig: typeof loadCockpitConfig
     readonly observeCheckout: typeof observeSetupCheckout
     readonly resolveGit: () => Promise<import('./executable.js').ExecutableResolution>
+    /** Needed only by a compose-first cockpit, whose service list is read from its Compose files. */
+    readonly resolveDocker?: () => Promise<import('./executable.js').ExecutableResolution>
     readonly execute?: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+}
+
+// `cockpit logs --service <id>` is an ordinary invocation only for a declared service. A generated
+// stack declares its services; a compose-first cockpit's services are whatever its own Compose files
+// resolve to, so they are read from Compose rather than guessed, and an unreadable topology refuses.
+async function guardServiceIds(
+    config: CockpitConfig,
+    root: string,
+    observe: Readonly<{
+        node: ResolvedExecutable
+        resolveDocker?: () => Promise<ExecutableResolution>
+        execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+    }>,
+): Promise<readonly string[] | string> {
+    const runtime = declaredRuntime(config.environment)
+    if (runtime === 'generated') return config.environment.generated!.services.map(service => service.id)
+    if (runtime === 'none') return Object.freeze([])
+    const docker = observe.resolveDocker ? await observe.resolveDocker() : undefined
+    if (docker?.state !== 'available') return docker?.reason ?? 'no Docker executable resolver is bound'
+    const topology = await observeComposeTopology({ root, references: config.environment.compose_files,
+        projectName: config.cockpit.name, docker: docker.value, node: observe.node, env: { PATH: GUARD_EXECUTABLE_SEARCH_PATH } }, observe.execute)
+    return topology.kind === 'complete' ? topology.services.map(service => service.id) : topology.reason
 }
 
 export interface GuardEvaluationApplicationResult {
@@ -402,9 +428,11 @@ export async function runGuardEvaluationApplication(
             }
             launcherSha256 = (await read(dirname(launcher), basename(launcher), 65_536)).sha256
             inspected.set(launcher, status)
+            const services = await guardServiceIds(config, identity.root,
+                { node, resolveDocker: adapters.resolveDocker, execute: adapters.execute ?? executeProbe })
+            if (typeof services === 'string') return unavailable(`Guard could not read the Compose service list: ${services}`)
             const authority = { executable: launcher, canonicalRoot: identity.root, configPath: identity.configPath,
-                allowedRoots: prepared.result.policy.allowedRoots,
-                services: config.environment.generated?.services.map(service => service.id) ?? [] }
+                allowedRoots: prepared.result.policy.allowedRoots, services }
             for (const invocation of parsed.invocations) {
                 const candidate = resolveOrdinaryInvocation({ executable: invocation.executable ?? '', cwd: invocation.cwd, argv: invocation.argv }, authority, path => {
                     const fact = inspect({ path, cwd: invocation.cwd, operation: 'write' })
@@ -589,9 +617,13 @@ export async function prepareGuardEvaluationPolicy(
                 return guardPolicyRefusal('guard command executable identity changed or is unavailable')
             }
             identities.set(executable.canonicalPath, status)
+            const node = await nodeAuthority()
+            if (!node) return guardPolicyRefusal('guard command authority requires an authenticated Node executable')
+            const services = await guardServiceIds(guardConfig, boundaries.canonicalRoot, { node, execute: executeProbe,
+                resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) })
+            if (typeof services === 'string') return guardPolicyRefusal(`guard command authority could not read the Compose service list: ${services}`)
             const authority = { executable: executable.invocationPath, canonicalRoot: boundaries.canonicalRoot,
-                allowedRoots: boundaries.allowedRoots, configPath: loaded.source.path,
-                services: guardConfig.environment.generated?.services.map(service => service.id) ?? [] }
+                allowedRoots: boundaries.allowedRoots, configPath: loaded.source.path, services }
             commandAuthority = captured as unknown as GuardPolicyCommandAuthority
             const inspectPath = (path: string) => {
                 const root = boundaries.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
@@ -3722,12 +3754,50 @@ interface DoctorFreshness {
     readonly repair?: ReturnType<typeof proposeGeneratedEnvironmentRepair>
 }
 
+export interface DoctorDeclaration {
+    readonly subject: 'runtime' | 'resource-ceilings' | 'data-modes' | 'vendor-guards'
+    readonly state: 'declared' | 'not-declared'
+    readonly source: string
+    readonly reason: string
+}
+
 export interface ApplicationDoctorEvaluation {
     readonly verdict: PreflightEvaluation['verdict']
     readonly checks: readonly DoctorCheck[]
     readonly comparisons: readonly ComparisonRemoteEvaluation[]
     readonly surfaceOverrides: DoctorSurfaceOverrideInspection
     readonly freshness: DoctorFreshness
+    /** What the configuration declares, read from cockpit.toml alone; empty when it does not load. */
+    readonly declarations: readonly DoctorDeclaration[]
+}
+
+// Resource ceilings, data modes and vendor guards are rendered into a generated stack. A cockpit that
+// runs its own Compose file, or none, has not declared them, and doctor says so instead of letting an
+// absent check read as a passed one.
+async function doctorDeclarations(configPath: string): Promise<readonly DoctorDeclaration[]> {
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind !== 'complete') return Object.freeze([])
+    const config = loaded.result.config
+    const runtime = declaredRuntime(config.environment)
+    const generated = config.environment.generated
+    const absent = runtime === 'none' ? 'no runtime environment is declared'
+        : runtime === 'compose' ? 'a compose-first cockpit runs its own Compose file; cockpit declares and enforces this only for environment.generated'
+            : 'the generated environment declares none'
+    const row = (subject: DoctorDeclaration['subject'], declared: boolean, source: string, reason: string): DoctorDeclaration =>
+        Object.freeze({ subject, state: declared ? 'declared' as const : 'not-declared' as const, source, reason: declared ? reason : absent })
+    return Object.freeze([
+        Object.freeze(runtime === 'none'
+            ? { subject: 'runtime' as const, state: 'not-declared' as const, source: 'environment',
+                reason: 'neither environment.compose_files nor environment.generated is declared; runtime commands refuse' }
+            : { subject: 'runtime' as const, state: 'declared' as const,
+                source: runtime === 'generated' ? 'environment.generated' : 'environment.compose_files',
+                reason: runtime === 'generated' ? 'cockpit renders and owns the Compose file' : 'cockpit runs the declared Compose files' }),
+        row('resource-ceilings', !!generated && (generated.services.some(service => service.resources) || !!config.browser?.resources),
+            'environment.generated.services[].resources', 'generated services declare resource ceilings'),
+        row('data-modes', !!generated?.data, 'environment.generated.data', 'the generated stack declares its data modes'),
+        row('vendor-guards', !!generated?.vendors.some(vendor => vendor.egress_guard),
+            'environment.generated.vendors[].egress_guard', 'generated vendors declare egress guards'),
+    ])
 }
 
 export type DoctorCommandResult = Readonly<{
@@ -4186,13 +4256,14 @@ function unavailableDoctor(
     message: string,
     surfaceOverrides: DoctorSurfaceOverrideInspection,
     freshness: DoctorFreshness,
+    declarations: readonly DoctorDeclaration[],
     forwarded?: readonly EnvironmentDiagnostic[],
 ): DoctorCommandResult {
     return Object.freeze({
         kind: 'complete', status: 0,
         diagnostics: forwarded ?? Object.freeze([applicationDiagnostic(code, message, 'preflight')]),
         result: Object.freeze({
-            verdict: 'unavailable', checks: Object.freeze([]), comparisons: Object.freeze([]), surfaceOverrides, freshness,
+            verdict: 'unavailable', checks: Object.freeze([]), comparisons: Object.freeze([]), surfaceOverrides, freshness, declarations,
         }),
     })
 }
@@ -4245,6 +4316,7 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const surfaceOverrides = inspectDoctorSurfaceOverrides(input.configPath, adapters)
+    const declarations = doctorDeclarations(input.configPath)
     const freshness = Promise.all([
         prepareGeneratedEnvironmentCurrentness(input),
         adapters.discoverReleaseFreshness?.() ?? Promise.resolve(Object.freeze({ kind: 'unknown' as const, reason: 'release discovery is not bound' })),
@@ -4263,6 +4335,7 @@ export async function runDoctor(
                 'doctor observation source is unavailable',
                 await surfaceOverrides,
                 await freshness,
+                await declarations,
                 refused,
             )
         }
@@ -4273,6 +4346,7 @@ export async function runDoctor(
                 'doctor requires authenticated steady lifecycle evidence',
                 await surfaceOverrides,
                 await freshness,
+                await declarations,
             )
         }
         health = await evaluateApplicationHealth(observed, adapters)
@@ -4283,6 +4357,7 @@ export async function runDoctor(
             'doctor requires authentic observation and lifecycle evidence',
             await surfaceOverrides,
             await freshness,
+            await declarations,
         )
     }
     return Object.freeze({
@@ -4293,6 +4368,7 @@ export async function runDoctor(
             comparisons: health.comparisons,
             surfaceOverrides: await surfaceOverrides,
             freshness: await freshness,
+            declarations: await declarations,
         }),
     })
 }
@@ -4403,8 +4479,10 @@ export async function runLogs(
     let observation: LogObservation
     try {
         observation = await observe(Object.freeze({ configPath, service }))
-    } catch {
+    } catch (error) {
         if (signal?.aborted) return logsCancelled(json)
+        if (error instanceof RuntimeNotDeclaredError) return Object.freeze({ kind: 'refusal', status: 2, result: null,
+            diagnostics: Object.freeze([error.diagnostic]) })
         return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log observation is unavailable for service ${service}`)
     }
     if (signal?.aborted) return logsCancelled(json)

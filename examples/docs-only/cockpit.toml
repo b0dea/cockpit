@@ -1,0 +1,16 @@
+# A cockpit with no [environment]: sync and check publish the agent surfaces, and the
+# runtime commands refuse because there is nothing to run.
+[cockpit]
+name = "handbook"
+siblings_root = "."
+
+[[sibling]]
+slug = "docs"
+dir = "docs"
+mount = "always"
+acquire = "none"
+var = "DOCS_DIR"
+purpose = "Design notes and decision records"
+
+[ports]
+bases = {}

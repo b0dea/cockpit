@@ -303,7 +303,7 @@ export function createGeneratedCommandFixture() {
             projectName: 'synthetic', env: {}, ports: [effectivePort],
             labels: { stackId: stack, configSha256: application.sourceSha256, batchId },
             timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources: [],
-        }, { generatedComposeAuthority: application.generatedComposeAuthority, portLeaseProjection })
+        }, { generatedComposeAuthority: application.generatedComposeAuthority!, portLeaseProjection })
         if (preview.kind !== 'preview') throw new Error('runtime preview unavailable')
         const topologyPlan = createRuntimeTopologyPlan({
             runtimePlan: preview.plan,

@@ -612,6 +612,37 @@ describe('pending guard policy construction', () => {
         }
     })
 
+    it('admits logs only for services the declared Compose files resolve to when no generated environment is declared', async () => {
+        const { configPath } = fixture()
+        const root = realpathSync(dirname(configPath))
+        const source = CockpitConfig.parse(parse(readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')))
+        const { generated: _generated, ...environment } = source.environment
+        mkdirSync(join(root, 'app'), { recursive: true })
+        writeFileSync(join(root, 'app/package-lock.json'), '{}')
+        writeFileSync(join(root, 'compose.yml'), 'services:\n  api:\n    image: busybox\n  worker:\n    image: busybox\n')
+        writeFileSync(configPath, stringify({ ...source, cockpit: { ...source.cockpit, name: 'synthetic-cockpit', siblings_root: root },
+            environment: { ...environment, compose_files: ['compose.yml'] } }))
+        const commands = commandAuthority(root, configPath)
+        const policyFor = async (service: string) => {
+            const loaded = await loadCockpitConfig(configPath)
+            if (loaded.kind !== 'complete') throw new Error('compose-first guard fixture did not load')
+            const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: loaded.result.config.cockpit.name,
+                observedAt: new Date().toISOString(), env: {}, gitExecutable })
+            return prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout, commands: { ...commands, invocations: [{
+                executable: commands.executable.canonicalPath, cwd: root,
+                argv: ['logs', '--config', realpathSync(configPath), '--service', service],
+            }] } })
+        }
+        const admitted = await policyFor('worker')
+        expect(admitted.kind, JSON.stringify(admitted.diagnostics)).toBe('complete')
+        if (admitted.kind !== 'complete') throw new Error(JSON.stringify(admitted))
+        expect(admitted.result.policy.cockpitInvocations.map(invocation => invocation.argv)).toEqual([
+            ['logs', '--config', realpathSync(configPath), '--service', 'worker'],
+        ])
+        expect(await policyFor('app')).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ message: 'guard command candidate is not an ordinary exact invocation' }] })
+    })
+
     it('issues independent immutable evaluation and representation projections from authenticated exact candidates', async () => {
         const { input, root, configPath } = await observedPolicy()
         const commands = commandAuthority(root, configPath)

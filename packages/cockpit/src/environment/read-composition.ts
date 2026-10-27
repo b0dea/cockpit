@@ -15,7 +15,8 @@ import {
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import type { ExecutionStep, HolderId, LifecycleProgress, StackId } from './contract.js'
+import { ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
+import { RuntimeNotDeclaredError } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
     admitRuntimeServiceObservation,
@@ -340,6 +341,9 @@ export function createReadCommandAdapters(
             }),
         }, (step) => execute(step, signal ? { signal } : undefined))
         const loaded = await lifecycle.load({ configPath: input.configPath })
+        if (loaded.kind === 'refusal' && loaded.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED)) {
+            throw new RuntimeNotDeclaredError(input.configPath)
+        }
         if (loaded.kind !== 'complete') throw new TypeError('authenticated lifecycle context is unavailable')
         const context = loaded.result
         const configurationResult = await loadCockpitConfig(input.configPath)
