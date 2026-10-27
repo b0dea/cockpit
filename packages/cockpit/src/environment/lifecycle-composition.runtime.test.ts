@@ -14,6 +14,7 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { readState } from './state.js'
+import { readActiveStackInventory } from './claims.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection } from './generated-application.js'
@@ -283,6 +284,60 @@ describe('production lifecycle adapter composition', () => {
 
         await expect(adapters.withRuntimeReadiness(loaded.result, async (value) => value)).resolves.toBeUndefined()
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
+
+        const up = await runUp({ configPath: candidate.configPath }, adapters)
+        expect(up).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNMEASURED' }] })
+        const message = up.diagnostics[0]?.message ?? ''
+        expect(message).toContain('Runtime docker-desktop is not supported by a complete measurement row')
+        expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"')
+        expect(message).toContain('measured rows: docker-desktop (unmeasured)')
+        expect(message).toMatch(/cockpit runtime measure --config <cockpit\.toml> --image <local-image> --write$/)
+        expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
+    })
+
+    it('names the missing machine floor table when up cannot bound the runtime', async () => {
+        const candidate = await fixture()
+        const source = await readFile(candidate.configPath, 'utf8')
+        await writeFile(candidate.configPath, source.slice(0, source.indexOf('[environment.machine]')))
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+
+        const up = await runUp({ configPath: candidate.configPath }, adapters)
+
+        expect(up).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'CONFIG_SCHEMA_INVALID', target: 'environment.machine', message: expect.stringContaining('[environment.machine]'),
+        }] })
+    })
+
+    it('gives back a freshly acquired port lease when entrypoint derivation refuses', async () => {
+        const candidate = await fixture()
+        const source = await readFile(candidate.configPath, 'utf8')
+        // A declared entrypoint named like the rendered APP_PORT address collides only after the lease exists.
+        await writeFile(candidate.configPath, source.replace('{ name = "web", kind = "entrypoint"', '{ name = "app-port", kind = "entrypoint"'))
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        const use = vi.fn(async (): Promise<unknown> => 'used')
+
+        const refused = await adapters.withAcquiredPorts(loaded.result, use, (diagnostics): unknown => diagnostics)
+
+        expect(use).not.toHaveBeenCalled()
+        expect(refused).toEqual([expect.objectContaining({ code: 'PORT_FAMILY_OUT_OF_RANGE', target: 'app-port' })])
+        const inventory = await readActiveStackInventory(loaded.result.namespace)
+        expect(inventory.kind).toBe('complete')
+        if (inventory.kind !== 'complete') return
+        expect(inventory.value.filter(({ stackId }) => stackId === loaded.result.stackId)
+            .flatMap(({ record }) => record.holders)).toEqual([])
     })
 
     it.each(['single', 'fresh', 'replayed'] as const)('lets an authenticated controlled probe measure an unmeasured runtime without claiming global support with a %s supplier', async (mode) => {

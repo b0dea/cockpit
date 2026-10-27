@@ -44,7 +44,7 @@ import {
 export const mechanism = {
     id: 'environment-port-coordination',
     module: 'packages/cockpit/src/environment/ports.ts',
-    exports: ['leasePortFamily', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'isPortObservation', 'observationDeclarations'],
+    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'isPortObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -1147,6 +1147,39 @@ export async function compensateAcquiredPortHolder(input: {
         recordRevision: transaction.value.revision,
         remainingHolderIds: Object.freeze(value.holders.map(({ holderId }) => holderId)),
     })
+}
+
+export type AcquirePortProjectionResult =
+    | Readonly<{ kind: 'complete'; leaseResult: LeasePortFamilyResult; projection: PortLeaseProjection }>
+    | PortRefusal
+    | Readonly<{ kind: 'unavailable' }>
+
+/**
+ * Lease the port family and project its entrypoints as one step. A caller only ever receives a
+ * lease together with its projection, so when derivation or projection fails after this call added
+ * a holder, nobody downstream could release it: give exactly that holder back here.
+ */
+export async function acquirePortProjection(input: Parameters<typeof leasePortFamily>[0] & {
+    readonly declarations: readonly EntrypointDerivative[]
+}): Promise<AcquirePortProjectionResult> {
+    const { declarations, ...lease } = input
+    const leaseResult = await leasePortFamily(lease)
+    if (leaseResult.kind !== 'complete') return leaseResult
+    const giveBack = async (): Promise<readonly EnvironmentDiagnostic[]> => {
+        if (leaseResult.change !== 'acquired') return []
+        const released = await compensateAcquiredPortHolder({ namespace: lease.namespace, leaseResult, now: new Date().toISOString() })
+        return released.kind === 'complete' ? [] : released.diagnostics
+    }
+    const entrypoints = deriveEntrypoints({ lease: leaseResult.lease, declarations })
+    if (entrypoints.kind !== 'complete') {
+        return Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([...entrypoints.diagnostics, ...await giveBack()]) })
+    }
+    const projection = projectPortLeaseResult({ leaseResult, entrypointResult: entrypoints })
+    if (!projection) {
+        const residue = await giveBack()
+        return residue.length > 0 ? Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze(residue) }) : Object.freeze({ kind: 'unavailable' as const })
+    }
+    return Object.freeze({ kind: 'complete' as const, leaseResult, projection })
 }
 
 export async function releasePortFamily(input: {

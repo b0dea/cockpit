@@ -56,9 +56,7 @@ import {
     resolveLifecycleStage,
 } from './lifecycle-stage.js'
 import {
-    deriveEntrypoints,
-    leasePortFamily,
-    projectPortLeaseResult,
+    acquirePortProjection,
     type PortLeaseProjection,
     type PortListenerEvidenceInput,
 } from './ports.js'
@@ -827,6 +825,14 @@ export function createLifecycleCommandAdapters(
         binding = bindings.get(context)
         if (!binding) return undefined
         const currentBinding = binding
+        // The machine floor bounds cold start and host capacity; without it there is nothing to hold
+        // the runtime to, so say which table is missing instead of a generic evidence refusal.
+        const machine = currentBinding.config.environment.machine
+        if (!machine) {
+            return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
+                'cockpit.toml declares no [environment.machine] table; runtime commands need its runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds',
+                'environment.machine'))
+        }
         const env = runtimeEnvironment(input.env)
         const docker = await resolveDockerExecutable(env)
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
@@ -882,7 +888,7 @@ export function createLifecycleCommandAdapters(
                     .map((path) => resolve(currentBinding.checkoutRoot, path)),
             ])].sort())
         }
-        if (!artifacts || artifacts.length === 0 || !currentBinding.config.environment.machine) return undefined
+        if (!artifacts || artifacts.length === 0) return undefined
         const batchId = randomBytes(32).toString('hex')
         const runtime = createRuntimeAdapter({
             runtime: observed.runtime,
@@ -897,7 +903,7 @@ export function createLifecycleCommandAdapters(
             labels: { stackId: context.stackId, configSha256: context.source.sha256, batchId },
             timeoutMs: input.timeoutMs,
             stackId: context.stackId,
-            coldStartLimitMillis: currentBinding.config.environment.machine.cold_start_seconds * 1_000,
+            coldStartLimitMillis: machine.cold_start_seconds * 1_000,
             expectedMountSources,
             activeProfiles,
         }, generatedApplication && ports ? {
@@ -1027,7 +1033,7 @@ export function createLifecycleCommandAdapters(
         if (!bindings.has(context)) return undefined
         const now = new Date().toISOString()
         const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
-        const leaseResult = await leasePortFamily({
+        const acquired = await acquirePortProjection({
             namespace: context.namespace,
             stackId: context.stackId,
             holderId: context.holderId,
@@ -1036,12 +1042,11 @@ export function createLifecycleCommandAdapters(
             now,
             listenerTimeoutMs,
             listenerEvidence: await listenerEvidence(context, now, listenerTimeoutMs),
+            declarations: context.entrypointDerivatives,
         })
-        if (leaseResult.kind !== 'complete') return refuse?.(leaseResult.diagnostics)
-        const entrypoints = deriveEntrypoints({ lease: leaseResult.lease, declarations: context.entrypointDerivatives })
-        if (entrypoints.kind !== 'complete') return refuse?.(entrypoints.diagnostics)
-        const projection = projectPortLeaseResult({ leaseResult, entrypointResult: entrypoints })
-        return projection ? use(Object.freeze({ leaseResult, projection })) : undefined
+        if (acquired.kind === 'refusal') return refuse?.(acquired.diagnostics)
+        if (acquired.kind !== 'complete') return undefined
+        return use(Object.freeze({ leaseResult: acquired.leaseResult, projection: acquired.projection }))
     }
 
     return Object.freeze({ load, execute, prepareGeneratedEnvironment, completeGeneratedEnvironment, completeGeneratedDependencies, completeGeneratedData, completeGeneratedVendors, withRuntimeReadiness, withGeneratedRuntime, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts })
