@@ -32,7 +32,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['examples/synthetic/README.md', [sourceInstall, executed, operator, executed, runtime]],
     ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],
-    ['examples/compose-first/README.md', [executed]],
+    ['examples/compose-first/README.md', [executed, runtime]],
 ])
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
@@ -335,7 +335,11 @@ describe('cockpits without a generated environment', () => {
         const owned = ownership.entries.map((entry: { path: string }) => entry.path)
         expect(owned).toContain('.claude/skills/bootstrap/SKILL.md')
         expect(owned).toContain('.cockpit/guards/bash-guard.sh')
-        expect(owned.filter((path: string) => !path.startsWith('.') && !/^(?:AGENTS|CLAUDE)\.md$|^opencode\.jsonc$/.test(path))).toEqual([])
+        // Beside the surfaces, cockpit owns only the override that labels the Compose services.
+        expect(owned.filter((path: string) => !path.startsWith('.') && !/^(?:AGENTS|CLAUDE)\.md$|^opencode\.jsonc$/.test(path))).toEqual(['compose.cockpit.yml'])
+        const override = readFileSync(join(root, 'compose.cockpit.yml'), 'utf8')
+        expect(override).toContain('  api:\n    labels:\n      dev.b0dea.cockpit.config-sha256:')
+        expect(override).toContain('  web:\n    labels:\n      dev.b0dea.cockpit.config-sha256:')
         expect(readFileSync(join(root, 'compose.yml'), 'utf8')).toBe(compose)
         expect(check!.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
     })

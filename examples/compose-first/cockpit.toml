@@ -20,6 +20,10 @@ acquire = "none"
 var = "WEB_DIR"
 purpose = "Tiny web front end"
 
+# The bases are 100 apart, so each parallel stack's family is 200 wide.
+[ports]
+step = 200
+
 [ports.bases]
 API_HOST_PORT = 4200
 WEB_HOST_PORT = 4300

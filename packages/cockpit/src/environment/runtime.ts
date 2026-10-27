@@ -296,12 +296,22 @@ export interface ComposeArtifact {
     sha256: string
 }
 
-export interface RuntimeAdapterAuthority {
-    readonly generatedComposeAuthority: GeneratedComposeArtifactAuthority
-    readonly portLeaseProjection?: PortLeaseProjection
-}
+export type RuntimeAdapterAuthority =
+    | Readonly<{ generatedComposeAuthority: GeneratedComposeArtifactAuthority; portLeaseProjection?: PortLeaseProjection }>
+    | Readonly<{ portLeaseProjection: PortLeaseProjection }>
 
 const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]*\}\}/
+
+// A cockpit's own Compose file interpolates from the environment cockpit hands Compose: the leased
+// [ports.bases] variables and nothing else. A reference with an explicit default is the file's own
+// choice; any other reference would resolve to empty, so it stays refused.
+function composeTokensResolved(source: string, portNames: readonly string[]): boolean {
+    const tokens = source.match(new RegExp(UNRESOLVED_TOKEN.source, 'g')) ?? []
+    return tokens.every((token) => {
+        const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}$/.exec(token)
+        return match !== null && (match[2] !== undefined || portNames.includes(match[1]!))
+    })
+}
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]*$/
 const REMOTE_REFERENCE = /^[A-Za-z][A-Za-z0-9+.-]*:/
 const MAX_TIMEOUT_MS = 300_000
@@ -1029,10 +1039,12 @@ export function createRuntimeAdapter(
     const capturedAuthority = authority === undefined ? undefined
         : captureOwnValues(authority, ['generatedComposeAuthority'])
             ?? captureOwnValues(authority, ['generatedComposeAuthority', 'portLeaseProjection'])
+            ?? captureOwnValues(authority, ['portLeaseProjection'])
     const generatedComposeAuthority = capturedAuthority?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined
     const suppliedPortProjection = capturedAuthority?.portLeaseProjection as PortLeaseProjection | undefined
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
-    if ((authority !== undefined && (!capturedAuthority || generatedComposeAuthority === undefined))
+    // A compose-first stack has no cockpit-rendered artifact to authenticate, only its port lease.
+    if ((authority !== undefined && (!capturedAuthority || generatedComposeAuthority === undefined && suppliedPortProjection === undefined))
         || (suppliedPortProjection !== undefined && portProjection === undefined)) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime artifact authority is malformed', 'runtime-input')
     }
@@ -1042,7 +1054,7 @@ export function createRuntimeAdapter(
         const entries = Object.entries(portProjection.lease.ports).sort(([left], [right]) => left.localeCompare(right))
         const projectedPorts = entries.map(([, port]) => port).sort((left, right) => left - right)
         const requestedPorts = [...input.ports].sort((left, right) => left - right)
-        if (generatedComposeAuthority === undefined || input.stackId !== portProjection.lease.stackId
+        if (input.stackId !== portProjection.lease.stackId
             || entries.length === 0 || entries.some(([name]) => !/^[A-Z][A-Z0-9_]*$/.test(name)
                 || HOST_PROCESS_CONTROL_ENV.test(name) || Object.hasOwn(originalEnv, name))
             || JSON.stringify(projectedPorts) !== JSON.stringify(requestedPorts)) {
@@ -1113,7 +1125,8 @@ export function createRuntimeAdapter(
                 sha256: source.sha256,
                 sourceSha256: input.labels.configSha256 ?? '',
             })
-        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource) || source.source.includes('\0')) {
+        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource && !composeTokensResolved(source.source, generatedPortNames))
+            || source.source.includes('\0')) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose artifact contains unresolved or unsafe data', source.reference)
         }
         if (createHash('sha256').update(source.source).digest('hex') !== source.sha256) {

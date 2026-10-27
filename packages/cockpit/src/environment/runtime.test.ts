@@ -1652,6 +1652,37 @@ fi
                 APP_HOST_PORT: String(expectedPort),
             })
             expect(projectRuntimeExecutionEnvironment({ ...observed.admitted.topology })).toBeUndefined()
+
+            // A compose-first stack's own file reads the leased variable, with no generated authority.
+            const ownCompose = 'services:\n  app:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n'
+            const ownPath = join(directory, 'compose.own.yml')
+            writeFileSync(ownPath, ownCompose)
+            const ownFile = { reference: 'compose.own.yml', canonicalPath: ownPath, source: ownCompose, sha256: sha(ownCompose) }
+            const ownProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
+            if (!ownProjection) throw new Error('compose-first port authority unavailable')
+            const owned = await topologyEvidence({ services: { app: { image: 'busybox', labels: {
+                'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256,
+            } } } }, [], {
+                composeFiles: [ownFile], env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
+                authority: { portLeaseProjection: ownProjection },
+            })
+            if (owned.admitted.kind !== 'complete') throw new Error(owned.admitted.reason)
+            expect(projectRuntimeExecutionEnvironment(owned.admitted.topology)).toEqual({
+                PATH: process.env.PATH ?? '/usr/bin', APP_HOST_PORT: String(expectedPort),
+            })
+            // A reference with neither a default nor a leased variable would resolve to empty.
+            const unset = `${ownCompose}    environment: ["TOKEN=\${UNDECLARED}"]\n`
+            writeFileSync(ownPath, unset)
+            expect(createRuntimeAdapter({
+                ...runtimeInput, operation: 'validate', cwd: directory, projectName: 'synthetic',
+                composeFiles: [{ ...ownFile, source: unset, sha256: sha(unset) }],
+                env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
+                labels: { stackId: stack, configSha256, batchId }, stackId: stack,
+                coldStartLimitMillis: 60_000, expectedMountSources: [],
+            }, { portLeaseProjection: projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })! })).toMatchObject({
+                kind: 'refusal', diagnostics: [{ message: 'compose artifact contains unresolved or unsafe data' }],
+            })
+            rmSync(ownPath, { force: true })
         } finally {
             rmSync(home, { recursive: true, force: true })
             rmSync(composeCanonicalPath, { force: true })

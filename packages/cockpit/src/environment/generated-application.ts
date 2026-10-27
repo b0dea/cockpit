@@ -76,6 +76,7 @@ import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } 
 import { checkoutId, cockpitId, stackId } from './identity.js'
 import { assessComposeTopology, observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime } from './declaration.js'
+import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
     admitGeneratedObservation,
     createGeneratedObservationExecution,
@@ -463,6 +464,7 @@ const SECRET_IGNORE_PATH = 'env/.secrets/.gitignore'
 const SECRET_IGNORE_BYTES = '# cockpit-owned: secret resolver material stays outside Git\n*\n'
 const SHA256 = /^[a-f0-9]{64}$/
 const MAX_OWNERSHIP_BYTES = 1_048_576
+const COMPOSE_SOURCE_BYTES = 1_048_576
 const MAX_OWNED_FILES = 256
 const MAX_EXECUTABLE_BYTES = 536_870_912
 const MAX_GENERATED_BYTES = 16_777_216
@@ -1323,7 +1325,25 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'the generated Compose authority could not be issued',
         loaded.result.source.path,
     )
-    const generated = Object.freeze((rendered?.manifest ?? []).map(({ path, bytes, sha256: digest }) => Object.freeze({ path, bytes, sha256: digest })))
+    let composeOwnership: OwnedBytes | undefined
+    if (!declaration && config.environment.compose_files.length > 0) {
+        const sources = []
+        for (const reference of config.environment.compose_files) {
+            const read = await readAnchoredFile(root, reference, COMPOSE_SOURCE_BYTES, node, adapters)
+            if (read.kind !== 'complete') return refuse('GENERATED_PATH_UNSAFE',
+                'a declared Compose file is missing, unreadable, or crosses a symbolic-link boundary', reference)
+            sources.push({ reference, source: read.bytes.toString('utf8') })
+        }
+        const ownership = renderComposeOwnership({ sources, stackId: currentStack, cockpitId: currentCockpit,
+            configSha256: loaded.result.source.sha256 })
+        if (ownership.kind !== 'complete') return refuse('GENERATED_DECLARATION_INVALID',
+            `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target)
+        composeOwnership = Object.freeze({ path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) })
+    }
+    const generated = Object.freeze([
+        ...(rendered?.manifest ?? []).map(({ path, bytes, sha256: digest }) => Object.freeze({ path, bytes, sha256: digest })),
+        ...(composeOwnership ? [composeOwnership] : []),
+    ])
     // The anchored source read pins the publication root's identity for the whole sync. A stack
     // without fixtures has no persona source, so the configuration file itself is the anchor.
     const fixtures = declaration?.data?.fixtures

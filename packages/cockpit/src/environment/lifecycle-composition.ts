@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
     checkGeneratedEnvironment,
     generatedApplicationProjection,
@@ -882,7 +883,22 @@ export function createLifecycleCommandAdapters(
             if (sources.some((source) => !confined(currentBinding.checkoutRoot, source))) return undefined
             expectedMountSources = Object.freeze([...new Set(sources)].sort())
         } else {
-            artifacts = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
+            const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
+            if (!declared) return undefined
+            // The cockpit's own Compose files carry no ownership labels; the override `sync`
+            // publishes adds them, and it is admitted only while it equals a fresh render.
+            const ownership = renderComposeOwnership({
+                sources: declared.map(({ reference, source }) => ({ reference, source })),
+                stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
+            })
+            if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+                `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
+            const override = await composeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
+                createHash('sha256').update(ownership.bytes).digest('hex'))
+            if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+                `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run cockpit sync`,
+                COMPOSE_OWNERSHIP_FILE))
+            artifacts = Object.freeze([...declared, override])
             expectedMountSources = Object.freeze([...new Set([
                 ...currentBinding.config.sibling
                     .filter((sibling) => sibling.mount === 'always')
@@ -902,7 +918,7 @@ export function createLifecycleCommandAdapters(
             composeFiles: artifacts,
             projectName: currentBinding.config.cockpit.name,
             env,
-            ports: generated && ports ? Object.freeze(Object.values(ports.lease.ports)) : Object.freeze([]),
+            ports: ports ? Object.freeze(Object.values(ports.lease.ports)) : Object.freeze([]),
             labels: { stackId: context.stackId, configSha256: context.source.sha256, batchId },
             timeoutMs: input.timeoutMs,
             stackId: context.stackId,
@@ -912,7 +928,9 @@ export function createLifecycleCommandAdapters(
         }, generatedApplication?.generatedComposeAuthority && ports ? {
             generatedComposeAuthority: generatedApplication.generatedComposeAuthority,
             portLeaseProjection: ports,
-        } : undefined)
+        // A compose-first stack reads its host ports from the [ports.bases] variables, so the lease
+        // reaches Compose as those variables instead of the `${VAR:-default}` fallback.
+        } : !generated && ports ? { portLeaseProjection: ports } : undefined)
         if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
         const topologyPlan = createRuntimeTopologyPlan({
