@@ -19,7 +19,7 @@ export interface ConsumerInstructionsInput {
     readonly siblings: readonly Readonly<{ dir: string; purpose: string; acquire: 'auto' | 'manual' | 'none' }>[]
     // False for a surfaces-only cockpit: stack commands would fail there, so they are not mentioned.
     readonly hasStack: boolean
-    readonly guards: Readonly<{ hostedDbHosts: readonly string[]; vendorEndpointHosts: readonly string[]; protectedBranches: readonly string[] }>
+    readonly guards: Readonly<{ declaredDatabaseHosts: readonly string[]; declaredVendorHosts: readonly string[]; pushRefusedBranches: readonly string[] }>
     readonly skills: readonly Readonly<{ name: string; description: string | undefined }>[]
 }
 
@@ -41,8 +41,8 @@ function hosts(label: string, declared: readonly string[]): string {
 }
 
 export function renderConsumerInstructions(input: ConsumerInstructionsInput): string {
-    const { hostedDbHosts, vendorEndpointHosts, protectedBranches } = input.guards
-    const noHosts = hostedDbHosts.length + vendorEndpointHosts.length === 0
+    const { declaredDatabaseHosts, declaredVendorHosts, pushRefusedBranches } = input.guards
+    const noHosts = declaredDatabaseHosts.length + declaredVendorHosts.length === 0
     const lines: string[] = [
         '# What this is', '',
         `This is the ${code(input.name)} cockpit. It gives every agent the same instructions, skills and guards for the repositories below${input.hasStack ? ', and starts them against your working copies' : ''}.`,
@@ -61,10 +61,10 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         '# Rules and why', '',
     )
     lines.push(
-        `- Never touch a non-local environment. The guard denies commands that reach a declared non-local host (${hosts('database hosts', hostedDbHosts)}; ${hosts('vendor endpoints', vendorEndpointHosts)}). A local mistake is cheap; a production one is not.${noHosts ? ' With none declared the guard cannot recognise one, so ask before running anything that might reach a hosted service.' : ''}`,
+        `- Never touch a non-local environment. The guard denies commands that reach a declared non-local host (${hosts('database hosts', declaredDatabaseHosts)}; ${hosts('vendor endpoints', declaredVendorHosts)}). A local mistake is cheap; a production one is not.${noHosts ? ' With none declared the guard cannot recognise one, so ask before running anything that might reach a hosted service.' : ''}`,
     )
-    if (protectedBranches.length > 0) lines.push(
-        `- Do not push to ${protectedBranches.map(code).join(' or ')}. The guard refuses it, because those branches are shared and a bad push reaches everyone.`,
+    if (pushRefusedBranches.length > 0) lines.push(
+        `- Do not push to ${pushRefusedBranches.map(code).join(' or ')}. The guard refuses it, because those branches are shared and a bad push reaches everyone.`,
     )
     lines.push(
         `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. Sync overwrites hand edits and \`cockpit check\` reports them as drift.`,

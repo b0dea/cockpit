@@ -2208,8 +2208,8 @@ async function prepareSurfaces(
         configFile: relative(prepared.root, prepared.configPath),
         siblings: config.sibling.map(row => ({ dir: row.dir, purpose: row.purpose, acquire: row.acquire })),
         hasStack: config.environment.generated !== undefined || config.environment.compose_files.length > 0,
-        guards: { hostedDbHosts: config.guards.hosted_db_hosts, vendorEndpointHosts: config.guards.vendor_endpoint_hosts,
-            protectedBranches: config.guards.protected_branches },
+        guards: { declaredDatabaseHosts: config.guards.hosted_db_hosts, declaredVendorHosts: config.guards.vendor_endpoint_hosts,
+            pushRefusedBranches: config.guards.protected_branches },
         skills: [
             ...merge.surfaces.filter(surface => surface.feature === 'skills').flatMap(surface => surface.sources
                 .filter(source => /^skills\/[^/]+\/SKILL\.md$/.test(source.path))
