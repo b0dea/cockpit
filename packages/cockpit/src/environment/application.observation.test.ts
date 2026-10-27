@@ -294,6 +294,25 @@ describe('observation application runners', () => {
         } finally { prepare.mockRestore() }
     })
 
+    it('warns that the guard denies no host when a declared runtime leaves both guard host lists empty', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-guards-')))
+        try {
+            const doctorFor = async (body: string) => {
+                const configPath = join(directory, 'cockpit.toml')
+                writeFileSync(configPath, ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
+                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
+                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', '', body, ''].join('\n'))
+                const result = await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })
+                return result.diagnostics.filter(row => row.code === 'GUARD_HOSTS_UNDECLARED')
+            }
+            const compose = '[environment]\ncompose_files = ["compose.yml"]'
+            expect(await doctorFor(compose)).toEqual([expect.objectContaining({ severity: 'warning', target: 'guards',
+                message: expect.stringContaining('guards.vendor_endpoint_hosts'), fix: expect.stringContaining('[guards]') })])
+            expect(await doctorFor(`[guards]\nhosted_db_hosts = ["db.staging.example.invalid"]\n\n${compose}`)).toEqual([])
+            expect(await doctorFor('')).toEqual([])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it.each(['authenticated', 'bootstrap', 'missing', 'throwing'] as const)(
         'starts doctor health loading during surface inspection and awaits both for a %s source',
         async (sourceKind) => {

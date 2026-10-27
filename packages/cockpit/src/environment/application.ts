@@ -3795,8 +3795,10 @@ export interface ApplicationDoctorEvaluation {
 // Resource ceilings, data modes and vendor guards are rendered into a generated stack. A cockpit that
 // runs its own Compose file, or none, has not declared them, and doctor says so instead of letting an
 // absent check read as a passed one.
-async function doctorDeclarations(configPath: string): Promise<readonly DoctorDeclaration[]> {
-    const loaded = await loadCockpitConfig(configPath)
+type LoadedDoctorConfig = Awaited<ReturnType<typeof loadCockpitConfig>>
+
+async function doctorDeclarations(loading: Promise<LoadedDoctorConfig>): Promise<readonly DoctorDeclaration[]> {
+    const loaded = await loading
     if (loaded.kind !== 'complete') return Object.freeze([])
     const config = loaded.result.config
     const runtime = declaredRuntime(config.environment)
@@ -3819,6 +3821,26 @@ async function doctorDeclarations(configPath: string): Promise<readonly DoctorDe
         row('vendor-guards', !!generated?.vendors.some(vendor => vendor.egress_guard),
             'environment.generated.vendors[].egress_guard', 'generated vendors declare egress guards'),
     ])
+}
+
+// The guard denies agent commands that reach these hosts. Two empty lists deny nothing, and that
+// looks exactly like a guard that is working, so doctor says so. A declared runtime is the signal
+// that hosted environments exist; generated vendors live under it, so it covers them too.
+async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
+    const loaded = await loading
+    if (loaded.kind !== 'complete') return Object.freeze([])
+    const { environment, guards } = loaded.result.config
+    if (declaredRuntime(environment) === 'none' || guards.hosted_db_hosts.length > 0 || guards.vendor_endpoint_hosts.length > 0) {
+        return Object.freeze([])
+    }
+    return Object.freeze([Object.freeze({
+        severity: 'warning' as const,
+        // A literal, so the diagnostic inventory captures the fix beside the code.
+        code: 'GUARD_HOSTS_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.GUARD_HOSTS_UNDECLARED,
+        message: 'guards.hosted_db_hosts and guards.vendor_endpoint_hosts are both empty, so the guard denies no agent command by host even though this cockpit declares a runtime',
+        target: 'guards',
+        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected',
+    })])
 }
 
 export type DoctorCommandResult = Readonly<{
@@ -4345,8 +4367,19 @@ export async function runDoctor(
     input: DoctorCommandInput,
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
+    const config = loadCockpitConfig(input.configPath)
+    const [outcome, guardHosts] = await Promise.all([doctorHealth(input, adapters, config), doctorGuardHostDiagnostics(config)])
+    return guardHosts.length === 0 ? outcome
+        : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...guardHosts]) })
+}
+
+async function doctorHealth(
+    input: DoctorCommandInput,
+    adapters: DoctorCommandAdapters,
+    config: Promise<LoadedDoctorConfig>,
+): Promise<DoctorCommandResult> {
     const surfaceOverrides = inspectDoctorSurfaceOverrides(input.configPath, adapters)
-    const declarations = doctorDeclarations(input.configPath)
+    const declarations = doctorDeclarations(config)
     const freshness = Promise.all([
         prepareGeneratedEnvironmentCurrentness(input),
         adapters.discoverReleaseFreshness?.() ?? Promise.resolve(Object.freeze({ kind: 'unknown' as const, reason: 'release discovery is not bound' })),
