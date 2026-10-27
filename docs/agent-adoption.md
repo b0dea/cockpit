@@ -55,7 +55,9 @@ but it does clone a repository and put a command on the PATH, so tell the human 
 to run.
 
 Your harness target is the tool you are running in: `claudecode` for Claude Code, `codexcli` for
-Codex CLI, `opencode` for OpenCode. Every `init` command below needs it.
+Codex CLI, `opencode` for OpenCode. Every `init` command below needs it. If your tool isn't one of
+the built-ins, cockpit's AGENTS.md still gives it the instructions; guards and permissions are not
+enforced there. The [capability matrix](capability-matrix.md) records what each built-in enforces.
 
 ## Choose your situation
 
