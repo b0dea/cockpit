@@ -48,7 +48,7 @@ export const mechanism = {
         'createReclaimDiscoverySteps', 'admitReclaimDiscovery',
         'createImageInspectionSteps', 'admitImageInspections', 'createVolumeInspectionSteps',
         'admitVolumeInspections', 'createNetworkInspectionSteps', 'admitNetworkInspections',
-        'combineReclaimDiscoveries',
+        'combineReclaimDiscoveries', 'inspectionOverflow',
         'planReset', 'planTeardown', 'projectResetActionTargets', 'projectTeardownActionTargets', 'consumeReclaimTargetProjection', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'reconcileTeardownAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
     ],
 } as const
@@ -67,6 +67,14 @@ const REQUIRED_LABELS = Object.freeze({
 })
 const MAX_RESOURCES = 4_096
 const OUTPUT_LIMIT = 1_048_576
+// Discovery stays unfiltered, so a busy daemon yields hundreds of resources to inspect. One Docker
+// client per resource exhausted the destructive budget, so each type is inspected in chunks. The
+// chunk is sized from the per-call output cap: every printed object is held to a fixed budget, and
+// a chunk's cap is its object count times that budget.
+const INSPECTION_OBJECT_BUDGET = 16_384
+const INSPECTION_CHUNK = Math.min(64, Math.floor(OUTPUT_LIMIT / INSPECTION_OBJECT_BUDGET))
+// [executable, --host, endpoint, <type>, inspect, --format, <format>, ...ids]
+const INSPECTION_ARGV_PREFIX = 7
 const admittedDiscoveries = new WeakSet<object>()
 const discoveryAuthorities = new WeakMap<object, DiscoveryAuthority>()
 const consumedDiscoveryReceipts = new Set<string>()
@@ -650,6 +658,61 @@ function dockerResource(value: unknown, kind: Exclude<ReclaimResourceKind, 'cach
         : undefined
 }
 
+function inspectionSteps(
+    authority: DiscoveryAuthority,
+    type: 'image' | 'volume' | 'network' | 'container',
+    format: string,
+    ids: readonly string[],
+    labels: Readonly<Record<string, string>>,
+): readonly (ExecutionStep | undefined)[] {
+    const steps: (ExecutionStep | undefined)[] = []
+    for (let start = 0; start < ids.length; start += INSPECTION_CHUNK) {
+        const chunk = ids.slice(start, start + INSPECTION_CHUNK)
+        steps.push(exactStep(
+            `runtime:inspect:${labels.resourceKind}:${digestValue(chunk).slice(0, 16)}`,
+            [authority.executable.canonicalPath, '--host', authority.selection.endpoint, type, 'inspect', '--format', format, ...chunk],
+            authority.executable, authority.cwd, authority.env, 30_000, [],
+            { ...labels, resourceCount: String(chunk.length) }, [], chunk.length * INSPECTION_OBJECT_BUDGET,
+        ))
+    }
+    return steps
+}
+
+function inspectedIds(step: ExecutionStep): readonly string[] {
+    return step.argv.slice(INSPECTION_ARGV_PREFIX)
+}
+
+/** One parsed row per inspected id, in argument order; any missing, extra or oversized row fails the chunk. */
+function inspectionRows(stdout: Buffer, ids: readonly string[]): readonly Record<string, unknown>[] | undefined {
+    const text = stdout.toString('utf8')
+    if (!Buffer.from(text, 'utf8').equals(stdout)) return undefined
+    const lines = text.endsWith('\n') ? text.slice(0, -1).split('\n') : text.split('\n')
+    if (lines.length !== ids.length) return undefined
+    const rows: Record<string, unknown>[] = []
+    for (const line of lines) {
+        if (Buffer.byteLength(line) > INSPECTION_OBJECT_BUDGET) return undefined
+        let row: unknown
+        try { row = JSON.parse(line) } catch { return undefined }
+        if (row === null || typeof row !== 'object' || Array.isArray(row)) return undefined
+        rows.push(row as Record<string, unknown>)
+    }
+    return rows
+}
+
+/**
+ * Name an inspection chunk that the per-object budget cannot hold, so the operator learns which
+ * resources to look at instead of a generic unobservable precondition.
+ */
+export function inspectionOverflow(step: ExecutionStep, outcome: ExecuteProbeOutcome): string | undefined {
+    if (!step.id.startsWith('runtime:inspect:')) return undefined
+    const ids = inspectedIds(step)
+    const oversized = outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT
+        || outcome.kind === 'complete' && outcome.stdout.toString('utf8').split('\n').some((line) => Buffer.byteLength(line) > INSPECTION_OBJECT_BUDGET)
+    if (!oversized) return undefined
+    return `docker ${step.argv[3]} inspect printed more than ${INSPECTION_OBJECT_BUDGET} bytes for one of ${ids.length} resources `
+        + `(${ids.slice(0, 4).join(', ')}${ids.length > 4 ? ', ...' : ''}); inspect them and remove or relabel the oversized one`
+}
+
 function imageInspectionFormat(): string {
     const label = (key: string) => `{{json (or (index . "${key}") "")}}`
     return `{"id":{{json .Id}},"labels":{{with (index .Config "Labels")}}{"${REQUIRED_LABELS.stack}":${label(REQUIRED_LABELS.stack)},"${REQUIRED_LABELS.config}":${label(REQUIRED_LABELS.config)},"${REQUIRED_LABELS.owner}":${label(REQUIRED_LABELS.owner)}}{{else}}{}{{end}}}`
@@ -658,16 +721,10 @@ function imageInspectionFormat(): string {
 export function createImageInspectionSteps(discovery: ReclaimDiscoverySnapshot): readonly ExecutionStep[] | undefined {
     const authority = discoveryAuthorities.get(discovery)
     if (!admittedDiscoveries.has(discovery) || authority === undefined || authority.kinds.length !== 1 || authority.kinds[0] !== 'image') return undefined
-    const images = discovery.resources.filter(({ kind }) => kind === 'image')
-    const steps = images.map((resource) => exactStep(
-        `runtime:inspect:image:${digestValue(resource.id).slice(0, 16)}`,
-        [authority.executable.canonicalPath, '--host', authority.selection.endpoint, 'image', 'inspect', '--format', imageInspectionFormat(), resource.id],
-        authority.executable, authority.cwd, authority.env, 30_000, [],
-        {
-            resourceKind: 'image-inspection', resourceId: resource.id,
-            dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint,
-        },
-    ))
+    const images = discovery.resources.filter(({ kind }) => kind === 'image').map(({ id }) => id)
+    const steps = inspectionSteps(authority, 'image', imageInspectionFormat(), images, {
+        resourceKind: 'image-inspection', dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint,
+    })
     return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
 }
 
@@ -688,14 +745,15 @@ export function admitImageInspections(
             if (digestValue(item.step) !== digestValue(expected)) return undefined
             const admitted = authenticatedExecutionOutcome(item.outcome, expected)
             if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            let row: unknown
-            try { row = JSON.parse(admitted.stdout.toString('utf8').trim()) } catch { return undefined }
-            if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['id', 'labels'])) return undefined
-            const record = row as Record<string, unknown>
-            const resourceId = expected.labels.resourceId
-            const observedLabels = dockerLabels(record.labels)
-            if (record.id !== resourceId || observedLabels === undefined || labels.has(resourceId!)) return undefined
-            labels.set(resourceId!, observedLabels)
+            const ids = inspectedIds(expected)
+            const rows = inspectionRows(admitted.stdout, ids)
+            if (rows === undefined) return undefined
+            for (const [position, record] of rows.entries()) {
+                const resourceId = ids[position]!
+                const observedLabels = exactKeys(record, ['id', 'labels']) ? dockerLabels(record.labels) : undefined
+                if (record.id !== resourceId || observedLabels === undefined || labels.has(resourceId)) return undefined
+                labels.set(resourceId, observedLabels)
+            }
             finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
             receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
         }
@@ -716,13 +774,9 @@ export function admitImageInspections(
 export function createVolumeInspectionSteps(discovery: ReclaimDiscoverySnapshot): readonly ExecutionStep[] | undefined {
     const authority = discoveryAuthorities.get(discovery)
     if (!admittedDiscoveries.has(discovery) || authority === undefined || authority.kinds.length !== 1 || authority.kinds[0] !== 'volume') return undefined
-    const steps = discovery.resources.map((resource) => exactStep(
-        `runtime:inspect:volume:${digestValue(resource.id).slice(0, 16)}`,
-        [authority.executable.canonicalPath, '--host', authority.selection.endpoint, 'volume', 'inspect', '--format',
-            `{"name":{{json .Name}},"generation":{{with .Labels}}{{json (or (index . "dev.b0dea.cockpit.generation-id") "")}}{{else}}""{{end}}}`, resource.id],
-        authority.executable, authority.cwd, authority.env, 30_000, [],
-        { resourceKind: 'volume-inspection', resourceId: resource.id },
-    ))
+    const steps = inspectionSteps(authority, 'volume',
+        `{"name":{{json .Name}},"generation":{{with .Labels}}{{json (or (index . "dev.b0dea.cockpit.generation-id") "")}}{{else}}""{{end}}}`,
+        discovery.resources.map(({ id }) => id), { resourceKind: 'volume-inspection' })
     return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
 }
 
@@ -743,14 +797,17 @@ export function admitVolumeInspections(
             if (digestValue(item.step) !== digestValue(expected)) return undefined
             const admitted = authenticatedExecutionOutcome(item.outcome, expected)
             if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            let row: unknown
-            try { row = JSON.parse(admitted.stdout.toString('utf8').trim()) } catch { return undefined }
-            if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['name', 'generation'])) return undefined
-            const { name, generation } = row as Record<string, unknown>
-            if (name !== expected.labels.resourceId || typeof generation !== 'string'
-                || generation.length > 128 || generation.includes('\0') || generations.has(name)) return undefined
-            if (generation !== '' && !SHA256.test(generation)) return undefined
-            generations.set(name, generation)
+            const ids = inspectedIds(expected)
+            const rows = inspectionRows(admitted.stdout, ids)
+            if (rows === undefined) return undefined
+            for (const [position, record] of rows.entries()) {
+                if (!exactKeys(record, ['name', 'generation'])) return undefined
+                const { name, generation } = record
+                if (name !== ids[position] || typeof generation !== 'string'
+                    || generation.length > 128 || generation.includes('\0') || generations.has(name)) return undefined
+                if (generation !== '' && !SHA256.test(generation)) return undefined
+                generations.set(name, generation)
+            }
             finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
             receipts.push(digestValue({ step: expected.id, receipt: admitted.receipt, stdout: createHash('sha256').update(admitted.stdout).digest('hex') }))
         }
@@ -796,24 +853,11 @@ export function createNetworkInspectionSteps(
         || authority.kinds.length !== 1 || authority.kinds[0] !== 'network'
         || containerAuthority.kinds.length !== 1 || containerAuthority.kinds[0] !== 'container'
         || !matchingDiscoveryAuthorities(authority, containerAuthority)) return undefined
-    const networkSteps = discovery.resources.map((resource) => exactStep(
-        `runtime:inspect:network:${digestValue(resource.id).slice(0, 16)}`,
-        [authority.executable.canonicalPath, '--host', authority.selection.endpoint, 'network', 'inspect', '--format', networkInspectionFormat(), resource.id],
-        authority.executable, authority.cwd, authority.env, 30_000, [],
-        {
-            resourceKind: 'network-inspection', resourceId: resource.id,
-            dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint,
-        },
-    ))
-    const containerSteps = discovery.resources.length === 0 ? [] : containers.resources.map((resource) => exactStep(
-        `runtime:inspect:container-network:${digestValue(resource.id).slice(0, 16)}`,
-        [authority.executable.canonicalPath, '--host', authority.selection.endpoint, 'container', 'inspect', '--format', containerNetworkInspectionFormat(), resource.id],
-        authority.executable, authority.cwd, authority.env, 30_000, [],
-        {
-            resourceKind: 'container-network-inspection', resourceId: resource.id,
-            dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint,
-        },
-    ))
+    const selection = { dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint }
+    const networkSteps = inspectionSteps(authority, 'network', networkInspectionFormat(),
+        discovery.resources.map(({ id }) => id), { resourceKind: 'network-inspection', ...selection })
+    const containerSteps = discovery.resources.length === 0 ? [] : inspectionSteps(authority, 'container', containerNetworkInspectionFormat(),
+        containers.resources.map(({ id }) => id), { resourceKind: 'container-network-inspection', ...selection })
     const steps = [...networkSteps, ...containerSteps]
     return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
 }
@@ -840,25 +884,26 @@ export function admitNetworkInspections(
             if (digestValue(item.step) !== digestValue(expected)) return undefined
             const admitted = authenticatedExecutionOutcome(item.outcome, expected)
             if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            let row: unknown
-            try { row = JSON.parse(admitted.stdout.toString('utf8').trim()) } catch { return undefined }
-            if (row === null || typeof row !== 'object' || Array.isArray(row)) return undefined
-            const record = row as Record<string, unknown>
-            const resourceId = expected.labels.resourceId
-            if (expected.labels.resourceKind === 'network-inspection') {
-                if (!exactKeys(record, ['id', 'referenced']) || record.id !== resourceId
-                    || typeof record.referenced !== 'boolean' || references.has(resourceId!)) return undefined
-                references.set(resourceId!, record.referenced)
-            } else {
-                if (expected.labels.resourceKind !== 'container-network-inspection'
-                    || !exactKeys(record, ['id', 'networks']) || record.id !== resourceId
-                    || record.networks === null || typeof record.networks !== 'object' || Array.isArray(record.networks)
-                    || Object.keys(record.networks).length > MAX_RESOURCES) return undefined
-                for (const endpoint of Object.values(record.networks)) {
-                    if (endpoint === null || typeof endpoint !== 'object' || Array.isArray(endpoint)) return undefined
-                    const networkId = (endpoint as Record<string, unknown>).NetworkID
-                    if (typeof networkId !== 'string' || !RESOURCE_ID.test(networkId)) return undefined
-                    configuredNetworks.add(networkId)
+            const ids = inspectedIds(expected)
+            const rows = inspectionRows(admitted.stdout, ids)
+            if (rows === undefined) return undefined
+            for (const [position, record] of rows.entries()) {
+                const resourceId = ids[position]!
+                if (expected.labels.resourceKind === 'network-inspection') {
+                    if (!exactKeys(record, ['id', 'referenced']) || record.id !== resourceId
+                        || typeof record.referenced !== 'boolean' || references.has(resourceId)) return undefined
+                    references.set(resourceId, record.referenced)
+                } else {
+                    if (expected.labels.resourceKind !== 'container-network-inspection'
+                        || !exactKeys(record, ['id', 'networks']) || record.id !== resourceId
+                        || record.networks === null || typeof record.networks !== 'object' || Array.isArray(record.networks)
+                        || Object.keys(record.networks).length > MAX_RESOURCES) return undefined
+                    for (const endpoint of Object.values(record.networks)) {
+                        if (endpoint === null || typeof endpoint !== 'object' || Array.isArray(endpoint)) return undefined
+                        const networkId = (endpoint as Record<string, unknown>).NetworkID
+                        if (typeof networkId !== 'string' || !RESOURCE_ID.test(networkId)) return undefined
+                        configuredNetworks.add(networkId)
+                    }
                 }
             }
             finishedAt = lexical(finishedAt, admitted.receipt.finishedAt) < 0 ? admitted.receipt.finishedAt : finishedAt
@@ -1259,6 +1304,7 @@ function exactStep(
     paths: readonly string[],
     labels: Readonly<Record<string, string>>,
     filesystemChecks: ExecutionStep['filesystemChecks'] = [],
+    stdoutLimitBytes = 65_536,
 ): ExecutionStep | undefined {
     return snapshotExecutionStep({
         id,
@@ -1267,7 +1313,7 @@ function exactStep(
         cwd,
         env,
         timeoutMs,
-        stdoutLimitBytes: 65_536,
+        stdoutLimitBytes,
         stderrLimitBytes: 65_536,
         paths,
         ports: [],

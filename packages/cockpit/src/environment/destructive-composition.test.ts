@@ -260,7 +260,7 @@ describe('destructive command composition', () => {
             'if [ "$1" = "compose" ] && printf "%s\\n" "$*" | /usr/bin/grep -q " ps --quiet"; then if [ -f "$PWD/runtime-up" ]; then printf "%s\\n" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; fi; exit 0; fi',
             'if [ "$1" = "compose" ]; then exit 0; fi',
             'if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then /bin/cat "$PWD/volume-discovery.jsonl"; exit 0; fi',
-            'if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then for argument in "$@"; do volume_name="$argument"; done; printf "{\\"name\\":\\"%s\\",\\"generation\\":\\"\\"}\\n" "$volume_name"; exit 0; fi',
+            'if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then shift 4; for volume_name do printf "{\\"name\\":\\"%s\\",\\"generation\\":\\"\\"}\\n" "$volume_name"; done; exit 0; fi',
             'if [ "$1" = "container" ] && [ "$2" = "inspect" ]; then /bin/cat "$PWD/inspect.json"; exit 0; fi',
             'if [ "$1" = "context" ]; then /bin/cat "$PWD/selection.json"; exit 0; fi',
             'exit 0',
@@ -368,7 +368,8 @@ describe('destructive command composition', () => {
         expect(runtime?.semantics.topology.services).toContainEqual(expect.objectContaining({
             id: 'api', bindMountSources: [siblingPath],
         }))
-        expect(inspectionCalls).toBe(12)
+        // Twelve volumes fit one inspection chunk, so Docker is asked once rather than once per volume.
+        expect(inspectionCalls).toBe(1)
         expect(maximumActiveInspections).toBeLessThanOrEqual(4)
 
         rejectOneInspection = true
@@ -376,7 +377,7 @@ describe('destructive command composition', () => {
         maximumActiveInspections = 0
         inspectionCalls = 0
         await expect(adapters.observe(destructive.result)).resolves.toBeUndefined()
-        expect(inspectionCalls).toBe(12)
+        expect(inspectionCalls).toBe(1)
         expect(activeInspections).toBe(0)
         expect(maximumActiveInspections).toBeLessThanOrEqual(4)
 

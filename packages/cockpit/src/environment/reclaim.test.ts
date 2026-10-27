@@ -10,6 +10,7 @@ import {
     classifyReclaim,
     admitReclaimDiscovery,
     combineReclaimDiscoveries,
+    inspectionOverflow,
     createDockerSelectionSteps,
     admitDockerSelection,
     createReclaimDiscoverySteps,
@@ -175,7 +176,7 @@ const authenticatedDiscovery = async (
     }
     await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
     const script = join(root, 'docker')
-    const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then /bin/cat -- "$PWD/inspect.$5"; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then /bin/cat -- "$PWD/inspect.$kind.$5"; exit; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
+    const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif [ "$2" = inspect ]; then echo "$kind" >> "$PWD/inspect.calls"; shift 4; status=0; for id do if [ "$kind" = image ] || [ "$kind" = volume ]; then /bin/cat -- "$PWD/inspect.$id" || status=1; else /bin/cat -- "$PWD/inspect.$kind.$id" || status=1; fi; done; exit $status; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
     const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'staged' as const }
@@ -213,7 +214,7 @@ const authenticatedDiscovery = async (
         if (kind === 'image') {
             const inspections = api.createImageInspectionSteps(admitted)
             if (inspections === undefined) throw new Error('image inspection plan unavailable')
-            if (inspections[0] !== undefined) expect(inspections[0].argv.at(-2)).toContain('{{with (index .Config "Labels")}}')
+            if (inspections[0] !== undefined) expect(inspections[0].argv[6]).toContain('{{with (index .Config "Labels")}}')
             const inspected = api.admitImageInspections(admitted, await Promise.all(inspections.map(async (inspection) => ({
                 step: inspection, outcome: await api.executeProbe(inspection),
             }))))
@@ -239,7 +240,7 @@ const authenticatedDiscovery = async (
             const networkInspection = inspections.find(({ labels: item }) => item.resourceKind === 'network-inspection')
             if (networkInspection !== undefined) {
                 expect(networkInspection.argv.slice(3, 6)).toEqual(['network', 'inspect', '--format'])
-                expect(networkInspection.argv.at(-2)).toContain('len .Containers')
+                expect(networkInspection.argv[6]).toContain('len .Containers')
             }
             const evidence = await Promise.all(inspections.map(async (inspection) => ({ step: inspection, outcome: await api.executeProbe(inspection) })))
             if (evidence[0] !== undefined) {
@@ -544,6 +545,47 @@ describe('runtime discovery authority', () => {
             expect(Object.fromEntries(observed.resources.map(({ id, bytes }) => [id, bytes]))).toEqual({
                 'sized-container': 8_190, 'sha256:sized-image': 1_029_000_000, 'sized-cache': 1_213_000,
             })
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('inspects each resource type in chunks of 64 rather than one Docker client per resource', async () => {
+        const root = await canonicalTemp('cockpit-discovery-chunks-')
+        try {
+            const volumes = Array.from({ length: 130 }, (_, index) => resource({
+                id: `volume-${String(index).padStart(3, '0')}`, name: `volume-${String(index).padStart(3, '0')}`, kind: 'volume', labels: {}, bytes: null,
+            }))
+            const images = Array.from({ length: 65 }, (_, index) => resource({
+                id: `sha256:${String(index).padStart(64, '0')}`, name: `image-${index}`, kind: 'image', labels: {}, bytes: 1,
+            }))
+            const observed = await authenticatedDiscovery(root, [...volumes, ...images])
+
+            expect(observed.resources.filter(({ kind }) => kind === 'volume')).toHaveLength(130)
+            const calls = (await readFile(join(root, 'inspect.calls'), 'utf8')).trim().split('\n')
+            expect({ volume: calls.filter((kind) => kind === 'volume').length, image: calls.filter((kind) => kind === 'image').length })
+                .toEqual({ volume: 3, image: 2 })
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('names the inspected resources when one printed object exceeds its byte budget', () => {
+        const step = { id: 'runtime:inspect:volume-inspection:synthetic', argv: ['/synthetic/docker', '--host', 'unix:///synthetic.sock', 'volume', 'inspect', '--format', '{{json .}}', 'small', 'huge'] } as never
+        const outcome = (stdout: string) => ({ kind: 'complete', stdout: Buffer.from(stdout), stderr: Buffer.alloc(0) }) as never
+
+        expect(inspectionOverflow(step, outcome(`{"name":"small"}\n{"name":"${'x'.repeat(16_384)}"}\n`)))
+            .toBe('docker volume inspect printed more than 16384 bytes for one of 2 resources (small, huge); inspect them and remove or relabel the oversized one')
+        expect(inspectionOverflow(step, outcome('{"name":"small"}\n{"name":"huge"}\n'))).toBeUndefined()
+    })
+
+    it('fails the whole discovery closed when one id in a chunk vanished before inspection, as the per-id path did', async () => {
+        const root = await canonicalTemp('cockpit-discovery-vanished-')
+        try {
+            const volumes = ['kept-a', 'vanished', 'kept-b'].map((name) => resource({ id: name, name, kind: 'volume', labels: {}, bytes: null }))
+            const vanish: DiscoveryApi = { ...discoveryApi, executeProbe: async (step, options) => {
+                // Docker prints the surviving objects, reports the missing one on stderr and exits nonzero.
+                if (step.labels.resourceKind === 'volume-inspection') await rm(join(root, 'inspect.vanished'), { force: true })
+                return discoveryApi.executeProbe(step, options)
+            } }
+
+            await expect(authenticatedDiscovery(root, volumes, vanish)).rejects.toThrow('volume inspection evidence rejected')
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 

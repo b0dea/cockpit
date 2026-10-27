@@ -39,6 +39,7 @@ import {
     createNetworkInspectionSteps,
     createReclaimDiscoverySteps,
     createVolumeInspectionSteps,
+    inspectionOverflow,
     type ReclaimDiscoverySnapshot,
     type ReclaimResourceKind,
 } from './reclaim.js'
@@ -244,7 +245,7 @@ async function inspectDiscovery(
     containerDiscovery: ReclaimDiscoverySnapshot,
     kind: Exclude<ReclaimResourceKind, 'cache'>,
     execute: Executor,
-): Promise<ReclaimDiscoverySnapshot | undefined> {
+): Promise<ReclaimDiscoverySnapshot | DestructiveObservationRefusal | undefined> {
     if (kind !== 'image' && kind !== 'volume' && kind !== 'network') return discovery
     const steps = kind === 'image'
         ? createImageInspectionSteps(discovery)
@@ -258,6 +259,10 @@ async function inspectDiscovery(
         step: ExecutionStep
         outcome: ExecuteProbeOutcome
     }>>).value)
+    const overflow = evidence.map(({ step, outcome }) => inspectionOverflow(step, outcome)).find((message) => message !== undefined)
+    if (overflow !== undefined) {
+        return observationRefusal([Object.freeze({ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, message: overflow, target: kind })])
+    }
     return kind === 'image'
         ? admitImageInspections(discovery, evidence)
         : kind === 'volume'
@@ -275,7 +280,7 @@ async function observeReclaim(
     runtimeExecutable: Awaited<ReturnType<typeof resolveDockerExecutable>> & { readonly state: 'available' }
     pathExecutable: Awaited<ReturnType<typeof resolvePathRemovalExecutable>> & { readonly state: 'available' }
     selectionAuthority: object
-}> | undefined> {
+}> | DestructiveObservationRefusal | undefined> {
     const [runtimeExecutable, pathExecutable] = await Promise.all([
         resolveDockerExecutable(input.env),
         resolvePathRemovalExecutable(),
@@ -310,6 +315,8 @@ async function observeReclaim(
     const inspected = await Promise.all(raw.map((discovery, index) => (
         inspectDiscovery(discovery!, container, kinds[index]!, inspect)
     )))
+    const refused = inspected.find((value): value is DestructiveObservationRefusal => value !== undefined && 'diagnostics' in value)
+    if (refused) return refused
     if (inspected.some((value) => value === undefined)) return undefined
     const discovery = combineReclaimDiscoveries(inspected as readonly ReclaimDiscoverySnapshot[])
     if (!discovery) return undefined
@@ -400,6 +407,7 @@ export function createDestructiveCommandAdapters(
             if (stored.kind !== 'complete') return undefined
             const reclaim = await observeReclaim(input, context, readiness.topology.cwd, execute)
             if (!reclaim) return undefined
+            if ('diagnostics' in reclaim) return reclaim
             // Policy rows select installers. They do not identify an instantiated cache or
             // its owning root, so treating their logical volume names as cache authority
             // could authorize deletion of unrelated data.
