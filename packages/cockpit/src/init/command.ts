@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { SurfaceTarget } from '../surfaces/contract.js'
-import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome } from '../environment/init-application.js'
+import { runInitApplication, type CockpitRootQuestion, type InitApplicationInput, type InitApplicationOutcome } from '../environment/init-application.js'
 
 export const mechanism = {
     id: 'init-command',
@@ -40,6 +40,9 @@ export interface InitCommandIo {
     readonly confirm: (preview: NonNullable<InitApplicationOutcome['result']>) => Promise<string | undefined>
     readonly writeArtifact: (destination: string, artifact: string) => Promise<void>
     readonly answerQuestion?: (question: NonNullable<NonNullable<InitApplicationOutcome['result']>['question']>) => Promise<string | undefined>
+    readonly chooseCockpitRoot?: (question: CockpitRootQuestion) => Promise<string | undefined>
+    /** Creates one directory beside the product repository, or accepts it when it is already a plain directory; it never creates parents. */
+    readonly createCockpitRoot?: (path: string) => Promise<void>
 }
 
 export type InitApplicationHandler = (input: InitApplicationInput) => Promise<InitApplicationOutcome>
@@ -47,7 +50,7 @@ export type InitApplicationHandler = (input: InitApplicationInput) => Promise<In
 // Real interviews ask up to nine questions; the bound only stops an application that never converges from looping forever.
 const MAX_INTERVIEW_ANSWERS = 64
 
-const ANSWER_FIELDS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
+const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
     'environment.install_policies', 'environment.generated', 'environment.compose_files', 'environment.machine', 'guards'] as const
 
 const isTable = (value: unknown): value is Record<string, unknown> =>
@@ -164,7 +167,7 @@ async function drive(
     application: InitApplicationHandler,
     asked: Set<string>,
 ): Promise<InitApplicationOutcome> {
-    const shared = {
+    let shared: Omit<InitApplicationInput, 'accepted'> = {
         root: input.root,
         target: input.target,
         ...(input.registry === undefined ? {} : { registry: input.registry }),
@@ -172,17 +175,47 @@ async function drive(
         platform: input.platform ?? (process.platform === 'darwin' ? 'darwin' : 'linux'),
         home: input.home ?? process.env.HOME,
         ...(input.xdgStateHome === undefined ? {} : { xdgStateHome: input.xdgStateHome }),
-    } as const
+    }
     const unattended = options.unattended
     const supplied = unattended ? answersByField(unattended.answers) : undefined
     if (supplied && supplied.unknown.length > 0) return refusal('INIT_ANSWER_FIELD_UNKNOWN',
         `the answers file names no interview field: ${supplied.unknown.join(', ')}; valid fields are ${ANSWER_FIELDS.join(', ')}`)
-    const preview = await application({ ...shared, accepted: false })
+    let preview = await application({ ...shared, accepted: false })
     noteInterview(asked, preview)
     if (preview.kind !== 'pending' || preview.status !== 0) return preview
     if (!unattended && (!options.interactive || options.json)) return preview
     if (!unattended && !io.terminal) return refusal('INIT_TERMINAL_REQUIRED',
         'interactive init requires an attached terminal; an agent without one passes --accept-preview and --answers instead')
+    const rootQuestion = preview.result?.cockpitRoot
+    if (rootQuestion) {
+        asked.add(rootQuestion.field)
+        const answer = unattended ? supplied!.fields.get(rootQuestion.field) : await io.chooseCockpitRoot?.(rootQuestion)
+        // No answer leaves the choice to the application, which refuses acceptance and names the key.
+        const option = rootQuestion.options.find(row => row.answer === answer)
+        if (answer !== undefined && !option) return refusal('INIT_ANSWER_INVALID',
+            `cockpit.root must be one of ${rootQuestion.options.map(row => JSON.stringify(row.answer)).join(' or ')}`)
+        // The preview digest does not depend on the root, so a stale one is refused before the folder is created.
+        if (option && unattended && unattended.previewSha256 !== preview.result!.previewSha256) {
+            return refusal('INIT_PREVIEW_NOT_ACCEPTED', '--accept-preview does not equal the digest of the pending preview; rerun without it to read the current digest')
+        }
+        if (option?.unavailable !== undefined) return refusal('INIT_COCKPIT_ROOT_UNAVAILABLE',
+            `cockpit.root = ${JSON.stringify(option.answer)} cannot be used here: ${option.unavailable}`)
+        if (option?.answer === 'dedicated') {
+            try {
+                if (!io.createCockpitRoot) throw new Error('this caller cannot create directories')
+                await io.createCockpitRoot(option.root)
+            }
+            catch (error) {
+                return refusal('INIT_COCKPIT_ROOT_CREATE_FAILED', `the dedicated cockpit folder ${option.root} could not be created (${error instanceof Error ? error.message : 'unknown error'}); create it yourself or answer cockpit.root = "in-repo"`)
+            }
+            shared = { ...shared, root: option.root, cockpitRoot: { kind: 'dedicated', firstSibling: option.firstSibling } }
+        } else if (option) shared = { ...shared, cockpitRoot: { kind: 'in-repo' } }
+        if (option) {
+            preview = await application({ ...shared, accepted: false })
+            noteInterview(asked, preview)
+            if (preview.kind !== 'pending' || preview.status !== 0) return preview
+        }
+    }
     const accepted = { ...shared, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 } as const
     let outcome: InitApplicationOutcome
     if (unattended && unattended.previewSha256 !== preview.result!.previewSha256) {

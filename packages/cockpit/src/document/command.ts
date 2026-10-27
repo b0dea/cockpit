@@ -14,10 +14,15 @@ import { renderCompleteDocument, renderIncompleteDocument, type Attribution, typ
 export const mechanism = {
     id: 'document-outcome',
     module: 'packages/cockpit/src/document/command.ts',
-    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'plannedGreenfieldQuestions'],
+    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'observeCockpitRoot', 'plannedGreenfieldQuestions'],
 } as const
 
-export interface EstateObservationInput { readonly root: string }
+/**
+ * The directory holding the repositories, and optionally the direct children to observe. A cockpit
+ * created beside a product repository observes only that repository in their shared parent, which
+ * also holds unrelated checkouts that are not part of this estate.
+ */
+export interface EstateObservationInput { readonly root: string; readonly repositories?: readonly string[] }
 export interface EstateObservationAdapters {
     readonly observe: (input: EstateObservationInput) => Promise<unknown>
 }
@@ -90,6 +95,8 @@ export interface DocumentCommandInput {
     registry?: string
     output?: string
     configuration?: DocumentConfigurationInput
+    /** The observed repositories live outside the cockpit root: init's dedicated cockpit beside a product repository. */
+    siblings?: Readonly<{ root: string; repositories: readonly string[] }>
 }
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
@@ -167,57 +174,77 @@ interface EstateRepositoryObservation {
     readonly sources?: readonly Readonly<{ path: string; sha256: string }>[]
 }
 
-export async function observePublicEstate(input: EstateObservationInput): Promise<unknown> {
-    if (!input || typeof input !== 'object' || Object.keys(input).join(',') !== 'root'
-        || typeof input.root !== 'string' || !isAbsolute(input.root) || resolve(input.root) !== input.root) {
-        throw new TypeError('public estate observation requires one canonical absolute root')
+interface RepositoryManifests {
+    readonly runnable: EstateRepositoryObservation['runnable']
+    readonly reasons: readonly string[]
+    readonly sources: readonly Readonly<{ path: string; sha256: string }>[]
+}
+
+/** Reads the public manifests one repository carries and whether one of them declares a run command. */
+async function observeRepositoryManifests(repository: string, label: string): Promise<RepositoryManifests> {
+    const sources: { path: string; sha256: string }[] = []
+    let runnable: EstateRepositoryObservation['runnable'] = 'absent'
+    const reasons: string[] = []
+    for (const manifest of PUBLIC_MANIFESTS) {
+        const path = resolve(repository, manifest)
+        let bytes: Buffer
+        try {
+            const stat = await lstat(path)
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_ESTATE_EVIDENCE_BYTES) {
+                throw new TypeError(`public manifest is not one bounded regular file: ${label}/${manifest}`)
+            }
+            bytes = await readFile(path)
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            continue
+        }
+        if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) {
+            throw new TypeError(`public manifest exceeds the observation bound: ${label}/${manifest}`)
+        }
+        sources.push(Object.freeze({ path: manifest, sha256: createHash('sha256').update(bytes).digest('hex') }))
+        if (manifest !== 'package.json') {
+            if (runnable !== 'confirmed') runnable = 'unknown'
+            reasons.push(`${manifest} does not declare a supported runnable command`)
+            continue
+        }
+        let parsed: unknown
+        try { parsed = JSON.parse(bytes.toString('utf8')) }
+        catch {
+            if (runnable !== 'confirmed') runnable = 'unknown'
+            reasons.push('package.json is not valid JSON')
+            continue
+        }
+        const scripts = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>).scripts : undefined
+        const confirmed = scripts && typeof scripts === 'object' && !Array.isArray(scripts)
+            && PACKAGE_RUN_SCRIPTS.some(name => typeof (scripts as Record<string, unknown>)[name] === 'string'
+                && ((scripts as Record<string, unknown>)[name] as string).trim().length > 0)
+        if (confirmed) runnable = 'confirmed'
+        else reasons.push('package.json declares no non-empty dev, start or serve script')
     }
-    const root = await realpath(input.root)
-    if (root !== input.root) throw new TypeError('public estate root is linked or non-canonical')
-    const entries = await estateDirectories(root)
+    return { runnable, reasons, sources }
+}
+
+function observationInput(input: EstateObservationInput): Readonly<{ root: string; repositories?: readonly string[] }> | undefined {
+    if (!input || typeof input !== 'object' || typeof input.root !== 'string'
+        || !isAbsolute(input.root) || resolve(input.root) !== input.root) return undefined
+    const keys = Object.keys(input).sort().join(',')
+    if (keys === 'root') return { root: input.root }
+    if (keys !== 'repositories,root' || !Array.isArray(input.repositories) || input.repositories.length < 1
+        || input.repositories.length > 64 || input.repositories.some(name => typeof name !== 'string' || !SAFE_NAME.test(name))
+        || new Set(input.repositories).size !== input.repositories.length) return undefined
+    return { root: input.root, repositories: Object.freeze([...input.repositories].sort()) }
+}
+
+export async function observePublicEstate(input: EstateObservationInput): Promise<unknown> {
+    const captured = observationInput(input)
+    if (!captured) throw new TypeError('public estate observation requires one canonical absolute root and optionally named repositories')
+    const root = await realpath(captured.root)
+    if (root !== captured.root) throw new TypeError('public estate root is linked or non-canonical')
+    const entries = await estateDirectories(root, captured.repositories)
     const repositories: EstateRepositoryObservation[] = []
     for (const entry of entries) {
-        const repository = resolve(root, entry.name)
-        const sources: { path: string; sha256: string }[] = []
-        let runnable: EstateRepositoryObservation['runnable'] = 'absent'
-        const reasons: string[] = []
-        for (const manifest of PUBLIC_MANIFESTS) {
-            const path = resolve(repository, manifest)
-            let bytes: Buffer
-            try {
-                const stat = await lstat(path)
-                if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_ESTATE_EVIDENCE_BYTES) {
-                    throw new TypeError(`public manifest is not one bounded regular file: ${entry.name}/${manifest}`)
-                }
-                bytes = await readFile(path)
-            } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-                continue
-            }
-            if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) {
-                throw new TypeError(`public manifest exceeds the observation bound: ${entry.name}/${manifest}`)
-            }
-            sources.push(Object.freeze({ path: manifest, sha256: createHash('sha256').update(bytes).digest('hex') }))
-            if (manifest !== 'package.json') {
-                if (runnable !== 'confirmed') runnable = 'unknown'
-                reasons.push(`${manifest} does not declare a supported runnable command`)
-                continue
-            }
-            let parsed: unknown
-            try { parsed = JSON.parse(bytes.toString('utf8')) }
-            catch {
-                if (runnable !== 'confirmed') runnable = 'unknown'
-                reasons.push('package.json is not valid JSON')
-                continue
-            }
-            const scripts = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-                ? (parsed as Record<string, unknown>).scripts : undefined
-            const confirmed = scripts && typeof scripts === 'object' && !Array.isArray(scripts)
-                && PACKAGE_RUN_SCRIPTS.some(name => typeof (scripts as Record<string, unknown>)[name] === 'string'
-                    && ((scripts as Record<string, unknown>)[name] as string).trim().length > 0)
-            if (confirmed) runnable = 'confirmed'
-            else reasons.push('package.json declares no non-empty dev, start or serve script')
-        }
+        const { runnable, reasons, sources } = await observeRepositoryManifests(resolve(root, entry.name), entry.name)
         const source = sources[0]
         if (!source) continue
         repositories.push(Object.freeze({ slug: entry.name, path: entry.name, evidencePath: source.path, runnable,
@@ -227,10 +254,32 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
     return Object.freeze({ root, observedAt: new Date().toISOString(), repositories: Object.freeze(repositories) })
 }
 
-async function estateDirectories(root: string) {
+/**
+ * A product repository is a git checkout whose own root carries a public manifest. Running init
+ * there must ask where the cockpit lives, because the answer decides where init writes; an empty,
+ * documents-only or not-yet-versioned directory simply is the cockpit.
+ */
+export async function observeCockpitRoot(input: Readonly<{ root: string }>): Promise<'product-repository' | 'cockpit-root'> {
+    let git = false
+    try {
+        await lstat(resolve(input.root, '.git'))
+        git = true
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    if (!git) return 'cockpit-root'
+    const { sources } = await observeRepositoryManifests(input.root, '.')
+    return sources.length > 0 ? 'product-repository' : 'cockpit-root'
+}
+
+async function estateDirectories(root: string, only?: readonly string[]) {
     const entries = (await readdir(root, { withFileTypes: true }))
-        .filter(entry => entry.isDirectory() && !entry.isSymbolicLink() && SAFE_NAME.test(entry.name))
+        .filter(entry => entry.isDirectory() && !entry.isSymbolicLink() && SAFE_NAME.test(entry.name)
+            && (only === undefined || only.includes(entry.name)))
         .sort((left, right) => left.name.localeCompare(right.name))
+    if (only !== undefined && entries.length !== only.length) {
+        throw new TypeError(`a named estate repository is missing or not a plain directory: ${only.join(', ')}`)
+    }
     if (entries.length > 64) throw new TypeError('public estate contains more than 64 candidate repositories')
     return Promise.all(entries.map(async entry => ({ name: entry.name, stat: await lstat(resolve(root, entry.name)) })))
 }
@@ -302,9 +351,9 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
     return Object.freeze(rows)
 }
 
-async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[]): Promise<boolean> {
+async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], only?: readonly string[]): Promise<boolean> {
     try {
-        for (const directory of await estateDirectories(root)) {
+        for (const directory of await estateDirectories(root, only)) {
             const manifests: string[] = []
             for (const manifest of PUBLIC_MANIFESTS) {
                 try {
@@ -358,29 +407,29 @@ export async function classifyEstateObservation(
     let root: string
     let before: Awaited<ReturnType<typeof lstat>>
     let directories: Awaited<ReturnType<typeof estateDirectories>>
+    const captured = observationInput(input)
+    if (!captured) return estateRefusal('estate classification requires one canonical absolute root and optionally named repositories')
+    const only = captured.repositories
     try {
-        if (!input || typeof input !== 'object' || Object.keys(input).join(',') !== 'root'
-            || typeof input.root !== 'string' || !isAbsolute(input.root) || resolve(input.root) !== input.root) {
-            return estateRefusal('estate classification requires one canonical absolute root')
-        }
-        root = await realpath(input.root)
+        root = await realpath(captured.root)
         before = await lstat(root)
-        if (root !== input.root || !before.isDirectory() || before.isSymbolicLink()) {
-            return estateRefusal('estate root is linked, missing or non-canonical', input.root)
+        if (root !== captured.root || !before.isDirectory() || before.isSymbolicLink()) {
+            return estateRefusal('estate root is linked, missing or non-canonical', captured.root)
         }
-        directories = await estateDirectories(root)
+        directories = await estateDirectories(root, only)
     } catch {
-        return estateRefusal('estate root is linked, missing or non-canonical', input.root)
+        return estateRefusal(only === undefined ? 'estate root is linked, missing or non-canonical'
+            : `estate root is linked, missing or non-canonical, or does not hold ${only.join(', ')} as a plain directory`, captured.root)
     }
     let observed: unknown
-    try { observed = await adapters.observe(Object.freeze({ root })) }
+    try { observed = await adapters.observe(Object.freeze({ root, ...(only === undefined ? {} : { repositories: only }) })) }
     catch { return estateRefusal('estate observation owner failed', root) }
     const rows = estateCandidate(observed, root)
-    if (!rows || !await currentEstateRows(root, rows)) {
+    if (!rows || !await currentEstateRows(root, rows, only)) {
         return estateRefusal('estate observation is malformed, ambiguous, stale or unbound to current source bytes', root)
     }
     try {
-        const currentDirectories = await estateDirectories(root)
+        const currentDirectories = await estateDirectories(root, only)
         if (directories.length !== currentDirectories.length || directories.some((entry, index) =>
             entry.name !== currentDirectories[index]!.name || !sameStat(entry.stat, currentDirectories[index]!.stat))) {
             return estateRefusal('estate candidate directories changed during observation', root)
@@ -450,10 +499,6 @@ function buildAttributions(model: Pick<DocumentModel, 'name' | 'siblings' | 'def
     ] as const) {
         attributions.push({ target, value, from: 'default', because: defaultReason(field) })
     }
-    if ('scope' in defaults.cockpit) attributions.push({
-        target: 'cockpit.scope', value: defaults.cockpit.scope, from: 'default',
-        because: defaultReason('the cockpit estate scope'),
-    })
     for (const sibling of model.siblings) {
         if (sibling.mount.from === 'inferred') {
             attributions.push({
@@ -681,12 +726,17 @@ function sameDetectedSibling(answered: Record<string, unknown>, detected: Record
     return Object.entries(detected).every(([key, value]) => JSON.stringify(answered[key]) === JSON.stringify(value))
 }
 
-function inferGreenfieldSiblingRoot(attributions: Attribution[], greenfieldEstate: boolean): Attribution[] {
-    if (!greenfieldEstate) return attributions
+/** undefined for a registry source; otherwise the observed repository directory, relative to the cockpit root. */
+type GreenfieldSiblingsRoot = string | undefined
+
+function inferGreenfieldSiblingRoot(attributions: Attribution[], siblingsRoot: GreenfieldSiblingsRoot): Attribution[] {
+    if (siblingsRoot === undefined) return attributions
     const index = attributions.findIndex(row => row.target === 'cockpit.siblings_root')
     if (index >= 0) attributions.splice(index, 1)
-    attributions.push({ target: 'cockpit.siblings_root', value: '.', from: 'inferred',
-        because: 'the authenticated greenfield estate repositories are direct children of the cockpit root' })
+    attributions.push({ target: 'cockpit.siblings_root', value: siblingsRoot, from: 'inferred',
+        because: siblingsRoot === '.'
+            ? 'the authenticated greenfield estate repositories are direct children of the cockpit root'
+            : 'the cockpit was created beside the product repository, so the authenticated estate repositories are children of the cockpit root\'s parent' })
     return attributions
 }
 
@@ -695,7 +745,7 @@ function defaultAttributions(
     siblings: readonly Record<string, unknown>[],
     detected: readonly DocumentedSibling[],
     root?: string,
-    greenfieldEstate = false,
+    siblingsRoot: GreenfieldSiblingsRoot = undefined,
 ): Attribution[] {
     const attributions = buildAttributions({ name: cockpitName(root), siblings: detected, defaults }, root)
         .filter(row => !row.target.startsWith('sibling.') || row.from !== 'default')
@@ -711,7 +761,7 @@ function defaultAttributions(
                 value: defaults.sibling[field], from: 'default', because: defaultReason(`a sibling ${field}`) })
         }
     }
-    return inferGreenfieldSiblingRoot(attributions, greenfieldEstate)
+    return inferGreenfieldSiblingRoot(attributions, siblingsRoot)
 }
 
 function confirmationDigest(attributions: readonly Attribution[]): string {
@@ -750,7 +800,8 @@ function completeConfigurationDocument(
         sourceObservationSha256: configuration.sourceObservationSha256,
         classification: configuration.classification ?? null })
     const defaults = configurationDefaults()
-    const greenfieldEstate = registrySha256 === null
+    const siblingsRoot: GreenfieldSiblingsRoot = registrySha256 !== null ? undefined
+        : input.siblings && root ? relative(root, input.siblings.root) || '.' : '.'
     const destination = input.output ? resolve(input.output) : null
     let answerIndex = 0
     let name = cockpitName(root)
@@ -762,7 +813,7 @@ function completeConfigurationDocument(
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
             attributions: inferGreenfieldSiblingRoot(
-                buildAttributions({ name, defaults, siblings: detected }, root), greenfieldEstate), gaps: [] }, destination, question)
+                buildAttributions({ name, defaults, siblings: detected }, root), siblingsRoot), gaps: [] }, destination, question)
         if (read.kind === 'refusal') return read.outcome
         const parsed = CockpitConfig.shape.cockpit.safeParse({ ...defaults.cockpit, name: read.value })
         if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
@@ -779,7 +830,7 @@ function completeConfigurationDocument(
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
             attributions: inferGreenfieldSiblingRoot(
-                buildAttributions({ name, defaults, siblings: detected }, root), greenfieldEstate), gaps: [] }, destination, question)
+                buildAttributions({ name, defaults, siblings: detected }, root), siblingsRoot), gaps: [] }, destination, question)
         if (read.kind === 'refusal') return read.outcome
         if (!Array.isArray(read.value) || read.value.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
             return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
@@ -856,14 +907,7 @@ function completeConfigurationDocument(
     const portQuestion = configurationQuestion(context, 'ports.bases', QUESTION_WHY.ports)
     const portRead = readConfigurationAnswer(configuration.answers, answerIndex, portQuestion)
     const previewRows = documentedRows(siblingRows)
-    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, greenfieldEstate)
-    const stackScope = configuration.classification === 'one-sibling'
-    if (stackScope) {
-        const defaultScope = attributions.findIndex(row => row.target === 'cockpit.scope')
-        if (defaultScope >= 0) attributions.splice(defaultScope, 1)
-        attributions.push({ target: 'cockpit.scope', value: 'stack', from: 'inferred',
-            because: 'the authenticated one-sibling estate uses the stack-only floor' })
-    }
+    const attributions = defaultAttributions(defaults, siblingAnswerRows, detected, root, siblingsRoot)
     if (portRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
         attributions, gaps: [] }, destination, portQuestion)
     if (portRead.kind === 'refusal') return portRead.outcome
@@ -966,7 +1010,7 @@ function completeConfigurationDocument(
     answerIndex += 1
 
     const candidate = CockpitConfig.safeParse({ ...defaults, cockpit: { ...defaults.cockpit, name,
-        ...(greenfieldEstate ? { siblings_root: '.' } : {}), ...(stackScope ? { scope: 'stack' } : {}) },
+        ...(siblingsRoot === undefined ? {} : { siblings_root: siblingsRoot }) },
         sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
         `the completed operator-confirmed configuration does not match the schema: ${issueSummary(candidate.error)}`)
@@ -1121,7 +1165,9 @@ export async function documentCommand(input: DocumentCommandInput): Promise<Docu
 export async function documentObservedCommand(input: DocumentCommandInput): Promise<DocumentOutcome> {
     if (input.registry !== undefined || input.configuration === undefined) return documentCommand(input)
     if (!input.root) return refusal('DOCUMENT_SOURCE_REQUIRED', 'greenfield configuration completion requires one canonical root')
-    const classified = await classifyEstateObservation({ root: resolve(input.root) }, { observe: observePublicEstate })
+    const classified = await classifyEstateObservation(input.siblings
+        ? { root: input.siblings.root, repositories: input.siblings.repositories }
+        : { root: resolve(input.root) }, { observe: observePublicEstate })
     if (classified.kind !== 'complete') return {
         kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
         diagnostics: [...classified.diagnostics],

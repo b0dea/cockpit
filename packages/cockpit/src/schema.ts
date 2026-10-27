@@ -993,7 +993,6 @@ export const Testing = z.object({
 export const CockpitMeta = z
     .object({
         name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
-        scope: z.enum(['estate', 'stack']).default('estate'),
         // Resolved from the MAIN checkout, never from the cwd's parent — a nested linked
         // checkout must still find the declared sibling root.
         siblings_root: z.string().default('..'),
@@ -1183,9 +1182,6 @@ export const CockpitConfig = z
     })
     .strict()
     .superRefine((cfg, ctx) => {
-        if (cfg.cockpit.scope === 'stack' && cfg.sibling.length !== 1) {
-            ctx.addIssue({ code: 'custom', path: ['cockpit', 'scope'], message: 'stack scope requires exactly one sibling' })
-        }
         const seen = new Map<string, string>()
         for (const [i, s] of cfg.sibling.entries()) {
             for (const [field, value] of [

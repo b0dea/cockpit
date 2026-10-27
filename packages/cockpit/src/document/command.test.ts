@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
-import { classifyEstateObservation, documentCommand, documentObservedCommand, observePublicEstate,
+import { classifyEstateObservation, documentCommand, documentObservedCommand, observeCockpitRoot, observePublicEstate,
     type DocumentConfigurationAnswer } from './command.js'
 import { CockpitConfig } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
@@ -875,9 +875,10 @@ describe('operator-confirmed document completion', () => {
         } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         expect(parseToml(complete.artifact!)).toMatchObject({
-            cockpit: { name: 'single-product', siblings_root: '.', scope: 'stack' },
+            cockpit: { name: 'single-product', siblings_root: '.' },
             sibling: [{ slug: 'app' }], ports: { bases: {} },
         })
+        expect(parseToml(complete.artifact!).cockpit).not.toHaveProperty('scope')
         expect(complete.diagnostics).toContainEqual(expect.objectContaining({
             code: 'DOCUMENT_INFERRED', target: 'cockpit.siblings_root',
             message: expect.stringContaining('authenticated greenfield estate'),
@@ -977,7 +978,7 @@ describe('operator-confirmed document completion', () => {
         } })).toMatchObject({ kind: 'refusal', status: 2 })
     })
 
-    it('binds inferred scope and name into the final confirmation digest', async () => {
+    it('confirms the same values for a one-repository estate as for any other estate', async () => {
         const estateRoot = temporaryPath('single-product')
         mkdirSync(estateRoot)
         const reachConfirmation = async (classification: 'one-sibling' | undefined) => {
@@ -992,13 +993,47 @@ describe('operator-confirmed document completion', () => {
             return { configuration, pending }
         }
         const estate = await reachConfirmation(undefined)
-        const stack = await reachConfirmation('one-sibling')
-        expect(stack.pending.question!.expectedSha256).not.toBe(estate.pending.question!.expectedSha256)
-        expect(await documentCommand({ root: estateRoot, configuration: { ...stack.configuration, answers: [
-            ...stack.configuration.answers,
-            answer(stack.pending.question!, { confirmed: true, sha256: estate.pending.question!.expectedSha256 }),
-        ] } })).toMatchObject({ kind: 'refusal', status: 2,
-            diagnostics: [{ code: 'DOCUMENT_DEFAULT_CONFIRMATION_INVALID' }] })
+        const single = await reachConfirmation('one-sibling')
+        // No value is inferred from the repository count, so one repository gets the same guards, settings and instructions.
+        expect(single.pending.question!.expectedSha256).toBe(estate.pending.question!.expectedSha256)
+        expect(await documentCommand({ root: estateRoot, configuration: { ...single.configuration, answers: [
+            ...single.configuration.answers,
+            answer(single.pending.question!, { confirmed: true, sha256: estate.pending.question!.expectedSha256 }),
+        ] } })).toMatchObject({ kind: 'complete', status: 0 })
+    })
+
+    it('observes only the product repository a dedicated cockpit sits beside and declares it through siblings_root', async () => {
+        const parent = realpathSync(temporaryPath('workspace').replace(/workspace$/, ''))
+        for (const name of ['shop', 'unrelated', 'shop-cockpit']) mkdirSync(join(parent, name))
+        writeFileSync(join(parent, 'shop/package.json'), JSON.stringify({ name: 'shop' }))
+        writeFileSync(join(parent, 'unrelated/package.json'), JSON.stringify({ scripts: { dev: 'vite' } }))
+        expect(await observeCockpitRoot({ root: join(parent, 'shop') })).toBe('cockpit-root')
+        mkdirSync(join(parent, 'shop/.git'))
+        expect(await observeCockpitRoot({ root: join(parent, 'shop') })).toBe('product-repository')
+        expect(await observeCockpitRoot({ root: join(parent, 'shop-cockpit') })).toBe('cockpit-root')
+
+        const scoped = await classifyEstateObservation({ root: parent, repositories: ['shop'] }, { observe: observePublicEstate })
+        expect(scoped).toMatchObject({ kind: 'complete', result: { classification: 'no-runnable-product',
+            runnable: [{ slug: 'shop', path: 'shop', disposition: 'absent' }] } })
+        if (scoped.kind !== 'complete') throw new Error('scoped observation did not classify')
+        const siblings = { root: parent, repositories: ['shop'] }
+        const configuration = { sourceObservationSha256: scoped.result.sourceObservationSha256,
+            classification: scoped.result.classification, answers: [] as ReturnType<typeof answer>[] }
+        const cockpitRoot = join(parent, 'shop-cockpit')
+        let pending = await documentObservedCommand({ root: cockpitRoot, siblings, configuration })
+        for (const value of [[{ slug: 'shop', dir: 'shop', mount: 'none', acquire: 'none', var: 'SHOP_DIR', purpose: 'The shop' }],
+            {}, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }]) {
+            configuration.answers.push(answer(pending.question!, value))
+            pending = await documentObservedCommand({ root: cockpitRoot, siblings, configuration })
+        }
+        configuration.answers.push(confirmDefaults(pending.question!))
+        const completed = await documentObservedCommand({ root: cockpitRoot, siblings, configuration })
+        expect(completed, JSON.stringify(completed.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(parseToml(completed.artifact!)).toMatchObject({ cockpit: { name: 'shop-cockpit', siblings_root: '..' },
+            sibling: [{ slug: 'shop', dir: 'shop' }] })
+        // A repository the dedicated cockpit was not created for is never observed into its estate.
+        expect(await classifyEstateObservation({ root: parent, repositories: ['missing'] }, { observe: observePublicEstate }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID' }] })
     })
 
     it('completes a no-runnable estate as a surfaces-only configuration that states no runtime is declared', async () => {

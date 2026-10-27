@@ -249,17 +249,11 @@ describe('consumer surface declarations', () => {
 })
 
 describe('generated environment declarations', () => {
-    it('defaults existing declarations to estate scope and bounds stack scope to one sibling', () => {
-        const estate = CockpitConfig.parse(generatedConfig)
-        expect(estate.cockpit.scope).toBe('estate')
-        const stack = { ...generatedConfig, cockpit: { ...generatedConfig.cockpit, scope: 'stack' as const } }
-        expect(CockpitConfig.safeParse(stack).success).toBe(true)
-        const validate = publishedCockpitValidator
-        expect(validate(stack), JSON.stringify(validate.errors)).toBe(true)
-        expect(CockpitConfig.safeParse({
-            ...stack,
-            sibling: [...generatedConfig.sibling, { ...generatedConfig.sibling[0]!, slug: 'worker', dir: 'worker', var: 'WORKER_DIR' }],
-        }).success).toBe(false)
+    it('declares one repository as an ordinary estate with no scope setting to narrow its surfaces', () => {
+        expect(CockpitConfig.parse(generatedConfig).sibling).toHaveLength(1)
+        const scoped = { ...generatedConfig, cockpit: { ...generatedConfig.cockpit, scope: 'stack' } }
+        expect(CockpitConfig.safeParse(scoped).success).toBe(false)
+        expect(publishedCockpitValidator(scoped)).toBe(false)
     })
 
     it('loads a complete consumer-neutral declaration through runtime and editor schemas', () => {

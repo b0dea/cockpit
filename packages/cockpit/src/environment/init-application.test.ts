@@ -193,6 +193,42 @@ describe('init application', () => {
             diagnostics: [{ severity: 'info', code: 'ENVIRONMENT_NOT_DECLARED', message: notDeclared.message }] })
     })
 
+    it('asks where the cockpit lives before publishing anything into a product repository', async () => {
+        const f = fixture()
+        const observed: unknown[] = []
+        const adapters: InitApplicationAdapters = { ...f.adapters, observeRoot: async () => 'product-repository',
+            classifyEstate: async input => { observed.push(input); return estate(input.root, 'one-sibling') },
+            document: interviewDocument(f.destination) }
+        const greenfield = { ...f.input, registry: undefined }
+        const dedicated = resolve(f.root, '..', 'checkout-cockpit')
+        expect(await runInitApplication(greenfield, adapters)).toMatchObject({ kind: 'pending', result: {
+            nextCommand: expect.stringContaining('cockpit.root'),
+            cockpitRoot: { field: 'cockpit.root', recommended: 'dedicated', options: [
+                { answer: 'dedicated', root: dedicated, creates: [dedicated], siblingsRoot: '..', firstSibling: f.root },
+                { answer: 'in-repo', root: f.root, creates: [], siblingsRoot: '.', firstSibling: f.root }] } } })
+        expect(observed).toEqual([])
+        // Consent to the preview bytes is not consent to a location.
+        expect(await runInitApplication({ ...greenfield, accepted: true, acceptedPreviewSha256: digest('3') }, adapters))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_COCKPIT_ROOT_REQUIRED', target: 'cockpit.root',
+                message: expect.stringContaining('cockpit.root = "dedicated"') }] })
+        expect(f.calls).not.toContain('apply')
+        expect(existsSync(join(f.input.home!, 'state'))).toBe(false)
+
+        // The dedicated cockpit observes only the product repository in the shared parent, not its unrelated neighbours.
+        mkdirSync(dedicated)
+        const rooted = <T extends { kind: string; result: unknown }>(outcome: T): T => outcome.kind === 'complete'
+            ? { ...outcome, result: { ...outcome.result as object, root: dedicated } } : outcome
+        const beside: InitApplicationAdapters = { ...adapters,
+            prepareBootstrap: async input => rooted(await adapters.prepareBootstrap(input)),
+            applyBootstrap: async authority => rooted(await adapters.applyBootstrap(authority)) }
+        const besideOutcome = await runInitApplication({ ...greenfield, root: dedicated, cockpitRoot: { kind: 'dedicated', firstSibling: f.root },
+            accepted: true, acceptedPreviewSha256: digest('3') }, beside)
+        expect(besideOutcome, JSON.stringify(besideOutcome.diagnostics)).toMatchObject({ kind: 'pending', result: { root: dedicated, question: { field: 'sibling' } } })
+        expect(observed).toEqual([{ root: resolve(f.root, '..'), repositories: ['checkout'] }])
+        expect(await runInitApplication({ ...greenfield, cockpitRoot: { kind: 'in-repo' } }, adapters))
+            .toMatchObject({ kind: 'pending', result: { nextCommand: 'confirm selected bootstrap preview' } })
+    })
+
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
         const f = fixture()
         const adapters: InitApplicationAdapters = { ...f.adapters, document: async () => ({
@@ -487,7 +523,7 @@ it('composes observed greenfield answers into a loadable configuration and actua
     await writeFile(join(f.root, 'app/package.json'), packageBytes)
     await writeFile(f.destination, artifact.artifact!)
     expect(await loadCockpitConfig(f.destination)).toMatchObject({ kind: 'complete', status: 0,
-        result: { config: { cockpit: { scope: 'stack' }, environment: { generated: expect.any(Object) } } } })
+        result: { config: { cockpit: expect.not.objectContaining({ scope: expect.anything() }), environment: { generated: expect.any(Object) } } } })
     const completed = await runInitApplication(accepted, adapters)
     expect(completed, JSON.stringify(completed)).toMatchObject({ kind: 'complete', status: 0,
         result: { stage: 'environment-verified' } })

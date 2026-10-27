@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { isAbsolute, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
 import {
     plannedGreenfieldQuestions,
     type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
+    type EstateObservationInput,
 } from '../document/command.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { bootstrapHolderId } from './identity.js'
@@ -44,6 +45,33 @@ export interface InitApplicationInput {
         bytes: string
         provenance: 'operator-confirmed'
     }>
+    /**
+     * The operator's answer to where the cockpit lives, required when root is a product repository.
+     * For "dedicated", root is the new cockpit folder and firstSibling the product repository beside it.
+     */
+    readonly cockpitRoot?: Readonly<{ kind: 'in-repo' }> | Readonly<{ kind: 'dedicated'; firstSibling: string }>
+}
+
+export type CockpitRootAnswer = 'dedicated' | 'in-repo'
+
+export interface CockpitRootOption {
+    readonly answer: CockpitRootAnswer
+    readonly root: string
+    /** Directories init creates before it writes anything else; each is outside the directory init ran in. */
+    readonly creates: readonly string[]
+    readonly siblingsRoot: string
+    readonly firstSibling: string
+    readonly tradeOff: string
+    /** Set when this option cannot be taken here; init refuses it before creating anything. */
+    readonly unavailable?: string
+}
+
+/** Asked before anything is written, because the answer decides which directory init writes into. */
+export interface CockpitRootQuestion {
+    readonly field: 'cockpit.root'
+    readonly why: string
+    readonly recommended: CockpitRootAnswer
+    readonly options: readonly CockpitRootOption[]
 }
 
 interface DigestRow { readonly path: string; readonly sha256: string }
@@ -106,7 +134,9 @@ export interface InitApplicationAdapters {
     }>) => Promise<OwnerOutcome>
     readonly check: (input: Readonly<{ configPath: string }>) => Promise<OwnerOutcome>
     readonly preflight: (input: Readonly<{ configPath: string }>) => Promise<OwnerOutcome>
-    readonly classifyEstate?: (input: Readonly<{ root: string }>) => Promise<EstateClassificationOutcome>
+    readonly classifyEstate?: (input: EstateObservationInput) => Promise<EstateClassificationOutcome>
+    /** Says whether root is a product repository, which makes init ask where the cockpit lives. */
+    readonly observeRoot?: (input: Readonly<{ root: string }>) => Promise<'product-repository' | 'cockpit-root'>
     /** Proposes answers from files the repositories already carry; every value comes back as inferred. */
     readonly infer?: (input: Readonly<{ root: string; repositories: readonly Readonly<{ slug: string; path: string }>[] }>)
         => Promise<Readonly<{
@@ -167,6 +197,7 @@ export interface InitResult {
     readonly question?: GreenfieldQuestion
     readonly estate?: GreenfieldResult
     readonly interview?: InterviewPlan
+    readonly cockpitRoot?: CockpitRootQuestion
 }
 
 interface InitOutcomeBase {
@@ -207,14 +238,50 @@ function result(
     projection: BootstrapProjection,
     nextCommand: string,
     ownerOutcome?: OwnerOutcome,
-    greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan }>,
+    greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan;
+        cockpitRoot?: CockpitRootQuestion }>,
 ): InitResult {
     return Object.freeze({ stage, root: projection.root, target: projection.target,
         previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]), nextCommand,
         ...(ownerOutcome === undefined ? {} : { ownerOutcome }),
         ...(greenfield?.question === undefined ? {} : { question: greenfield.question }),
         ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }),
-        ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }) })
+        ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }),
+        ...(greenfield?.cockpitRoot === undefined ? {} : { cockpitRoot: greenfield.cockpitRoot }) })
+}
+
+// The repository's directory name becomes the first sibling's slug and the cockpit's name stem.
+const SIBLING_DIRECTORY = /^[a-z][a-z0-9-]{0,63}$/
+
+function cockpitRootQuestion(root: string): CockpitRootQuestion {
+    const dedicated = resolve(dirname(root), `${basename(root)}-cockpit`)
+    const unnamed = SIBLING_DIRECTORY.test(basename(root)) ? undefined
+        : `the directory name ${JSON.stringify(basename(root))} is not a valid sibling slug (lowercase letters, digits and hyphens, starting with a letter); rename the directory, or create a dedicated cockpit folder yourself and add this repository with cockpit sibling add --from`
+    return Object.freeze({
+        field: 'cockpit.root',
+        why: `${root} is a product repository, and the cockpit root is where init writes cockpit.toml, AGENTS.md, guards and harness settings, so init never chooses it for you; answer cockpit.root = "dedicated" or "in-repo"`,
+        recommended: 'dedicated',
+        options: Object.freeze([
+            Object.freeze({ answer: 'dedicated' as const, root: dedicated, creates: Object.freeze([dedicated]), siblingsRoot: '..',
+                firstSibling: root,
+                tradeOff: `the product repository stays free of cockpit files, and the cockpit grows to more repositories with cockpit sibling add, each created or found beside ${basename(root)}, without moving`,
+                ...(unnamed === undefined ? {} : { unavailable: unnamed }) }),
+            Object.freeze({ answer: 'in-repo' as const, root, creates: Object.freeze([]), siblingsRoot: '.', firstSibling: root,
+                tradeOff: 'the product repository carries the cockpit files and the cockpit cannot neutrally own several repositories; it can be moved out to a dedicated folder later' }),
+        ]),
+    })
+}
+
+/** Where the estate's repositories are observed: the cockpit root, or the product repository a dedicated cockpit sits beside. */
+function estateInput(input: InitApplicationInput): EstateObservationInput {
+    return input.cockpitRoot?.kind === 'dedicated'
+        ? Object.freeze({ root: dirname(input.cockpitRoot.firstSibling), repositories: Object.freeze([basename(input.cockpitRoot.firstSibling)]) })
+        : Object.freeze({ root: input.root })
+}
+
+function documentSiblings(input: InitApplicationInput): Pick<DocumentCommandInput, 'siblings'> {
+    const observed = estateInput(input)
+    return observed.repositories === undefined ? {} : { siblings: { root: observed.root, repositories: observed.repositories } }
 }
 
 async function interviewPlan(
@@ -224,8 +291,9 @@ async function interviewPlan(
     answered: number,
 ): Promise<InterviewPlan> {
     const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
+    const observedRoot = estateInput(input).root
     const inference = await adapters.infer?.({ root: input.root,
-        repositories: classification.runnable.map(row => ({ slug: row.slug, path: row.path })) })
+        repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(input.root, resolve(observedRoot, row.path)) })) })
     return Object.freeze({
         answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),
         outstanding: Object.freeze(planned.slice(answered).map(({ field, why }) => Object.freeze({ field, why,
@@ -236,7 +304,8 @@ async function interviewPlan(
 }
 
 function commandDigest(input: InitApplicationInput): string {
-    return sha256(JSON.stringify({ root: input.root, target: input.target, registry: input.registry ?? null }))
+    return sha256(JSON.stringify({ root: input.root, target: input.target, registry: input.registry ?? null,
+        ...(input.cockpitRoot?.kind === 'dedicated' ? { firstSibling: input.cockpitRoot.firstSibling } : {}) }))
 }
 
 function evidenceMatches(record: BootstrapStateRecord, projection: BootstrapProjection, commandSha256: string): boolean {
@@ -320,6 +389,24 @@ export async function runInitApplication(
     if (input.greenfieldAnswer !== undefined && !input.accepted) {
         return refused('GREENFIELD_ANSWER_UNEXPECTED', 'configuration answers require an accepted bootstrap preview')
     }
+    const firstSibling = input.cockpitRoot?.kind === 'dedicated' ? input.cockpitRoot.firstSibling : undefined
+    if (firstSibling !== undefined && (input.registry !== undefined || !isAbsolute(firstSibling) || resolve(firstSibling) !== firstSibling
+        || dirname(firstSibling) !== dirname(input.root) || firstSibling === input.root)) {
+        return refused('INIT_ROOT_INVALID', 'a dedicated cockpit root must sit beside the product repository it is created for, without a registry', input.root)
+    }
+    let rootQuestion: CockpitRootQuestion | undefined
+    if (input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
+        let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
+        try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
+        catch (error) {
+            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun cockpit init`, input.root)
+        }
+        if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
+    }
+    // Accepting publishes files into the root, so a product repository's root must be chosen first;
+    // --accept-preview and --accept-defaults consent to bytes, never to a location.
+    if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
+        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run cockpit init --interactive`, 'cockpit.root')
     for (const target of SURFACE_TARGETS) {
         if (target === input.target) continue
         const other = await selectBootstrapStateRoot({ platform: input.platform, home: input.home,
@@ -365,6 +452,10 @@ export async function runInitApplication(
     if (current !== null && !evidenceMatches(current, projection, expectedCommand)) {
         return refused('INIT_STATE_STALE', 'bootstrap state does not match the current root, target, command, sources, or preview', address.path)
     }
+    if (rootQuestion) return { kind: 'pending', status: 0, artifact: null, destination: null,
+        diagnostics: [...(resumed?.diagnostics ?? prepared!.diagnostics)],
+        result: result(current?.value.stage ?? 'surface-previewed', projection,
+            'answer cockpit.root ("dedicated" or "in-repo") before accepting the preview', undefined, { cockpitRoot: rootQuestion }) }
     if (!input.accepted && (current?.value.greenfield === undefined || current.value.stage !== 'surface-published')) {
         const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
         let interview: InterviewPlan | undefined
@@ -372,7 +463,7 @@ export async function runInitApplication(
         // Questions are only asked after acceptance, but listing them now lets an unattended caller
         // prepare every answer before it consents. The observation is read-only.
         if (input.registry === undefined && adapters.classifyEstate && (stage === 'surface-previewed' || stage === 'surface-published')) {
-            const classified = await adapters.classifyEstate(Object.freeze({ root: input.root }))
+            const classified = await adapters.classifyEstate(estateInput(input))
             if (classified.kind === 'complete') interview = await interviewPlan(input, adapters, classified.result, 0)
             else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
                 message: `the interview could not be previewed (${classified.diagnostics.map(row => row.code).join(', ')}); each question is still reported when accepting reaches it`,
@@ -418,7 +509,7 @@ export async function runInitApplication(
             if (!adapters.classifyEstate) return { kind: 'pending-dependency', status: 2, artifact: null, destination: null,
                 diagnostics: [diagnostic('GREENFIELD_DISCOVERY_UNAVAILABLE', 'greenfield init requires the public estate observation owner')],
                 result: result('surface-published', projection, 'restore public estate discovery and retry') }
-            const classified = await adapters.classifyEstate(Object.freeze({ root: input.root }))
+            const classified = await adapters.classifyEstate(estateInput(input))
             if (classified.kind !== 'complete') return ownerRefusal(classified, current.value.stage, projection)
             classification = classified.result
             sourceObservationSha256 = (classified.result as IssuedEstateClassificationResult).sourceObservationSha256
@@ -442,7 +533,7 @@ export async function runInitApplication(
             return refused('GREENFIELD_ANSWER_INVALID', 'configuration answer does not match the next persisted question and provenance', address.path)
         }
         const answers = proposed ? [...priorAnswers, { ...proposed, sha256: sha256(proposed.bytes) }] : [...priorAnswers]
-        const documented = await adapters.document({ root: input.root, registry: input.registry, output: destination,
+        const documented = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentSiblings(input),
             configuration: { sourceObservationSha256, ...(classification ? { classification: classification.classification } : {}), answers } })
         if (documented.artifact === null) {
             if (proposed && documented.diagnostics.some(row => row.code.startsWith('DOCUMENT_CONFIGURATION_ANSWER')
@@ -502,7 +593,7 @@ export async function runInitApplication(
     const persistedConfiguration = current.value.greenfield
     if (!persistedConfiguration) return refused('INIT_DRAFT_SOURCE_CHANGED',
         'persisted cockpit.toml has no source-bound configuration answers', destination)
-    const currentDocument = await adapters.document({ root: input.root, registry: input.registry, output: destination,
+    const currentDocument = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentSiblings(input),
         configuration: { sourceObservationSha256: persistedConfiguration.sourceObservationSha256,
             ...(persistedConfiguration.classification ? { classification: persistedConfiguration.classification } : {}),
             answers: persistedConfiguration.answers } })

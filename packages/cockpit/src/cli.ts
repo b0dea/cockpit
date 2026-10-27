@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { installedPackageMetadata } from './package-metadata.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
-import { readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { parse as parseToml } from 'smol-toml'
 import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -14,7 +14,7 @@ import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-ada
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderJsonResponse } from './diagnostics.js'
-import { classifyEstateObservation, documentCommand, documentObservedCommand, observePublicEstate, type DocumentCommandInput } from './document/command.js'
+import { classifyEstateObservation, documentCommand, documentObservedCommand, observeCockpitRoot, observePublicEstate, type DocumentCommandInput } from './document/command.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
@@ -527,6 +527,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             applyBootstrap: applySelectedBootstrapSurface,
             document: documentObservedCommand,
             classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+            observeRoot: observeCockpitRoot,
             infer: deriveInferredFacts,
             observeDestination: async ({ path, byteLimit }) => {
                 const node = await nodeAuthority()
@@ -711,6 +712,18 @@ function optionCount(args: readonly string[], name: string): number {
 }
 
 const ANSWERS_FILE_BYTE_LIMIT = 262_144
+
+/** The one write init makes outside its root: the dedicated folder named in the previewed answer, never its parents. */
+async function createDedicatedCockpitRoot(path: string): Promise<void> {
+    try { await mkdir(path, { mode: 0o755 }) }
+    catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    const status = await lstat(path)
+    if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== path) {
+        throw new Error(`${path} exists and is not a plain directory`)
+    }
+}
 
 /** Reads the consent digests and answers file of an unattended init; absent flags mean a terminal run. */
 async function decodeUnattendedInit(values: {
@@ -1107,6 +1120,13 @@ async function invokeHandler(
             try { return await prompt.question('Type the exact bootstrap preview digest to accept: ') } finally { prompt.close() }
         },
         writeArtifact: (destination, artifact) => writeFile(destination, artifact, { flag: 'wx', mode: 0o600 }),
+        createCockpitRoot: createDedicatedCockpitRoot,
+        chooseCockpitRoot: async question => {
+            if (!io.stdin) return undefined
+            io.stderr.write(`${JSON.stringify(question)}\n`)
+            const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
+            try { return (await prompt.question(`Where does the cockpit live? Type ${question.options.map(row => row.answer === question.recommended ? `${row.answer} (recommended)` : row.answer).join(' or ')}: `)).trim().replace(/ \(recommended\)$/, '') } finally { prompt.close() }
+        },
         answerQuestion: async question => {
             if (io.answerInitQuestion) return io.answerInitQuestion(question)
             if (!io.stdin) return undefined

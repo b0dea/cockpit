@@ -914,62 +914,6 @@ async function authenticatedBootstrapPriorSurfaces(
     })))
 }
 
-async function prepareStackSurfaces(
-    prepared: PreparedEnvironment,
-    priorOwned: readonly SurfacePriorOwnedEntry[],
-    adapters: GeneratedEnvironmentCommandAdapters,
-): Promise<PreparedEnvironment | RefusalOutcome> {
-    const targets = [...new Set(priorOwned.flatMap(row => row.harnesses))]
-    if (targets.length !== 1 || !SURFACE_TARGETS.includes(targets[0] as SurfaceTarget)
-        || priorOwned.some(row => row.kind !== 'file' || row.harnesses.length !== 1 || row.harnesses[0] !== targets[0])) {
-        return refuse('SURFACE_INPUT_INVALID', 'stack scope requires one authenticated selected bootstrap surface', 'bootstrap')
-    }
-    const target = targets[0] as SurfaceTarget
-    if (prepared.registry.config.surfaces.adopted.length > 0) {
-        return refuse('SURFACE_ADOPTION_REFUSED', 'a stack-scope cockpit renders no harness settings files to merge adopted settings into', 'surfaces.adopted')
-    }
-    const assets = await selectedBootstrapAssets(prepared.node, adapters)
-    if (!assets) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets could not be authenticated', 'bootstrap')
-    const byPath = new Map(assets.map(asset => [asset.path, asset]))
-    const sources = selectedBootstrapSources(byPath)
-    const collection = byPath.get('skills/collection.json')
-    const terminal = byPath.get('skills/procedures/onboarding.md')
-    if (!sources || !collection || !terminal) return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap assets are incomplete', 'bootstrap')
-    const inspection = await inspectSkillSet({ sources,
-        collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
-        terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
-    if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, target, 'bootstrap')
-    if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'selected bootstrap output set was refused', target)
-    const expected = inspected.files.map(file => `${file.path}\0${file.sha256}`).sort(compareCodeUnits)
-    const prior = priorOwned.map(file => `${file.path}\0${file.kind === 'file' ? file.sha256 : ''}`).sort(compareCodeUnits)
-    if (JSON.stringify(expected) !== JSON.stringify(prior)) {
-        return refuse('SURFACE_INPUT_INVALID', 'stack scope bootstrap ownership does not match packaged outputs', 'bootstrap')
-    }
-    const surfaces = Object.freeze(inspected.files.map(file => Object.freeze({
-        kind: 'file' as const, path: file.path, harnesses: [target] as [SurfaceTarget], scope: 'always' as const,
-        capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,
-        ownership: 'whole-file' as const, bytes: file.bytes, sha256: file.sha256,
-    })))
-    if (new Set([...prepared.owned, ...surfaces].map(row => row.path)).size !== prepared.owned.length + surfaces.length) {
-        return refuse('SURFACE_PATH_CONFLICT', 'generated environment and bootstrap paths collide', 'surfaces')
-    }
-    const payload = Object.freeze({
-        schema: 'cockpit-generated-surface-selftest/v1' as const,
-        configuredHarnesses: Object.freeze([target]),
-        declarations: Object.freeze([]),
-        entries: surfaces,
-        custom: Object.freeze([]),
-    })
-    return Object.freeze({
-        ...prepared,
-        surfaces,
-        configuredHarnesses: payload.configuredHarnesses,
-        surfaceSelftest: Object.freeze({ ...payload, manifestSha256: sha256(JSON.stringify(payload)) }),
-        surfaceAssets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => Object.freeze({ path, sha256: digest, identity }))),
-    })
-}
-
 export function projectGeneratedApplicationNodeExecutable(application: GeneratedApplicationProjection): ResolvedExecutable | undefined {
     if (application === null || typeof application !== 'object') return undefined
     return issuedApplicationProjections.get(application)?.node
@@ -2858,9 +2802,7 @@ async function preparePublication(
     const priorEntries = ownership.kind === 'complete' ? ownership.manifest.entries : []
     const priorSurfaces = [...priorEntries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row), ...(adoptedBootstrap ?? [])]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
-    let prepared = base.registry.config.cockpit.scope === 'stack'
-        ? await prepareStackSurfaces(base, priorSurfaces, adapters)
-        : await prepareSurfaces(base, priorSurfaces, adapters, ownership.kind === 'complete' ? ownership.manifest : undefined)
+    let prepared = await prepareSurfaces(base, priorSurfaces, adapters, ownership.kind === 'complete' ? ownership.manifest : undefined)
     if ('status' in prepared) return prepared
     const ownedInput = await ownedInputOverlap(prepared, priorEntries)
     if (ownedInput.kind === 'invalid') return refuse(
@@ -3042,9 +2984,7 @@ async function checkCanonicalGeneratedEnvironment(
         'restore trusted ownership metadata or run cockpit sync --config <file>',
     )
     const priorSurfaces = ownership.manifest.entries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row)
-    const prepared = seed?.surfaceSelftest ? seed : base.registry.config.cockpit.scope === 'stack'
-        ? await prepareStackSurfaces(base, priorSurfaces, adapters)
-        : await prepareSurfaces(base, priorSurfaces, adapters, ownership.manifest)
+    const prepared = seed?.surfaceSelftest ? seed : await prepareSurfaces(base, priorSurfaces, adapters, ownership.manifest)
     if ('status' in prepared) return prepared
     const ownedInput = await ownedInputOverlap(prepared, ownership.manifest.entries)
     if (ownedInput.kind === 'invalid') return refuse(

@@ -158,9 +158,6 @@ export async function runSyncAdoption(
     const configPath = loaded.result.source.path
     const root = dirname(configPath)
     const config = loaded.result.config
-    if (config.cockpit.scope === 'stack') {
-        return refused('SURFACE_ADOPTION_REFUSED', 'a stack-scope cockpit renders no harness settings files to merge adopted settings into', 'cockpit.scope')
-    }
     const owned = await ownedPaths(root, configPath, config.cockpit.name)
     if (!(owned instanceof Set)) return owned as SyncAdoptionOutcome
     const already = new Set(config.surfaces.adopted.map(row => row.path))

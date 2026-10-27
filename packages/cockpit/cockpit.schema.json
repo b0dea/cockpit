@@ -9,14 +9,6 @@
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9-]*$"
         },
-        "scope": {
-          "default": "estate",
-          "type": "string",
-          "enum": [
-            "estate",
-            "stack"
-          ]
-        },
         "siblings_root": {
           "default": "..",
           "type": "string"

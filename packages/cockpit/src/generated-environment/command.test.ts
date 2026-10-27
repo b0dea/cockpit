@@ -276,7 +276,7 @@ describe('selected bootstrap target', () => {
     }, 120_000)
 
     it('adopts only the exact state publication and anchored bootstrap outputs during first sync', async () => {
-        const { root, configPath } = await consumer('bootstrap-adoption', 'stack')
+        const { root, configPath } = await consumer('bootstrap-adoption')
         const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
         const applied = await applySelectedBootstrapSurface(prepared.authority)
@@ -321,7 +321,8 @@ describe('selected bootstrap target', () => {
         expect(manifest).toMatchObject({ format: 'cockpit-generated-ownership/v3' })
         expect(manifest.entries.filter((entry: { harnesses?: string[] }) => entry.harnesses))
             .toEqual(expect.arrayContaining(prepared.result.files.map(file => expect.objectContaining({ path: file.path, sha256: file.sha256 }))))
-        expect(manifest.entries.filter((entry: { harnesses?: string[] }) => entry.harnesses)).toHaveLength(prepared.result.files.length)
+        // One repository is an ordinary estate: adopting the bootstrap skills does not narrow what is published.
+        expect(manifest.entries.map((entry: { path: string }) => entry.path)).toEqual(expect.arrayContaining(['AGENTS.md', '.cockpit/guards/bash-guard.sh']))
         await expect(readFile(join(root, 'compose.generated.yml'), 'utf8')).resolves.toContain('services:')
         await expect(readFile(join(root, 'fixtures/personas.generated.ts'), 'utf8')).resolves.toContain('first')
         expect(await syncGeneratedEnvironment({ configPath,

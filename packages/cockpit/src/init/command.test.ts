@@ -213,6 +213,42 @@ describe('init operator command', () => {
             expect(calls).toContain(true)
         })
 
+        it.each(['dedicated', 'in-repo'] as const)('creates only the previewed folder for a %s cockpit root and runs init there', async (answer) => {
+            const rootQuestion = { field: 'cockpit.root' as const, why: 'product repository', recommended: 'dedicated' as const, options: [
+                { answer: 'dedicated' as const, root: '/work/app-cockpit', creates: ['/work/app-cockpit'], siblingsRoot: '..', firstSibling: '/work/app', tradeOff: 'clean' },
+                { answer: 'in-repo' as const, root: '/work/app', creates: [], siblingsRoot: '.', firstSibling: '/work/app', tradeOff: 'carries files' }] }
+            const calls: string[] = []
+            const outcome = await runInitOperatorCommand({ root: '/work/app', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { cockpit: { root: answer } } } },
+                { ...noTerminal, createCockpitRoot: async path => { calls.push(`create:${path}`) } },
+                async input => {
+                    calls.push(`application:${input.accepted}:${input.root}:${JSON.stringify(input.cockpitRoot ?? null)}`)
+                    if (input.cockpitRoot === undefined) return { ...pending(), result: { ...pending().result!, cockpitRoot: rootQuestion } }
+                    return input.accepted ? asking('sibling') : pending()
+                })
+            expect(outcome).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
+            expect(outcome.diagnostics).toEqual([])
+            expect(calls).toEqual(answer === 'dedicated' ? [
+                'application:false:/work/app:null', 'create:/work/app-cockpit',
+                'application:false:/work/app-cockpit:{"kind":"dedicated","firstSibling":"/work/app"}',
+                'application:true:/work/app-cockpit:{"kind":"dedicated","firstSibling":"/work/app"}',
+            ] : [
+                'application:false:/work/app:null', 'application:false:/work/app:{"kind":"in-repo"}', 'application:true:/work/app:{"kind":"in-repo"}',
+            ])
+        })
+
+        it('refuses an unavailable cockpit root option before creating anything', async () => {
+            const created: string[] = []
+            const outcome = await runInitOperatorCommand({ root: '/work/My_App', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { cockpit: { root: 'dedicated' } } } },
+                { ...noTerminal, createCockpitRoot: async path => { created.push(path) } },
+                async () => ({ ...pending(), result: { ...pending().result!, cockpitRoot: { field: 'cockpit.root', why: 'product repository',
+                    recommended: 'dedicated', options: [{ answer: 'dedicated', root: '/work/My_App-cockpit', creates: ['/work/My_App-cockpit'],
+                        siblingsRoot: '..', firstSibling: '/work/My_App', tradeOff: 'clean', unavailable: 'not a valid sibling slug' }] } } }))
+            expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_COCKPIT_ROOT_UNAVAILABLE' }] })
+            expect(created).toEqual([])
+        })
+
         it('names an answers key that matches no interview field and an ambiguous environment answer', async () => {
             const unknown = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [], ports: { base: {} } } } },

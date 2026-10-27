@@ -60,13 +60,13 @@ export function createGeneratedCommandFixture() {
         await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
     }
 
-    async function consumer(name: string, scope: 'estate' | 'stack' = 'estate', parentDirectory?: string) {
+    async function consumer(name: string, parentDirectory?: string) {
         const root = await realpath(await mkdtemp(join(parentDirectory ?? tmpdir(), `cockpit-generated-${name}-`)))
         // A supplied parent owns cleanup for its nested fixture estate.
         if (parentDirectory === undefined) roots.push(root)
         const configPath = join(root, 'cockpit.toml')
         const declaration = (await readFile(fixture, 'utf8')).replace(
-            'name = "generated-environment"', `name = "generated-environment"\nscope = ${JSON.stringify(scope)}\nsiblings_root = "."`,
+            'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
         )
         await writeFile(configPath, declaration)
         await mkdir(join(root, 'app'), { recursive: true })
@@ -146,7 +146,7 @@ export function createGeneratedCommandFixture() {
         readonly siblingDirectory?: string
         readonly parentDirectory?: string
     } = {}) {
-        const result = await consumer(name, 'estate', options.parentDirectory)
+        const result = await consumer(name, options.parentDirectory)
         const siblingDirectory = options.siblingDirectory ?? join(result.root, 'app')
         await mkdir(siblingDirectory, { recursive: true })
         await writeFile(join(siblingDirectory, 'AGENTS.md'), 'Synthetic sibling guide.\n')
