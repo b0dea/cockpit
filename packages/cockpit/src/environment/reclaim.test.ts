@@ -169,9 +169,11 @@ const authenticatedDiscovery = async (
             )}\n`)
         }
         if (kind === 'container') for (const row of rows) {
-            const networks = Object.fromEntries((options.containerNetworks?.[row.id] ?? []).map((networkId) => [
-                `network-${networkId.slice(0, 8)}`, { NetworkID: networkId },
-            ]))
+            // `name:<network>` stands for a created, never-started container, which Docker reports
+            // by network name with an empty id.
+            const networks = Object.fromEntries((options.containerNetworks?.[row.id] ?? []).map((networkId) => networkId.startsWith('name:')
+                ? [networkId.slice(5), { NetworkID: '' }]
+                : [`network-${networkId.slice(0, 8)}`, { NetworkID: networkId }]))
             await writeFile(join(root, `inspect.container.${row.id}`), `${JSON.stringify({ id: row.id, networks })}\n`)
         }
     }
@@ -429,7 +431,10 @@ describe('runtime discovery authority', () => {
                 resource({ id: 'container-own', name: 'own-service' }),
                 resource({ id: 'container-running', name: 'running-service', labels: foreignLabels }),
                 resource({ id: 'container-stopped', name: 'stopped-service', labels: {} }),
+                resource({ id: 'container-created-own', name: 'replacement-own-service' }),
+                resource({ id: 'container-created', name: 'created-service', labels: {} }),
                 resource({ id: 'network-orphan', name: 'owned-orphan', kind: 'network', bytes: null }),
+                resource({ id: 'network-created', name: 'owned-created', kind: 'network', bytes: null }),
                 resource({ id: 'network-own', name: 'owned-default', kind: 'network', bytes: null }),
                 resource({ id: 'network-running', name: 'owned-running', kind: 'network', referenced: true, bytes: null }),
                 resource({ id: 'network-stopped', name: 'owned-stopped', kind: 'network', bytes: null }),
@@ -447,9 +452,12 @@ describe('runtime discovery authority', () => {
                     'container-own': ['network-own'],
                     'container-running': ['network-running'],
                     'container-stopped': ['network-stopped'],
+                    'container-created-own': ['name:owned-default'],
+                    'container-created': ['name:owned-created'],
                 },
             })
             expect(observed.resources.filter(({ kind }) => kind === 'network').map(({ id, referenced }) => ({ id, referenced }))).toEqual([
+                { id: 'network-created', referenced: true },
                 { id: 'network-foreign', referenced: false },
                 { id: 'network-orphan', referenced: false },
                 { id: 'network-own', referenced: false },
@@ -463,6 +471,7 @@ describe('runtime discovery authority', () => {
             if (classified.kind !== 'complete') return
             expect(classified.resources.filter(({ kind }) => kind === 'network')
                 .map(({ id, ownership, action }) => ({ id, ownership, action }))).toEqual([
+                { id: 'network-created', ownership: 'current', action: 'report-only' },
                 { id: 'network-foreign', ownership: 'foreign', action: 'report-only' },
                 { id: 'network-orphan', ownership: 'current', action: 'teardown' },
                 { id: 'network-own', ownership: 'current', action: 'teardown' },

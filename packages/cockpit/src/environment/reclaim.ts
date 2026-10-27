@@ -932,9 +932,17 @@ export function admitNetworkInspections(
                         || !exactKeys(record, ['id', 'networks']) || record.id !== resourceId
                         || record.networks === null || typeof record.networks !== 'object' || Array.isArray(record.networks)
                         || Object.keys(record.networks).length > MAX_RESOURCES) return undefined
-                    for (const endpoint of Object.values(record.networks)) {
+                    for (const [name, endpoint] of Object.entries(record.networks)) {
                         if (endpoint === null || typeof endpoint !== 'object' || Array.isArray(endpoint)) return undefined
                         const networkId = (endpoint as Record<string, unknown>).NetworkID
+                        // A container that was created but never started (as an interrupted Compose
+                        // recreate leaves its replacement) names its networks without an id. It still
+                        // holds every discovered network of that name; refusing the whole discovery
+                        // left `down` unable to remove the stack that `up` had started.
+                        if (networkId === '') {
+                            for (const network of discovery.resources) if (network.name === name) hold(network.id, resourceId)
+                            continue
+                        }
                         if (typeof networkId !== 'string' || !RESOURCE_ID.test(networkId)) return undefined
                         hold(networkId, resourceId)
                     }
