@@ -358,6 +358,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `INIT_DRAFT_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DRAFT_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_DRAFT_SOURCE_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_INTERVIEW_LIMIT_EXCEEDED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_PREVIEW_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_PREVIEW_NOT_ACCEPTED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ROOT_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
