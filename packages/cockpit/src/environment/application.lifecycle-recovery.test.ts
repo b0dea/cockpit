@@ -964,6 +964,13 @@ describe('lifecycle application contracts', () => {
     it('stops the final-holder runtime after its drain attempt is durable', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const events: string[] = []
+        // A generated stack's resume is admitted only against the replay identity it ran with.
+        const generatedReplay = { sourceSha256: '8'.repeat(64), generation: '9'.repeat(64), profiles: [], mounts: [] }
+        await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
+            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
+            revision: 0, updatedAt: new Date().toISOString(), value: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
+                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], holderId: context.holderId, generatedReplay },
+        }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         applicationOwners.ports.observeRetainedPortFamily = async () => ({
             kind: 'complete', holderId: context.holderId, recordRevision: 4, lease,
@@ -1009,6 +1016,7 @@ describe('lifecycle application contracts', () => {
                         workBasisSha256: request.operationBasis,
                         operationGeneration: request.generation,
                         completedServices: [],
+                        generatedReplay,
                     },
                 },
             })

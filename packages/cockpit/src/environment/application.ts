@@ -3187,11 +3187,14 @@ async function invalidateCompletedLifecycle(
         kind: 'refusal', status: 2, result: null, diagnostics: current.diagnostics,
     }
     const stored = current as CurrentLifecycleRecord | null
+    // Stopped services are no longer complete, but the generated identity they ran stays: readiness
+    // admits a generated resume only against it, so dropping it refused every resume after sleep.
     const value: LifecycleRecordValue = Object.freeze({
         holderId: context.holderId,
         workBasisSha256,
         operationGeneration,
         completedServices: Object.freeze([]),
+        ...(stored?.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
     })
     const publication = await publishLifecycleRecord(context, stored?.record ?? null, value)
     if ('status' in publication) return {
