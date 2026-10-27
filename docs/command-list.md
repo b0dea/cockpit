@@ -19,6 +19,7 @@ The command table supplies this list.
 - `cockpit down`: Remove the selected generated runtime.
 - `cockpit reset`: Preview or interactively approve an exact reset.
 - `cockpit runtime`: Measure the local container runtime (runtime measure) and record its support row.
+- `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
 - `cockpit preflight`: Evaluate the authenticated environment gate.
 - `cockpit doctor`: Report read-only environment diagnostics.
 - `cockpit logs`: Collect bounded logs for one declared service.

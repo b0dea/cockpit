@@ -229,7 +229,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `CLI_COMMAND_REQUIRED` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_UNKNOWN_COMMAND` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
-| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_REVISION_INVALID` | `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_FIXTURE_INVALID` | `packages/cockpit/src/comparison/contract.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_NORMALIZATION_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
@@ -465,7 +465,16 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_DIRECTORY_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_DIR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_GIT_FAILED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_NOT_FOUND` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_PATH_NOT_EMPTY` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_REFERENCED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_REMOTE_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_SLUG_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_VAR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_COMMAND_UNDECLARED` | `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_CONTRACT_INVALID` | `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |

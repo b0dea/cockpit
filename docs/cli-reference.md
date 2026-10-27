@@ -519,7 +519,43 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+
+## cockpit sibling
+
+Add or remove a repository in cockpit.toml (sibling add, sibling remove).
+
+Configuration: `unavailable`. Owners: none.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--create` | boolean | `false` |
+| `--from` | string | unset |
+| `--remote` | string | unset |
+| `--dir` | string | unset |
+| `--var` | string | unset |
+| `--purpose` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+| Diagnostic | Implementing owners | Source remedy |
+| --- | --- | --- |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_DIRECTORY_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_DIR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_GIT_FAILED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_NOT_FOUND` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_PATH_NOT_EMPTY` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_REFERENCED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_REMOTE_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_SLUG_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `SIBLING_VAR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit preflight
 
