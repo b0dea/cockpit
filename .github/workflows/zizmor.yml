@@ -1,0 +1,43 @@
+name: Workflow security audit
+
+# Static analysis of the workflows themselves: template injection, over-broad permissions,
+# unpinned actions, credential persistence. Runs when .github changes, and weekly because new
+# audits and newly disclosed vulnerable actions change the verdict on unchanged files.
+on:
+  pull_request:
+    paths: ['.github/**']
+  push:
+    branches: [main]
+    paths: ['.github/**']
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          version: 1.31.1
+          inputs: .github
+          # Annotations in the run, not SARIF upload: uploading needs security-events: write
+          # and code scanning, and this job must stay read-only.
+          advanced-security: false
+          annotations: true
+          min-severity: low

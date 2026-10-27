@@ -1,0 +1,27 @@
+version: 2
+
+# Weekly and grouped so one review covers a week of updates. The cooldown keeps a freshly
+# published release out of the lockfile for a week, which is the window in which a hijacked
+# or malicious publish is usually found and pulled.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
