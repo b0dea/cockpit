@@ -10,6 +10,7 @@ export default defineConfig({
         // Keep scheduling independent of earlier runs; transformed modules remain cached.
         cache: false,
         allowOnly: false,
+        setupFiles: ['packages/cockpit/src/test-support/git-isolation.ts'],
         // Real process and filesystem integration needs a larger budget than in-memory tests.
         testTimeout: 60_000,
         hookTimeout: 60_000,
