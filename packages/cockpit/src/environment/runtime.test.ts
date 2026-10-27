@@ -1409,6 +1409,13 @@ fi
         expect(stop.step.spawnNotAfter).toBe(drain.attempt.validThrough)
         expect(stop.step.timeoutMs).toBeLessThanOrEqual(Date.parse(drain.attempt.validThrough) - Date.now() + 10)
         expect(createRuntimeStopPlan({ topology: topology.admitted.topology, attempt: drain.authority }).kind).toBe('unavailable')
+        // A service that ignores SIGTERM holds `compose stop` for Compose's 10s stop grace, so the
+        // stop gets that grace on top of the ordinary command budget.
+        const budgeted = await topologyEvidence({ services: { api: {} } }, [], { timeoutMs: 10_000 })
+        if (budgeted.admitted.kind !== 'complete') throw new Error('topology fixture unavailable')
+        const budgetedStop = createRuntimeStopPlan({ topology: budgeted.admitted.topology, attempt: (await drainAuthority(budgeted)).authority })
+        if (budgetedStop.kind !== 'planned') throw new Error(budgetedStop.reason)
+        expect(budgetedStop.step.timeoutMs).toBe(20_000)
         const observation = createRuntimeStopObservationPlan({ plan: stop, outcome: await executeProbe(stop.step) })
         if (observation.kind !== 'planned') throw new Error(observation.reason)
         expect(createRuntimeStopObservationPlan({ plan: stop, outcome: await executeProbe(stop.step) }).kind).toBe('unavailable')
