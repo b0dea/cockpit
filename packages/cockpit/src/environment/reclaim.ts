@@ -616,7 +616,9 @@ function dockerBytes(value: unknown, allowVirtualSize = false): number | null | 
     if (!allowVirtualSize && value.includes('(virtual ')) return undefined
     if (!match) return undefined
     const powers: Record<string, number> = { B: 1, kB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4 }
-    const bytes = Number(match[1]) * powers[match[2]!]!
+    // Docker prints rounded decimal sizes ("1.029GB"), and scaling the decimal is inexact in floating
+    // point (1028999999.9999999), so round to whole bytes; the printed value is already approximate.
+    const bytes = Math.round(Number(match[1]) * powers[match[2]!]!)
     return Number.isSafeInteger(bytes) ? bytes : undefined
 }
 

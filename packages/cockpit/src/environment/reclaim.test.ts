@@ -137,6 +137,7 @@ const authenticatedDiscovery = async (
     options: {
         readonly networkInspection?: (resource: ReclaimResource) => unknown
         readonly containerNetworks?: Readonly<Record<string, readonly string[]>>
+        readonly displayedBytes?: Readonly<Record<string, string>>
     } = {},
 ): Promise<ReclaimDiscoverySnapshot> => {
     const groups = new Map<Exclude<ReclaimResource['kind'], 'cache'>, ReclaimResource[]>([
@@ -147,7 +148,11 @@ const authenticatedDiscovery = async (
         groups.set(item.kind, [...(groups.get(item.kind) ?? []), item])
     }
     for (const [kind, rows] of groups) {
-        await writeFile(join(root, `docker.${kind}`), `${rows.map((row) => JSON.stringify(dockerRow(row))).join('\n')}\n`)
+        await writeFile(join(root, `docker.${kind}`), `${rows.map((row) => {
+            const shown = options.displayedBytes?.[row.id]
+            const encoded = dockerRow(row) as Record<string, unknown>
+            return JSON.stringify(shown === undefined ? encoded : kind === 'build-cache' ? { ...encoded, Size: shown } : { ...encoded, bytes: shown })
+        }).join('\n')}\n`)
         if (kind === 'image') for (const row of rows) {
             await writeFile(join(root, `inspect.${row.id}`), `${JSON.stringify({
                 id: row.id, labels: Object.fromEntries(Object.keys(labels).map((key) => [key, row.labels[key] ?? ''])),
@@ -523,6 +528,23 @@ describe('runtime discovery authority', () => {
         } finally {
             await rm(root, { recursive: true, force: true })
         }
+    })
+
+    it('admits the decimal human sizes Docker prints', async () => {
+        const root = await canonicalTemp('cockpit-discovery-sizes-')
+        try {
+            // 1.029 * 1e9 is 1028999999.9999999 in floating point; real daemons print sizes like this.
+            const observed = await authenticatedDiscovery(root, [
+                resource({ id: 'sized-container', bytes: 8_190 }),
+                resource({ id: 'sha256:sized-image', name: 'synthetic-image', kind: 'image', labels: {}, bytes: 1_029_000_000 }),
+                resource({ id: 'sized-cache', name: 'sized-cache', kind: 'build-cache', labels: {}, bytes: 1_213_000 }),
+            ], discoveryApi, { displayedBytes: {
+                'sized-container': '8.19kB (virtual 499MB)', 'sha256:sized-image': '1.029GB', 'sized-cache': '1.213MB',
+            } })
+            expect(Object.fromEntries(observed.resources.map(({ id, bytes }) => [id, bytes]))).toEqual({
+                'sized-container': 8_190, 'sha256:sized-image': 1_029_000_000, 'sized-cache': 1_213_000,
+            })
+        } finally { await rm(root, { recursive: true, force: true }) }
     })
 
     it('preserves absent ownership labels beside a malformed control', async () => {
