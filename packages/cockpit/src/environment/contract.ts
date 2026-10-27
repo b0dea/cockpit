@@ -20,7 +20,7 @@ export const mechanism = {
         'REFUSAL_CODES', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT',
         'isCanonicalTimestamp', 'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
-        'snapshotLifecyclePlan',
+        'snapshotLifecyclePlan', 'inStackCommand',
     ],
 } as const
 
