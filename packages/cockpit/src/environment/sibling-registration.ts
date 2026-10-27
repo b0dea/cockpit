@@ -58,7 +58,6 @@ export interface SiblingOutcome {
 
 const STEP_TIMEOUT_MS = 10_000
 const FREE_TEXT_UNSAFE = /[\u0000-\u001f\u007f]/
-const DEFAULT_PURPOSE = 'Added with `cockpit sibling add`; replace this with what the repository is for'
 
 function refused(code: string, message: string, target?: string): SiblingOutcome {
     return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
@@ -238,6 +237,10 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
             + 'Run `cockpit setup` to verify the remote against the checkout.')
     }
 
+    if (input.purpose === undefined) {
+        return usage('a new sibling needs --purpose, printed when its checkout is missing; say what the repository is for, e.g. --purpose "HTTP API for orders"', '--purpose')
+    }
+    const purpose = input.purpose
     const dir = input.dir ?? slug.data
     const dirCheck = Sibling.shape.dir.safeParse(dir)
     if (!dirCheck.success) return usage(`--dir ${JSON.stringify(dir)} must be "." or a confined relative path without dot segments`, '--dir')
@@ -292,7 +295,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     }
 
     const acquire = remote === undefined ? 'none' : 'auto'
-    const row: SiblingTableRow = { slug: slug.data, dir, ...(remote === undefined ? {} : { remote }), mount: 'always', acquire, var: varName, toolchain: 'none', purpose: input.purpose ?? DEFAULT_PURPOSE }
+    const row: SiblingTableRow = { slug: slug.data, dir, ...(remote === undefined ? {} : { remote }), mount: 'always', acquire, var: varName, toolchain: 'none', purpose }
     const original = await sourceText(configPath, loaded.result.source.sha256)
     if (typeof original !== 'string') return original
     const edit = appendSiblingTable(original, row, config.sibling.length)
@@ -315,7 +318,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     const sources = {
         dir: input.dir === undefined ? 'defaulted to the slug' : '--dir',
         var: input.varName === undefined ? 'derived from the slug' : '--var',
-        purpose: input.purpose === undefined ? 'default placeholder; edit it' : '--purpose',
+        purpose: '--purpose',
     }
     const note = mode === 'create'
         ? `initialised ${target} and recorded sibling "${slug.data}" (acquire "none") in ${configPath}.\n`

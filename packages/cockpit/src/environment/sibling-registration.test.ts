@@ -91,7 +91,7 @@ describe('sibling add', () => {
         await writeFile(join(siblings, 'ledger', 'notes.txt'), 'keep me')
         const before = await readFile(configPath, 'utf8')
 
-        const outcome = await add({ configPath, slug: 'ledger', create: true })
+        const outcome = await add({ configPath, slug: 'ledger', create: true, purpose: 'Ledger' })
 
         expect(outcome.status).toBe(2)
         expect(outcome.diagnostics[0]?.code).toBe('SIBLING_PATH_NOT_EMPTY')
@@ -109,7 +109,7 @@ describe('sibling add', () => {
         await writeFile(join(scattered, 'README.md'), 'widgets')
         const before = await treeDigest(scattered)
 
-        const outcome = await add({ configPath, slug: 'widgets', from: scattered })
+        const outcome = await add({ configPath, slug: 'widgets', from: scattered, purpose: 'Widgets' })
 
         expect(outcome.diagnostics).toEqual([])
         expect(await treeDigest(scattered)).toBe(before)
@@ -125,7 +125,7 @@ describe('sibling add', () => {
         execFileSync('git', ['init', '--quiet', local])
         const before = await readFile(configPath, 'utf8')
 
-        const outcome = await add({ configPath, slug: 'scratch', from: local })
+        const outcome = await add({ configPath, slug: 'scratch', from: local, purpose: 'Scratch' })
 
         expect(outcome.status).toBe(2)
         expect(outcome.diagnostics[0]).toMatchObject({ code: 'SIBLING_REMOTE_MISSING' })
@@ -152,7 +152,7 @@ describe('sibling add', () => {
         const { configPath } = await estate()
         const before = await readFile(configPath, 'utf8')
 
-        const outcome = await add({ configPath, slug: 'api', create: true })
+        const outcome = await add({ configPath, slug: 'api', create: true, purpose: 'Again' })
 
         expect(outcome.status).toBe(2)
         expect(outcome.diagnostics[0]).toMatchObject({ code: 'SIBLING_SLUG_DUPLICATE', target: 'api' })
@@ -163,7 +163,7 @@ describe('sibling add', () => {
         const { configPath, siblings } = await estate()
         await mkdir(join(siblings, 'queue'))
 
-        const outcome = await add({ configPath, slug: 'queue' })
+        const outcome = await add({ configPath, slug: 'queue', purpose: 'Job queue' })
 
         expect(outcome.diagnostics).toEqual([])
         const after = await readFile(configPath, 'utf8')
@@ -177,6 +177,21 @@ describe('sibling add', () => {
         expect(after.indexOf('slug = "queue"')).toBeLessThan(after.indexOf('[ports.bases]'))
         expect(after).toContain('# Machine floor, measured once.')
         expect((await loaded(configPath)).sibling.map((sibling) => sibling.slug)).toEqual(['api', 'docs', 'queue'])
+    })
+})
+
+describe('sibling add purpose', () => {
+    it('refuses a new sibling without --purpose and shows an example, writing nothing', async () => {
+        const { configPath, siblings } = await estate()
+        await mkdir(join(siblings, 'orders'))
+        const before = await readFile(configPath, 'utf8')
+
+        const outcome = await add({ configPath, slug: 'orders' })
+
+        expect(outcome.status).toBe(2)
+        expect(outcome.diagnostics[0]).toMatchObject({ code: 'CLI_USAGE_INVALID', target: '--purpose' })
+        expect(outcome.diagnostics[0]?.message).toContain('--purpose "HTTP API for orders"')
+        expect(await readFile(configPath, 'utf8')).toBe(before)
     })
 })
 

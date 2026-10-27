@@ -121,20 +121,21 @@ where the repository is:
 
 ```sh
 # a directory that already exists under the siblings root (acquire = "none")
-cockpit sibling add api --config ./cockpit.toml
+cockpit sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
 
 # a repository that does not exist yet: runs `git init` on an empty or missing path
-cockpit sibling add api --config ./cockpit.toml --create
+cockpit sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
 
 # a checkout elsewhere on disk: records its origin so `setup` clones a fresh copy
-cockpit sibling add api --config ./cockpit.toml --from ~/code/api
+cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
 
 # a known remote (acquire = "auto"); also records a remote for an existing acquire = "none" sibling
-cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git
+cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
 ```
 
 `--dir <relative dir>` sets the directory under the siblings root (default: the slug), `--var <NAME>`
-the exported variable (default: the slug as `API_DIR`) and `--purpose "<text>"` the purpose line.
+the exported variable (default: the slug as `API_DIR`). `--purpose "<text>"` says what the
+repository is for; it is required for a new sibling and never defaulted.
 A duplicate slug, directory or variable is refused by name. `--create` never creates a GitHub
 repository: it prints the `gh repo create` command to run and the `--remote` call that records
 the result. `--from` never moves, modifies or deletes the original checkout, and refuses one with
