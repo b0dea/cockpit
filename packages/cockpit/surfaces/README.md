@@ -2,28 +2,25 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-These are the authenticated neutral templates that `cockpit sync` renders into a consumer's
-checkout. They describe that consumer's repositories, environment, guards, and work contracts.
-Repository tests and contributor configuration are outside this estate and cannot become
-generation inputs.
+These are the templates that `cockpit sync` renders into a consumer's checkout. They describe
+that consumer's repositories, environment, guards and work contracts. This repository's own
+tests and contributor configuration never become inputs to them.
 
 ## Rendering
 
-Templates are parameterised by the resolved configuration — the sibling registry, the mount
-lanes, the guard tables, the harness set — so a generated skill names *that* cockpit's
-repositories and commands rather than describing them generically.
+Templates are filled from the resolved configuration: the sibling repositories, mount modes,
+guard tables and configured harnesses. A generated skill therefore names that product's
+repositories and commands instead of describing them generically.
 
-Per the resolved overlay decision, cockpit resolves core plus the consumer's overlay itself
-and hands the generator one merged source. Merge semantics are ours and do not change when a
-dependency changes its own.
+cockpit merges the core templates with the consumer's overlays itself and hands the generator
+one merged source, so merge behaviour does not change when the generator dependency changes.
 
 ## Golden behavior
 
-These files are the authenticated neutral sources consumed by `cockpit sync`. Native skill
-entry points are deliberately transformed because each harness uses different frontmatter,
-tool names, paths, and sidecars. Their contract is the complete rendered inventory and the
-semantics checked by the skill contract.
+Skill entry points are transformed per harness, because each harness uses different
+frontmatter, tool names, paths and sidecar files. Their contract is the complete rendered
+inventory plus the meaning checked by the skill contract.
 
-Supplementary files that need no native spelling remain byte-for-byte goldens. The skill
+Supporting files that need no harness-specific spelling stay byte-for-byte copies. The skill
 contract compares every rendered copy of [skills/procedures/onboarding.md](skills/procedures/onboarding.md) with this source
 for all three harnesses.

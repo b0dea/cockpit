@@ -2,25 +2,15 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Cockpit renders one declared agent environment for Claude Code, Codex, and OpenCode. This page
-is for cockpit operators reviewing what `sync` will own, how product-specific extensions enter,
-and which claims still need native or human evidence.
+This page explains what `cockpit sync` writes for Claude Code, Codex CLI and OpenCode, how
+product-specific additions enter, and how each feature's enforcement is measured. It is for
+people reviewing generated agent configuration and for integrators extending it.
 
 ## Publish and verify
 
-Use the same configuration for every step:
-
-```sh
-cockpit sync --config ./cockpit.toml --dry-run
-cockpit sync --config ./cockpit.toml
-cockpit check --config ./cockpit.toml
-cockpit preflight --config ./cockpit.toml
-```
-
-The dry run prepares the same canonical model and reports ordered writes and removals without
-staging or changing files. `sync` publishes the complete owned set as one recoverable
-transaction. `check` is the sole drift authority and never repairs output. `preflight` then
-evaluates the generated environment with the other required environment evidence.
+Surfaces are published by the same `sync` and checked by the same `check` as the rest of the
+generated environment; follow [Bring the product up](getting-started.md#bring-the-product-up).
+`check` is the only drift authority and never repairs output.
 
 The repository action at `.github/actions/cockpit-check/action.yml` runs only `cockpit check`.
 The caller must install the exact cockpit version from its lockfile first; the action does not
@@ -32,16 +22,16 @@ Generated entries are either whole-file owned or an explicitly delimited region 
 file. The ownership manifest records the expected type, bytes, and source identities. Its
 unkeyed digest detects accidental changes but does not prove historical ownership. A dry run
 reports an exact stale-removal request and digest. Applying any stale removal requires a separate
-operator approval bound to the current paths and bytes. Plain `sync` refuses the apply;
-`sync --interactive` previews the request, displays its entries and digest, and requires the
-operator to type that exact digest before a revalidated apply. Changed stale paths remain
+approval bound to the current paths and bytes. Plain `sync` refuses the apply;
+`sync --interactive` previews the request, displays its entries and digest, and requires you to
+type that exact digest before a revalidated apply. Changed stale paths remain
 conflicts to reconcile.
 
 Core declarations and `[surfaces].overlays` merge by stable name. A colliding overlay must use
 `replaces` with the core name and the recorded SHA-256 of that original. `permissions` and `mcp`
 remain core authority and cannot be replaced by an overlay. When a later cockpit version changes
-an overridden original, `OVERRIDDEN_CORE_CHANGED` identifies the affected overlay before the
-operator accepts new output. `doctor` lists active overrides and changed originals from an
+an overridden original, `OVERRIDDEN_CORE_CHANGED` identifies the affected overlay before you
+accept new output. `doctor` lists active overrides and changed originals from an
 authenticated read-only generation preview; an unavailable preview is reported explicitly.
 Authored Markdown frontmatter must use unqualified YAML delimiters and valid bounded YAML.
 Cockpit rejects language-qualified or malformed frontmatter before generator dispatch.
@@ -57,8 +47,7 @@ Setting `[surfaces].bundles = ["claudecode-plugin"]` also publishes the generate
 bundle directory at **.cockpit/bundles/claudecode-plugin/**. It contains a manifest and the applicable generated
 skills, subagents, hooks, and MCP declaration. These files use the same ownership transaction
 and drift check as other surfaces. An unmanaged file in that directory remains untouched.
-Publication alone does not show that Claude loaded the bundle; native loading remains an
-operator evidence gate.
+Publication alone does not show that Claude loaded the bundle; that needs a native run.
 
 ## Capability states
 
@@ -167,10 +156,10 @@ version, help, candidate, and broken-control events. The configured command firs
 environment check and refuses an absent, malformed, stale, or provenance-mismatched artifact.
 Interactive mode requires a terminal. Before executing any submitted vector, it displays the
 canonical artifact path, whole-file SHA-256, bound source and manifest digests, and each exact
-invocation, version, and help command. The operator must type that artifact digest, then approve
+invocation, version, and help command. You must type that artifact digest, then approve
 each resolved executable by its displayed absolute path and SHA-256. It is unavailable in CI and
 JSON mode.
-Custom cells remain `human_needed` until an operator-approved exact probe is available.
+Custom cells remain `human_needed` until an approved exact probe is available.
 Generated custom-module checks do not authorize a constructed worker command.
 Without that approval, or when process isolation cannot be established, the cell remains
 `human_needed`. Claude Code and Codex skill reviews also remain

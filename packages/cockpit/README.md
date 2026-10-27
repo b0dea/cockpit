@@ -2,11 +2,13 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Cockpit boots one product from several working repositories and gives supported agent tools the
-same generated environment, instructions, controls, and verification entrypoints.
+cockpit runs the environment your AI coding agents work in. Declare a multi-repository product
+once in cockpit.toml; cockpit starts the whole stack against your live local checkouts, gives
+Claude Code, Codex CLI and OpenCode the same instructions, skills, guards and permissions, and
+hands finished work to an independent evaluator.
 
-The package is currently private at version `0.0.0`; no public registry installation is claimed.
-Use the [repository README](https://github.com/b0dea/cockpit#readme) for source-checkout setup,
-the synthetic quickstart, documentation, and current publication status.
+The package is pre-alpha and not yet published to npm. The
+[repository README](https://github.com/b0dea/cockpit#readme) has the source install, a
+quickstart on the synthetic example, the documentation and the current status.
 
-Cockpit requires Node.js 22 or newer. Its CLI entrypoint is `cockpit`.
+The CLI command is `cockpit`. Supported Node.js versions: `^22.13.0 || ^24.0.0 || ^26.0.0`.

@@ -2,9 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page gives maintainers a short path from a cockpit diagnostic to its public contract,
-implementation owner, tested remedy, and focused verification command. The full diagnostic
-families remain in the [environment reference](environment.md#respond-to-diagnostic-codes).
+This page takes you from a cockpit diagnostic code to its remedy, the code that owns it, and the
+test that pins it. Look the code up in the index at the end; remedies grouped by family are in
+the [environment reference](environment.md#respond-to-diagnostic-codes).
 
 ## GENERATED_ARTIFACT_DRIFT
 
@@ -42,7 +42,7 @@ probes, data operations, and vendor values enter through `[environment.generated
 `synchronizes one owned manifest idempotently and checks without mutation`. Run exactly:
 
 ```sh
-NPM_CONFIG_CACHE=/tmp/b0-cockpit-npm-cache npm test -- packages/cockpit/src/generated-environment/command.publication-core.test.ts -t 'synchronizes one owned manifest idempotently and checks without mutation'
+npm test -- packages/cockpit/src/generated-environment/command.publication-core.test.ts -t 'synchronizes one owned manifest idempotently and checks without mutation'
 ```
 
 The candidate exit synchronizes canonical bytes, then completes `check` without mutation. The
@@ -155,7 +155,7 @@ It can also mean a candidate, deliberately broken control, version/help event,
 transcript, or final evidence bundle did not establish the expected result. Inspect the named
 harness and retained bounded evidence. A missing executable, authentication requirement,
 unavailable isolation boundary, or pending enforcement probe remains `human_needed` until the
-operator action in the record is completed. Use `selftest --interactive` at a terminal outside CI;
+manual action in the record is completed. Use `selftest --interactive` at a terminal outside CI;
 approve the full artifact digest and vectors first, then each executable path and SHA-256.
 Approval lasts only for that run.
 

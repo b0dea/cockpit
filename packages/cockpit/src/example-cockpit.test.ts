@@ -18,11 +18,10 @@ const executed = { kind: 'executed', reason: 'run by the synthetic example accep
 const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof sourceInstall | typeof operator | typeof runtime | typeof executed)[]>([
     ['CONTRIBUTING.md', [developer, developer, developer]],
     ['README.md', [sourceInstall, operator]],
-    ['docs/adoption.md', [operator, operator, operator, runtime]],
+    ['docs/adoption.md', [operator, operator]],
     ['docs/contributing/style.md', [developer]],
-    ['docs/environment.md', [operator, runtime]],
     ['docs/getting-started.md', [sourceInstall, operator, operator, operator, runtime, runtime]],
-    ['docs/harness-surfaces.md', [operator, operator]],
+    ['docs/harness-surfaces.md', [operator]],
     ['docs/parallel-run.md', [operator, runtime, operator]],
     ['docs/contributing/releasing.md', [developer]],
     ['docs/release-policy.md', [operator]],
@@ -191,7 +190,7 @@ describe('the public synthetic cockpit', () => {
         const planted = new Map(documents)
         planted.set('docs/environment.md', `${planted.get('docs/environment.md')}\n\`\`\`sh\ncockpit unknown-command\n\`\`\`\n`)
         expect(publicShellInventory(planted).filter(row => row.kind === 'unclassified')).toContainEqual({
-            path: 'docs/environment.md', block: 3, kind: 'unclassified', reason: 'shell block and classification table differ',
+            path: 'docs/environment.md', block: 1, kind: 'unclassified', reason: 'shell block and classification table differ',
         })
     })
 })

@@ -1,102 +1,39 @@
-# Environment commands
+# Environment lifecycle
 
 <!-- cockpit:verified version=0.0.0 -->
 
-These commands operate on the repositories and runtime declared by <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. They do not
-create product code. Run them from a cockpit checkout with a configuration you have inspected.
+This reference explains how cockpit's environment commands behave: what each one owns, what it
+refuses, and how to recover. It is for people running cockpit on a product and for agents
+working inside it. For the order to run them in, follow
+[Bring the product up](getting-started.md#bring-the-product-up); every flag is in the
+[CLI reference](cli-reference.md), and `cockpit <command> --help` prints a command's usage.
 
-## Bootstrap a checkout
+## Output and exit codes
 
-Preview one explicit harness target before a configuration exists:
+Add `--json` to get the result and diagnostics as one JSON document on stdout. Without it,
+diagnostics and a one-line JSON summary go to stderr. Every refusal exits nonzero with a named
+diagnostic code; unknown flags are refused. `logs` defaults to `--tail 100 --since 15m`.
 
-```sh
-cockpit init . --target codexcli --json
-```
+## Input limits
 
-The target is required: `claudecode`, `codexcli`, or `opencode`. Supply `--registry <file>`
-when adopting an existing registry. The explicit root must exist and name its canonical
-directory. JSON preview does not write files or accept changes. To accept the shown files,
-use the same command with `--interactive` in a human terminal and type the exact preview digest.
-Re-run the same root and target to resume. Init binds durable state to the selected target,
-validates the written configuration, synchronizes generated output, checks drift and runs
-preflight. Report any named gap; a local preview does not prove native discovery or a real interview.
+Configuration, registry and adoption files are limited to 1,048,576 bytes before parsing.
+Unreadable, non-regular, oversized or concurrently changed inputs refuse with a diagnostic.
+Reduce an oversized input; raising an output or subprocess limit does not change this boundary.
 
-## Run the commands
+`document` can emit a visibly incomplete draft when a registry fact is missing; its JSON result
+is `null` for that gap. A skipped registry row emits nothing, because its repository scope may
+have been lost. `registry-resolve` emits sourceable shell data only from validated input.
 
-For the upgrade example, obtain a release evidence JSON file and its approved release-attestation
-digest first, and set `approved_release_sha256` to that independently obtained digest. Do not
-derive approval by hashing an untrusted candidate file.
+## Sibling and template paths
 
-```sh
-cockpit document --registry ./synthetic/registry.sh --output ./synthetic/draft.toml
-cockpit registry-resolve --registry ./synthetic/registry.sh --siblings-root ./synthetic/repos --adoption ./synthetic/adoption.json
-cockpit setup --config ./cockpit.toml
-cockpit sync --config ./cockpit.toml --dry-run
-cockpit sync --config ./cockpit.toml
-cockpit sync --config ./cockpit.toml --interactive
-cockpit check --config ./cockpit.toml
-cockpit selftest --interactive --config ./cockpit.toml --probe-specifications ./.cockpit/probe-specifications.json
-cockpit upgrade --config ./cockpit.toml --release-evidence ./release-evidence.json --release-evidence-sha256 "$approved_release_sha256"
-cockpit up --config ./cockpit.toml
-cockpit session --config ./cockpit.toml -- your-agent-command
-cockpit preflight --config ./cockpit.toml
-cockpit doctor --config ./cockpit.toml --json
-cockpit logs --config ./cockpit.toml --service api --tail 100 --since 15m
-cockpit baseline-record --config ./cockpit.toml --interactive
-cockpit sleep --config ./cockpit.toml
-DOCKER_CONTEXT=local-context cockpit down --config ./cockpit.toml
-DOCKER_CONTEXT=local-context cockpit reset --config ./cockpit.toml
-DOCKER_CONTEXT=local-context cockpit reset --config ./cockpit.toml --interactive
-```
+`sync` and `check` require each declared sibling directory to exist inside the siblings root,
+both lexically and after resolving filesystem links. An absolute sibling path is accepted only
+inside that root. Acquire missing checkouts before generating their environment.
 
-`--json` is available where listed below. It sends the result and diagnostics in one JSON envelope
-on stdout and suppresses human diagnostic rendering on stderr. In human mode, diagnostics go to
-stderr. A refusal has a nonzero exit
-status and a named diagnostic code. `cockpit --help` lists the available commands; it does not
-list flags and command-specific `--help` is not supported. The accepted flags are:
-
-| Command | Flags |
-|---|---|
-| `init <root>` | `--target <claudecode\|codexcli\|opencode>`, `--registry <file>`, `--interactive`, `--json` |
-| `document` | `--registry <file>`, `--output <file>`, `--json` |
-| `registry-resolve` | `--registry <file>`, `--siblings-root <directory>`, `--adoption <file>`, `--json` |
-| `setup` | `--config <file>`, `--json` |
-| `sync` | `--config <file>`, `--dry-run`, `--interactive`, `--json` |
-| `check` | `--config <file>`, `--json` |
-| `selftest` | `--config <file>`, `--probe-specifications <file>`, `--interactive`, `--json` |
-| `upgrade` | `--config <file>`, `--release-evidence <file>`, `--release-evidence-sha256 <digest>`, `--json` |
-| `up` | `--config <file>`, `--json` |
-| `session -- <command> [arguments...]` | `--config <file>` |
-| `sleep` | `--config <file>`, `--json` |
-| `down` | `--config <file>`, `--json` |
-| `reset` | `--config <file>`, `--interactive`, `--json` |
-| `preflight` | `--config <file>`, `--json` |
-| `doctor` | `--config <file>`, `--json` |
-| `logs` | `--config <file>`, `--service <name>`, `--tail <count>`, `--since <duration>`, `--follow`, `--json` |
-| `baseline-record` | `--config <file>`, `--interactive`, `--json` |
-
-`logs` defaults to `--tail 100 --since 15m`. Unknown flags are refused.
-
-`document` can emit a visibly incomplete human draft when a known registry fact is missing;
-its JSON result is `null` for that gap. A skipped registry row emits no artifact because its
-repository scope may have been lost. Review a draft's attributed gaps before using it as
-configuration. `registry-resolve` emits sourceable shell data only from validated input.
-
-Configuration, registry, and adoption files are limited to 1,048,576 bytes before parsing.
-Unreadable, non-regular, oversized, or concurrently changed inputs refuse with a diagnostic.
-Resolve an oversized input by reducing it; increasing an output or subprocess limit does not
-change this input boundary.
-
-`sync` and `check` require each declared sibling directory to exist within `cockpit.siblings_root`,
-both lexically and after resolving filesystem links. An absolute sibling path is supported only
-inside that root. Acquire missing checkouts before generating their environment. Use `setup` for
-consumer-owned templates; generated vendor templates need the
-[generation-first adoption order](adoption.md#adopt-in-bounded-layers).
-
-Generated vendor templates must also lie within the cockpit publication root. External sibling
-checkouts remain valid for mounted surfaces, but a vendor template outside that root is refused;
-cockpit never substitutes a similarly named directory inside its own checkout. Use a contained
-repository layout for generated supplier templates.
+Generated vendor templates must also lie inside the cockpit checkout. External sibling checkouts
+remain valid for mounted surfaces, but a vendor template outside the checkout is refused, and
+cockpit never substitutes a similarly named directory inside its own checkout. The
+[adoption guide](adoption.md#adopt-in-layers) gives the order for generated templates.
 
 ## Lifecycle and ownership
 
@@ -125,7 +62,7 @@ remains; one holder cannot stop a second holder's environment. `stackId` names t
 runtime, while `checkoutId` names a particular checkout. Equal stack identity does not make
 two checkouts interchangeable.
 
-`session` runs `up`, keeps that exact holder while one foreground agent or operator command is
+`session` runs `up`, keeps that exact holder while one foreground command is
 alive, and runs `sleep` only after the command's process group is confirmed stopped. A silent
 command remains active. Interrupting the wrapper terminates only that owned process group before
 sleeping. If termination of the owned process group cannot be confirmed, the holder is preserved for explicit
@@ -270,8 +207,8 @@ The evidence words in this reference are deliberate:
   include mounted candidates beside unmounted and incompatible controls, but those synthetic
   controls do not prove a particular local runtime.
 - **unavailable** means a current owner could not issue or authenticate the required evidence. It
-  is nonpassing. The native dependency probe remains unavailable until an operator supplies a
-  canonical generated configuration, checkout, and pinned incompatible-image control.
+  is nonpassing. The native dependency probe remains unavailable until you supply a canonical
+  generated configuration, checkout, and pinned incompatible-image control.
 - **human_needed** means semantic product or vendor behavior still needs a maintainer review and
   has not been mechanically established.
 

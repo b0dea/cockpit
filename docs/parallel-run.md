@@ -2,9 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide is for an operator comparing an existing bring-up path with cockpit in an isolated
-checkout. Comparison reports evidence. Default changes, fallback removal and publication require
-separate operator approval.
+This guide is for teams comparing an existing bring-up path with cockpit, side by side, in an
+isolated checkout before switching. Comparison only reports evidence: changing a default,
+removing the old path or publishing stays a separate decision you make.
 
 ## Prepare the exact subject
 
@@ -31,10 +31,10 @@ cockpit compare validate --fixture fixtures/cockpit/comparison.json --json
 ```
 
 Validation establishes the fixture's structure. It does not establish live source identity, runtime
-ownership, equivalence or real operator use. Unavailable, oversized, unsafe or malformed inputs
+ownership, equivalence or real use. Unavailable, oversized, unsafe or malformed inputs
 refuse with `COMPARISON_UNAVAILABLE`.
 
-After reviewing the configuration, package input and runtime selection, an operator may run:
+After reviewing the configuration, package input and runtime selection, run:
 
 ```sh human-only:runtime
 DOCKER_CONTEXT=reviewed-context cockpit compare run --fixture fixtures/cockpit/comparison.json --config cockpit.toml
@@ -60,8 +60,8 @@ Compare median invocation-to-healthy durations with zero tolerance: a slower coc
 Synthetic controls prove the classifier, not an actual product's startup time.
 
 Keep raw receipts under an ignored evidence directory. Reset-owned artifacts must be separate from
-the durable operator ledger. The CLI reads one bounded JSON ledger; a `.jsonl` filename does not
-change that format. The operator records ten consecutive working days, all data modes, every shared
+the durable real-use ledger. The CLI reads one bounded JSON ledger; a `.jsonl` filename does not
+change that format. You record ten consecutive working days, all data modes, every shared
 command and extra, actual receipt digests, explained differences and a dated sign-off.
 
 ```sh human-only:operator-ledger
@@ -70,12 +70,12 @@ cockpit compare status --fixture fixtures/cockpit/comparison.json --ledger .cock
 
 A structurally valid ledger returns `PARTIAL`, `satisfiesGate: false` and
 `operatorAuthentication: required`. Invalid, stale, unsigned, gapped or synthetic rows cannot pass.
-The CLI neither writes the ledger nor authenticates that the operator was present. Repeated
+The CLI neither writes the ledger nor authenticates that a person was present. Repeated
 synthetic runs cannot replace ten real working days.
 
 ## Retain rollback
 
 Keep the existing implementation frozen and invocable while evidence is collected. Review the
 exact selector and rollback invocation before changing a default. Comparison output contains no
-authority to flip that selector or delete either fallback. Preserve both until the operator accepts
-the required real-use and post-cutover observations and separately authorizes removal.
+authority to flip that selector or delete either fallback. Preserve both until you accept the
+required real-use and post-cutover observations and separately decide to remove one.

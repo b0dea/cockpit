@@ -2,93 +2,96 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide is for teams moving an existing multi-repository product into cockpit without replacing
-working configuration in one step. Keep the old path available until the equivalent cockpit path
-has current evidence.
+This guide is for teams that already run a multi-repository product with their own scripts or
+an earlier shell-registry cockpit, and want to move to cockpit one layer at a time without
+breaking what works. Keep the old path runnable until the cockpit path has passed the same
+checks.
 
-## Inspect before publishing
+## Describe the existing setup
 
-Run `document` from the intended [Cockpit checkout root](concepts.md#cockpit-checkout-root). It
-observes the existing checkout and emits attributed <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` content; it does not make every
-inferred value authoritative.
+If your current setup records its repositories in a shell registry, `document` turns it into an
+attributed <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` draft. By default it reads the registry at
+**env/lib/instance.sh** under the root you give it; pass `--registry` to name another file. A
+directory without a registry is refused with `REGISTRY_NOT_FOUND`, so for a product with no
+registry start from [Bootstrap a new product](getting-started.md#bootstrap-a-new-product)
+instead.
 
 ```sh
 cockpit document . --json
 ```
 
-The document preview reports <!-- cockpit:ref schema=ports.bases --> `ports.bases` as unresolved when the source
-[Cockpit product registry](concepts.md#cockpit-product-registry) does not carry the product port map.
-Supply and review that value and the generated environment declaration through interactive init,
-resolve every other reported gap, then compare the draft with the
-generated [configuration reference](configuration-reference.md). If a legacy registry exists,
-pass it explicitly with `--registry`; never substitute a similarly named file discovered elsewhere.
+Every value the registry did not state is marked with its source and the reason it was
+inferred or defaulted. This is real output for one of the repository's synthetic registry
+fixtures, run from the cockpit checkout:
+
+<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
+```console
+$ cockpit document --registry fixtures/registries/tier-dialect.sh
+#:schema ./node_modules/@b0dea/cockpit/cockpit.schema.json
+# COCKPIT DOCUMENT: INCOMPLETE DRAFT — this file intentionally fails validation.
+# Provenance — every unread value names its source and reason.
+# [default] cockpit.siblings_root = "..": the registry dialect does not record the sibling checkout root; materialised from the CockpitConfig schema default
+...
+# [inferred] sibling.app.mount = "always": tier "required" — the stack bind-mounts it or preflight fails
+# [inferred] sibling.app.acquire = "auto": tier "required" implies setup clones it
+...
+# [inferred] sibling.docs.mount = "host": purpose opens with `make screenshots` — a target, never a compose service
+...
+```
+
+The draft deliberately fails validation until you resolve its gaps. In particular it reports
+<!-- cockpit:ref schema=ports.bases --> `ports.bases` as unresolved when the registry does not carry the product's port map. Compare the
+draft with the [configuration reference](configuration-reference.md), fill each gap, and never
+substitute a similarly named registry found somewhere else.
 
 ## Bootstrap one harness
 
-Select one target so the preview has one unambiguous publication boundary:
+Pick one harness so the preview has a single publication boundary, preview, then accept:
 
 ```sh
-cockpit init . --target codexcli --registry /absolute/path/to/registry.toml --json
-cockpit init . --target codexcli --registry /absolute/path/to/registry.toml --interactive
+cockpit init . --target codexcli --registry ./env/lib/instance.sh --json
+cockpit init . --target codexcli --registry ./env/lib/instance.sh --interactive
 ```
 
-The first command previews. The second requires an attached terminal and the exact preview digest.
-Repeat the command to resume its persisted stage if an accepted dependency is repaired. Without a
-registry, init observes public package manifests and asks for unresolved facts. Accepted answers
-retain their source observation and provenance. One repository uses stack scope without estate
-registry or projection output; no runnable product receives no Compose output. A preview or a
-pending question does not establish adoption or a running environment.
+The first command writes nothing. The second needs a terminal and the exact preview digest.
+Accepted answers keep their source and provenance, and re-running the command resumes from the
+stage it reached. When `init` observes repositories directly beneath the cockpit root instead
+of reading a registry, it records `siblings_root = "."` as an inference for you to confirm.
 
-Greenfield observation inspects repositories directly beneath the cockpit root. Its configuration
-therefore attributes `siblings_root = "."` as an inference for confirmation, and sibling answers
-must retain the observed repository directories.
+## Adopt in layers
 
-Generated bootstrap skills can guide the same sequence inside a supported harness, but generation
-does not prove that the harness loaded them. A literal clean-machine terminal run and an in-session
-run are separate, operator-held evidence.
+Move one layer at a time, and keep the previous layer's old path until the new one passes:
 
-## Adopt in bounded layers
+1. **Registry.** Get the reviewed configuration to validate.
+2. **Generated environment and surfaces.** Run the
+   [canonical bring-up sequence](getting-started.md#bring-the-product-up) up to `check`, and
+   read the dry run before every `sync`.
+3. **Runtime.** Run `up` and `preflight` against the same configuration.
+4. **Guards, grading and more harnesses.** Add them once the earlier layers are stable. The
+   [capability matrix](capability-matrix.md) shows each harness feature's
+   [Cockpit harness capability state](concepts.md#cockpit-harness-capability-state); an
+   `instructed` feature should not yet replace a legacy control that is enforced.
 
-For repositories whose environment templates are already consumer-owned, adopt registry facts
-first, then generated environment and harness surfaces:
+Two ordering rules matter during the generated-environment layer:
 
-```sh
-cockpit setup --config ./cockpit.toml
-cockpit sync --config ./cockpit.toml --dry-run
-cockpit sync --config ./cockpit.toml
-cockpit check --config ./cockpit.toml
-```
+- **Generated vendor templates come first.** When cockpit generates a sibling's environment
+  template, prepare the sibling checkouts, run `sync`, then review and commit the template in its
+  own repository before `setup` creates the ignored instance from it. The
+  [tutorial](tutorial.md#apply-the-sync-and-set-up) shows this order.
+- **cockpit never takes over an unmanaged file.** If a file already exists where cockpit wants to
+  generate one, `sync` refuses. Keep the existing file, review the destination and the ownership
+  change, and move it deliberately.
 
-Inspect the dry run before publication.
-When a declared vendor supplier template is generated by cockpit, first prepare the sibling
-checkouts and other source inputs, then run the dry run and `sync`. Review and commit the generated
-template in its owning repository before `setup` initializes the ignored environment instance;
-finish with `check`. The [synthetic example](../examples/synthetic/README.md) exercises this order.
-Do not pre-create a generated template or replace an existing unmanaged predecessor: cockpit
-refuses to take ownership of it. Preserve the predecessor and review the destination and ownership
-change before proceeding.
-Before adopting environment credentials, establish the generated ignore boundary and follow
+Before adopting environment credentials, let `sync` create the ignore boundary and follow
 [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas).
-Keep provider access and encrypted resolver provisioning within their explicit operator scope.
-[Cockpit generated ownership](concepts.md#cockpit-generated-ownership) protects managed outputs; it does not authorize
-removal of an unmanaged predecessor. Keep existing bring-up and agent configuration available until
-`check`, `up`, and `preflight` pass for the same configuration and runtime.
-
-Add guards, grading, and more harness targets only after the earlier layer is stable. The current
-[capability matrix](capability-matrix.md) records each
-[Cockpit harness capability state](concepts.md#cockpit-harness-capability-state); an `instructed` row still needs native
-evidence before it can replace an enforced legacy control.
+[Cockpit generated ownership](concepts.md#cockpit-generated-ownership) protects cockpit's own
+output; it never authorises removing a file cockpit did not write.
 
 ## Complete the cutover
 
-Run the product and authenticated gate:
-
-```sh
-cockpit up --config ./cockpit.toml
-cockpit preflight --config ./cockpit.toml
-```
-
-Retire the predecessor only after its responsibilities have matching current evidence and rollback
-is understood. Destructive environment commands, stale generated-output removal, external service
-changes, and publication remain explicit human decisions. See [Environment](environment.md) for
-recovery and [Troubleshooting](troubleshooting.md) for named refusals.
+Retire the old path only when every responsibility it had passes under cockpit (`check`, `up`
+and `preflight` for the same configuration and runtime) and you know how to roll back.
+Destructive environment commands, stale-output removal, changes to external services and
+publication stay explicit human decisions. To compare the two paths side by side first, see
+[Environment comparison](parallel-run.md). For recovery, see [Environment](environment.md) and
+[Troubleshooting](troubleshooting.md).

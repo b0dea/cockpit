@@ -2,9 +2,10 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Cockpit binds authority to captured invocations and declared resources. This guide explains which
-requests are allowed, prompted, denied, or unavailable, and which claims still require operator
-evidence. It is for operators reviewing generated controls and agents working within them.
+This guide explains what cockpit's guards and launcher allow, ask about, deny or cannot
+evaluate, and why. It is for people reviewing generated controls and for agents working within
+them. Authority is always tied to a captured invocation and declared resources, never to a
+command family.
 
 The [command table](../packages/cockpit/src/command-table.ts),
 [autonomy launcher](../packages/cockpit/src/autonomy/launcher.ts), and
@@ -17,7 +18,7 @@ The [command table](../packages/cockpit/src/command-table.ts),
 | Outcome | Meaning |
 | --- | --- |
 | `allow` | Evaluation completed without a harder boundary; executable invocations match exact permitted profiles. |
-| `ask` | An operator decision is required. This grants no authority by itself. |
+| `ask` | A human decision is required. This grants no authority by itself. |
 | `deny` | A hard boundary forbids the request, even with an exact grant. |
 | `unavailable` | Cockpit could not authenticate or safely evaluate the request. No authority is granted. |
 
@@ -55,7 +56,7 @@ redirects, heredocs, comments, and definitions do not count as executable host u
 Pushes to declared protected branches are hard denials. This includes explicit protected
 destinations and `git push --all` or `git push --mirror` when protected branches are declared. Missing or unresolved
 destinations, including ambiguous source-only revisions, symbolic aliases, and wildcards, require
-an operator decision. An exact grant cannot override either boundary.
+a human decision. An exact grant cannot override either boundary.
 
 Unresolved Git execution context, destructive Git reset or clean forms, staging without explicit
 paths, wrapped or environment-modifying commands, and unmatched invocation profiles produce `ask`.
@@ -94,7 +95,7 @@ file may still be generated. Instruction projections also retain pending evidenc
 `human_needed` skill judgments. Historical adapter measurements do not prove current native
 enforcement. See [harness surfaces](harness-surfaces.md) for the wider surface estate.
 
-## Command completion and operator decline
+## Command completion and interactive decline
 
 Public CLI outcomes in `--json` mode carry a bounded invocation record with the command name, floored
 monotonic duration in milliseconds, resolved configuration path when present, and one exit status.
@@ -112,7 +113,7 @@ These CLI completion statuses are separate from native adapter decision encoding
 
 Interactive reset and baseline decline waits for cleanup before returning exit 130 with no
 result. A thrown decline cleanup reports failure instead of cancellation. JSON mode, CI, and
-non-terminal input cannot open an operator continuation. Noninteractive reset remains a preview;
+non-terminal input cannot open an interactive confirmation. Noninteractive reset remains a preview;
 baseline requires interaction. These boundaries belong to the
 [operator application](../packages/cockpit/src/environment/operator-application.ts).
 
@@ -144,24 +145,18 @@ reference publication does not establish a public release or native enforcement.
 For a refusal, use the diagnostic's implementing owner in [troubleshooting](troubleshooting.md).
 Do not edit an ownership record, evidence bundle, or generated control to conceal the refusal.
 
-## Evidence and operator holds
+## Evidence
 
-Static configuration, source inspection, synthetic fixtures, model self-report, and silence do
+Static configuration, source inspection, synthetic fixtures, model self-report and silence do
 not prove native enforcement. The
 [native evidence validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) binds exact
 current executable and wiring identities, generated-manifest and candidate digests, version,
-bounded transcripts, and validation results. Escalation evidence requires distinct ordinary,
-escalated, missing, and unknown mode rows, each with candidate and deliberately broken-control
-evidence. It expires and is rechecked against current installed wiring at use. Serialized or
-copied evidence objects do not reproduce its authority. Cleanup is outside this validator's
-evidence contract.
+bounded transcripts and validation results. Escalation evidence requires distinct ordinary,
+escalated, missing and unknown mode rows, each with candidate and deliberately broken-control
+evidence. It expires and is rechecked against current installed wiring at use; a copied evidence
+object carries no authority.
 
-Native prompt behavior requires current measurements; absent evidence remains non-authorizing.
 Missing evidence keeps cells `instructed` or `unavailable`, with `human_needed` judgments still
-pending. It does not relax hard denials or grant authority. Source tests establish source
-behavior; they do not satisfy native, human, bootstrap, or real-use acceptance.
-
-Operator gates keep cutover,
-fallback deletion, and gate evaluation under operator control. Real use needs human-paced
-evidence, and public publication remains a separate decision. Default changes and release
-decisions cannot be inferred from generated references or green source checks.
+pending. It never relaxes a hard denial or grants authority. Cutover, fallback deletion, default
+changes and publication stay human decisions; a green source check or a generated reference does
+not make them.
