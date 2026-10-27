@@ -156,16 +156,9 @@ function runGuard(bytes: string, payload: unknown, env: Record<string, string> =
         encoding: 'utf8',
         env: { ...process.env, PATH: process.env.PATH, ...env },
     })
-    const lines = result.stderr.match(/[^\n]*\n|[^\n]+$/g) ?? []
-    const records = lines.filter(line => line.startsWith('{"result":null,"diagnostics":[],"invocation":'))
-    expect(records).toHaveLength(1)
-    const record = JSON.parse(records[0]!)
-    expect(record).toEqual({ result: null, diagnostics: [], invocation: {
-        verb: 'guard-evaluate', durationMs: expect.any(Number), exitCode: result.status, resolvedConfigPath: null,
-    } })
-    expect(Number.isSafeInteger(record.invocation.durationMs)).toBe(true)
-    expect(record.invocation.durationMs).toBeGreaterThanOrEqual(0)
-    return { ...result, invocation: record.invocation, stderr: lines.filter(line => line !== records[0]).join('') }
+    // The hook transcript is shown to the model, so the guard must not append the CLI invocation record.
+    expect(result.stderr).not.toContain('"invocation":')
+    return result
 }
 
 function bash(command: string) {

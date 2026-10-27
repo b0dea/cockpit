@@ -19,7 +19,6 @@ import { applyGeneratedEnvironmentRepair, applySelectedBootstrapSurface, checkGe
 import * as publicationTransaction from './transaction.js'
 import * as generatedCommands from './command.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import { createInvocationRecord } from '../invocation.js'
 
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
@@ -360,15 +359,8 @@ it('consumes vendor and exact build/test authority through installed hook regist
         const result = spawnSync('/bin/sh', ['-c', hook], {
             cwd, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }),
         })
-        const lines = result.stderr.match(/[^\n]*\n|[^\n]+$/g) ?? []
-        const records = lines.filter(line => line.startsWith('{"result":null,"diagnostics":[],"invocation":'))
-        expect(records).toHaveLength(1)
-        const record = JSON.parse(records[0]!)
-        expect(record).toEqual({ result: null, diagnostics: [], invocation: createInvocationRecord(record.invocation) })
-        expect(record.invocation).toMatchObject({ verb: 'guard-evaluate', exitCode: result.status, resolvedConfigPath: null })
-        expect(Number.isSafeInteger(record.invocation.durationMs)).toBe(true)
-        expect(record.invocation.durationMs).toBeGreaterThanOrEqual(0)
-        return { ...result, invocation: record.invocation, stderr: lines.filter(line => line !== records[0]).join('') }
+        expect(result.stderr).not.toContain('"invocation":')
+        return result
     }
     expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
     expect(invoke('npm test -- unit.test.ts')).toMatchObject({ status: 0, stdout: '', stderr: '' })
