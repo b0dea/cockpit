@@ -76,8 +76,12 @@ delete the existing path as a workaround.
 
 `SURFACE_STATE_CONFLICT` means a shared region, stale entry, symlink, or prior ownership record no
 longer matches the bytes cockpit previously owned. Preserve the current bytes and reconcile their
-owner before retrying. `SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling
-could not be authenticated. Restore that source at its declared root and retry the dry run.
+owner before retrying. For a team's own `.claude/settings.json`, `.codex/config.toml` or
+`.codex/hooks.json`, the message names the `sync --adopt` command that keeps it; see
+[Adopt existing agent settings](adoption.md#adopt-existing-agent-settings).
+`SURFACE_ADOPTION_REFUSED` names the adopted key that would switch off or bypass the guard, or that
+cockpit writes with a different value; remove it from the named file and sync again.
+`SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be authenticated. Restore that source at its declared root and retry the dry run.
 `SURFACE_CUSTOM_REFUSED` means the named custom harness module did not return a complete result
 bound to its declaration and source digest, or an `enforced` row's evidence file was missing or
 did not match its declared SHA-256. Inspect the module, evidence reference, and broken control.

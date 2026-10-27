@@ -18,7 +18,7 @@ const executed = { kind: 'executed', reason: 'run by the synthetic example accep
 const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof sourceInstall | typeof operator | typeof runtime | typeof executed)[]>([
     ['CONTRIBUTING.md', [developer, developer, developer]],
     ['README.md', [sourceInstall, operator]],
-    ['docs/adoption.md', [operator, operator]],
+    ['docs/adoption.md', [operator, operator, operator]],
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [runtime]],
     ['docs/getting-started.md', [sourceInstall, operator, operator, operator, operator, runtime, operator, operator, runtime]],

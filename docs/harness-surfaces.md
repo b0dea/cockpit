@@ -25,7 +25,9 @@ reports an exact stale-removal request and digest. Applying any stale removal re
 approval bound to the current paths and bytes. Plain `sync` refuses the apply;
 `sync --interactive` previews the request, displays its entries and digest, and requires you to
 type that exact digest before a revalidated apply. Changed stale paths remain
-conflicts to reconcile.
+conflicts to reconcile. A team's existing `.claude/settings.json`, `.codex/config.toml` or
+`.codex/hooks.json` is not overwritten: [adopt it](adoption.md#adopt-existing-agent-settings) and
+cockpit renders a merge of the team's copy and its own output.
 
 Core declarations and `[surfaces].overlays` merge by stable name. A colliding overlay must use
 `replaces` with the core name and the recorded SHA-256 of that original. `permissions` and `mcp`

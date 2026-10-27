@@ -80,12 +80,59 @@ Two ordering rules matter during the generated-environment layer:
   [tutorial](tutorial.md#apply-the-sync-and-set-up) shows this order.
 - **cockpit never takes over an unmanaged file.** If a file already exists where cockpit wants to
   generate one, `sync` refuses. Keep the existing file, review the destination and the ownership
-  change, and move it deliberately.
+  change, and move it deliberately. A team's existing agent settings file is the one exception
+  with a supported path: [adopt it](#adopt-existing-agent-settings) so cockpit merges it.
 
 Before adopting environment credentials, let `sync` create the ignore boundary and follow
 [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas).
 [Cockpit generated ownership](concepts.md#cockpit-generated-ownership) protects cockpit's own
 output; it never authorises removing a file cockpit did not write.
+
+## Adopt existing agent settings
+
+This section is for a repository that already commits its own `.claude/settings.json`,
+`.codex/config.toml` or `.codex/hooks.json` (team hooks and permissions). cockpit writes those
+three files whole, so a plain `sync` refuses with `SURFACE_STATE_CONFLICT` and names the command
+that keeps the team's settings instead of overwriting them:
+
+```sh
+cockpit sync --config cockpit.toml
+cockpit sync --config cockpit.toml --adopt .claude/settings.json
+cockpit check --config cockpit.toml
+```
+
+`--adopt <path>` can be repeated, once per file. It moves the file's bytes to
+`cockpit/adopted/<path>`, records one
+<!-- cockpit:ref schema=surfaces.adopted --> `surfaces.adopted` row in cockpit.toml (path, source,
+SHA-256 of the moved bytes, date, provenance), and syncs. The file at `<path>` becomes cockpit's
+merge of the adopted copy and its own rendering:
+
+- **Hooks:** the team's hooks are kept beside cockpit's guard hook, by the same rule cockpit uses
+  for two of its own producers: `PreToolUse` entries are combined, and any other hook event both
+  sides define must be identical.
+- **Claude permissions:** `allow`, `ask` and `deny` rules are combined. A rule cockpit denies is
+  never kept as a team `allow` or `ask`.
+- **Every other key** is the team's, unless cockpit writes the same key; then the two values must
+  match.
+
+Commit `cockpit/adopted/` with cockpit.toml: it is the team's copy, and the place to change those
+settings from now on. Editing the merged file by hand is reported by `check` and refused by `sync`;
+edit the adopted copy, delete the merged file and run `sync` again. A changed adopted copy is
+reported as drift by `check` until `sync` merges it again. The recorded SHA-256 says which bytes were
+moved; it is a record, not a lock, so it does not stop the copy from changing. Uninstalling
+cockpit's generated files puts the adopted bytes back at `<path>`.
+
+Adoption is refused with `SURFACE_ADOPTION_REFUSED`, naming the key, when the adopted file would
+switch off or route around the guard or carry an authority cockpit declares elsewhere:
+`disableAllHooks`, `permissions.defaultMode = "bypassPermissions"`, any hook that names a
+`.cockpit/guards/` transport, `permissions.additionalDirectories` and `enabledMcpjsonServers`
+(declare a sibling or approve the MCP server instead), and in `.codex/config.toml`, `mcp_servers`
+and `features.codex_hooks = false`. A refused adoption is rolled back: the file stays where it was
+and cockpit.toml is unchanged. Adoption changes cockpit.toml, so it is never a dry run, never
+`--interactive`, and an agent's guard never treats it as an ordinary command.
+
+`opencode.jsonc` is not adopted: cockpit already shares that file and owns only its `$schema`,
+`instructions`, `mcp` and `permission` keys, so the team's other keys are kept as they are.
 
 ## Complete the cutover
 
