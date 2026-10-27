@@ -77,10 +77,18 @@ where it came from, and a changed repository invalidates earlier answers instead
 them. Re-running the same command resumes where it stopped. A single repository gets stack
 scope: the environment without the multi-repository registry and guide projection. A directory
 with nothing runnable gets a surfaces-only configuration with no `[environment]`, and `init` says
-that no runtime is declared; see [Environment modes](environment.md#environment-modes).
+that no runtime is declared; see [Environment modes](environment.md#environment-modes). That
+includes an empty directory and a repository of documents with no package manifest: there,
+`init` proposes the cockpit root itself as the first sibling (`dir = "."`, `mount = "none"`),
+and you add the product's repositories later with [`sibling add`](#add-or-remove-a-repository).
 
-Review the port map, the generated environment declaration and the defaults before accepting
-the configuration.
+Where a runtime is declared, `init` also asks for the machine floor the product needs. On every
+interview it asks for the database and live vendor API hosts of each non-local environment
+(production, staging, shared), which the generated guard denies to agents; an explicit empty
+answer is recorded as a decision in `cockpit.toml`.
+
+Review the port map, the generated environment declaration, the guard hosts and the defaults
+before accepting the configuration.
 
 ### Bootstrap without a terminal
 
@@ -120,6 +128,10 @@ purpose = "Shared library"
 
 [ports]
 bases = {}
+
+[guards]
+hosted_db_hosts = []
+vendor_endpoint_hosts = []
 ```
 
 | Field | Answer |
@@ -131,6 +143,8 @@ bases = {}
 | `environment.install_policies` | the dependency install protocols; `[]` for none |
 | `environment.generated` | the generated environment to render |
 | `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
+| `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |
+| `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; both `[]` records that none exists |
 
 Answers an earlier run recorded are kept, so the same file can be passed on every run as long as
 it repeats them. A different value for a recorded field is refused (`INIT_ANSWER_CONFLICT`) before
@@ -138,8 +152,10 @@ anything is published: drop that field from the file to keep the recorded answer
 command to reset a recorded answer. A field the interview never asked for is reported as
 `INIT_ANSWER_UNUSED`. The proposed values come from
 cheap, exact sources only: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, the variable names
-(never the values) in `.env.example`, an existing Compose file, and the `services:` of GitHub
-workflows. Each is a proposal to confirm, not an answer; an unreadable source is listed in
+(never the values) in env templates such as `.env.example` and `.env.staging.example`, an
+existing Compose file, and the `services:` of GitHub workflows. A variable whose name suggests a
+database or a vendor endpoint, such as `DATABASE_URL`, is proposed under `guards` as a question
+about which host it points at, not as a host. Each is a proposal to confirm, not an answer; an unreadable source is listed in
 `interview.inferenceSkipped`. A run that declares a runtime ends with `preflight`, which needs the Docker runtime named in
 [Install cockpit](#install-cockpit); without it the run stops there and resumes when you rerun.
 
@@ -200,7 +216,8 @@ the exported variable (default: the slug as `API_DIR`). `--purpose "<text>"` say
 repository is for; it is required for a new sibling and never defaulted.
 A duplicate slug, directory or variable is refused by name. `--create` never creates a GitHub
 repository: it prints the `gh repo create` command to run and the `--remote` call that records
-the result. `--from` never moves, modifies or deletes the original checkout, and refuses one with
+the result, and with `--json` returns them as `result.publish.command` and
+`result.publish.recordRemote`. `--from` never moves, modifies or deletes the original checkout, and refuses one with
 no `origin` remote.
 
 ```sh

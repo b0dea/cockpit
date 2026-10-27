@@ -11,7 +11,7 @@ written for a terminal.
 ## Safety contract
 
 cockpit exists so that an agent's environment holds no guesses. A clean-looking configuration
-with invented values in it is the failure it is built to prevent, so the agent works under four
+with invented values in it is the failure it is built to prevent, so the agent works under five
 rules for the whole adoption:
 
 1. **Ask the human first** before any of these, and wait for a yes:
@@ -30,6 +30,9 @@ rules for the whole adoption:
 4. **Inferred values carry provenance and need confirmation.** Whatever you derive, and whatever
    `init` proposes under `provenance.kind = "inferred"`, is shown to the human with the file it
    came from. It becomes an answer only on their word.
+5. **Ask for every non-local host.** The `guards` answer lists the database and live vendor API
+   hosts of production, staging and shared environments; propose the variable names `init` found
+   in env templates, never read their values, and take each host from the human.
 
 These are instructions, not enforcement: no harness blocks an agent that ignores them. The guard
 cockpit installs later blocks some commands; see [Safety and autonomy](safety-and-autonomy.md).
@@ -89,16 +92,56 @@ human before running `git init` there: the generated files are meant to be commi
 Done when `cockpit check --config cockpit.toml --json` exits 0 and every repository the human
 named is declared.
 
-`init` reads the repositories under the root, so in a directory with none it cannot interview: its
-preview warns `INIT_INTERVIEW_PREVIEW_UNAVAILABLE` and accepting it is refused with
-`DOCUMENT_ESTATE_OBSERVATION_INVALID`. Start the cockpit first, then add repositories as the
-product grows.
+With no repository under the root, `init` observes nothing runnable and builds a surfaces-only
+cockpit. Its first sibling is the cockpit root itself: the schema needs one sibling, and the root
+is where the product's notes and decisions live until its repositories exist.
 
-1. Ask the human for the cockpit name and for one directory to hold the product's notes and
-   decisions, with a one-line purpose. Write a surfaces-only `cockpit.toml` in the shape of
-   [examples/docs-only](../examples/docs-only/README.md): `[cockpit]`, one `[[sibling]]` with
-   `acquire = "none"`, and `[ports] bases = {}`. The schema needs at least one sibling.
-2. Preview, show the human the listing, then publish and check:
+1. **Preview** from the directory that will hold the cockpit:
+
+   ```sh
+   cockpit init "$(pwd)" --target claudecode --json
+   ```
+
+   `result.interview.outstanding` lists `sibling`, `ports.bases`, `guards` and
+   `configuration.defaults`. Under `sibling`, `inferred` proposes the root row: the directory name
+   as `slug`, `dir = "."`, `mount = "none"` and `acquire = "none"`. It has no `purpose`.
+2. **Write the answers file** with the purpose and the non-local hosts from the human. For a
+   product not yet started there are usually no hosts, and an explicit empty answer is recorded
+   as a decision. In a directory named `orders`:
+
+   ```toml
+   [[sibling]]
+   slug = "orders"
+   dir = "."
+   mount = "none"
+   acquire = "none"
+   var = "ORDERS_DIR"
+   purpose = "Product notes and decisions"
+
+   [ports]
+   bases = {}
+
+   [guards]
+   hosted_db_hosts = []
+   vendor_endpoint_hosts = []
+   ```
+
+   `mount = "none"` because the agent already works in the root: mounting it, or projecting its
+   guides, would point the cockpit's own files at themselves.
+3. **Accept the preview and the answers, then the defaults**, exactly as in steps 3 and 4 of
+   [One or several repositories](#one-or-several-repositories). The run ends at
+   `environment-verified` and reports `ENVIRONMENT_NOT_DECLARED` as information.
+4. **Add each repository** the product will have. `--purpose` is required and comes from the
+   human:
+
+   ```sh
+   cockpit sibling add api --config cockpit.toml --create --purpose "HTTP API for orders" --json
+   ```
+
+   `--create` runs `git init` on an empty or missing directory and never creates a hosted
+   repository. `result.publish.command` is the `gh repo create` command to hand to the human, and
+   `result.publish.recordRemote` is the `sibling add <slug> --remote <url>` call that records the
+   result. Then preview, publish and check:
 
    ```sh
    cockpit sync --config cockpit.toml --dry-run --json
@@ -106,28 +149,17 @@ product grows.
    cockpit check --config cockpit.toml --json
    ```
 
-3. For each repository the product will have, create and declare it. `--purpose` is required and
-   comes from the human:
-
-   ```sh
-   cockpit sibling add api --config cockpit.toml --create --purpose "HTTP API for orders" --json
-   ```
-
-   `--create` runs `git init` on an empty or missing directory and never creates a hosted
-   repository. Without `--json` it prints the `gh repo create` command for the human and the
-   `sibling add <slug> --remote <url>` call that records the result. Then run the sync sequence
-   from step 2 again.
-
 ### Docs or decisions only
 
 Done when `cockpit check --config cockpit.toml --json` exits 0 and `cockpit up` refuses with
 `ENVIRONMENT_NOT_DECLARED`.
 
-A repository with no package manifest is not observed by `init`, so a documents-only repository
-takes the same route as an [empty directory](#empty-directory): a hand-written surfaces-only
-`cockpit.toml` whose sibling is the documents directory. [Environment modes](environment.md#environment-modes)
-explains what surfaces-only publishes. The runtime commands refuse with
-`ENVIRONMENT_NOT_DECLARED`, which is the expected result, not a failure to fix.
+A repository with no package manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`,
+`Gemfile`) has nothing runnable. Run `init` from the repository itself and follow
+[Empty directory](#empty-directory) steps 1 to 3: the documents repository is the cockpit root
+and its own first sibling. [Environment modes](environment.md#environment-modes) explains what
+surfaces-only publishes. The runtime commands refuse with `ENVIRONMENT_NOT_DECLARED`, which is the
+expected result, not a failure to fix.
 
 ### One or several repositories
 
@@ -223,9 +255,10 @@ a `[ports.bases]` variable, and a service without a healthcheck warns. The rules
 [examples/compose-first](../examples/compose-first/README.md). Changing the Compose file is a
 product change: ask first.
 
-The runtime commands also need an `[environment.machine]` table (`runtime_memory_mb`,
-`runtime_cpus`, `free_disk_mb`, `cold_start_seconds`); without it they refuse with
-`CONFIG_SCHEMA_INVALID`. Ask the human for these floors rather than picking numbers.
+`init` then asks `environment.machine`: the floor the product needs from the container runtime
+(`runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`). These are product
+requirements and `init` proposes none of them, so ask the human rather than picking numbers, and
+answer under `[environment.machine]` in the answers file.
 
 ### No local setup
 
