@@ -101,6 +101,14 @@ function logRequest(value: unknown): LogRequest | undefined {
     return input as LogRequest
 }
 
+// Logs must read the daemon the lifecycle started, so they accept the same local selection: a named
+// context or a unix:// socket (rootless Docker, OrbStack and Colima are reached that way). TLS and
+// remote endpoints stay refused.
+function localDockerSelection(name: string, value: string): boolean {
+    return name === 'DOCKER_HOST' ? /^unix:\/\/\/\S+$/.test(value)
+        : name === 'DOCKER_CONTEXT' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
+}
+
 export function planLogs(rawInput: LogRequest, generatedComposeAuthority?: GeneratedComposeArtifactAuthority): LogPlan {
     const input = logRequest(snapshotJson(rawInput))
     if (input === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request must be readable JSON data' }
@@ -113,7 +121,8 @@ export function planLogs(rawInput: LogRequest, generatedComposeAuthority?: Gener
         || !Number.isInteger(input.timeoutMs) || input.timeoutMs <= 0 || input.timeoutMs > 300_000
         || !Number.isInteger(input.outputLimitBytes) || input.outputLimitBytes <= 0 || input.outputLimitBytes > 16_777_216
         || input.composeFiles.length === 0
-        || Object.entries(input.env).some(([name, value]) => name.startsWith('COMPOSE_') || name.startsWith('DOCKER_') || name.includes('\0') || value.includes('\0'))) {
+        || Object.entries(input.env).some(([name, value]) => name.startsWith('COMPOSE_') || name.includes('\0') || value.includes('\0')
+            || name.startsWith('DOCKER_') && !localDockerSelection(name, value))) {
         return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request must be resolved and bounded' }
     }
     const composeBoundary = createRuntimeAdapter({

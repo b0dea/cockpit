@@ -285,6 +285,14 @@ describe('runtime logs', () => {
         expect(result.step).toEqual(expect.objectContaining({ timeoutMs: 10_000, stdoutLimitBytes: 4096 }))
     })
 
+    it('reads logs from the local socket or context the lifecycle selected', () => {
+        for (const env of [{ PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic/docker.sock' }, { PATH: '/usr/bin', DOCKER_CONTEXT: 'synthetic' }] as Readonly<Record<string, string>>[]) {
+            const result = planLogs({ ...input, env })
+            expect(result.kind, JSON.stringify(env)).toBe('planned')
+            if (result.kind === 'planned') expect(result.step.env).toEqual(env)
+        }
+    })
+
     it('binds collection to the authenticated container identity rather than a replaceable Compose service', () => {
         const authenticatedContainerId = sha('authenticated container')
         const result = planLogs({ ...input, containerId: authenticatedContainerId })
@@ -335,7 +343,7 @@ describe('runtime logs', () => {
         }
     })
 
-    it.each([{ service: '--all' }, { service: 'worker' }, { since: 'yesterday' }, { since: '2026-02-30T00:00:00Z' }, { configSha256: 'unbound' }, { tail: -1 }, { timeoutMs: 0 }, { outputLimitBytes: 20_000_000 }, { runtime: 'other' }, { batchId: 'unbound' }, { containerId: '--privileged' }, { executable: { ...input.executable, invocationPath: '/tmp/not-docker' } }, { env: { PATH: '$UNRESOLVED' } }, { env: { PATH: 'x\0y' } }])('refuses ambiguous or unbounded requests', (patch) => {
+    it.each([{ service: '--all' }, { service: 'worker' }, { since: 'yesterday' }, { since: '2026-02-30T00:00:00Z' }, { configSha256: 'unbound' }, { tail: -1 }, { timeoutMs: 0 }, { outputLimitBytes: 20_000_000 }, { runtime: 'other' }, { batchId: 'unbound' }, { containerId: '--privileged' }, { executable: { ...input.executable, invocationPath: '/tmp/not-docker' } }, { env: { PATH: '$UNRESOLVED' } }, { env: { PATH: 'x\0y' } }, { env: { PATH: '/usr/bin', DOCKER_HOST: 'tcp://127.0.0.1:2375' } }, { env: { PATH: '/usr/bin', DOCKER_TLS_VERIFY: '1' } }])('refuses ambiguous or unbounded requests', (patch) => {
         expect(planLogs({ ...input, ...patch } as typeof input).kind).toBe('unavailable')
     })
 
