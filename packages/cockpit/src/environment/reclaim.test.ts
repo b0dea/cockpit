@@ -664,35 +664,38 @@ describe('reset planning', () => {
         const root = await canonicalTemp('cockpit-reset-')
         try {
             await mkdir(join(root, 'generated', 'session'), { recursive: true })
-            const fresh = await authenticatedDiscovery(root, snapshot([
+            // The stack's own stopped container still references its volume, and Docker refuses
+            // to remove a referenced volume, so reset removes that container first. A container
+            // another stack owns is never a reset target.
+            const discovered = () => snapshot([
+                resource({ id: 'container-1', name: 'synthetic-api-1' }),
+                resource({ id: 'container-2', name: 'other-api-1', labels: { ...labels, 'dev.b0dea.cockpit.stack-id': `stack:${sha('other stack')}` } }),
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ]).resources)
+            ]).resources
+            const fresh = await authenticatedDiscovery(root, discovered())
             const preview = await planReset(resetInput(root, { discovery: fresh }))
             expect(preview).toEqual(expect.objectContaining({ kind: 'preview', coordinationRevision: 7 }))
             if (preview.kind !== 'preview') return
-            expect(preview.targets.map(({ kind, identity }) => ({ kind, identity }))).toEqual([
-                { kind: 'host-path', identity: join(root, 'generated', 'session') },
-                { kind: 'volume', identity: 'session-data' },
+            expect(preview.targets.map(({ kind, identity, declaration }) => ({ kind, identity, declaration }))).toEqual([
+                { kind: 'container', identity: 'container-1', declaration: 'synthetic-api-1' },
+                { kind: 'host-path', identity: join(root, 'generated', 'session'), declaration: 'generated/session' },
+                { kind: 'volume', identity: 'session-data', declaration: 'session-data' },
             ])
 
             const coordinationAddress = await writeCoordination(root)
             expect(await planReset(resetInput(root, {
                 confirmationDigest: preview.digest, discovery: fresh, coordinationAddress,
             }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
-            const actionDiscovery = await authenticatedDiscovery(root, snapshot([
-                resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ]).resources)
+            const actionDiscovery = await authenticatedDiscovery(root, discovered())
             const accepted = await planReset(resetInput(root, {
                 confirmationDigest: preview.digest, consent: preview.consent, discovery: actionDiscovery, coordinationAddress,
             }))
             expect(accepted).toEqual(expect.objectContaining({
-                kind: 'complete', step: null, actionAuthority: expect.any(Object), remaining: 1,
+                kind: 'complete', step: null, actionAuthority: expect.any(Object), remaining: 2,
             }))
             if (accepted.kind !== 'complete') return
             expect(JSON.stringify(accepted)).not.toContain('-rf')
-            const reusedConsentDiscovery = await authenticatedDiscovery(root, snapshot([
-                resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ]).resources)
+            const reusedConsentDiscovery = await authenticatedDiscovery(root, discovered())
             expect(await planReset(resetInput(root, {
                 confirmationDigest: preview.digest, consent: preview.consent, discovery: reusedConsentDiscovery, coordinationAddress,
             }))).toEqual(expect.objectContaining({ kind: 'refusal' }))

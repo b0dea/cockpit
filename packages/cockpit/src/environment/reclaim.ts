@@ -1111,7 +1111,7 @@ export function combineReclaimDiscoveries(snapshots: readonly ReclaimDiscoverySn
 }
 
 export interface ResetTargetInput {
-    readonly kind: 'volume' | 'host-path'
+    readonly kind: 'container' | 'volume' | 'host-path'
     readonly identity: string
     readonly declaration: string
     readonly labels?: Readonly<Record<string, string>>
@@ -1153,6 +1153,10 @@ type ResetTargetAuthority =
     | Omit<ResetTargetInput, 'kind'> & {
           readonly kind: 'volume'
           readonly evidence: { readonly resourceId: string; readonly bytes: number | null; readonly generation: string }
+      }
+    | Omit<ResetTargetInput, 'kind'> & {
+          readonly kind: 'container'
+          readonly evidence: { readonly resource: ReclaimResource }
       }
 
 export interface PlanResetInput extends ClassifyReclaimInput {
@@ -1463,6 +1467,21 @@ async function resetAuthorities(input: PlanResetInput): Promise<ResetTargetAutho
             evidence: Object.freeze({ resourceId: match.id, bytes: match.bytes, generation: match.generation }),
         }))
     }
+    // Docker refuses to remove a volume a container still references, stopped or not, and the
+    // runtime stop leaves the stack's containers in place. So a reset that removes volumes first
+    // removes the containers the same ownership evidence names as this stack's own; containers
+    // sort before volumes, so they are removed first. Without them every approved reset failed
+    // with "volume is in use".
+    if (targets.length > 0) {
+        for (const match of classified.resources) {
+            if (match.kind !== 'container' || match.ownership !== 'current' || match.action !== 'teardown') continue
+            const { ownership: _ownership, reversibility: _reversibility, action: _action, evidence: _evidence, reason: _reason, suggestion: _suggestion, ...resource } = match
+            targets.push(Object.freeze({
+                kind: 'container', identity: match.id, declaration: match.name, labels: Object.freeze({ ...match.labels }),
+                evidence: Object.freeze({ resource: Object.freeze(resource) }),
+            }))
+        }
+    }
     const hostIdentities = new Set<string>()
     for (const declaration of input.generatedHostPaths) {
         const evidence = await inspectHostPath(declaration)
@@ -1592,7 +1611,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             authorities = remainingNow
         }
         const digestTargetIds = Object.freeze(authorities
-            .filter((candidate) => candidate.kind === 'volume' || (candidate.evidence as HostPathEvidence).state === 'present')
+            .filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
             .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
         const digestIdentities = coldPlanningIdentities ?? resetTargetIdentities(digestTargetIds, authorities)
         const digest = continued?.consentDigest ?? digestValue({
@@ -1615,8 +1634,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 targets: publicTargets, noop: authorities.length === 0,
                 consent: issueConsent(digest, previewAuthority),
             })
-            const actionable = authorities.filter((candidate) => candidate.kind === 'volume'
-                || (candidate.evidence as HostPathEvidence).state === 'present')
+            const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
             const targetIds = Object.freeze(actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
             const identities = resetTargetIdentities(targetIds, actionable)
             if (identities === undefined) {
@@ -1667,8 +1685,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset requires a fresh authenticated runtime discovery', 'reset-discovery')
         }
         // Revalidation narrows cooperative races; portable process APIs cannot bind a daemon object or pathname descriptor through its final removal syscall.
-        const actionable = authorities.filter((candidate) => candidate.kind === 'volume'
-            || (candidate.evidence as HostPathEvidence).state === 'present')
+        const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
         const target = actionable[0]
         if (target === undefined) return Object.freeze({ kind: 'complete', step: null, actionAuthority: null, remaining: 0, noop: true, digest, continuation: null })
         const step = target.kind === 'host-path'
@@ -1677,7 +1694,13 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 [pathExecutable.canonicalPath, '-rf', '--', target.identity],
                 pathExecutable, input.cwd, env, input.timeoutMs, [target.identity],
                 { stackId: input.stackId, configSha256: input.configSha256, resetKind: target.kind },
-                [{ path: target.identity, expected: (target.evidence as HostPathEvidence).type! }],
+                [{ path: target.identity, expected: target.evidence.type! }],
+            )
+            : target.kind === 'container' ? exactStep(
+                `reset:container:${digestValue(target.identity).slice(0, 16)}`,
+                [runtimeExecutable.canonicalPath, '--host', selection.endpoint, 'container', 'rm', '--force', '--', target.identity],
+                runtimeExecutable, input.cwd, env, input.timeoutMs, [],
+                { stackId: input.stackId, configSha256: input.configSha256, resetKind: target.kind, container: target.declaration },
             )
             : exactStep(
                 `reset:volume:${digestValue(target.identity).slice(0, 16)}`,
@@ -2205,6 +2228,12 @@ function resetTargetIdentities(
                 targetId, 'host-path', target.declaration, target.root, target.identity,
                 target.evidence,
             )
+            return identity === undefined ? [] : [identity]
+        }
+        // A container is committed with the identity teardown commits for it, so recovery reads
+        // one runtime identity shape whichever verb removed it.
+        if (target.kind === 'container') {
+            const identity = teardownRuntimeTargetIdentity(targetId, target.evidence.resource)
             return identity === undefined ? [] : [identity]
         }
         const evidence = target.evidence
