@@ -173,6 +173,8 @@ cold_start_seconds = 300
                     byteLength: Buffer.byteLength(validConfig),
                     sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
                 },
+                // The fixture writes no guard host keys, so their empty defaults are not an operator statement.
+                guardHostsStated: false,
             },
         })
     })
