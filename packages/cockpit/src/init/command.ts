@@ -113,6 +113,33 @@ function unattendedAnswer(
     }
 }
 
+const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonicalJson).join(',')}]`
+    : isTable(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
+        : JSON.stringify(value)
+
+/**
+ * An answer an earlier run recorded stays in force, so a different value in the file must not be
+ * accepted quietly: the person approved the file's bytes, not the recorded ones.
+ */
+function recordedAnswerConflict(
+    preview: InitApplicationOutcome,
+    supplied: ReadonlyMap<string, unknown>,
+    unattended: UnattendedInit,
+): InitApplicationOutcome | undefined {
+    const answered = preview.result?.interview?.answered ?? []
+    const recorded = preview.result?.estate?.answers ?? []
+    for (const [index, field] of answered.entries()) {
+        const now = unattendedAnswer(field, undefined, supplied, unattended)
+        if (now.kind === 'refusal') return now.outcome
+        if (now.kind !== 'answer' || recorded[index] === undefined) continue
+        let same = false
+        try { same = canonicalJson(JSON.parse(now.bytes)) === canonicalJson(JSON.parse(recorded[index]!.bytes)) } catch { same = false }
+        if (!same) return refusal('INIT_ANSWER_CONFLICT',
+            `the answers file gives a different value for ${field} than the answer an earlier run recorded; drop ${field} from the answers file to keep the recorded answer. init has no command to reset a recorded answer`)
+    }
+    return undefined
+}
+
 export async function runInitOperatorCommand(
     input: InitCommandInput,
     options: InitCommandOptions,
@@ -160,6 +187,10 @@ async function drive(
     let outcome: InitApplicationOutcome
     if (unattended && unattended.previewSha256 !== preview.result!.previewSha256) {
         return refusal('INIT_PREVIEW_NOT_ACCEPTED', '--accept-preview does not equal the digest of the pending preview; rerun without it to read the current digest')
+    }
+    if (unattended && supplied) {
+        const conflict = recordedAnswerConflict(preview, supplied.fields, unattended)
+        if (conflict) return conflict
     }
     if (preview.result?.question === undefined && !unattended) {
         const answer = await io.confirm(preview.result!)

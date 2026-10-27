@@ -193,6 +193,22 @@ describe('init operator command', () => {
             expect(wrong).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_DEFAULTS_NOT_ACCEPTED' }] })
         })
 
+        it('refuses a value that differs from an answer an earlier run recorded, before publishing', async () => {
+            const resumed = (): InitApplicationOutcome => ({ ...asking('ports.bases'), result: { ...asking('ports.bases').result!,
+                estate: { answers: [{ questionId: 'question:x', bytes: '{"B":2,"A":1}', sha256: 'x', provenance: 'operator-confirmed' }] } as never,
+                interview: { answered: ['ports.bases'], outstanding: [], inferenceSkipped: [] } } })
+            const calls: boolean[] = []
+            const run = (bases: unknown) => runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true, unattended: { previewSha256: digest, answers: { ports: { bases } } } }, noTerminal,
+                async input => { calls.push(input.accepted); return input.accepted ? asking('configuration.defaults', defaultsDigest) : resumed() })
+            const conflict = await run({ A: 1, B: 3 })
+            expect(conflict).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_CONFLICT', message: expect.stringContaining('ports.bases') }] })
+            expect(calls).toEqual([false])
+            calls.length = 0
+            expect(await run({ A: 1, B: 2 })).toMatchObject({ kind: 'pending' })
+            expect(calls).toContain(true)
+        })
+
         it('names an answers key that matches no interview field and an ambiguous environment answer', async () => {
             const unknown = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true, unattended: { previewSha256: digest, answers: { sibling: [], ports: { base: {} } } } },

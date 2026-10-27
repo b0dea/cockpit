@@ -132,8 +132,11 @@ bases = {}
 | `environment.generated` | the generated environment to render |
 | `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
 
-Answers an earlier run recorded are kept, so the same file can be passed on every run; a field
-the interview never asked for is reported as `INIT_ANSWER_UNUSED`. The proposed values come from
+Answers an earlier run recorded are kept, so the same file can be passed on every run as long as
+it repeats them. A different value for a recorded field is refused (`INIT_ANSWER_CONFLICT`) before
+anything is published: drop that field from the file to keep the recorded answer. `init` has no
+command to reset a recorded answer. A field the interview never asked for is reported as
+`INIT_ANSWER_UNUSED`. The proposed values come from
 cheap, exact sources only: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, the variable names
 (never the values) in `.env.example`, an existing Compose file, and the `services:` of GitHub
 workflows. Each is a proposal to confirm, not an answer; an unreadable source is listed in
