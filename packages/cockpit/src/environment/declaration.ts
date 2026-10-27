@@ -8,7 +8,7 @@ import { ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './contract.js'
 export const mechanism = {
     id: 'environment-declaration',
     module: 'packages/cockpit/src/environment/declaration.ts',
-    exports: ['declaredRuntime', 'runtimeNotDeclared', 'RuntimeNotDeclaredError'],
+    exports: ['declaredRuntime', 'declaresNothingToRun', 'runtimeNotDeclared', 'RuntimeNotDeclaredError'],
 } as const
 
 export type DeclaredRuntime = 'generated' | 'compose' | 'none'
@@ -16,6 +16,12 @@ export type DeclaredRuntime = 'generated' | 'compose' | 'none'
 export function declaredRuntime(environment: Pick<CockpitConfig['environment'], 'generated' | 'compose_files'>): DeclaredRuntime {
     if (environment.generated) return 'generated'
     return environment.compose_files.length > 0 ? 'compose' : 'none'
+}
+
+// A machine floor alone still has something to measure: preflight checks this laptop against it,
+// so only a cockpit that declares no runtime and no floor has nothing for runtime commands to do.
+export function declaresNothingToRun(environment: Pick<CockpitConfig['environment'], 'generated' | 'compose_files' | 'machine'>): boolean {
+    return declaredRuntime(environment) === 'none' && environment.machine === undefined
 }
 
 /** The one refusal every runtime command gives a cockpit that declares no environment. */

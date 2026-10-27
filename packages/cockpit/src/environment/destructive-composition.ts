@@ -17,7 +17,7 @@ import {
 } from './application.js'
 import { ENVIRONMENT_CODES, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
 import { readActiveStackInventory } from './claims.js'
-import { declaredRuntime, runtimeNotDeclared } from './declaration.js'
+import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolveExecutable, resolvePathRemovalExecutable,
     type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { createGitObservationStep } from './git-observation.js'
@@ -335,7 +335,7 @@ export function createDestructiveCommandAdapters(
         // A cockpit with no runtime has nothing to stop or reset; that outranks any runtime-input problem.
         load: async (request: { readonly configPath: string }) => {
             const loaded = typeof request?.configPath === 'string' ? await loadCockpitConfig(request.configPath) : undefined
-            return loaded?.kind === 'complete' && declaredRuntime(loaded.result.config.environment) === 'none'
+            return loaded?.kind === 'complete' && declaresNothingToRun(loaded.result.config.environment)
                 ? Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null,
                     diagnostics: Object.freeze([runtimeNotDeclared(loaded.result.source.path)]) })
                 : refusal(request?.configPath ?? 'destructive')

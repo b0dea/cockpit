@@ -15,7 +15,7 @@ import {
     type EnvironmentObservation,
     type ExecutionStep,
 } from './contract.js'
-import { declaredRuntime, runtimeNotDeclared } from './declaration.js'
+import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolveGitExecutable } from './executable.js'
 import {
     observeExternalDependencies,
@@ -545,8 +545,8 @@ export function createHealthCommandAdapters(
         // A malformed cockpit.toml is the user's to fix, so the loader's own diagnostics reach them.
         if (loaded.kind === 'refusal') return refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete') return undefined
-        // Health is about a running stack; with none declared it is not declared, never healthy.
-        if (declaredRuntime(loaded.result.config.environment) === 'none') return refuse?.([runtimeNotDeclared(loaded.result.source.path)])
+        // Health is about a running stack or a machine floor; with neither declared it is not declared, never healthy.
+        if (declaresNothingToRun(loaded.result.config.environment)) return refuse?.([runtimeNotDeclared(loaded.result.source.path)])
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return undefined
         const checkout = await checkoutProjection(input, loaded, git.value)

@@ -34,7 +34,8 @@ have been lost. `registry-resolve` emits sourceable shell data only from validat
 | `environment.compose_files` | compose first | the surfaces, plus `check` reads the Compose topology | run the declared Compose files |
 | `[environment.generated]` | generated | the surfaces and the rendered stack | run the rendered Compose file |
 
-`generated` wins when both are declared. The harness surfaces are the instructions, skills,
+`generated` wins when both are declared. A cockpit that declares only `[environment.machine]` keeps
+its machine-floor `preflight`, so it is not refused as surfaces only. The harness surfaces are the instructions, skills,
 guards, permissions, evaluator and work orders; every mode publishes and owns them. The runtime
 commands are `up`, `sleep`, `session`, `down`, `reset`, `preflight`, `logs` and `runtime measure`.
 `doctor` reports the runtime as not declared rather than healthy, and its `declarations` result

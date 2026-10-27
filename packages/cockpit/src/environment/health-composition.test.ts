@@ -205,7 +205,8 @@ describe('production health adapter composition', () => {
     })
 
     it('derives steady authority and invokes the real owner producers', async () => {
-        const candidate = await fixture()
+        // Health needs a declared floor or runtime; with neither, doctor reports ENVIRONMENT_NOT_DECLARED.
+        const candidate = await fixture({ machineOnly: true })
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
@@ -375,7 +376,7 @@ describe('production health adapter composition', () => {
     })
 
     it('reissues exact posture and stage authority after a producer crosses the initial window', async () => {
-        const candidate = await fixture()
+        const candidate = await fixture({ machineOnly: true })
         vi.useFakeTimers({ toFake: ['Date'] })
         vi.setSystemTime(new Date('2026-09-26T08:00:00.000Z'))
         let advanced = false
