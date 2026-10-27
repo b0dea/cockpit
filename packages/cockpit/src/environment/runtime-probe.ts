@@ -12,6 +12,7 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { readActiveStackInventory } from './claims.js'
 import { readState } from './state.js'
+import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
 
 export const mechanism = {
@@ -357,8 +358,9 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const outputMarkerPath = join(siblingPath, 'output')
     const candidatePath = join(input.cwd, `candidate-${batchId}.yml`)
     const controlPath = join(input.cwd, `broken-${batchId}.yml`)
+    const ownershipPath = join(input.cwd, COMPOSE_OWNERSHIP_FILE)
     const volumeName = `${projectName}-data`
-    if (![siblingsRoot, siblingPath, generatedPath, configPath, inputMarkerPath, outputMarkerPath, candidatePath, controlPath]
+    if (![siblingsRoot, siblingPath, generatedPath, configPath, inputMarkerPath, outputMarkerPath, candidatePath, controlPath, ownershipPath]
         .every((path) => confined(input.cwd, path))) return unavailable(input, 'the disposable probe paths escaped their authenticated root')
 
     const marker = `cockpit-runtime-${randomBytes(16).toString('hex')}`
@@ -548,6 +550,14 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         ].join('\n')
         candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
         await writeFile(candidatePath, candidateSource, { mode: 0o600 })
+        // A compose_files stack runs with the ownership override `sync` publishes; the probe writes
+        // the same production render instead of running sync in its disposable checkout.
+        const ownership = renderComposeOwnership({
+            sources: [{ reference: basename(candidatePath), source: candidateSource }],
+            stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
+        })
+        if (ownership.kind !== 'complete') fail(`the candidate's ownership override could not be rendered (${ownership.reason})`)
+        await writeExclusive(ownershipPath, (ownership as Extract<typeof ownership, { kind: 'complete' }>).bytes)
         fresh()
 
         const control = await execute.run('broken-control', [...composeArgs(input, projectName, controlPath), 'config', '--quiet'], controlArtifact)
@@ -667,7 +677,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 ownedSurvivors = Object.freeze(['cleanup-unavailable'])
             }
         }
-        for (const path of [configPath, candidatePath, controlPath, generatedPath, siblingsRoot, homePath, join(input.cwd, '.git')]) {
+        for (const path of [configPath, candidatePath, controlPath, ownershipPath, generatedPath, siblingsRoot, homePath, join(input.cwd, '.git')]) {
             try { await rm(path, { recursive: true, force: true }) } catch { checks.teardown = false }
         }
     }

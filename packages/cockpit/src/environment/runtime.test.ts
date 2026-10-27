@@ -1706,6 +1706,15 @@ fi
         }
     })
 
+    it('reads the KEY=VALUE label list Compose prints once an override merges labels', async () => {
+        const merged = [`dev.b0dea.cockpit.config-sha256=${configSha256}`, 'dev.b0dea.cockpit.probe=merged', `dev.b0dea.cockpit.stack-id=${stack}`]
+        const { admitted } = await topologyEvidence({ services: { api: { labels: merged } } })
+        expect(admitted.kind).toBe('complete')
+        for (const labels of [[...merged, `dev.b0dea.cockpit.stack-id=stack:${sha('other')}`], ['dev.b0dea.cockpit.stack-id'], merged.slice(1)]) {
+            expect((await topologyEvidence({ services: { api: { labels } } })).admitted.kind).toBe('unavailable')
+        }
+    })
+
     it('closes cyclic, unknown, malformed, and value-bearing topology without reflecting input', async () => {
         const hostile = 'hostile-topology-canary'
         const candidates = [

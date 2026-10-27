@@ -308,7 +308,7 @@ const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]
 function composeTokensResolved(source: string, portNames: readonly string[]): boolean {
     const tokens = source.match(new RegExp(UNRESOLVED_TOKEN.source, 'g')) ?? []
     return tokens.every((token) => {
-        const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}$/.exec(token)
+        const match = token.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}$/)
         return match !== null && (match[2] !== undefined || portNames.includes(match[1]!))
     })
 }
@@ -1136,7 +1136,10 @@ export function createRuntimeAdapter(
                 sha256: source.sha256,
                 sourceSha256: input.labels.configSha256 ?? '',
             })
-        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource && !composeTokensResolved(source.source, generatedPortNames))
+        // Only a compose-first stack, which brings its lease and no generated authority, interpolates
+        // its own file; a generated file's tokens are admitted only through its authority.
+        const composeFirst = generatedComposeAuthority === undefined && portProjection !== undefined
+        if ((UNRESOLVED_TOKEN.test(source.source) && !generatedSource && !(composeFirst && composeTokensResolved(source.source, generatedPortNames)))
             || source.source.includes('\0')) {
             return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'compose artifact contains unresolved or unsafe data', source.reference)
         }
@@ -1460,6 +1463,19 @@ function namedVolumeMounts(
     return Object.freeze([...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
 }
 
+// Compose prints labels as a mapping, but as a `KEY=VALUE` list once an override merges labels into
+// a service that already has some; reading only the mapping refused every such merged service.
+function composeLabels(value: unknown): Readonly<Record<string, unknown>> | null | undefined {
+    if (!Array.isArray(value)) return value as Readonly<Record<string, unknown>> | null | undefined
+    const entries: [string, string][] = []
+    for (const item of value) {
+        if (typeof item !== 'string' || !item.includes('=')) return null
+        entries.push([item.slice(0, item.indexOf('=')), item.slice(item.indexOf('=') + 1)])
+    }
+    const labels = Object.fromEntries(entries)
+    return Object.keys(labels).length === entries.length ? labels : null
+}
+
 // Compose projects a generated build as an absolute local context with a Dockerfile name.
 function generatedBuild(value: unknown): boolean {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
@@ -1510,7 +1526,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
             const mounts = bindMountSources(service.volumes)
             const namedMounts = namedVolumeMounts(service.volumes, volumeNames)
             const healthcheck = healthcheckEnabled(service.healthcheck)
-            const labels = service.labels
+            const labels = composeLabels(service.labels)
             if (!dependsOn || !mounts || !namedMounts || healthcheck === undefined || dependsOn.includes(id) || dependsOn.some((name) => !known.has(name))
                 || labels === null || typeof labels !== 'object' || Array.isArray(labels)
                 || (labels as Record<string, unknown>)['dev.b0dea.cockpit.stack-id'] !== stackId
