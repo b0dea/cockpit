@@ -81,6 +81,43 @@ If a destructive attempt ends with `DRAIN_ATTEMPT_REPAIR_REQUIRED`, repair the i
 attempt through the owning recovery procedure before retrying. Elapsed time, a missing process,
 or a missing target does not prove which action completed. Do not edit the state file directly.
 
+## Measure the container runtime
+
+`up` and `down` run only on a container runtime that `cockpit.toml` records as measured, and
+`preflight` and `doctor` report an unmeasured one. cockpit names the runtime from one `docker info` reading of `OperatingSystem`, `Name` and
+`OSType`:
+
+| Runtime identity | Recognised by | Provenance |
+|---|---|---|
+| `docker-desktop` | `OperatingSystem` is `Docker Desktop` | vendor `docker info` output, not probed |
+| `orbstack` | `OperatingSystem` is `OrbStack` | observed on an OrbStack host, 2026-10-27 |
+| `colima` | `Name` starts with `colima` | vendor `docker info` output, not probed |
+| `rancher-desktop` | `Name` ends with `rancher-desktop` | vendor `docker info` output, not probed |
+| `docker-engine` | a Linux host whose daemon reports `OSType` `linux` | vendor `docker info` output, not probed |
+
+Any other reading, including an unrecognised VM on macOS, is not identified and is never admitted;
+the refusal lists the raw `docker info` values so they can be reported.
+
+Record a measurement for the runtime on this machine:
+
+```sh
+docker pull node:22-alpine
+cockpit runtime measure --config ./cockpit.toml --image node:22-alpine --write
+```
+
+The command runs the runtime probe in a disposable directory: a candidate stack exercising
+profiles, bind mounts in both directions, labels, health, logs, recovery and teardown, beside a
+deliberately broken Compose file that the runtime must reject. It uses only the named local image
+and never pulls. When the candidate passes and the broken control is rejected, it prints one
+`[[environment.runtime_measurements]]` row whose `compose_floor` is the observed Compose version.
+With `--write` it appends that row to `cockpit.toml`, re-reads the file, and refuses unless exactly
+that one row was added; it also refuses when the runtime already has a row or the file changed
+while the probe ran. A failed measurement writes nothing.
+
+The probe runs only from an installed `@b0dea/cockpit` package and only against a local runtime:
+the selected Docker context or `DOCKER_HOST` must be a `unix://` socket, and `DOCKER_CONTEXT` must be
+unset (select the context with `docker context use`).
+
 ## Secret sources and environment schemas
 
 Keep each product component's `.env.schema` tracked beside its application. If its ignore rules
@@ -357,11 +394,10 @@ means the generated environment keys no longer match the declared inputs.
 `RUNTIME_UNAVAILABLE` and `RUNTIME_PROBE_TIMEOUT` mean runtime evidence could not establish a
 healthy local stack. Repair or start the declared runtime, then run the probe again.
 `RUNTIME_UNMEASURED` means cockpit could not authenticate bounded runtime inputs or artifacts,
-the observed runtime has no exact supported measurement row with a passed candidate and rejected
-broken control, or the observed Compose version is below that row's measured floor. Restore safe,
-digest-matched local artifacts and canonical measurement inputs. Runtime admission requires a
-complete supported row for the observed runtime, a passed candidate, a rejected broken control,
-and a Compose version at or above the row's valid measured floor. `RUNTIME_COMPOSE_REMOTE` means
+did not recognise the runtime, found no complete supported measurement row for it, or observed a
+Compose version below that row's measured floor. The message names the detected runtime, its
+`docker info` values and the rows present. Restore safe, digest-matched local artifacts, then
+record a measurement as described in [Measure the container runtime](#measure-the-container-runtime). `RUNTIME_COMPOSE_REMOTE` means
 a Compose file escaped the declared root, referred to a remote file, was not safely parseable, or
 contained a remote or unsupported build, include, or extends source. Replace it with a confined,
 digest-matched local Compose file and supported local build contexts.

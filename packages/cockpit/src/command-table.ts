@@ -29,6 +29,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'preflight'
     | 'registry-resolve'
     | 'reset'
+    | 'runtime'
     | 'setup'
     | 'selftest'
     | 'session'
@@ -267,6 +268,19 @@ export const commands = [
         options: {
             config: { type: 'string' },
             interactive: { type: 'boolean', default: false },
+            json: { type: 'boolean', default: false },
+        },
+    },
+    {
+        name: 'runtime',
+        summary: 'Measure the local container runtime (runtime measure) and record its support row',
+        handler: 'runtime',
+        visibility: 'public',
+        ordinary: unavailable('runtime measurement starts containers and can rewrite cockpit.toml'),
+        options: {
+            config: { type: 'string' },
+            image: { type: 'string' },
+            write: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
     },

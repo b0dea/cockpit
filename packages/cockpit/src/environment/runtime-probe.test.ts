@@ -226,6 +226,14 @@ describe('installed container-runtime capability promotion', () => {
         expect(verdict.operatorAction?.reason).toBe('runtime probe input is malformed or contains an unsafe environment')
     })
 
+    it('refuses a remote DOCKER_HOST before any runtime command', () => {
+        const verdict = installedChildProbe(request({ env: { ...runtimeEnvironment(), DOCKER_HOST: 'tcp://127.0.0.1:2375' } }))
+        expect(verdict.status).toBe('unavailable')
+        expect(verdict.operatorAction?.reason).toBe('DOCKER_HOST names a non-local endpoint (only a unix:// socket is local); unset it or point it at a local socket')
+        expect(verdict.evidence?.runtimeVersion).toBeNull()
+        expect(readdirSync(liveDirectory)).toEqual([])
+    })
+
     it('rejects a caller-added package digest at the installed-child boundary', () => {
         const verdict = installedChildProbe({ ...request(), packageArtifactSha256: 'f'.repeat(64) })
         expect(verdict).toEqual(expect.objectContaining({ status: 'unavailable', evidence: null }))

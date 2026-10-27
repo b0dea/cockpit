@@ -361,6 +361,7 @@ describe('CLI help', () => {
             '  session                Keep the environment available for one command, then release it\n' +
             '  down                   Remove the selected generated runtime\n' +
             '  reset                  Preview or interactively approve an exact reset\n' +
+            '  runtime                Measure the local container runtime (runtime measure) and record its support row\n' +
             '  preflight              Evaluate the authenticated environment gate\n' +
             '  doctor                 Report read-only environment diagnostics\n' +
             '  logs                   Collect bounded logs for one declared service\n' +

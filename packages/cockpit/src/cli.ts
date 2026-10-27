@@ -47,6 +47,7 @@ import { createDestructiveCommandAdapters } from './environment/destructive-comp
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
+import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import {
     issueSetupRunContext,
     setupEnvironment,
@@ -163,6 +164,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     preflight: PreflightCommandInput
     'registry-resolve': RegistryResolveCommandInput
     reset: ResetCommandInput
+    runtime: Readonly<{ configPath: string; image: string; write: boolean }>
     setup: SetupCommandInput
     selftest: Readonly<{
         configPath: string
@@ -601,6 +603,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                     ...(runtime.createReleaseMetadataTransport ? { createTransport: runtime.createReleaseMetadataTransport } : {}) }),
             })
         },
+        runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         logs: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
@@ -924,6 +927,17 @@ async function decodeRequest(
         }
     }
 
+    if (handler === 'runtime') {
+        const values = parsed.values as { config?: string; image?: string; write?: boolean }
+        const [operation, ...extra] = parsed.positionals
+        if (operation !== 'measure' || extra.length > 0) {
+            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: cockpit runtime measure --config <file> --image <local-image>')
+        }
+        if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
+        if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
+        return { handler, input: { configPath: values.config, image: values.image, write: values.write === true } }
+    }
+
     if (handler === 'baseline-record') {
         const values = parsed.values as { config?: string; interactive?: boolean; json?: boolean }
         if (parsed.positionals.length > 0) {
@@ -1041,6 +1055,7 @@ async function invokeHandler(
     if (request.handler === 'preflight') return handlers.preflight?.(request.input) ?? unavailable()
     if (request.handler === 'doctor') return handlers.doctor?.(request.input) ?? unavailable()
     if (request.handler === 'logs') return handlers.logs?.(request.input) ?? unavailable()
+    if (request.handler === 'runtime') return handlers.runtime?.(request.input) ?? unavailable()
     if (request.handler === 'baseline-record') return runBaselineOperatorApplication(request.input, {
         ...options,
         terminal: io.confirmBaseline !== undefined || io.stdin?.isTTY === true,

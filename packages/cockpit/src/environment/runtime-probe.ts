@@ -404,6 +404,13 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const fail = (reason: string): never => { throw new RuntimeProbeFailure(reason) }
     const fresh = (): void => { if (Date.now() >= mutationDeadline) fail('the runtime mutation window closed to reserve authenticated cleanup') }
     try {
+        // Rootless Docker and the VM products (OrbStack, Colima) are reached through a local socket
+        // that DOCKER_HOST may name directly; only a unix:// socket is local. tcp://, ssh:// and other
+        // schemes reach a daemon elsewhere, whose behaviour says nothing about this machine.
+        const dockerHost = input.env.DOCKER_HOST
+        if (dockerHost !== undefined && !/^unix:\/\/\/[^\s]+$/.test(dockerHost)) {
+            fail('DOCKER_HOST names a non-local endpoint (only a unix:// socket is local); unset it or point it at a local socket')
+        }
         await Promise.all([
             mkdir(siblingPath, { recursive: true, mode: 0o700 }),
             mkdir(homePath, { mode: 0o700 }),
@@ -426,11 +433,11 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         if (!versionAtLeast(runtime.composeVersion, input.composeFloor)) throw new RuntimeProbeFailure('the required Compose version is unavailable')
         runtimeVersion = runtime.runtime.version
         composeVersion = runtime.composeVersion
-        if (input.env.DOCKER_HOST !== undefined) fail('an explicit Docker endpoint cannot establish local runtime support')
         dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
         const endpoint = dockerContext === '' ? undefined
             : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
         checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && endpoint?.startsWith('unix://') === true
+            && (dockerHost === undefined || endpoint === dockerHost)
         if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
 
         pre = await inventory(execute.run, 'pre')
@@ -456,7 +463,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             '[environment.machine]', 'runtime_memory_mb = 1', 'runtime_cpus = 1', 'free_disk_mb = 1', 'cold_start_seconds = 30', '',
         ].join('\n')
         await writeExclusive(configPath, configSource)
-        lifecycleEnvironment = Object.freeze({ PATH: input.env.PATH ?? '', HOME: homePath })
+        lifecycleEnvironment = Object.freeze({ PATH: input.env.PATH ?? '', HOME: homePath,
+            ...(dockerHost === undefined ? {} : { DOCKER_HOST: dockerHost }) })
         const operationEnvironment = lifecycleEnvironment
         const freshLifecycle = () => createLifecycleCommandAdapters({
             configPath, env: operationEnvironment, sessionId: `runtime-probe-${batchId}`, timeoutMs: Math.min(input.timeoutMs, 30_000),
