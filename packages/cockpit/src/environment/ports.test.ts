@@ -762,8 +762,11 @@ describe('whole-family port leases', () => {
             listenerTimeoutMs: 100, observeListeners: noListeners,
         })
         expect(first).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
-        await releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now })
+        expect(await releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
 
+        // The holder still retains its family, so its own published port does not collide and the
+        // family is returned to it unchanged rather than handed out afresh.
         const returned = await leasePortFamily({
             namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100,
@@ -771,7 +774,7 @@ describe('whole-family port leases', () => {
                 state: 'available', value: ports.includes(3000) ? [3000] : [], observedAt: now, producer: 'test',
             }),
         })
-        expect(returned).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION }] })
+        expect(returned).toMatchObject({ kind: 'complete', change: 'unchanged', lease: { offset: 0 } })
     })
 
     it('serialises concurrent lease decisions into disjoint families', async () => {
@@ -1006,9 +1009,10 @@ describe('whole-family port leases', () => {
         const result = await leasePortFamily({
             namespace: state, stackId: stackA, holderId: holderA, checkoutId, config,
             now: '2026-09-07T12:01:00.000Z', listenerTimeoutMs: 100,
+            // The running stack publishes its own leased ports, so they are occupied on re-entry.
             observeListeners: async (ports) => {
                 observed.push([...ports])
-                return { state: 'available', value: [], observedAt: '2026-09-07T12:01:00.000Z', producer: 'test-listener-probe' }
+                return { state: 'available', value: [...ports], observedAt: '2026-09-07T12:01:00.000Z', producer: 'test-listener-probe' }
             },
         })
         expect(result).toMatchObject({ kind: 'complete', lease: { offset: 0, ports: { WEB: 3000, API: 4000 } } })

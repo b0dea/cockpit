@@ -973,6 +973,11 @@ export async function leasePortFamily(supplied: {
             }
         }
         const occupied = new Set(active.flatMap((lease) => Object.values(lease.ports)))
+        // While a holder retains the lease, its ports are published by the stack's own runtime, so a
+        // listener there is the stack itself. Probing them refused every repeated `up` and every
+        // co-tenant joining a running stack with PORT_FAMILY_COLLISION on its own ports. A lease no
+        // holder retains belongs to a stopped stack, and a listener there is someone else's.
+        const retained = currentLease !== null && !currentLease.released && currentValue.holders.length > 0
         let sawListenerCollision = false
         const occupiedFamilies: string[] = []
         for (const evidence of observed.evidence) {
@@ -986,14 +991,14 @@ export async function leasePortFamily(supplied: {
                 continue
             }
             if (evidence.result.kind === 'refusal') return abortStateTransaction(evidence.result.refusal)
-            const loopbackOccupied = await probeListenerFamily(ports, input.listenerTimeoutMs)
+            const loopbackOccupied = retained ? [] : await probeListenerFamily(ports, input.listenerTimeoutMs)
             if (!loopbackOccupied) return abortStateTransaction(refuse(
                 ENVIRONMENT_CODES.PORT_LISTENER_EVIDENCE_INVALID,
                 'bounded host listener probe did not produce current evidence',
                 input.stackId,
                 'restore loopback listener access and retry',
             ))
-            if (evidence.result.occupied.length > 0 || loopbackOccupied.length > 0) {
+            if (!retained && (evidence.result.occupied.length > 0 || loopbackOccupied.length > 0)) {
                 sawListenerCollision = true
                 occupiedFamilies.push(ports.join(','))
                 continue
