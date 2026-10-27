@@ -271,6 +271,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_GAP` | `packages/cockpit/src/document/command.ts` | confirm or replace the attributed default; supply this value before treating the draft as valid |
+| `DOCUMENT_GUARD_HOSTS_NONE` | `packages/cockpit/src/document/command.ts` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run cockpit sync once a non-local environment exists |
 | `DOCUMENT_INFERRED` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_OPTION_DUPLICATE` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
@@ -359,6 +360,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `GREENFIELD_OBSERVATION_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GREENFIELD_OBSERVATION_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_INPUT_UNAVAILABLE` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_TRANSPORT_INVALID` | `packages/cockpit/src/guards/harness-adapter.ts` | no static remedy captured; inspect implementing owners |

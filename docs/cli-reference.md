@@ -41,6 +41,7 @@ Configuration: `none`. Owners: none.
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_GAP` | `packages/cockpit/src/document/command.ts` | confirm or replace the attributed default; supply this value before treating the draft as valid |
+| `DOCUMENT_GUARD_HOSTS_NONE` | `packages/cockpit/src/document/command.ts` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run cockpit sync once a non-local environment exists |
 | `DOCUMENT_INFERRED` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
@@ -64,6 +65,7 @@ Configuration: `none`. Owners: none.
 | `GREENFIELD_OBSERVATION_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GREENFIELD_OBSERVATION_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
@@ -148,6 +150,7 @@ Configuration: `none`. Owners: none.
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_GAP` | `packages/cockpit/src/document/command.ts` | confirm or replace the attributed default; supply this value before treating the draft as valid |
+| `DOCUMENT_GUARD_HOSTS_NONE` | `packages/cockpit/src/document/command.ts` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run cockpit sync once a non-local environment exists |
 | `DOCUMENT_INFERRED` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
@@ -222,6 +225,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -411,6 +415,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -435,6 +440,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -458,6 +464,7 @@ Configuration: `unavailable`. Owners: none.
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -482,6 +489,7 @@ Configuration: `unavailable`. Owners: none.
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -507,6 +515,7 @@ Configuration: `unavailable`. Owners: none.
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -590,6 +599,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -614,6 +624,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
@@ -642,6 +653,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |

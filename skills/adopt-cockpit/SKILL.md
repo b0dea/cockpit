@@ -19,7 +19,7 @@ step below points to.
 ## Safety contract
 
 cockpit exists so that an agent's environment holds no guesses: a clean-looking configuration
-with invented values in it is the failure it is built to prevent. Work under four rules:
+with invented values in it is the failure it is built to prevent. Work under five rules:
 
 1. Ask the human before writing into a product repository, creating a Git remote or hosted
    repository, running a destructive command (`down`, `reset`, approving removals), running
@@ -30,6 +30,8 @@ with invented values in it is the failure it is built to prevent. Work under fou
    from the human. When neither has it, name the gap and ask.
 4. Show every inferred value with the file it came from, including what `init` proposes under
    `provenance.kind = "inferred"`. It becomes an answer only on the human's word.
+5. Ask the human for the database and live vendor API hosts of every non-local environment
+   (production, staging, shared) for the `guards` answer; env templates give variable names only.
 
 ## Install cockpit if it is missing
 
@@ -58,12 +60,12 @@ and `invocation.exitCode`; a pending `init` also exits 0, so read its `result.st
 Look at the directory before asking. Several cases can apply; bootstrap first. Each line names
 the guide section that owns the detail.
 
-- **Empty directory, or only documents and decisions.** `init` cannot interview a directory with
-  no repository manifests. Write a surfaces-only `cockpit.toml` with one `[[sibling]]` for the
-  notes directory, its name and purpose from the human. Then run
-  `cockpit sync --config cockpit.toml --dry-run --json`, `cockpit sync --config cockpit.toml --json`
-  and `cockpit check --config cockpit.toml --json`. Add each repository later with
-  `cockpit sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json`.
+- **Empty directory, or only documents and decisions.** Follow **Bootstrap** below: with no
+  package manifest `init` builds a surfaces-only cockpit and proposes the cockpit root itself as
+  the first sibling (`dir = "."`, `mount = "none"`); the purpose comes from the human. Add each
+  repository later with
+  `cockpit sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json`, whose
+  `result.publish.command` is the `gh repo create` command to hand to the human.
   Guide: *Empty directory*, *Docs or decisions only*.
 - **One or several repositories with services.** From the directory that holds them, follow
   **Bootstrap** below: `cockpit init "$(pwd)" --target <target> --json`, then the same command
@@ -73,7 +75,7 @@ the guide section that owns the detail.
   each with `cockpit sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`
   and run `cockpit setup --config cockpit.toml --json`. Guide: *Scattered repositories*.
 - **An existing Compose file.** Answer `environment.compose_files = ["compose.yml"]` instead of a
-  generated stack, and ask the human for the `[environment.machine]` floors.
+  generated stack, and ask the human for the `environment.machine` floors `init` asks next.
   Guide: *Existing Compose file*.
 - **A service with no local setup.** Follow **Create a local setup** below.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
