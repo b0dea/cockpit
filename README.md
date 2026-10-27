@@ -18,6 +18,11 @@ code.
 > generated file layout will change in backward-incompatible ways before 1.0.
 > See [Status and limits](#status-and-limits).
 
+## For AI agents
+
+Asked to set cockpit up for a project? Follow the [agent adoption guide](docs/agent-adoption.md),
+or install its skill with `npx skills add b0dea/cockpit --skill adopt-cockpit`.
+
 ## Why cockpit
 
 An agent editing one repository of a multi-repository product hits three problems that more

@@ -1,0 +1,19 @@
+# cockpit
+
+> cockpit runs the environment AI coding agents work in for a product made of several repositories. One `cockpit.toml` declares the repositories, services and ports; `cockpit sync` renders the same instructions, skills, guards and permissions for Claude Code, Codex CLI and OpenCode and a Docker Compose stack over the live checkouts; `cockpit check` fails on drift; and an independent evaluator grades finished work. It is pre-alpha and installed from source.
+
+## Set cockpit up
+
+- [Agent adoption guide](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md): the safety contract and exact non-interactive commands for an agent adopting cockpit, by situation
+- [README](https://raw.githubusercontent.com/b0dea/cockpit/main/README.md): what cockpit is, the quickstart, and its current limits
+- [Getting started](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md): install, bootstrap and the canonical bring-up sequence
+
+## Reference
+
+- [CLI reference](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/cli-reference.md): every command, flag, exit code and diagnostic
+- [Configuration reference](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/configuration-reference.md): every `cockpit.toml` field, the defaults and the JSON Schema
+- [Concepts](https://raw.githubusercontent.com/b0dea/cockpit/main/docs/concepts.md): the terms the commands and diagnostics use
+
+## Contributing
+
+- [AGENTS.md](https://raw.githubusercontent.com/b0dea/cockpit/main/AGENTS.md): the working guide for agents changing cockpit itself
