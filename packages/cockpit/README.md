@@ -11,4 +11,4 @@ The package is pre-alpha and not yet published to npm. The
 [repository README](https://github.com/b0dea/cockpit#readme) has the source install, a
 quickstart on the synthetic example, the documentation and the current status.
 
-The CLI command is `cockpit`. Supported Node.js versions: `^22.13.0 || ^24.0.0 || ^26.0.0`.
+The CLI command is `cockpit`. Supported Node.js versions: see `engines` in this package's `package.json`.

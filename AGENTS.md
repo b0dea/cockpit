@@ -74,6 +74,7 @@ npm run test:changed -- <base-commit>  # tests adjacent to your changes
 npm test -- <test file>                # targeted run; bare `npm test` is the full suite
 npm run typecheck
 npm run lint:docs
+npm run references                     # regenerate generated docs (see Keep docs current)
 ```
 
 Run adjacent owner tests, review non-adjacent dependents, and typecheck before reporting a
@@ -97,6 +98,14 @@ changes.
   restate them elsewhere.
 - **Every bug fix lands with a test that fails without it.** One test pins one public behaviour;
   extend the closest existing case rather than adding branch or getter coverage.
+
+## Keep docs current
+
+- After changing `command-table.ts`, `schema.ts` or a diagnostic code: commit, run `npm run references`, commit the regenerated pages. It refuses while implementation changes are uncommitted.
+- A user-visible behaviour change updates the hand-written page that owns that fact in the same change; find the owner through the `docs/README.md` index (grep the old wording).
+- Never write counts, tool versions, dates or line numbers in prose: link to the generated page, `package.json` or the schema.
+- Add a changeset for package changes: `npx changeset`.
+- Re-reviewing a page means bumping its `cockpit:verified` marker; `npm run lint:docs` must pass.
 
 ## Harness capabilities
 

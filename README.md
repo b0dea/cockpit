@@ -54,7 +54,8 @@ long as one agent command runs.
 
 ## Quickstart
 
-Requires Node.js `^22.13.0 || ^24.0.0 || ^26.0.0`, Git, and macOS or Linux. The synthetic
+Requires Node.js, Git, and macOS or Linux; versions are in
+[Getting started](docs/getting-started.md#install-cockpit). The synthetic
 example needs no credentials and no Docker.
 
 **1. Install from source** and put `cockpit` on your PATH:
@@ -74,7 +75,7 @@ cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo" && cd "${TMPDIR:-/tmp}/c
 ```
 
 **3. Preview what cockpit generates.** The dry run lists every file it would write for the
-three agent tools and the stack, and writes none of them (output trimmed):
+agent tools and the stack, and writes none of them (output trimmed):
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
@@ -153,15 +154,16 @@ repository carries only synthetic fixtures. What is true today:
 - **Breaking changes before 1.0.** Commands, configuration fields and the generated file layout
   can change between minors. [Release policy](docs/release-policy.md) covers deprecation and
   migration notes.
-- **macOS and Linux.** CI runs both on Node 22.13, 24 and 26. Windows is not supported.
+- **macOS and Linux.** CI runs both; supported Node versions are in
+  [Getting started](docs/getting-started.md#install-cockpit). Windows is not supported.
 - **Bringing the stack up currently needs Docker Desktop.** `up`, `session`, `preflight`, `down`
   and `reset` need Docker with Compose, and the runtime check today admits only Docker Desktop.
   OrbStack, Colima, Rancher Desktop and Linux Docker Engine are refused, currently with a
   generic `LIFECYCLE_EVIDENCE_INVALID`. Wider runtime support is being designed. Generation,
   `setup` and `check` work without Docker.
 - **Native enforcement is not yet measured.** cockpit generates the hooks, permissions and rules,
-  and its guard adapters were probed against specific harness versions (Claude Code 2.1.220,
-  Codex 0.149.0, OpenCode 1.18.15, August 2026). It has not re-measured them against current
+  and its guard adapters were probed against specific harness versions recorded in the
+  [capability matrix](docs/capability-matrix.md). It has not re-measured them against current
   versions, so every built-in feature is reported as *instructed*, not *enforced*.
   [Harness surfaces](docs/harness-surfaces.md#capability-states) explains the states and how
   `cockpit selftest` measures them.

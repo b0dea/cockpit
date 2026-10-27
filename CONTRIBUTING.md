@@ -29,7 +29,8 @@ file to that list is the review.
 
 ## Setup
 
-You need Node.js `^22.13.0 || ^24.0.0 || ^26.0.0` (the root `engines` field), Git 2.42 or newer
+You need the Node.js and platform prerequisites in
+[Getting started](docs/getting-started.md#install-cockpit), Git 2.42 or newer
 (the hygiene scanner uses `git cat-file -Z`), and Bash and zsh.
 
 ```sh
@@ -73,13 +74,13 @@ A targeted pass proves only its target. The full suite takes several minutes.
 
 The generated references (the CLI, configuration, command list, capability matrix and the
 troubleshooting index) are checked against committed `HEAD`, so `npm run lint:docs` refuses while
-an implementation change is uncommitted. Commit the change, rebuild, publish the references
-through `publishRepositoryReferences` in `scripts/diagnostic-inventory.mjs`, then lint again.
+an implementation change is uncommitted. Commit the change, rebuild (`npm run build`), run `npm run references`, commit the regenerated
+pages, then lint again. `npm run references` calls `publishRepositoryReferences` in
+`scripts/diagnostic-inventory.mjs` and refuses while implementation changes are uncommitted.
 Never edit a generated reference by hand.
 
-CI runs the build, tests, typecheck and documentation lint on macOS and Linux across the
-supported Node versions, the anonymisation scan as its own job, and a check that the launcher
-refuses Node below 22.
+CI runs the build, tests, typecheck and documentation lint, and the anonymisation scan as its
+own job; the workflow definitions in `.github/workflows/` are the source for its matrix.
 
 ## The rule that is not negotiable
 

@@ -36,7 +36,7 @@ authenticated read-only generation preview; an unavailable preview is reported e
 Authored Markdown frontmatter must use unqualified YAML delimiters and valid bounded YAML.
 Cockpit rejects language-qualified or malformed frontmatter before generator dispatch.
 
-The generator uses a checked-in, SHA-pinned bundle of Rulesync 40.2.0 only for harness-specific
+The generator uses a checked-in, SHA-pinned bundle of Rulesync only for harness-specific
 spelling. Packaging verifies the bundle against its source and includes its third-party notices;
 runtime execution authenticates the bundle bytes before loading them. Cockpit
 owns declaration merge, restriction policy, MCP approval, sibling projection, capability state,
@@ -87,15 +87,14 @@ generated configuration, not proof that a native harness loaded or enforced it.
 | Hooks | instructed | instructed | instructed | Generated registration is `pending_evidence` until the exact candidate is probed. |
 | Permissions | instructed | instructed | instructed | Native acceptance and enforcement are not established by rendering. |
 
-The checked-in guard adapters record historical transport measurements:
+The checked-in guard adapters (the
+[Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),
+[Codex](../packages/cockpit/surfaces/guards/codex.adapter.json) and
+[OpenCode](../packages/cockpit/surfaces/guards/opencode.adapter.json) adapters) record historical
+transport measurements. Each harness's recorded version, date and probe are in the
+[capability matrix](capability-matrix.md).
 
-| Harness | Recorded version/date | Adapter and measurement provenance |
-|---|---|---|
-| Claude Code | 2.1.220 / 2026-08-25 | [Claude adapter](../packages/cockpit/surfaces/guards/claude.adapter.json): paired native PreToolUse payload and decision probe. |
-| Codex | 0.149.0 / 2026-08-24 | [Codex adapter](../packages/cockpit/surfaces/guards/codex.adapter.json): paired native PreToolUse payload, apply_patch and ask-decision probe. |
-| OpenCode | 1.18.15 / 2026-08-24 | [OpenCode adapter](../packages/cockpit/surfaces/guards/opencode.adapter.json): paired native tool.execute.before payload, apply_patch and thrown-refusal probe. |
-
-These recorded versions are not claims about a currently installed harness.
+The recorded versions are not claims about a currently installed harness.
 [Restriction expansion](../packages/cockpit/src/surfaces/restrictions.ts) authenticates the
 adapter provenance but emits `instructed`/`pending_evidence`, including native read-only
 fragments. An unavailable adapter emits no control and records `unavailable`/`not_applicable`.

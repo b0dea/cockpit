@@ -43,6 +43,6 @@ from; this entry describes what the first version contains.
 - **Upgrade review.** `upgrade` produces a read-only plan from exact release evidence.
 - **Repository standards.** Synthetic example and fixtures, anonymisation scan, packaging
   allow-list check, generated CLI and configuration references, documentation lint, and CI on
-  macOS and Linux across Node 22.13, 24 and 26.
+  macOS and Linux.
 
 [Unreleased]: https://github.com/b0dea/cockpit/commits/main

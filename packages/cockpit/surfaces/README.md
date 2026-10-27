@@ -23,4 +23,4 @@ inventory plus the meaning checked by the skill contract.
 
 Supporting files that need no harness-specific spelling stay byte-for-byte copies. The skill
 contract compares every rendered copy of [skills/procedures/onboarding.md](skills/procedures/onboarding.md) with this source
-for all three harnesses.
+for every harness.

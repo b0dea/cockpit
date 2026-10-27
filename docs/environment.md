@@ -397,8 +397,8 @@ requires the declared initial seed; do not erase history to make the stack appea
 Generated services can declare `resources.memory_mb`, `resources.cpus`, and
 `resources.provenance`. The generated Compose service applies these as `mem_limit` and `cpus`.
 Use `browser.resources` with the same fields, `environment.generated` and a declared `browser.endpoint` to bound the
-generated browser runner. Memory must be at least 6 MiB and CPU at least 0.01, matching the
-container runtime's minimum usable limits. Choose
+generated browser runner. Minimum memory and CPU values are in the
+[configuration reference](configuration-reference.md). Choose
 ceilings from the product's measured needs and the laptop's allocation; cockpit supplies no
 invented limits. Environment decisions report declared ceilings or their absence. The machine
 floor remains a minimum capacity check, separate from these per-service ceilings.

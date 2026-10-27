@@ -7,8 +7,9 @@ notice a breaking change gets, and what a migration note contains.
 
 ## Runtime support
 
-cockpit supports Node.js `^22.13.0 || ^24.0.0 || ^26.0.0`, the range CI tests on macOS and
-Linux. The launcher refuses anything below Node 22 with
+cockpit supports the Node.js versions listed in
+[Getting started](getting-started.md#install-cockpit), the range CI tests on macOS and
+Linux. The launcher refuses unsupported Node versions with
 [COCKPIT_NODE_VERSION_UNSUPPORTED](../packages/cockpit/bin/cockpit.mjs) before any compiled code
 loads. Environment commands also need Git and, for the stack, Docker with Compose; see the
 [prerequisites](getting-started.md#install-cockpit) for the current Docker runtime requirement.

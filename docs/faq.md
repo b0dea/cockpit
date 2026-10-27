@@ -26,9 +26,9 @@ The full list of non-goals, with reasons, is in [Architecture](architecture.md#n
 No. The package is private at 0.0.0. Install it from source with
 [Install cockpit](getting-started.md#install-cockpit).
 
-## Do I have to use all three agent tools?
+## Do I have to use every agent tool?
 
-No. `sync` always renders surfaces for all three built-in harnesses, so whichever tool you open
+No. `sync` always renders surfaces for every built-in harness, so whichever tool you open
 in the checkout finds its configuration. `init` takes one `--target` to choose which harness
 receives the bootstrap skill first. Custom harnesses can be declared under `[surfaces]`; see
 [Harness surfaces](harness-surfaces.md#capability-states).

@@ -52,7 +52,7 @@ CI fails when a line changes without the configuration changing.
 
 Configuration, validation, codegen, drift and state live in the TypeScript CLI, and every child
 process goes through one executor. Guards and hooks stay in shell, because every harness invokes
-them directly on each tool call and they must behave identically under all three with no
+them directly on each tool call and they must behave identically under all of them with no
 interpreter start-up cost.
 
 ### Leases, locks and destruction
