@@ -305,6 +305,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_COMPENSATION_FAILED` | `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_COMPOSE_INVALID` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECISION_COVERAGE` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECISION_DUPLICATE` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECISION_FUTURE` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |

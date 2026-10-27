@@ -253,6 +253,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     "type": "object",
                     "properties": {
                       "role": {
+                        "default": "service",
                         "type": "string",
                         "enum": [
                           "service",
@@ -311,7 +312,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -321,11 +321,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -341,7 +352,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -470,7 +482,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 },
                                 "required": [
                                   "source",
-                                  "observed_on",
                                   "kind",
                                   "reason"
                                 ],
@@ -480,11 +491,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     "properties": {
                                       "kind": {
                                         "enum": [
-                                          "declared",
-                                          "measured"
+                                          "declared"
                                         ]
                                       }
                                     }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "measured"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "observed_on"
+                                    ]
                                   },
                                   {
                                     "properties": {
@@ -500,7 +522,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       }
                                     },
                                     "required": [
-                                      "confirmed"
+                                      "confirmed",
+                                      "observed_on"
                                     ]
                                   }
                                 ]
@@ -510,8 +533,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "location",
                               "cwd",
                               "argv",
-                              "timeout_seconds",
-                              "provenance"
+                              "timeout_seconds"
                             ],
                             "additionalProperties": false,
                             "oneOf": [
@@ -622,7 +644,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 },
                                 "required": [
                                   "source",
-                                  "observed_on",
                                   "kind",
                                   "reason"
                                 ],
@@ -632,11 +653,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     "properties": {
                                       "kind": {
                                         "enum": [
-                                          "declared",
-                                          "measured"
+                                          "declared"
                                         ]
                                       }
                                     }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "measured"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "observed_on"
+                                    ]
                                   },
                                   {
                                     "properties": {
@@ -652,7 +684,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       }
                                     },
                                     "required": [
-                                      "confirmed"
+                                      "confirmed",
+                                      "observed_on"
                                     ]
                                   }
                                 ]
@@ -662,8 +695,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "location",
                               "cwd",
                               "argv",
-                              "timeout_seconds",
-                              "provenance"
+                              "timeout_seconds"
                             ],
                             "additionalProperties": false,
                             "oneOf": [
@@ -728,7 +760,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -738,11 +769,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -758,7 +800,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -768,12 +811,41 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "reference",
                           "reason",
                           "architectures",
-                          "manifest_probe",
-                          "provenance"
+                          "manifest_probe"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "build": {
+                        "type": "object",
+                        "properties": {
+                          "context": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "."
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "maxLength": 4096,
+                                "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                              }
+                            ]
+                          },
+                          "dockerfile": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          }
+                        },
+                        "required": [
+                          "context"
                         ],
                         "additionalProperties": false
                       },
                       "ports": {
+                        "default": [],
                         "maxItems": 256,
                         "type": "array",
                         "items": {
@@ -845,6 +917,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         }
                       },
                       "dependencies": {
+                        "default": [],
                         "maxItems": 256,
                         "type": "array",
                         "items": {
@@ -966,7 +1039,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 },
                                 "required": [
                                   "source",
-                                  "observed_on",
                                   "kind",
                                   "reason"
                                 ],
@@ -976,11 +1048,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     "properties": {
                                       "kind": {
                                         "enum": [
-                                          "declared",
-                                          "measured"
+                                          "declared"
                                         ]
                                       }
                                     }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "measured"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "observed_on"
+                                    ]
                                   },
                                   {
                                     "properties": {
@@ -996,7 +1079,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       }
                                     },
                                     "required": [
-                                      "confirmed"
+                                      "confirmed",
+                                      "observed_on"
                                     ]
                                   }
                                 ]
@@ -1006,8 +1090,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "location",
                               "cwd",
                               "argv",
-                              "timeout_seconds",
-                              "provenance"
+                              "timeout_seconds"
                             ],
                             "additionalProperties": false,
                             "oneOf": [
@@ -1118,7 +1201,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 },
                                 "required": [
                                   "source",
-                                  "observed_on",
                                   "kind",
                                   "reason"
                                 ],
@@ -1128,11 +1210,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     "properties": {
                                       "kind": {
                                         "enum": [
-                                          "declared",
-                                          "measured"
+                                          "declared"
                                         ]
                                       }
                                     }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "measured"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "observed_on"
+                                    ]
                                   },
                                   {
                                     "properties": {
@@ -1148,7 +1241,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       }
                                     },
                                     "required": [
-                                      "confirmed"
+                                      "confirmed",
+                                      "observed_on"
                                     ]
                                   }
                                 ]
@@ -1158,8 +1252,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "location",
                               "cwd",
                               "argv",
-                              "timeout_seconds",
-                              "provenance"
+                              "timeout_seconds"
                             ],
                             "additionalProperties": false,
                             "oneOf": [
@@ -1253,7 +1346,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 },
                                 "required": [
                                   "source",
-                                  "observed_on",
                                   "kind",
                                   "reason"
                                 ],
@@ -1263,11 +1355,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     "properties": {
                                       "kind": {
                                         "enum": [
-                                          "declared",
-                                          "measured"
+                                          "declared"
                                         ]
                                       }
                                     }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "measured"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "observed_on"
+                                    ]
                                   },
                                   {
                                     "properties": {
@@ -1283,7 +1386,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       }
                                     },
                                     "required": [
-                                      "confirmed"
+                                      "confirmed",
+                                      "observed_on"
                                     ]
                                   }
                                 ]
@@ -1299,16 +1403,15 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         "required": [
                           "property",
                           "probe",
-                          "tool_probe",
                           "interval_seconds",
                           "timeout_seconds",
                           "retries",
-                          "start_period_seconds",
-                          "measurement"
+                          "start_period_seconds"
                         ],
                         "additionalProperties": false
                       },
                       "toolchain_pins": {
+                        "default": [],
                         "maxItems": 32,
                         "type": "array",
                         "items": {
@@ -1361,7 +1464,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               },
                               "required": [
                                 "source",
-                                "observed_on",
                                 "kind",
                                 "reason"
                               ],
@@ -1371,11 +1473,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   "properties": {
                                     "kind": {
                                       "enum": [
-                                        "declared",
-                                        "measured"
+                                        "declared"
                                       ]
                                     }
                                   }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "measured"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "observed_on"
+                                  ]
                                 },
                                 {
                                   "properties": {
@@ -1391,7 +1504,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     }
                                   },
                                   "required": [
-                                    "confirmed"
+                                    "confirmed",
+                                    "observed_on"
                                   ]
                                 }
                               ]
@@ -1439,7 +1553,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -1449,11 +1562,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -1469,23 +1593,44 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
                       }
                     },
                     "required": [
-                      "role",
                       "command",
-                      "image",
-                      "ports",
-                      "dependencies",
-                      "health",
-                      "toolchain_pins",
-                      "provenance"
+                      "health"
                     ],
                     "additionalProperties": false,
+                    "allOf": [
+                      {
+                        "oneOf": [
+                          {
+                            "required": [
+                              "image"
+                            ],
+                            "not": {
+                              "required": [
+                                "build"
+                              ]
+                            }
+                          },
+                          {
+                            "required": [
+                              "build"
+                            ],
+                            "not": {
+                              "required": [
+                                "image"
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ],
                     "oneOf": [
                       {
                         "properties": {
@@ -1496,6 +1641,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           }
                         },
                         "required": [
+                          "role",
                           "one_shot_failure"
                         ]
                       },
@@ -1746,7 +1892,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           },
                           "required": [
                             "source",
-                            "observed_on",
                             "kind",
                             "reason"
                           ],
@@ -1756,11 +1901,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "properties": {
                                 "kind": {
                                   "enum": [
-                                    "declared",
-                                    "measured"
+                                    "declared"
                                   ]
                                 }
                               }
+                            },
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "measured"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "observed_on"
+                              ]
                             },
                             {
                               "properties": {
@@ -1776,7 +1932,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 }
                               },
                               "required": [
-                                "confirmed"
+                                "confirmed",
+                                "observed_on"
                               ]
                             }
                           ]
@@ -1986,7 +2143,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           },
                           "required": [
                             "source",
-                            "observed_on",
                             "kind",
                             "reason"
                           ],
@@ -1996,11 +2152,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "properties": {
                                 "kind": {
                                   "enum": [
-                                    "declared",
-                                    "measured"
+                                    "declared"
                                   ]
                                 }
                               }
+                            },
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "measured"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "observed_on"
+                              ]
                             },
                             {
                               "properties": {
@@ -2016,7 +2183,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 }
                               },
                               "required": [
-                                "confirmed"
+                                "confirmed",
+                                "observed_on"
                               ]
                             }
                           ]
@@ -2069,7 +2237,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     },
                     "required": [
                       "source",
-                      "observed_on",
                       "kind",
                       "reason"
                     ],
@@ -2079,11 +2246,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         "properties": {
                           "kind": {
                             "enum": [
-                              "declared",
-                              "measured"
+                              "declared"
                             ]
                           }
                         }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "measured"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "observed_on"
+                        ]
                       },
                       {
                         "properties": {
@@ -2099,7 +2277,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           }
                         },
                         "required": [
-                          "confirmed"
+                          "confirmed",
+                          "observed_on"
                         ]
                       }
                     ]
@@ -2166,7 +2345,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       },
                       "required": [
                         "source",
-                        "observed_on",
                         "kind",
                         "reason"
                       ],
@@ -2176,11 +2354,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "properties": {
                             "kind": {
                               "enum": [
-                                "declared",
-                                "measured"
+                                "declared"
                               ]
                             }
                           }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "measured"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "observed_on"
+                          ]
                         },
                         {
                           "properties": {
@@ -2196,7 +2385,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             }
                           },
                           "required": [
-                            "confirmed"
+                            "confirmed",
+                            "observed_on"
                           ]
                         }
                       ]
@@ -2629,7 +2819,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               },
               "required": [
                 "source",
-                "observed_on",
                 "kind",
                 "reason"
               ],
@@ -2688,7 +2877,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               },
               "required": [
                 "source",
-                "observed_on",
                 "kind",
                 "reason"
               ],
@@ -2698,11 +2886,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                   "properties": {
                     "kind": {
                       "enum": [
-                        "declared",
-                        "measured"
+                        "declared"
                       ]
                     }
                   }
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "measured"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "observed_on"
+                  ]
                 },
                 {
                   "properties": {
@@ -2718,7 +2917,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     }
                   },
                   "required": [
-                    "confirmed"
+                    "confirmed",
+                    "observed_on"
                   ]
                 }
               ]
@@ -3633,6 +3833,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     "pattern": "^[a-z0-9][a-z0-9-]*$"
                   },
                   "role": {
+                    "default": "service",
                     "type": "string",
                     "enum": [
                       "service",
@@ -3646,6 +3847,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     ]
                   },
                   "profiles": {
+                    "default": [],
                     "maxItems": 64,
                     "type": "array",
                     "items": {
@@ -3700,7 +3902,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -3710,11 +3911,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -3730,7 +3942,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -3859,7 +4072,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -3869,11 +4081,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -3889,7 +4112,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -3899,8 +4123,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -4011,7 +4234,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -4021,11 +4243,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -4041,7 +4274,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -4051,8 +4285,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -4117,7 +4350,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -4127,11 +4359,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -4147,7 +4390,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -4157,12 +4401,41 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       "reference",
                       "reason",
                       "architectures",
-                      "manifest_probe",
-                      "provenance"
+                      "manifest_probe"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "build": {
+                    "type": "object",
+                    "properties": {
+                      "context": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "."
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                          }
+                        ]
+                      },
+                      "dockerfile": {
+                        "type": "string",
+                        "maxLength": 4096,
+                        "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                      }
+                    },
+                    "required": [
+                      "context"
                     ],
                     "additionalProperties": false
                   },
                   "ports": {
+                    "default": [],
                     "maxItems": 256,
                     "type": "array",
                     "items": {
@@ -4234,6 +4507,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     }
                   },
                   "mounts": {
+                    "default": [],
                     "maxItems": 256,
                     "type": "array",
                     "items": {
@@ -4336,6 +4610,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     }
                   },
                   "dependencies": {
+                    "default": [],
                     "maxItems": 256,
                     "type": "array",
                     "items": {
@@ -4457,7 +4732,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -4467,11 +4741,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -4487,7 +4772,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -4497,8 +4783,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -4609,7 +4894,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -4619,11 +4903,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -4639,7 +4934,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -4649,8 +4945,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -4744,7 +5039,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -4754,11 +5048,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -4774,7 +5079,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -4790,16 +5096,15 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     "required": [
                       "property",
                       "probe",
-                      "tool_probe",
                       "interval_seconds",
                       "timeout_seconds",
                       "retries",
-                      "start_period_seconds",
-                      "measurement"
+                      "start_period_seconds"
                     ],
                     "additionalProperties": false
                   },
                   "toolchain_pins": {
+                    "default": [],
                     "maxItems": 32,
                     "type": "array",
                     "items": {
@@ -4852,7 +5157,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           },
                           "required": [
                             "source",
-                            "observed_on",
                             "kind",
                             "reason"
                           ],
@@ -4862,11 +5166,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "properties": {
                                 "kind": {
                                   "enum": [
-                                    "declared",
-                                    "measured"
+                                    "declared"
                                   ]
                                 }
                               }
+                            },
+                            {
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "measured"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "observed_on"
+                              ]
                             },
                             {
                               "properties": {
@@ -4882,7 +5197,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 }
                               },
                               "required": [
-                                "confirmed"
+                                "confirmed",
+                                "observed_on"
                               ]
                             }
                           ]
@@ -4930,7 +5246,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     },
                     "required": [
                       "source",
-                      "observed_on",
                       "kind",
                       "reason"
                     ],
@@ -4940,11 +5255,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         "properties": {
                           "kind": {
                             "enum": [
-                              "declared",
-                              "measured"
+                              "declared"
                             ]
                           }
                         }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "measured"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "observed_on"
+                        ]
                       },
                       {
                         "properties": {
@@ -4960,7 +5286,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           }
                         },
                         "required": [
-                          "confirmed"
+                          "confirmed",
+                          "observed_on"
                         ]
                       }
                     ]
@@ -4969,18 +5296,36 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                 "required": [
                   "id",
                   "sibling",
-                  "role",
-                  "profiles",
                   "command",
-                  "image",
-                  "ports",
-                  "mounts",
-                  "dependencies",
-                  "health",
-                  "toolchain_pins",
-                  "provenance"
+                  "health"
                 ],
                 "additionalProperties": false,
+                "allOf": [
+                  {
+                    "oneOf": [
+                      {
+                        "required": [
+                          "image"
+                        ],
+                        "not": {
+                          "required": [
+                            "build"
+                          ]
+                        }
+                      },
+                      {
+                        "required": [
+                          "build"
+                        ],
+                        "not": {
+                          "required": [
+                            "image"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ],
                 "oneOf": [
                   {
                     "properties": {
@@ -4991,6 +5336,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       }
                     },
                     "required": [
+                      "role",
                       "one_shot_failure"
                     ]
                   },
@@ -5012,6 +5358,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               }
             },
             "volumes": {
+              "default": [],
               "maxItems": 256,
               "type": "array",
               "items": {
@@ -5071,7 +5418,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     },
                     "required": [
                       "source",
-                      "observed_on",
                       "kind",
                       "reason"
                     ],
@@ -5081,11 +5427,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         "properties": {
                           "kind": {
                             "enum": [
-                              "declared",
-                              "measured"
+                              "declared"
                             ]
                           }
                         }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "measured"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "observed_on"
+                        ]
                       },
                       {
                         "properties": {
@@ -5101,7 +5458,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           }
                         },
                         "required": [
-                          "confirmed"
+                          "confirmed",
+                          "observed_on"
                         ]
                       }
                     ]
@@ -5161,7 +5519,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                   ]
                 },
                 "modes": {
-                  "minItems": 3,
+                  "minItems": 1,
                   "maxItems": 3,
                   "type": "array",
                   "items": {
@@ -5276,7 +5634,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   },
                                   "required": [
                                     "source",
-                                    "observed_on",
                                     "kind",
                                     "reason"
                                   ],
@@ -5286,11 +5643,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       "properties": {
                                         "kind": {
                                           "enum": [
-                                            "declared",
-                                            "measured"
+                                            "declared"
                                           ]
                                         }
                                       }
+                                    },
+                                    {
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "measured"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "observed_on"
+                                      ]
                                     },
                                     {
                                       "properties": {
@@ -5306,7 +5674,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                         }
                                       },
                                       "required": [
-                                        "confirmed"
+                                        "confirmed",
+                                        "observed_on"
                                       ]
                                     }
                                   ]
@@ -5316,8 +5685,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "location",
                                 "cwd",
                                 "argv",
-                                "timeout_seconds",
-                                "provenance"
+                                "timeout_seconds"
                               ],
                               "additionalProperties": false,
                               "oneOf": [
@@ -5431,7 +5799,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     },
                                     "required": [
                                       "source",
-                                      "observed_on",
                                       "kind",
                                       "reason"
                                     ],
@@ -5441,11 +5808,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                         "properties": {
                                           "kind": {
                                             "enum": [
-                                              "declared",
-                                              "measured"
+                                              "declared"
                                             ]
                                           }
                                         }
+                                      },
+                                      {
+                                        "properties": {
+                                          "kind": {
+                                            "enum": [
+                                              "measured"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "observed_on"
+                                        ]
                                       },
                                       {
                                         "properties": {
@@ -5461,7 +5839,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                           }
                                         },
                                         "required": [
-                                          "confirmed"
+                                          "confirmed",
+                                          "observed_on"
                                         ]
                                       }
                                     ]
@@ -5471,8 +5850,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   "location",
                                   "cwd",
                                   "argv",
-                                  "timeout_seconds",
-                                  "provenance"
+                                  "timeout_seconds"
                                 ],
                                 "additionalProperties": false,
                                 "oneOf": [
@@ -5550,7 +5928,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               },
                               "required": [
                                 "source",
-                                "observed_on",
                                 "kind",
                                 "reason"
                               ],
@@ -5560,11 +5937,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   "properties": {
                                     "kind": {
                                       "enum": [
-                                        "declared",
-                                        "measured"
+                                        "declared"
                                       ]
                                     }
                                   }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "measured"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "observed_on"
+                                  ]
                                 },
                                 {
                                   "properties": {
@@ -5580,7 +5968,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     }
                                   },
                                   "required": [
-                                    "confirmed"
+                                    "confirmed",
+                                    "observed_on"
                                   ]
                                 }
                               ]
@@ -5592,8 +5981,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "operation",
                             "prerequisites",
                             "after",
-                            "fresh_volume_only",
-                            "provenance"
+                            "fresh_volume_only"
                           ],
                           "additionalProperties": false
                         }
@@ -5681,7 +6069,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               },
                               "required": [
                                 "source",
-                                "observed_on",
                                 "kind",
                                 "reason"
                               ],
@@ -5691,11 +6078,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   "properties": {
                                     "kind": {
                                       "enum": [
-                                        "declared",
-                                        "measured"
+                                        "declared"
                                       ]
                                     }
                                   }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "measured"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "observed_on"
+                                  ]
                                 },
                                 {
                                   "properties": {
@@ -5711,7 +6109,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     }
                                   },
                                   "required": [
-                                    "confirmed"
+                                    "confirmed",
+                                    "observed_on"
                                   ]
                                 }
                               ]
@@ -5721,8 +6120,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "location",
                             "cwd",
                             "argv",
-                            "timeout_seconds",
-                            "provenance"
+                            "timeout_seconds"
                           ],
                           "additionalProperties": false,
                           "oneOf": [
@@ -5794,7 +6192,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -5804,11 +6201,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -5824,7 +6232,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -5959,7 +6368,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       },
                       "required": [
                         "source",
-                        "observed_on",
                         "kind",
                         "reason"
                       ],
@@ -5969,11 +6377,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "properties": {
                             "kind": {
                               "enum": [
-                                "declared",
-                                "measured"
+                                "declared"
                               ]
                             }
                           }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "measured"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "observed_on"
+                          ]
                         },
                         {
                           "properties": {
@@ -5989,7 +6408,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             }
                           },
                           "required": [
-                            "confirmed"
+                            "confirmed",
+                            "observed_on"
                           ]
                         }
                       ]
@@ -6077,7 +6497,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -6087,11 +6506,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -6107,7 +6537,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -6117,8 +6548,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -6234,7 +6664,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -6244,11 +6673,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -6264,7 +6704,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -6274,8 +6715,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -6418,7 +6858,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 },
                                 "required": [
                                   "source",
-                                  "observed_on",
                                   "kind",
                                   "reason"
                                 ],
@@ -6428,11 +6867,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     "properties": {
                                       "kind": {
                                         "enum": [
-                                          "declared",
-                                          "measured"
+                                          "declared"
                                         ]
                                       }
                                     }
+                                  },
+                                  {
+                                    "properties": {
+                                      "kind": {
+                                        "enum": [
+                                          "measured"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "observed_on"
+                                    ]
                                   },
                                   {
                                     "properties": {
@@ -6448,7 +6898,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                       }
                                     },
                                     "required": [
-                                      "confirmed"
+                                      "confirmed",
+                                      "observed_on"
                                     ]
                                   }
                                 ]
@@ -6458,8 +6909,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "location",
                               "cwd",
                               "argv",
-                              "timeout_seconds",
-                              "provenance"
+                              "timeout_seconds"
                             ],
                             "additionalProperties": false,
                             "oneOf": [
@@ -6550,7 +7000,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       },
                       "required": [
                         "source",
-                        "observed_on",
                         "kind",
                         "reason"
                       ],
@@ -6560,11 +7009,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "properties": {
                             "kind": {
                               "enum": [
-                                "declared",
-                                "measured"
+                                "declared"
                               ]
                             }
                           }
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "measured"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "observed_on"
+                          ]
                         },
                         {
                           "properties": {
@@ -6580,7 +7040,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             }
                           },
                           "required": [
-                            "confirmed"
+                            "confirmed",
+                            "observed_on"
                           ]
                         }
                       ]
@@ -6597,13 +7058,12 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               "required": [
                 "volume",
                 "default_mode",
-                "modes",
-                "fixtures",
-                "restore"
+                "modes"
               ],
               "additionalProperties": false
             },
             "vendors": {
+              "default": [],
               "maxItems": 256,
               "type": "array",
               "items": {
@@ -6664,7 +7124,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                     },
                     "required": [
                       "source",
-                      "observed_on",
                       "kind",
                       "reason"
                     ],
@@ -6674,11 +7133,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         "properties": {
                           "kind": {
                             "enum": [
-                              "declared",
-                              "measured"
+                              "declared"
                             ]
                           }
                         }
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "measured"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "observed_on"
+                        ]
                       },
                       {
                         "properties": {
@@ -6694,7 +7164,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           }
                         },
                         "required": [
-                          "confirmed"
+                          "confirmed",
+                          "observed_on"
                         ]
                       }
                     ]
@@ -6867,7 +7338,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -6877,11 +7347,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -6897,7 +7378,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -6907,8 +7389,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       "location",
                       "cwd",
                       "argv",
-                      "timeout_seconds",
-                      "provenance"
+                      "timeout_seconds"
                     ],
                     "additionalProperties": false,
                     "oneOf": [
@@ -7019,7 +7500,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -7029,11 +7509,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -7049,7 +7540,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -7059,8 +7551,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       "location",
                       "cwd",
                       "argv",
-                      "timeout_seconds",
-                      "provenance"
+                      "timeout_seconds"
                     ],
                     "additionalProperties": false,
                     "oneOf": [
@@ -7171,7 +7662,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -7181,11 +7671,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -7201,7 +7702,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -7211,8 +7713,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                       "location",
                       "cwd",
                       "argv",
-                      "timeout_seconds",
-                      "provenance"
+                      "timeout_seconds"
                     ],
                     "additionalProperties": false,
                     "oneOf": [
@@ -7349,7 +7850,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               },
                               "required": [
                                 "source",
-                                "observed_on",
                                 "kind",
                                 "reason"
                               ],
@@ -7359,11 +7859,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   "properties": {
                                     "kind": {
                                       "enum": [
-                                        "declared",
-                                        "measured"
+                                        "declared"
                                       ]
                                     }
                                   }
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "measured"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "observed_on"
+                                  ]
                                 },
                                 {
                                   "properties": {
@@ -7379,7 +7890,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                     }
                                   },
                                   "required": [
-                                    "confirmed"
+                                    "confirmed",
+                                    "observed_on"
                                   ]
                                 }
                               ]
@@ -7389,8 +7901,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "location",
                             "cwd",
                             "argv",
-                            "timeout_seconds",
-                            "provenance"
+                            "timeout_seconds"
                           ],
                           "additionalProperties": false,
                           "oneOf": [
@@ -7524,7 +8035,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -7534,11 +8044,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -7554,7 +8075,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -7564,8 +8086,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -7718,7 +8239,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -7728,11 +8248,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -7748,7 +8279,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -7758,8 +8290,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -7870,7 +8401,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -7880,11 +8410,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -7900,7 +8441,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -7910,8 +8452,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -8052,7 +8593,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -8062,11 +8602,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -8082,7 +8633,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -8092,8 +8644,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -8204,7 +8755,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -8214,11 +8764,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -8234,7 +8795,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -8244,8 +8806,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -8392,7 +8953,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -8402,11 +8962,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -8422,7 +8993,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -8432,8 +9004,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -8562,7 +9133,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -8572,11 +9142,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -8592,7 +9173,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -8602,8 +9184,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -8714,7 +9295,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -8724,11 +9304,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -8744,7 +9335,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -8754,8 +9346,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -8866,7 +9457,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -8876,11 +9466,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -8896,7 +9497,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -8906,8 +9508,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -9047,7 +9648,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -9057,11 +9657,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -9077,7 +9688,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -9087,8 +9699,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -9199,7 +9810,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             },
                             "required": [
                               "source",
-                              "observed_on",
                               "kind",
                               "reason"
                             ],
@@ -9209,11 +9819,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                 "properties": {
                                   "kind": {
                                     "enum": [
-                                      "declared",
-                                      "measured"
+                                      "declared"
                                     ]
                                   }
                                 }
+                              },
+                              {
+                                "properties": {
+                                  "kind": {
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "observed_on"
+                                ]
                               },
                               {
                                 "properties": {
@@ -9229,7 +9850,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                                   }
                                 },
                                 "required": [
-                                  "confirmed"
+                                  "confirmed",
+                                  "observed_on"
                                 ]
                               }
                             ]
@@ -9239,8 +9861,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "location",
                           "cwd",
                           "argv",
-                          "timeout_seconds",
-                          "provenance"
+                          "timeout_seconds"
                         ],
                         "additionalProperties": false,
                         "oneOf": [
@@ -9340,22 +9961,25 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               }
             },
             "decisions": {
+              "default": {},
               "type": "object",
               "properties": {
                 "path": {
+                  "default": "docs/cockpit/environment-decisions.md",
                   "type": "string",
                   "enum": [
                     "docs/cockpit/environment-decisions.md"
                   ]
                 },
                 "ownership": {
+                  "default": "whole-file",
                   "type": "string",
                   "enum": [
                     "whole-file"
                   ]
                 },
                 "entries": {
-                  "minItems": 1,
+                  "default": [],
                   "maxItems": 512,
                   "type": "array",
                   "items": {
@@ -9451,7 +10075,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         },
                         "required": [
                           "source",
-                          "observed_on",
                           "kind",
                           "reason"
                         ],
@@ -9461,11 +10084,22 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                             "properties": {
                               "kind": {
                                 "enum": [
-                                  "declared",
-                                  "measured"
+                                  "declared"
                                 ]
                               }
                             }
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": [
+                                  "measured"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "observed_on"
+                            ]
                           },
                           {
                             "properties": {
@@ -9481,7 +10115,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               }
                             },
                             "required": [
-                              "confirmed"
+                              "confirmed",
+                              "observed_on"
                             ]
                           }
                         ]
@@ -9502,21 +10137,12 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                   }
                 }
               },
-              "required": [
-                "path",
-                "ownership",
-                "entries"
-              ],
               "additionalProperties": false
             }
           },
           "required": [
             "compose_file",
-            "services",
-            "volumes",
-            "data",
-            "vendors",
-            "decisions"
+            "services"
           ],
           "additionalProperties": false
         }
@@ -10141,8 +10767,16 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
       "rule": "product_data_volume_and_mode_operations"
     },
     {
+      "path": "environment.generated.data",
+      "rule": "declared_default_mode_fixtures_for_seeded_and_restore_for_restored"
+    },
+    {
       "path": "environment.generated.decisions.entries[]",
-      "rule": "exact_rendered_choice_and_vendor_coverage"
+      "rule": "declared_subject_with_undecided_subjects_rendered"
+    },
+    {
+      "path": "environment.generated",
+      "rule": "undated_declared_provenance_names_the_configuration_file"
     }
   ],
   "x-cockpit-editor-limitations": [
@@ -10279,8 +10913,16 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
       "rule": "product_data_volume_and_mode_operations"
     },
     {
+      "path": "environment.generated.data",
+      "rule": "declared_default_mode_fixtures_for_seeded_and_restore_for_restored"
+    },
+    {
       "path": "environment.generated.decisions.entries[]",
-      "rule": "exact_rendered_choice_and_vendor_coverage"
+      "rule": "declared_subject_with_undecided_subjects_rendered"
+    },
+    {
+      "path": "environment.generated",
+      "rule": "undated_declared_provenance_names_the_configuration_file"
     }
   ]
 }
