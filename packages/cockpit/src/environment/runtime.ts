@@ -1939,11 +1939,15 @@ function runtimeServiceInitialSteps(
 ): RuntimeServiceInitialSteps | undefined {
     // Compose builds a generated service's image inside its first start, and the declared
     // cold_start_seconds already bounds start through health, so a built service's start gets that
-    // bound instead of the ordinary command budget, which a first build outruns.
+    // bound instead of the ordinary command budget, which a first build outruns. When the service's
+    // configuration changed since its container was created, `up` first stops that container and
+    // pays its stop grace; a start held to the command budget alone was killed mid-recreate after
+    // a fixed `up`, leaving the replacement container created but never started.
     const built = typeof service.generation === 'string' && service.image === null
     const start = derivedComposeStep(
-        built ? { ...topologyContract.step, timeoutMs: Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis) }
-            : topologyContract.step,
+        { ...topologyContract.step, timeoutMs: COMPOSE_STOP_GRACE_MS + (built
+            ? Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis)
+            : topologyContract.step.timeoutMs) },
         `runtime:docker-compose:start:${service.id}`,
         'up',
         ['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', service.id],

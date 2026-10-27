@@ -1598,6 +1598,7 @@ fi
 
         // A generated service Compose builds from a local context has no pinned identity, and its first
         // start includes the build, so the start is held to the declared cold start, not the command budget.
+        // Either start may first stop a container whose configuration changed, so both add its stop grace.
         const { image: _pinned, ...unpinned } = topology.services.api
         const built = { ...topology, services: { api: { ...unpinned, build: { context: directory, dockerfile: 'Dockerfile' } } } }
         const builtEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
@@ -1605,7 +1606,7 @@ fi
         expect(builtEvidence.topology.services[0]).toMatchObject({ id: 'api', image: null, generation })
         const builtStart = createRuntimeServicePlan({ topology: builtEvidence.topology, service: 'api' })
         if (builtStart.kind !== 'planned') throw new Error('built service plan unavailable')
-        expect(builtStart.start.timeoutMs).toBe(60_000)
+        expect(builtStart.start.timeoutMs).toBe(70_000)
         // The built image gets the launcher check a pinned image gets before start: it is built
         // first, then must run the generated entrypoint's /bin/sh, or start is refused by name.
         const launcherCheck = async (controls: Readonly<Record<string, unknown>>) => {
@@ -1630,7 +1631,7 @@ fi
         const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
         if (pinnedStart.kind !== 'planned') throw new Error('pinned service plan unavailable')
         expect(pinnedStart).not.toHaveProperty('build')
-        expect(pinnedStart.start.timeoutMs).toBe(10_000)
+        expect(pinnedStart.start.timeoutMs).toBe(20_000)
         for (const build of [{ context: 'relative', dockerfile: 'Dockerfile' }, { context: directory }, { context: directory, dockerfile: 'Dockerfile', args: {} }]) {
             expect((await topologyEvidence({ ...topology, services: { api: { ...unpinned, build } } })).admitted.kind).toBe('unavailable')
         }
