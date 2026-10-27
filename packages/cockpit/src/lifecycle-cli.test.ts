@@ -57,6 +57,16 @@ describe('lifecycle CLI composition', () => {
         expect(capture.output().stderr).toBe('')
     })
 
+    it.each(['down', 'reset'] as const)('names the missing Docker daemon selection for %s', async (verb) => {
+        const capture = captureIo()
+        const status = await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {}, { env: {} })
+
+        expect(status).toBe(2)
+        expect(JSON.parse(capture.output().stdout)).toMatchObject({
+            diagnostics: [{ code: 'CLI_USAGE_INVALID', target: 'DOCKER_CONTEXT', message: expect.stringContaining('docker context show') }],
+        })
+    })
+
     it('opens the production reset session only from the interactive branch', async () => {
         const capture = captureIo(async () => true)
         const status = await runCli(

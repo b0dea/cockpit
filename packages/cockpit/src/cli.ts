@@ -443,6 +443,15 @@ const defaultSetupAdapters: SetupCommandAdapters = {
         }),
 }
 
+// Destructive commands must name the daemon they delete from; refusing here names the fix instead of
+// the generic authority refusal an empty context selection produced.
+function destructiveDaemonUnset(runtime: CliRuntime): CommandOutcome | undefined {
+    const env = runtime.env ?? process.env
+    return env.DOCKER_CONTEXT === undefined && env.DOCKER_HOST === undefined ? usageOutcome('CLI_USAGE_INVALID',
+        'down and reset need an explicit Docker daemon: set DOCKER_CONTEXT (for example DOCKER_CONTEXT="$(docker context show)") or a local unix:// DOCKER_HOST',
+        'DOCKER_CONTEXT') : undefined
+}
+
 function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId: string) {
     const env = runtime.env ?? process.env
     return createDestructiveCommandAdapters({
@@ -592,12 +601,16 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         down: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const unset = destructiveDaemonUnset(runtime)
+            if (unset) return Promise.resolve(unset)
             const configPath = resolve(input.configPath)
             return runDownApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
         },
         reset: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+            const unset = destructiveDaemonUnset(runtime)
+            if (unset) return Promise.resolve(unset)
             const configPath = resolve(input.configPath)
             return runResetApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
         },
