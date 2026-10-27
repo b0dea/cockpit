@@ -5,7 +5,7 @@
 // Deliberately cheap and exact: Dockerfile, .env.example names, Compose files and CI service
 // containers. Orchestrator manifests are not parsed; their shape is too varied to read reliably.
 import { lstat, readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
 export const mechanism = {
@@ -47,6 +47,7 @@ const MAX_BYTES = 1024 * 1024
 const MAX_WORKFLOWS = 32
 const COMPOSE_NAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+const SIBLING_SLUG = /^[a-z][a-z0-9-]*$/
 
 type Read = { kind: 'absent' } | { kind: 'skipped'; reason: string } | { kind: 'text'; text: string }
 
@@ -219,6 +220,17 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             }
         }
     }
+    // With no repository under the root, the cockpit root is the first one: an empty directory
+    // the product will grow in, or a repository of documents. The schema needs one sibling, and
+    // declaring the root itself (dir ".") says what is true instead of inventing a child directory
+    // or allowing a cockpit with no repositories that every sibling consumer would have to special-case.
+    // mount "none" because the agent already works in the root: mounting or projecting it would
+    // point the cockpit's own guides at themselves. The purpose is the human's to state.
+    const rootName = basename(input.root)
+    if (input.repositories.length === 0 && SIBLING_SLUG.test(rootName)) facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
+        value: { slug: rootName, dir: '.', mount: 'none', acquire: 'none', var: `${rootName.toUpperCase().replaceAll('-', '_')}_DIR` },
+        provenance: { kind: 'inferred', source: '.',
+            reason: 'no directory under the root has a package manifest, so the cockpit root itself is the first repository; add its purpose' } })
     if (composeFiles.length > 0) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: composeFiles,
         provenance: { kind: 'inferred', source: composeFiles[0]!,
             reason: composeFiles.length === 1 ? 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment'

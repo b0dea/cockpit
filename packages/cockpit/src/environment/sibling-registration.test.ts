@@ -85,6 +85,21 @@ describe('sibling add', () => {
         expect(outcome.artifact).toContain('--remote <url>')
     })
 
+    it('--create grows a cockpit whose only sibling is its own root', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-sibling-genesis-')))
+        roots.push(root)
+        const configPath = join(root, 'cockpit.toml')
+        await writeFile(configPath, ['[cockpit]', 'name = "genesis"', 'siblings_root = "."', '',
+            '[[sibling]]', 'slug = "genesis"', 'dir = "."', 'mount = "none"', 'acquire = "none"',
+            'var = "GENESIS_DIR"', 'purpose = "Product notes"', '', '[ports]', 'bases = {}', ''].join('\n'))
+
+        const outcome = await add({ configPath, slug: 'api', create: true, purpose: 'HTTP API' })
+
+        expect(outcome).toMatchObject({ status: 0, diagnostics: [] })
+        expect((await stat(join(root, 'api', '.git'))).isDirectory()).toBe(true)
+        expect((await loaded(configPath)).sibling.map((row) => [row.slug, row.dir])).toEqual([['genesis', '.'], ['api', 'api']])
+    })
+
     it('--create refuses a path that already has content and changes nothing', async () => {
         const { configPath, siblings } = await estate()
         await mkdir(join(siblings, 'ledger'))

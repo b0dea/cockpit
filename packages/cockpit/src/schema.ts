@@ -676,7 +676,8 @@ export const Sibling = z
         slug: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
         // Relative to the siblings root and resolved without further checks by several
         // consumers, so the schema is where a hostile cockpit.toml is stopped. `.` is the
-        // siblings root itself: a single-repository stack whose one sibling is the cockpit root.
+        // siblings root itself: a single-repository stack whose one sibling is the cockpit root, or a
+        // cockpit started before any product repository exists, which grows with `sibling add`.
         dir: z.union([z.literal('.'), SafeRelativePath]),
         // Absent exactly when nothing is cloned. Never derived from `dir`: a directory is
         // named for local convenience, a remote for whatever the org called it.

@@ -53,6 +53,18 @@ describe('inferred interview answers', () => {
         expect(byTarget(facts, 'services.cache')).toMatchObject({ value: { image: 'redis:7' } })
     })
 
+    it('proposes the cockpit root as the first sibling only when no repository was observed', async () => {
+        const parent = estate({})
+        mkdirSync(join(parent, 'product-notes'))
+        const root = join(parent, 'product-notes')
+        const { facts } = await deriveInferredFacts({ root, repositories: [] })
+        expect(byTarget(facts, 'sibling.product-notes')).toEqual({ fields: ['sibling'], target: 'sibling.product-notes',
+            value: { slug: 'product-notes', dir: '.', mount: 'none', acquire: 'none', var: 'PRODUCT_NOTES_DIR' },
+            provenance: expect.objectContaining({ kind: 'inferred', source: '.' }) })
+        const observed = await deriveInferredFacts({ root, repositories: api })
+        expect(observed.facts.filter(fact => fact.fields.includes('sibling'))).toEqual([])
+    })
+
     it('reports an unreadable input instead of dropping it', async () => {
         const root = estate({ '.github/workflows/ci.yml': 'jobs: [unclosed', 'api/real.txt': 'x' })
         symlinkSync(join(root, 'api/real.txt'), join(root, 'api/Dockerfile'))
