@@ -267,21 +267,23 @@ function cockpitRootQuestion(root: string): CockpitRootQuestion {
                 tradeOff: `the product repository stays free of cockpit files, and the cockpit grows to more repositories with cockpit sibling add, each created or found beside ${basename(root)}, without moving`,
                 ...(unnamed === undefined ? {} : { unavailable: unnamed }) }),
             Object.freeze({ answer: 'in-repo' as const, root, creates: Object.freeze([]), siblingsRoot: '.', firstSibling: root,
-                tradeOff: 'the product repository carries the cockpit files and the cockpit cannot neutrally own several repositories; it can be moved out to a dedicated folder later' }),
+                tradeOff: 'the product repository carries the cockpit files and the cockpit cannot neutrally own several repositories; it can be moved out to a dedicated folder later',
+                ...(unnamed === undefined ? {} : { unavailable: unnamed }) }),
         ]),
     })
 }
 
 /** Where the estate's repositories are observed: the cockpit root, or the product repository a dedicated cockpit sits beside. */
 function estateInput(input: InitApplicationInput): EstateObservationInput {
-    return input.cockpitRoot?.kind === 'dedicated'
-        ? Object.freeze({ root: dirname(input.cockpitRoot.firstSibling), repositories: Object.freeze([basename(input.cockpitRoot.firstSibling)]) })
-        : Object.freeze({ root: input.root })
+    if (input.cockpitRoot?.kind === 'dedicated') return Object.freeze({ root: dirname(input.cockpitRoot.firstSibling),
+        repositories: Object.freeze([basename(input.cockpitRoot.firstSibling)]) })
+    // Choosing in-repo must not lose the product: its root manifests are observed as the sibling at ".".
+    if (input.cockpitRoot?.kind === 'in-repo') return Object.freeze({ root: input.root, rootIsRepository: true as const })
+    return Object.freeze({ root: input.root })
 }
 
-function documentSiblings(input: InitApplicationInput): Pick<DocumentCommandInput, 'siblings'> {
-    const observed = estateInput(input)
-    return observed.repositories === undefined ? {} : { siblings: { root: observed.root, repositories: observed.repositories } }
+function documentEstate(input: InitApplicationInput): Pick<DocumentCommandInput, 'estate'> {
+    return input.cockpitRoot === undefined ? {} : { estate: estateInput(input) }
 }
 
 async function interviewPlan(
@@ -293,7 +295,7 @@ async function interviewPlan(
     const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
     const observedRoot = estateInput(input).root
     const inference = await adapters.infer?.({ root: input.root,
-        repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(input.root, resolve(observedRoot, row.path)) })) })
+        repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(input.root, resolve(observedRoot, row.path)) || '.' })) })
     return Object.freeze({
         answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),
         outstanding: Object.freeze(planned.slice(answered).map(({ field, why }) => Object.freeze({ field, why,
@@ -533,7 +535,7 @@ export async function runInitApplication(
             return refused('GREENFIELD_ANSWER_INVALID', 'configuration answer does not match the next persisted question and provenance', address.path)
         }
         const answers = proposed ? [...priorAnswers, { ...proposed, sha256: sha256(proposed.bytes) }] : [...priorAnswers]
-        const documented = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentSiblings(input),
+        const documented = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentEstate(input),
             configuration: { sourceObservationSha256, ...(classification ? { classification: classification.classification } : {}), answers } })
         if (documented.artifact === null) {
             if (proposed && documented.diagnostics.some(row => row.code.startsWith('DOCUMENT_CONFIGURATION_ANSWER')
@@ -593,7 +595,7 @@ export async function runInitApplication(
     const persistedConfiguration = current.value.greenfield
     if (!persistedConfiguration) return refused('INIT_DRAFT_SOURCE_CHANGED',
         'persisted cockpit.toml has no source-bound configuration answers', destination)
-    const currentDocument = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentSiblings(input),
+    const currentDocument = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentEstate(input),
         configuration: { sourceObservationSha256: persistedConfiguration.sourceObservationSha256,
             ...(persistedConfiguration.classification ? { classification: persistedConfiguration.classification } : {}),
             answers: persistedConfiguration.answers } })

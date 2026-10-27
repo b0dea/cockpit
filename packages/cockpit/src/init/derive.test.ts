@@ -82,6 +82,15 @@ describe('inferred interview answers', () => {
         expect(observed.facts.filter(fact => fact.fields.includes('sibling'))).toEqual([])
     })
 
+    it('reads an in-repo cockpit\'s root once, as the repository at "." that is its own first sibling', async () => {
+        const parent = estate({ 'shop/Dockerfile': 'FROM node:22\nEXPOSE 3000\nCMD ["node", "server.mjs"]\n',
+            'shop/.env.example': 'DATABASE_URL=\n' })
+        const { facts } = await deriveInferredFacts({ root: join(parent, 'shop'), repositories: [{ slug: 'shop', path: '.' }] })
+        expect(byTarget(facts, 'shop.command')).toMatchObject({ value: ['node', 'server.mjs'], provenance: { source: 'Dockerfile' } })
+        expect(byTarget(facts, 'sibling.shop')).toMatchObject({ value: { slug: 'shop', dir: '.' } })
+        expect(facts.filter(fact => fact.target === 'guards.hosted_db_hosts')).toHaveLength(1)
+    })
+
     it('reports an unreadable input instead of dropping it', async () => {
         const root = estate({ '.github/workflows/ci.yml': 'jobs: [unclosed', 'api/real.txt': 'x' })
         symlinkSync(join(root, 'api/real.txt'), join(root, 'api/Dockerfile'))

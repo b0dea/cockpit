@@ -177,10 +177,9 @@ step runs there with the repository as its first sibling (`dir` is the repositor
 answers file, not from the new folder, which `init` would treat as a fresh empty cockpit;
 `result.root` shows the cockpit root, and the `sync`, `check` and `sibling add`
 commands that follow take `--config <result.root>/cockpit.toml`. With `"in-repo"`, `init`
-proposes the repository as its own first sibling (`dir = "."`) and continues as in
-[Empty directory](#empty-directory) steps 2 and 3. It observes manifests only in directories
-below the root, so an in-repo cockpit declares no runtime until you add
-`environment.compose_files` or `[environment.generated]` by hand.
+observes the repository's own manifest as its first sibling (`dir = "."`) and proposes that
+row, then asks the same runtime questions as
+[One or several repositories](#one-or-several-repositories), from step 2.
 
 ### Docs or decisions only
 

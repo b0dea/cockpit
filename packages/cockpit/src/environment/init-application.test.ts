@@ -227,6 +227,8 @@ describe('init application', () => {
         expect(observed).toEqual([{ root: resolve(f.root, '..'), repositories: ['checkout'] }])
         expect(await runInitApplication({ ...greenfield, cockpitRoot: { kind: 'in-repo' } }, adapters))
             .toMatchObject({ kind: 'pending', result: { nextCommand: 'confirm selected bootstrap preview' } })
+        // In-repo keeps the product: the root is observed as a repository itself, not as an empty cockpit.
+        expect(observed.at(-1)).toEqual({ root: f.root, rootIsRepository: true })
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {

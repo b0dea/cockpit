@@ -153,8 +153,11 @@ function workflowServices(document: unknown): Array<{ job: string; name: string;
 export async function deriveInferredFacts(input: InferenceInput): Promise<InferenceResult> {
     const facts: InferredFact[] = []
     const skipped: SkippedInference[] = []
-    const directories = [{ slug: undefined as string | undefined, path: '' },
-        ...input.repositories.map(repository => ({ slug: repository.slug as string | undefined, path: repository.path }))]
+    // A repository at "." is the cockpit root itself (an in-repo cockpit), so the root is read once, as that repository.
+    const ownRoot = input.repositories.find(repository => repository.path === '.')
+    const directories = [{ slug: ownRoot?.slug, path: '' },
+        ...input.repositories.filter(repository => repository !== ownRoot)
+            .map(repository => ({ slug: repository.slug as string | undefined, path: repository.path }))]
     const relative = (directory: string, name: string) => directory === '' ? name : `${directory}/${name}`
     const read = async (directory: string, name: string): Promise<string | undefined> => {
         const source = relative(directory, name)
@@ -256,10 +259,11 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     // mount "none" because the agent already works in the root: mounting or projecting it would
     // point the cockpit's own guides at themselves. The purpose is the human's to state.
     const rootName = basename(input.root)
-    if (input.repositories.length === 0 && SIBLING_SLUG.test(rootName)) facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
+    if ((input.repositories.length === 0 || ownRoot?.slug === rootName) && SIBLING_SLUG.test(rootName)) facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
         value: { slug: rootName, dir: '.', mount: 'none', acquire: 'none', var: `${rootName.toUpperCase().replaceAll('-', '_')}_DIR` },
-        provenance: { kind: 'inferred', source: '.',
-            reason: 'no directory under the root has a package manifest, so the cockpit root itself is the first repository; add its purpose' } })
+        provenance: { kind: 'inferred', source: '.', reason: ownRoot
+            ? 'the cockpit lives inside this product repository, so the repository is its own first sibling; add its purpose'
+            : 'no directory under the root has a package manifest, so the cockpit root itself is the first repository; add its purpose' } })
     if (composeFiles.length > 0) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: composeFiles,
         provenance: { kind: 'inferred', source: composeFiles[0]!,
             reason: composeFiles.length === 1 ? 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment'

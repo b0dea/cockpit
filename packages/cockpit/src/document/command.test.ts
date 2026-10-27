@@ -117,7 +117,7 @@ describe('estate observation classification', () => {
                 classification: 'one-sibling',
                 applicability: { stack: true, seed: true, postures: true,
                     registry: false, projection: false, drift: false, compose: 'applicable' },
-                notice: 'cockpit starts earning its keep at two siblings; this estate can still use stack, seed and posture controls',
+                notice: 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with cockpit sibling add',
                 gaps: [],
                 runnable: [{ slug: 'web', path: 'web', disposition: 'confirmed' }],
                 sourceObservationSha256: observationDigest(estateRoot, repositories),
@@ -1020,20 +1020,42 @@ describe('operator-confirmed document completion', () => {
         const configuration = { sourceObservationSha256: scoped.result.sourceObservationSha256,
             classification: scoped.result.classification, answers: [] as ReturnType<typeof answer>[] }
         const cockpitRoot = join(parent, 'shop-cockpit')
-        let pending = await documentObservedCommand({ root: cockpitRoot, siblings, configuration })
+        let pending = await documentObservedCommand({ root: cockpitRoot, estate: siblings, configuration })
         for (const value of [[{ slug: 'shop', dir: 'shop', mount: 'none', acquire: 'none', var: 'SHOP_DIR', purpose: 'The shop' }],
             {}, { hosted_db_hosts: [], vendor_endpoint_hosts: [] }]) {
             configuration.answers.push(answer(pending.question!, value))
-            pending = await documentObservedCommand({ root: cockpitRoot, siblings, configuration })
+            pending = await documentObservedCommand({ root: cockpitRoot, estate: siblings, configuration })
         }
         configuration.answers.push(confirmDefaults(pending.question!))
-        const completed = await documentObservedCommand({ root: cockpitRoot, siblings, configuration })
+        const completed = await documentObservedCommand({ root: cockpitRoot, estate: siblings, configuration })
         expect(completed, JSON.stringify(completed.diagnostics)).toMatchObject({ kind: 'complete' })
         expect(parseToml(completed.artifact!)).toMatchObject({ cockpit: { name: 'shop-cockpit', siblings_root: '..' },
             sibling: [{ slug: 'shop', dir: 'shop' }] })
         // A repository the dedicated cockpit was not created for is never observed into its estate.
         expect(await classifyEstateObservation({ root: parent, repositories: ['missing'] }, { observe: observePublicEstate }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID' }] })
+    })
+
+    it('observes an in-repo cockpit\'s own manifest as its runnable sibling at "." and asks for its runtime', async () => {
+        const product = realpathSync(temporaryPath('store').replace(/store$/, '')) + '/store'
+        mkdirSync(join(product, 'src'), { recursive: true })
+        writeFileSync(join(product, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.mjs' } }))
+        expect(await classifyEstateObservation({ root: product }, { observe: observePublicEstate }))
+            .toMatchObject({ kind: 'complete', result: { classification: 'no-runnable-product', runnable: [] } })
+        const estate = { root: product, rootIsRepository: true as const }
+        const observed = await classifyEstateObservation(estate, { observe: observePublicEstate })
+        expect(observed).toMatchObject({ kind: 'complete', result: { classification: 'one-sibling',
+            runnable: [{ slug: 'store', path: '.', disposition: 'confirmed' }] } })
+        if (observed.kind !== 'complete') throw new Error('in-repo observation did not classify')
+        const configuration = { sourceObservationSha256: observed.result.sourceObservationSha256,
+            classification: observed.result.classification, answers: [] as ReturnType<typeof answer>[] }
+        let pending = await documentObservedCommand({ root: product, estate, configuration })
+        for (const value of [[{ slug: 'store', dir: '.', mount: 'none', acquire: 'none', var: 'STORE_DIR', purpose: 'The store' }], {}]) {
+            configuration.answers.push(answer(pending.question!, value))
+            pending = await documentObservedCommand({ root: product, estate, configuration })
+        }
+        // The product keeps its runtime interview instead of collapsing to a surfaces-only cockpit.
+        expect(pending, JSON.stringify(pending.diagnostics)).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.install_policies' } })
     })
 
     it('completes a no-runnable estate as a surfaces-only configuration that states no runtime is declared', async () => {

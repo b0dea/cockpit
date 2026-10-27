@@ -20,9 +20,15 @@ export const mechanism = {
 /**
  * The directory holding the repositories, and optionally the direct children to observe. A cockpit
  * created beside a product repository observes only that repository in their shared parent, which
- * also holds unrelated checkouts that are not part of this estate.
+ * also holds unrelated checkouts that are not part of this estate. A cockpit kept inside a product
+ * repository sets rootIsRepository, so the root's own manifests are observed as the sibling at ".".
  */
-export interface EstateObservationInput { readonly root: string; readonly repositories?: readonly string[] }
+export interface EstateObservationInput {
+    readonly root: string
+    readonly repositories?: readonly string[]
+    readonly rootIsRepository?: true
+}
+type ObservationScope = Readonly<{ root: string; repositories?: readonly string[]; rootIsRepository?: true }>
 export interface EstateObservationAdapters {
     readonly observe: (input: EstateObservationInput) => Promise<unknown>
 }
@@ -95,8 +101,8 @@ export interface DocumentCommandInput {
     registry?: string
     output?: string
     configuration?: DocumentConfigurationInput
-    /** The observed repositories live outside the cockpit root: init's dedicated cockpit beside a product repository. */
-    siblings?: Readonly<{ root: string; repositories: readonly string[] }>
+    /** How init observed the estate when it is not the cockpit root's children: a dedicated or an in-repo cockpit. */
+    estate?: EstateObservationInput
 }
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
@@ -225,11 +231,12 @@ async function observeRepositoryManifests(repository: string, label: string): Pr
     return { runnable, reasons, sources }
 }
 
-function observationInput(input: EstateObservationInput): Readonly<{ root: string; repositories?: readonly string[] }> | undefined {
+function observationInput(input: EstateObservationInput): ObservationScope | undefined {
     if (!input || typeof input !== 'object' || typeof input.root !== 'string'
         || !isAbsolute(input.root) || resolve(input.root) !== input.root) return undefined
     const keys = Object.keys(input).sort().join(',')
     if (keys === 'root') return { root: input.root }
+    if (keys === 'root,rootIsRepository') return input.rootIsRepository === true ? { root: input.root, rootIsRepository: true } : undefined
     if (keys !== 'repositories,root' || !Array.isArray(input.repositories) || input.repositories.length < 1
         || input.repositories.length > 64 || input.repositories.some(name => typeof name !== 'string' || !SAFE_NAME.test(name))
         || new Set(input.repositories).size !== input.repositories.length) return undefined
@@ -243,6 +250,15 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
     if (root !== captured.root) throw new TypeError('public estate root is linked or non-canonical')
     const entries = await estateDirectories(root, captured.repositories)
     const repositories: EstateRepositoryObservation[] = []
+    if (captured.rootIsRepository) {
+        const slug = basename(root)
+        if (!SAFE_NAME.test(slug)) throw new TypeError(`the repository directory name ${JSON.stringify(slug)} is not a valid sibling slug`)
+        const { runnable, reasons, sources } = await observeRepositoryManifests(root, '.')
+        const source = sources[0]
+        if (source) repositories.push(Object.freeze({ slug, path: '.', evidencePath: source.path, runnable,
+            ...(runnable === 'confirmed' ? {} : { why: reasons.join('; ') }), source,
+            ...(sources.length > 1 ? { sources: Object.freeze(sources) } : {}) }))
+    }
     for (const entry of entries) {
         const { runnable, reasons, sources } = await observeRepositoryManifests(resolve(root, entry.name), entry.name)
         const source = sources[0]
@@ -351,9 +367,10 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
     return Object.freeze(rows)
 }
 
-async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], only?: readonly string[]): Promise<boolean> {
+async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], scope: ObservationScope): Promise<boolean> {
     try {
-        for (const directory of await estateDirectories(root, only)) {
+        const candidates = [...(scope.rootIsRepository ? [{ name: '.' }] : []), ...await estateDirectories(root, scope.repositories)]
+        for (const directory of candidates) {
             const manifests: string[] = []
             for (const manifest of PUBLIC_MANIFESTS) {
                 try {
@@ -374,7 +391,8 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
         for (const row of rows) {
             const repository = resolve(root, row.path)
             const repositoryRelative = relative(root, repository)
-            if (!repositoryRelative || repositoryRelative.startsWith(`..${sep}`) || isAbsolute(repositoryRelative)
+            const ownRoot = row.path === '.' && scope.rootIsRepository === true
+            if (!repositoryRelative && !ownRoot || repositoryRelative.startsWith(`..${sep}`) || isAbsolute(repositoryRelative)
                 || await realpath(repository) !== repository) return false
             const repositoryBefore = await lstat(repository)
             if (!repositoryBefore.isDirectory() || repositoryBefore.isSymbolicLink()) return false
@@ -422,10 +440,11 @@ export async function classifyEstateObservation(
             : `estate root is linked, missing or non-canonical, or does not hold ${only.join(', ')} as a plain directory`, captured.root)
     }
     let observed: unknown
-    try { observed = await adapters.observe(Object.freeze({ root, ...(only === undefined ? {} : { repositories: only }) })) }
+    try { observed = await adapters.observe(Object.freeze({ root, ...(only === undefined ? {} : { repositories: only }),
+        ...(captured.rootIsRepository ? { rootIsRepository: true as const } : {}) })) }
     catch { return estateRefusal('estate observation owner failed', root) }
     const rows = estateCandidate(observed, root)
-    if (!rows || !await currentEstateRows(root, rows, only)) {
+    if (!rows || !await currentEstateRows(root, rows, captured)) {
         return estateRefusal('estate observation is malformed, ambiguous, stale or unbound to current source bytes', root)
     }
     try {
@@ -457,7 +476,7 @@ export async function classifyEstateObservation(
             registry: multi, projection: multi, drift: multi,
             compose: unknown.length > 0 ? 'unknown' : confirmed.length > 0 ? 'applicable' : 'inapplicable' }),
         notice: classification === 'one-sibling'
-            ? 'cockpit starts earning its keep at two siblings; this estate can still use stack, seed and posture controls'
+            ? 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with cockpit sibling add'
             : classification === 'no-runnable-product'
                 ? 'build enough product to run before scaffolding a cockpit environment'
                 : classification === 'incomplete-multi-repository'
@@ -801,7 +820,7 @@ function completeConfigurationDocument(
         classification: configuration.classification ?? null })
     const defaults = configurationDefaults()
     const siblingsRoot: GreenfieldSiblingsRoot = registrySha256 !== null ? undefined
-        : input.siblings && root ? relative(root, input.siblings.root) || '.' : '.'
+        : input.estate && root ? relative(root, input.estate.root) || '.' : '.'
     const destination = input.output ? resolve(input.output) : null
     let answerIndex = 0
     let name = cockpitName(root)
@@ -1165,9 +1184,7 @@ export async function documentCommand(input: DocumentCommandInput): Promise<Docu
 export async function documentObservedCommand(input: DocumentCommandInput): Promise<DocumentOutcome> {
     if (input.registry !== undefined || input.configuration === undefined) return documentCommand(input)
     if (!input.root) return refusal('DOCUMENT_SOURCE_REQUIRED', 'greenfield configuration completion requires one canonical root')
-    const classified = await classifyEstateObservation(input.siblings
-        ? { root: input.siblings.root, repositories: input.siblings.repositories }
-        : { root: resolve(input.root) }, { observe: observePublicEstate })
+    const classified = await classifyEstateObservation(input.estate ?? { root: resolve(input.root) }, { observe: observePublicEstate })
     if (classified.kind !== 'complete') return {
         kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
         diagnostics: [...classified.diagnostics],
