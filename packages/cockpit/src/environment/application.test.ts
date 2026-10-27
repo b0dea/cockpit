@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
+import { chmodSync, renameSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { parse, stringify } from 'smol-toml'
@@ -429,10 +429,31 @@ describe('pending guard policy construction', () => {
             execute: executeProbe,
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
-            change === 'changed' ? 'publication changed during evaluation' : 'could not be read or revalidated',
+            change === 'changed' ? 'publication changed during evaluation'
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: a human must restore it with \`git -C ${root} restore .cockpit/guards/bash-guard.sh\``
+                    : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
         expect(loads).toBe(change === 'changed' ? 2 : 1)
+    }, 120_000)
+
+    it.each([
+        ['cockpit.toml', 'guard policy comes from it', 'and then run'],
+        ['.cockpit/generated-environment-ownership.json', 'it authenticates the guard and the hook that launches it', ', or run'],
+        ['.claude/settings.json', 'it authenticates the guard and the hook that launches it', ', or run'],
+        ['.cockpit/local/guard-identity', 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', undefined],
+    ] as const)('names a deleted %s, why every call is held, and the fix', async (file, why, sync) => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        // A rename keeps the file's identity, so the shared fixture stays authenticated afterwards.
+        renameSync(join(root, file), join(root, `${file}.away`))
+        try {
+            const { decision } = await runGuardEvaluationApplication(request, adapters)
+            expect(decision.decision).toBe('unavailable')
+            expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so every tool call is held`)
+            expect(decision.reason).toContain(sync
+                ? `Fix: a human must restore it with \`git -C ${root} restore ${file}\` (it is committed)${sync.startsWith(',') ? '' : ' '}${sync} \`cockpit sync --config ${configPath}\``
+                : `Fix: a human must run \`cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
+        } finally { renameSync(join(root, `${file}.away`), join(root, file)) }
     }, 120_000)
 
     it.each([1, 2])('refuses forged guard publication batch evidence at checkpoint %s', async checkpoint => {
@@ -481,7 +502,7 @@ describe('pending guard policy construction', () => {
             writeFileSync(path, bytes)
             const observeCheckout = vi.fn(adapters.observeCheckout)
             expect(await runGuardEvaluationApplication(request, { ...adapters, observeCheckout }))
-                .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('producer') } })
+                .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('the installed cockpit version changed') } })
             expect(observeCheckout).not.toHaveBeenCalled()
         }, 120_000,
     )
@@ -523,7 +544,7 @@ describe('pending guard policy construction', () => {
         expect(await runGuardEvaluationApplication({ ...request, identity: { ...identity, extra: true } }, adapters))
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('malformed') } })
         expect(await runGuardEvaluationApplication({ ...request, identity: { ...identity, rootInode: '0' } }, adapters))
-            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('identity changed') } })
+            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(`the cockpit checkout ${root} was moved or replaced since the guards were generated`) } })
         // A guard in another checkout must not evaluate under this checkout's identity and policy.
         expect(await runGuardEvaluationApplication({ ...request, guardRoot: join(root, 'app') }, adapters))
             .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('location') } })
@@ -556,8 +577,10 @@ describe('pending guard policy construction', () => {
             return loadCockpitConfig(path)
         } })).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('changed during') } })
         expect(loads).toBe(2)
-        expect(await runGuardEvaluationApplication(request, adapters))
-            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('configuration changed') } })
+        // An edited configuration holds every call until a human regenerates, and the reason says which file and how.
+        const canonicalConfig = realpathSync(configPath)
+        expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
+            `${canonicalConfig} changed since the guards were generated; guard policy comes from it and an edit takes effect only once a human approves it, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: a human must run \`cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {
@@ -568,7 +591,7 @@ describe('pending guard policy construction', () => {
         const policy = result.result.policy
         expect(result.result.status).toBe('pending_integration')
         expect(policy).toEqual({
-            canonicalRoot: root, allowedRoots: [root, join(root, 'app')],
+            canonicalRoot: root, configPath: join(root, 'cockpit.toml'), allowedRoots: [root, join(root, 'app')],
             instances: ['.env', 'config/runtime.env'].map(path => ({ name: `app-${createHash('sha256').update(path).digest('hex').slice(0, 12)}`, path: join(root, 'app', path) })),
             protectedIdentities: expect.any(Array),
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
@@ -578,7 +601,7 @@ describe('pending guard policy construction', () => {
             ],
         })
         expect(policy.protectedIdentities.map(item => item.path)).toEqual([...policy.instances.map(item => item.path),
-            ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path))])
+            ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path)), join(root, 'cockpit.toml')])
         expect(policy.protectedIdentities[1]).toEqual({ path: join(root, 'app/config/runtime.env'), identity: null,
             ancestors: ['app', 'app/config'].map(path => guardIdentity(lstatSync(join(root, path)))) })
         expect(input.configuration.config.environment.generated?.vendors[0].endpoints[0].sink).toBe('https://app:3000/messages')

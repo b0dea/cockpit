@@ -381,6 +381,17 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         expect(separated.kind).toBe('complete')
     })
 
+    it('tells a deleted configuration in a cockpit checkout apart from a mistyped path', async () => {
+        const directory = mkdtemp()
+        const configPath = join(directory, 'cockpit.toml')
+        expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
+            message: 'cockpit configuration was not found', target: configPath }])
+        mkdirSync(join(directory, '.cockpit'))
+        expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
+            message: 'cockpit.toml is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it',
+            target: configPath, fix: `git -C ${directory} restore cockpit.toml (it is committed), then retry` }])
+    })
+
     it('keeps the executor contract resolved and policy-free', () => {
         expectTypeOf<ExecutionStep>().toMatchTypeOf<{
             id: string

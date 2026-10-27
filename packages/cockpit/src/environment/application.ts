@@ -281,6 +281,24 @@ export interface GuardEvaluationApplicationResult {
     readonly native?: NativeGuardOutput
 }
 
+// Every refusal below holds all of the agent's calls, `git restore` included, so each says what
+// failed, why that blocks everything, and the human action that clears it. Regeneration is a human
+// step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
+// could loosen its guard.
+type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string; readonly thenSync: boolean }
+function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
+    const sync = `\`cockpit sync --config ${identity.configPath}\` in a terminal, outside the agent`
+    const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
+        : fix.thenSync
+            // A restored file is a new file, so its identity must be authenticated again.
+            ? `a human must restore it with \`git -C ${identity.root} restore ${fix.path}\` (it is committed) and then run ${sync}`
+            : `a human must restore it with \`git -C ${identity.root} restore ${fix.path}\` (it is committed), or run ${sync}`
+    return `${what}; ${why}, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: ${action}.`
+}
+
+const GUARD_RESTORABLE = new Set(['.cockpit/generated-environment-ownership.json', '.cockpit/guards/bash-guard.sh',
+    '.claude/settings.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js'])
+
 /** Installed bytes are authority only while their source, roots and publication still match. */
 export async function runGuardEvaluationApplication(
     input: GuardEvaluationApplicationInput,
@@ -306,28 +324,43 @@ export async function runGuardEvaluationApplication(
             || dirname(identity.configPath) !== identity.root || typeof data.cwd !== 'string' || realpathSync(data.cwd) !== data.cwd
             // A local identity copied from another checkout would evaluate this one under that one's policy.
             || data.guardRoot !== identity.root
-            || realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))) !== identity.module) return unavailable('Installed guard location does not match this application.')
+            ) return unavailable('Installed guard location does not match this application.')
+        const configFile = relative(identity.root, identity.configPath)
+        const changed = (what: string) => unavailable(guardHeld(identity, `${what} since the guards were generated`,
+            'the guard trusts only the cockpit, Node and configuration it was generated for', { kind: 'sync' }))
+        if (realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
         const roots = new Map<string, Stats>()
         for (const [path, device, inode, directory] of [
             [identity.root, identity.rootDevice, identity.rootInode, true],
             [identity.configPath, identity.configDevice, identity.configInode, false],
         ] as const) {
-            const status = lstatSync(path)
+            let status: Stats
+            try { status = lstatSync(path) }
+            catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !directory) return unavailable(guardHeld(identity,
+                    `${identity.configPath} is missing`, 'guard policy comes from it', { kind: 'restore', path: configFile, thenSync: true }))
+                throw error
+            }
             if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())
-                || String(status.dev) !== device || String(status.ino) !== inode || realpathSync(path) !== path) return unavailable('Installed guard source or root identity changed.')
+                || String(status.dev) !== device || String(status.ino) !== inode || realpathSync(path) !== path) {
+                return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced`)
+            }
             roots.set(path, status)
         }
         const node = await nodeAuthority()
-        if (!node || node.canonicalPath !== identity.node || node.sha256 !== identity.nodeSha256) return unavailable('Installed guard executable identity changed.')
+        if (!node || node.canonicalPath !== identity.node || node.sha256 !== identity.nodeSha256) return changed(`the Node executable changed (now ${node?.canonicalPath ?? 'unreadable'})`)
         const read = async (root: string, path: string, maxBytes: number) => {
             const result = await readAnchoredFile(root, path, maxBytes, node, { execute: adapters.execute ?? executeProbe })
             if (result.kind !== 'complete') throw new Error('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
             return result
         }
         const module = await read(dirname(identity.module), basename(identity.module), 16_777_216)
-        if (module.sha256 !== identity.moduleSha256) return unavailable('Installed guard handler bytes changed.')
+        if (module.sha256 !== identity.moduleSha256) return changed('the installed cockpit version changed (its handler bytes differ)')
         const loaded = await adapters.loadConfig(identity.configPath)
-        if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath || loaded.result.source.sha256 !== identity.configSha256) return unavailable('Installed guard configuration changed; synchronize before continuing.')
+        if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath || loaded.result.source.sha256 !== identity.configSha256) {
+            return unavailable(guardHeld(identity, `${identity.configPath} changed since the guards were generated`,
+                'guard policy comes from it and an edit takes effect only once a human approves it', { kind: 'sync' }))
+        }
         const config = loaded.result.config
         const manifestPath = '.cockpit/generated-environment-ownership.json'
         const registration = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }[harness]
@@ -339,11 +372,19 @@ export async function runGuardEvaluationApplication(
             if (batch?.kind !== 'complete' || batch.results.length !== publicationRequests.length) throw new Error('Guard publication read could not be authenticated.')
             return new Map(publicationRequests.map((request, index) => {
                 const result = batch.results[index]
+                if (result?.kind === 'missing') throw new GuardFileMissing(request.path)
                 if (result?.kind !== 'complete') throw new Error('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
                 return [request.path, result] as const
             }))
         }
-        const publication = await readPublication()
+        let publication: Awaited<ReturnType<typeof readPublication>>
+        try { publication = await readPublication() }
+        catch (error) {
+            if (!(error instanceof GuardFileMissing)) throw error
+            return unavailable(GUARD_RESTORABLE.has(error.path)
+                ? guardHeld(identity, `${error.path} is missing`, 'it authenticates the guard and the hook that launches it', { kind: 'restore', path: error.path, thenSync: false })
+                : guardHeld(identity, `${error.path} is missing`, 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', { kind: 'sync' }))
+        }
         const local = parseGuardLocalIdentity(publication.get(GUARD_LOCAL_PATHS.identity)!.bytes.toString('utf8'))
         if (!local || !isDeepStrictEqual(local, identity)) return unavailable('Installed guard identity does not match its machine-local record.')
         const manifestRead = publication.get(manifestPath)!
@@ -356,7 +397,7 @@ export async function runGuardEvaluationApplication(
         if (ownership.manifest.format !== 'cockpit-generated-ownership/v3' || !producer
             || producer.package !== installedPackageMetadata.name
             || producer.version !== installedPackageMetadata.version
-            || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) return unavailable('Installed guard producer authority is stale or unavailable; synchronize before continuing.')
+            || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) return changed(`the installed cockpit version changed (the guards were generated by ${producer ? `${producer.package} ${producer.version}` : 'an unknown producer'}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`)
         const published = new Map<string, string>()
         for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
             const entry = ownership.manifest.entries.find(entry => entry.path === path)
@@ -473,6 +514,10 @@ export async function runGuardEvaluationApplication(
     } catch {
         return unavailable('Guard authority could not be read or revalidated.')
     }
+}
+
+class GuardFileMissing extends Error {
+    constructor(readonly path: string) { super(`${path} is missing`) }
 }
 
 export interface PendingGuardEvaluationPolicy {

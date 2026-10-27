@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'smol-toml'
 import {
     ENVIRONMENT_CODES,
@@ -333,9 +333,20 @@ function undatedForeignProvenance(value: unknown, configName: string, path: read
     return undefined
 }
 
-function refusal(code: RefusalCode, message: string, target: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
-    const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target }
+function refusal(code: RefusalCode, message: string, target: string, fix?: string): EnvironmentCommandOutcome<LoadedCockpitConfig> {
+    const diagnostic: EnvironmentDiagnostic = { severity: 'error', code, message, target, ...(fix ? { fix } : {}) }
     return { kind: 'refusal', status: 2, diagnostics: [diagnostic], result: null }
+}
+
+// A `.cockpit/` directory beside the missing file means it was deleted from a cockpit checkout
+// rather than mistyped, and every cockpit command and guarded agent call is stranded until it
+// comes back; the committed copy is the fastest way back.
+async function deletedFromCockpit(path: string): Promise<boolean> {
+    try { return (await lstat(join(dirname(path), '.cockpit'))).isDirectory() }
+    catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+    }
 }
 
 export async function loadCockpitConfig(
@@ -343,6 +354,11 @@ export async function loadCockpitConfig(
 ): Promise<EnvironmentCommandOutcome<LoadedCockpitConfig>> {
     const observed = await readConfigSource(inputPath)
     if (observed.kind === 'unavailable') {
+        if (observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND && await deletedFromCockpit(observed.source.path)) {
+            return refusal(observed.source.code,
+                `${basename(observed.source.path)} is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it`,
+                observed.source.path, `git -C ${dirname(observed.source.path)} restore ${basename(observed.source.path)} (it is committed), then retry`)
+        }
         return refusal(
             observed.source.code,
             observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND

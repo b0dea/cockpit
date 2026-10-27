@@ -359,6 +359,23 @@ it('publishes the guard handler identity only to the ignored machine-local file 
     expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal' })
 }, 120_000)
 
+it('names a deleted generated file and ignores a re-created identical configuration', async () => {
+    const { root, configPath } = await surfaceConsumer('recreated-config')
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    // `git restore` and editors that save by rename leave the same bytes in a new file; the committed
+    // guard used to embed the configuration's inode, so check blamed the guard for that.
+    const source = await readFile(configPath)
+    await rm(configPath)
+    await writeFile(configPath, source)
+    expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    const guide = await readFile(join(root, 'AGENTS.md'))
+    await rm(join(root, 'AGENTS.md'))
+    expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal',
+        diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT', target: 'AGENTS.md' })] })
+    await writeFile(join(root, 'AGENTS.md'), guide)
+}, 120_000)
+
 it('consumes vendor and exact build/test authority through installed hook registrations', async () => {
     const { root, configPath } = await surfaceConsumer('installed-authority')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
@@ -394,7 +411,7 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('test = [ "npm", "test", "--", "unit.test.ts" ]\n', ''))
-    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('configuration changed') })
+    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining(`Fix: a human must run \`cockpit sync --config ${await realpath(configPath)}\` in a terminal`) })
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     expect(invoke('npm run build').stdout).toContain('permissionDecision":"ask')
     expect(invoke('npm test -- unit.test.ts').stdout).toContain('permissionDecision":"ask')
