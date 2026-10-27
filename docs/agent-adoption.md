@@ -373,7 +373,16 @@ cockpit sync --config cockpit.toml --json
 ```
 
 `check` shows what the new version renders differently; the dry run lists the writes for the
-human to read before `sync`. The generated guard pins the cockpit CLI it was rendered for, so after
-an upgrade the guard can refuse the agent's commands until the files are regenerated. When that
-happens, ask the human to run `cockpit sync --config cockpit.toml` in a terminal. To inspect a
-release before installing it, see [Review an upgrade](harness-surfaces.md#review-an-upgrade).
+human to read before `sync`. The guard trusts only the cockpit, Node and `cockpit.toml` it was
+generated for, so after an upgrade, a Node switch or an edit to `cockpit.toml` it holds every agent
+tool call, `cockpit sync` run through the agent included, until a human regenerates. That is
+deliberate: guard policy comes from `cockpit.toml`, and an agent able to apply its own edit could
+loosen its guard. The refusal names what changed and the command to run. The upgrade sequence is:
+
+1. Update the dependency, for example `npm update @b0dea/cockpit`.
+2. In a terminal, outside the agent, run `cockpit sync --config cockpit.toml`.
+3. Review and commit the regenerated files.
+
+Each clone keeps its own machine-local guard identity in `.cockpit/local/`, which Git ignores, so
+teammates run step 2 after pulling and commit nothing extra. To inspect a release before
+installing it, see [Review an upgrade](harness-surfaces.md#review-an-upgrade).

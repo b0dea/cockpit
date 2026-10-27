@@ -189,7 +189,9 @@ The command does not query a floating package tag, install anything, or modify t
 Review the reported versions, integrity, and every affected override. Upgrade the dependency
 through the repository's lockfile workflow, then run
 the reported sequence: `cockpit sync --config <path> --dry-run`, `cockpit sync --config <path>`,
-and `cockpit preflight --config <path>`, using the quoted configuration path in the plan. Do not
+and `cockpit preflight --config <path>`, using the quoted configuration path in the plan, in a
+terminal outside the agent: until `sync` runs, the guard holds every agent tool call, because it
+trusts only the cockpit it was generated for. Then commit the regenerated files. Do not
 accept a changed override original until its replacement has been reviewed against the new
 core bytes.
 
