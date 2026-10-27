@@ -63,11 +63,17 @@ export type LoadedConfigProjection = LoadedCockpitConfig
 export interface ConsumedLoadedConfig {
     readonly config: CockpitConfig
     readonly source: SourceProvenance
+    readonly guardHostsStated: boolean
 }
 
 export interface LoadedCockpitConfig {
     readonly config: CockpitConfig
     readonly source: SourceProvenance
+    /**
+     * Both guard host keys are written in the file. The schema defaults an absent key to the same
+     * empty list, so only the parsed source can tell "none exists" from "never answered".
+     */
+    readonly guardHostsStated: boolean
     readonly [loadedConfigProjectionBrand]: never
 }
 
@@ -402,12 +408,16 @@ export async function loadCockpitConfig(
     if (!reconstructed.success) {
         return refusal(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, 'cockpit configuration does not match the schema', path)
     }
+    const writtenGuards = (parsed as { guards?: unknown }).guards
+    const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'
+        && Object.hasOwn(writtenGuards, 'hosted_db_hosts') && Object.hasOwn(writtenGuards, 'vendor_endpoint_hosts')
     const immutableConfig = snapshotJson(reconstructed.data) as unknown as CockpitConfig
     const bound = Object.freeze({
         config: immutableConfig,
         source: Object.freeze({ ...provenance }),
+        guardHostsStated,
     })
-    const result = { config: validated.data, source: provenance } as LoadedCockpitConfig
+    const result = { config: validated.data, source: provenance, guardHostsStated } as LoadedCockpitConfig
     issuedConfigProjections.set(result, bound)
     return {
         kind: 'complete',

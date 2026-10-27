@@ -309,6 +309,9 @@ describe('observation application runners', () => {
             expect(await doctorFor(compose)).toEqual([expect.objectContaining({ severity: 'warning', target: 'guards',
                 message: expect.stringContaining('guards.vendor_endpoint_hosts'), fix: expect.stringContaining('[guards]') })])
             expect(await doctorFor(`[guards]\nhosted_db_hosts = ["db.staging.example.invalid"]\n\n${compose}`)).toEqual([])
+            // init writes an explicit "none" as both keys; one key alone still leaves the other kind unanswered.
+            expect(await doctorFor(`[guards]\nhosted_db_hosts = []\nvendor_endpoint_hosts = []\n\n${compose}`)).toEqual([])
+            expect(await doctorFor(`[guards]\nhosted_db_hosts = []\n\n${compose}`)).toHaveLength(1)
             expect(await doctorFor('')).toEqual([])
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })

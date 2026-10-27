@@ -3946,12 +3946,14 @@ async function doctorDeclarations(loading: Promise<LoadedDoctorConfig>): Promise
 
 // The guard denies agent commands that reach these hosts. Two empty lists deny nothing, and that
 // looks exactly like a guard that is working, so doctor says so. A declared runtime is the signal
-// that hosted environments exist; generated vendors live under it, so it covers them too.
+// that hosted environments exist; generated vendors live under it, so it covers them too. Both keys
+// written as empty lists, as init records an explicit "none", is a decision and is not warned about.
 async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
     const loaded = await loading
     if (loaded.kind !== 'complete') return Object.freeze([])
     const { environment, guards } = loaded.result.config
-    if (declaredRuntime(environment) === 'none' || guards.hosted_db_hosts.length > 0 || guards.vendor_endpoint_hosts.length > 0) {
+    if (declaredRuntime(environment) === 'none' || loaded.result.guardHostsStated
+        || guards.hosted_db_hosts.length > 0 || guards.vendor_endpoint_hosts.length > 0) {
         return Object.freeze([])
     }
     return Object.freeze([Object.freeze({
@@ -3960,7 +3962,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
         code: 'GUARD_HOSTS_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.GUARD_HOSTS_UNDECLARED,
         message: 'guards.hosted_db_hosts and guards.vendor_endpoint_hosts are both empty, so the guard denies no agent command by host even though this cockpit declares a runtime',
         target: 'guards',
-        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, this warning is expected',
+        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
     })])
 }
 
