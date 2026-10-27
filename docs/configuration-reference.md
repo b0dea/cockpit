@@ -136,7 +136,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
           },
           "dir": {
             "type": "string",
-            "minLength": 1
+            "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
           },
           "remote": {
             "type": "string",
@@ -205,7 +205,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
             "type": "array",
             "items": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
             }
           },
           "purpose": {
