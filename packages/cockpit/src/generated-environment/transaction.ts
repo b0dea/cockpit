@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
 import { installedPackageMetadata } from '../package-metadata.js'
@@ -692,6 +693,9 @@ async function digestFile(path: string, maxBytes: number): Promise<string | unde
         handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
         const opened = await handle.stat()
         if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > maxBytes) return undefined
+        const fingerprint = fileFingerprint(path, opened)
+        const known = verifiedDigest(fingerprint)
+        if (known) return known
         const hash = createHash('sha256')
         const chunk = Buffer.allocUnsafe(Math.min(maxBytes + 1, 1_048_576))
         let total = 0
@@ -703,7 +707,10 @@ async function digestFile(path: string, maxBytes: number): Promise<string | unde
             hash.update(chunk.subarray(0, bytesRead))
         }
         const after = await handle.stat()
-        return after.size === opened.size && after.mtimeMs === opened.mtimeMs ? hash.digest('hex') : undefined
+        if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return undefined
+        const digest = hash.digest('hex')
+        if (fileFingerprint(path, after) === fingerprint) recordVerifiedDigest(fingerprint, digest)
+        return digest
     } catch {
         return undefined
     } finally {

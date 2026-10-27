@@ -9,6 +9,7 @@ import { encodeOwnershipManifest } from './ownership.js'
 import { cockpitId } from '../environment/identity.js'
 import { spawn, spawnSync } from 'node:child_process'
 import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
+import { fileFingerprint } from '../environment-exec/verified-digest.js'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -123,7 +124,7 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
     const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
     const handler = { root: canonical, rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino), configPath,
         configDevice: String(configStat.dev), configInode: String(configStat.ino), configSha256: hash(configPath),
-        node, nodeSha256: hash(node), module, moduleSha256: hash(module) }
+        node, nodeSha256: hash(node), nodeFingerprint: fileFingerprint(node, lstatSync(node)), module, moduleSha256: hash(module) }
     pendingContext = { root: canonical, alias, api, source, configPath, handler }
     return { ...value, canonicalProjectRoot: canonical, allowedProjectRoots: roots, instances }
 }

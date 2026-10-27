@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
-import { chmodSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -388,6 +388,30 @@ describe('mechanical environment executor', () => {
         }
         expect(executionReceiptMatches(outcome.receipt, relabelled)).toBe(false)
         expect(executionOutcomeMatches(outcome, relabelled)).toBe(false)
+    })
+
+    it('re-hashes a verified executable whose bytes changed under a restored size and modification time', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-verified-memo-'))
+        scratch.push(directory)
+        const executable = join(directory, 'runtime')
+        const source = '#!/bin/sh\nprintf safe\n'
+        writeFileSync(executable, source, { mode: 0o700 })
+        // Whole seconds survive utimes exactly, so only the change time can tell the rewrite apart.
+        utimesSync(executable, 1_700_000_000, 1_700_000_000)
+        const step = nodeStep('verified-memo-control', '', {
+            argv: [executable],
+            consumedFiles: [{
+                path: executable, sha256: sha256(source), maxBytes: 536_870_912,
+                argvIndexes: [0], executable: true, executionMode: 'verified-path',
+            }],
+        })
+        expect(await executeProbe(step)).toEqual(expect.objectContaining({ kind: 'complete', stdout: Buffer.from('safe') }))
+        // A same-length rewrite with its timestamps put back still moves the change time, so the
+        // remembered digest no longer applies and the re-hash catches the new bytes.
+        writeFileSync(executable, '#!/bin/sh\nprintf evil\n')
+        utimesSync(executable, 1_700_000_000, 1_700_000_000)
+        expect(statSync(executable).mtimeMs).toBe(1_700_000_000_000)
+        expect(await executeProbe(step)).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED' }))
     })
 
     it('refuses an unreadable execution mode without propagating the getter failure', async () => {

@@ -40,6 +40,7 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generat
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
+import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import type { FixContext } from '../fix-catalogue.js'
 import { completeGuardTransport, planGuardTransport, type NativeGuardOutput } from '../guards/harness-adapter.js'
@@ -315,7 +316,7 @@ export async function runGuardEvaluationApplication(
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || !['claudecode', 'codexcli', 'opencode'].includes(String(data.harness))) return unavailable('Guard request is malformed.')
         const harness = data.harness as SurfaceTarget
-        const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode', 'node', 'nodeSha256', 'module', 'moduleSha256'])
+        const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
         if (!captured
             || !Object.values(captured).every(value => typeof value === 'string')
             || !['configSha256', 'nodeSha256', 'moduleSha256'].every(key => /^[a-f0-9]{64}$/.test(String(captured[key])))) return unavailable('Installed guard identity is missing or malformed.')
@@ -346,6 +347,13 @@ export async function runGuardEvaluationApplication(
                 return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced`)
             }
             roots.set(path, status)
+        }
+        // Re-hashing a 100 MB Node binary in every guard process dominated each call. The local record
+        // carries the fingerprint sync hashed; an identical device, inode, size, mode and timestamps
+        // stand in for the re-hash, and the local record is checked against this identity below.
+        const nodePath = realpathSync(process.execPath)
+        if (nodePath === identity.node && fileFingerprint(nodePath, lstatSync(nodePath)) === identity.nodeFingerprint) {
+            recordVerifiedDigest(identity.nodeFingerprint, identity.nodeSha256)
         }
         const node = await nodeAuthority()
         if (!node || node.canonicalPath !== identity.node || node.sha256 !== identity.nodeSha256) return changed(`the Node executable changed (now ${node?.canonicalPath ?? 'unreadable'})`)

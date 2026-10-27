@@ -22,6 +22,8 @@ export interface GuardHandlerIdentity {
     readonly configInode: string
     readonly node: string
     readonly nodeSha256: string
+    /** The stat fingerprint of the Node file `sync` hashed; while it holds, the guard skips re-hashing. */
+    readonly nodeFingerprint: string
     readonly module: string
     readonly moduleSha256: string
 }
@@ -36,7 +38,7 @@ export const GUARD_LOCAL_PATHS = Object.freeze({
 // than JSON: a format line, the two executables it launches, then the identity the application checks.
 const FORMAT = 'cockpit-guard-local/v1'
 const KEYS = ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode',
-    'node', 'nodeSha256', 'module', 'moduleSha256'] as const satisfies readonly (keyof GuardHandlerIdentity)[]
+    'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'] as const satisfies readonly (keyof GuardHandlerIdentity)[]
 const IGNORE_BYTES = '# cockpit-owned: machine-local guard identity, written by `cockpit sync`, never committed\n*\n'
 
 export function encodeGuardLocalIdentity(identity: GuardHandlerIdentity): string {

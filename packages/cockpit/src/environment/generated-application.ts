@@ -64,6 +64,7 @@ import {
 import { renderConsumerInstructions } from '../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../surfaces/restrictions.js'
 import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
+import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import {
@@ -2182,11 +2183,15 @@ async function prepareSurfaces(
     if (moduleRead.kind !== 'complete') return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', 'the installed guard handler is unavailable', 'guard')
     const rootStat = await lstat(prepared.root)
     const configStat = await lstat(prepared.configPath)
+    // Only a fingerprint this process hashed to the authenticated digest may stand in for a re-hash.
+    const nodeFingerprint = fileFingerprint(prepared.node.canonicalPath, await lstat(prepared.node.canonicalPath))
+    if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
+        'the Node executable changed while sync was running', 'guard', 'run `cockpit sync` again in a terminal')
     const guardHandler: GuardHandlerIdentity = Object.freeze({ root: prepared.root,
         rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino),
         configPath: prepared.configPath, configSha256: prepared.sourceSha256,
         configDevice: String(configStat.dev), configInode: String(configStat.ino),
-        node: prepared.node.canonicalPath, nodeSha256: prepared.node.sha256,
+        node: prepared.node.canonicalPath, nodeSha256: prepared.node.sha256, nodeFingerprint,
         module: modulePath, moduleSha256: moduleRead.sha256 })
     const restrictions = expandRestrictions({
         canonicalProjectRoot: prepared.root,

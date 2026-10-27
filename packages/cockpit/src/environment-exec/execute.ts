@@ -18,6 +18,7 @@ import {
     type FilesystemCheck,
     type EnvironmentDiagnostic,
 } from '../environment/contract.js'
+import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from './verified-digest.js'
 
 export const mechanism = {
     id: 'environment-execution',
@@ -256,6 +257,11 @@ async function consumedFileMatches(file: ConsumedFile): Promise<boolean> {
         const opened = await source.stat()
         if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > file.maxBytes
             || (file.executable && (opened.mode & 0o111) === 0)) return false
+        const fingerprint = fileFingerprint(file.path, opened)
+        if (verifiedDigest(fingerprint) === file.sha256) {
+            const linked = await lstat(file.path)
+            return fileFingerprint(file.path, linked) === fingerprint
+        }
         const hash = createHash('sha256')
         const chunk = Buffer.allocUnsafe(Math.min(file.maxBytes + 1, 1_048_576))
         let total = 0
@@ -268,10 +274,12 @@ async function consumedFileMatches(file: ConsumedFile): Promise<boolean> {
         }
         const after = await source.stat()
         const linked = await lstat(file.path)
-        return total === opened.size && after.size === opened.size && after.mtimeMs === opened.mtimeMs
+        const matches = total === opened.size && after.size === opened.size && after.mtimeMs === opened.mtimeMs
             && linked.dev === opened.dev && linked.ino === opened.ino && linked.size === opened.size && linked.mtimeMs === opened.mtimeMs
             && (!file.executable || (linked.mode & 0o111) !== 0)
             && hash.digest('hex') === file.sha256
+        if (matches && fileFingerprint(file.path, after) === fingerprint) recordVerifiedDigest(fingerprint, file.sha256)
+        return matches
     } catch {
         return false
     } finally {
