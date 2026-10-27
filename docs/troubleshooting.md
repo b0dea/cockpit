@@ -235,6 +235,10 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `COMPARISON_NORMALIZATION_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_OUTPUT_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_UNAVAILABLE` | `packages/cockpit/src/comparison/command.ts` | no static remedy captured; inspect implementing owners |
+| `COMPOSE_HEALTHCHECK_MISSING` | `packages/cockpit/src/environment/compose-topology.ts` | no static remedy captured; inspect implementing owners |
+| `COMPOSE_IMAGE_UNPINNED` | `packages/cockpit/src/environment/compose-topology.ts` | no static remedy captured; inspect implementing owners |
+| `COMPOSE_PORT_NOT_LEASED` | `packages/cockpit/src/environment/compose-topology.ts` | no static remedy captured; inspect implementing owners |
+| `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
@@ -269,6 +273,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `DOCUMENT_OUTPUT_JSON_UNSUPPORTED` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_ROOT_COUNT` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | `packages/cockpit/src/document/command.ts` | once a product runs, declare environment.compose_files or [environment.generated] and run cockpit sync |
 | `DOCUMENT_SOURCE_CONFLICT` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_SOURCE_REQUIRED` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_STDOUT_TARGET` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
@@ -278,6 +283,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
 | `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
