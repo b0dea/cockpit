@@ -171,8 +171,12 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
                 || typeof entry !== 'string' || entry.includes('\0')) return undefined
             env[name] = entry
         }
-        if (env.DOCKER_HOST !== undefined || env.DOCKER_TLS_VERIFY !== undefined
-            || env.DOCKER_CERT_PATH !== undefined
+        // A local unix:// DOCKER_HOST (rootless Docker, OrbStack, Colima) is selected through Docker's
+        // `default` context, which reports that socket; dropping it addressed whatever the default
+        // context named instead. TLS and remote hosts stay refused.
+        if (env.DOCKER_HOST !== undefined && (!/^unix:\/\/\/\S+$/.test(env.DOCKER_HOST)
+                || dockerContext !== 'default' || env.DOCKER_CONTEXT !== undefined)
+            || env.DOCKER_TLS_VERIFY !== undefined || env.DOCKER_CERT_PATH !== undefined
             || env.DOCKER_CONTEXT !== undefined && env.DOCKER_CONTEXT !== dockerContext) return undefined
         return Object.freeze({
             configPath: resolve(configPath),
@@ -192,7 +196,10 @@ function observationRefusal(diagnostics: readonly EnvironmentDiagnostic[]): Dest
     return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics })
 }
 
-function refusal(target: string): EnvironmentCommandOutcome<DestructiveRunContext> {
+function refusal(
+    target: string,
+    message = 'destructive run authority is unavailable or does not match current state',
+): EnvironmentCommandOutcome<DestructiveRunContext> {
     return Object.freeze({
         kind: 'refusal' as const,
         status: 2 as const,
@@ -200,7 +207,7 @@ function refusal(target: string): EnvironmentCommandOutcome<DestructiveRunContex
         diagnostics: Object.freeze([Object.freeze({
             severity: 'error' as const,
             code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            message: 'destructive run authority is unavailable or does not match current state',
+            message,
             target,
         })]),
     })
@@ -235,6 +242,7 @@ async function selectionAuthority(
         env: executionEnvironment(input.env),
         timeoutMs: input.timeoutMs,
         context: input.dockerContext,
+        ...(input.env.DOCKER_HOST === undefined ? {} : { host: input.env.DOCKER_HOST }),
     })
     if (!steps) return undefined
     const evidence = await Promise.all(steps.map(async (step) => Object.freeze({ step, outcome: await execute(step) })))
@@ -345,7 +353,7 @@ export function createDestructiveCommandAdapters(
     }) as DownCommandAdapters & ResetCommandAdapters
     const lifecycleInput = Object.freeze({
         configPath: input.configPath,
-        env: Object.freeze({ ...input.env, DOCKER_CONTEXT: input.dockerContext }),
+        env: Object.freeze(input.env.DOCKER_HOST === undefined ? { ...input.env, DOCKER_CONTEXT: input.dockerContext } : input.env),
         sessionId: input.sessionId,
         timeoutMs: input.timeoutMs,
         ...(input.activeProfiles === undefined ? {} : { activeProfiles: input.activeProfiles }),
@@ -367,7 +375,7 @@ export function createDestructiveCommandAdapters(
             const currentRecord = inventory.value.find(({ stackId }) => stackId === context.stackId)?.record
             if (!currentRecord?.holders.some(({ holderId, checkoutId }) => (
                 holderId === context.holderId && checkoutId === context.checkoutId
-            ))) return refusal(context.stackId)
+            ))) return refusal(context.stackId, 'this session holds no claim on the stack; down and reset act only for a holder, so run `cockpit up` first')
             const claimInventory = Object.freeze(inventory.value.flatMap(({ stackId, record }) => (
                 record.holders.map(({ checkoutId }) => Object.freeze({ stackId, checkoutId }))
             )))
@@ -474,7 +482,7 @@ export async function withBoundedComparisonLifecycle<T>(
     }
     const lifecycleInput = Object.freeze({
         configPath: input.configPath,
-        env: Object.freeze({ ...input.env, DOCKER_CONTEXT: input.dockerContext }),
+        env: Object.freeze(input.env.DOCKER_HOST === undefined ? { ...input.env, DOCKER_CONTEXT: input.dockerContext } : input.env),
         sessionId: input.sessionId,
         timeoutMs: input.timeoutMs,
         ...(input.activeProfiles === undefined ? {} : { activeProfiles: input.activeProfiles }),

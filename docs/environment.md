@@ -102,9 +102,9 @@ second `cockpit session` wrapper is refused.
 evidence. `reset` first shows an exact preview of generated volumes and declared generated
 host paths. Normal and JSON reset calls do not delete anything. Interactive reset requires a
 human terminal outside CI; approval remains in the process that showed the preview and is
-revalidated before an action. Set `DOCKER_CONTEXT` explicitly for destructive commands so
-discovery and deletion address the same Docker daemon. A conflicting Docker host or TLS
-override is refused.
+revalidated before an action. Set `DOCKER_CONTEXT` explicitly for destructive commands, or a local
+`unix://` `DOCKER_HOST` with `DOCKER_CONTEXT` unset, so discovery and deletion address the same
+Docker daemon. A remote or conflicting Docker host and a TLS override are refused.
 
 If a destructive attempt ends with `DRAIN_ATTEMPT_REPAIR_REQUIRED`, repair the interrupted
 attempt through the owning recovery procedure before retrying. Elapsed time, a missing process,

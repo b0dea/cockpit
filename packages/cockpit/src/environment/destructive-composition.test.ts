@@ -174,18 +174,21 @@ describe('destructive command composition', () => {
         expect(JSON.stringify(adapters)).not.toContain('continuation')
     })
 
-    it('refuses Docker daemon overrides that can diverge from the explicit context', async () => {
+    // A local unix:// DOCKER_HOST is selected through the default context, so only a remote host, a
+    // host beside an explicit context, or a TLS override can diverge from the selected daemon.
+    it.each([
+        ['a remote host', { DOCKER_HOST: 'tcp://127.0.0.1:2375' }, 'default'],
+        ['a local host beside an explicit context', { DOCKER_HOST: 'unix:///tmp/other.sock', DOCKER_CONTEXT: 'synthetic' }, 'synthetic'],
+        ['a local host under a named context', { DOCKER_HOST: 'unix:///tmp/other.sock' }, 'synthetic'],
+        ['a TLS override', { DOCKER_TLS_VERIFY: '1' }, 'default'],
+    ] as const)('refuses %s that can diverge from the selected daemon', async (_label, overrides, dockerContext) => {
         const execute = vi.fn<(_step: never) => Promise<ExecuteProbeOutcome>>()
         const adapters = createDestructiveCommandAdapters({
             configPath: '/tmp/cockpit.toml',
-            env: {
-                PATH: '/usr/bin:/bin',
-                HOME: '/tmp',
-                DOCKER_HOST: 'unix:///tmp/other.sock',
-            },
+            env: { PATH: '/usr/bin:/bin', HOME: '/tmp', ...overrides },
             sessionId: 'cockpit-cli',
             timeoutMs: 5_000,
-            dockerContext: 'default',
+            dockerContext,
         }, execute as never)
 
         await expect(adapters.load({ configPath: '/tmp/cockpit.toml' })).resolves.toMatchObject({

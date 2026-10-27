@@ -450,7 +450,8 @@ function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId:
         env,
         sessionId,
         timeoutMs: 10_000,
-        dockerContext: env.DOCKER_CONTEXT ?? '',
+        // A local unix:// DOCKER_HOST is reached through Docker's `default` context, which reports it.
+        dockerContext: env.DOCKER_CONTEXT ?? (env.DOCKER_HOST === undefined ? '' : 'default'),
     }, executeProbe)
 }
 

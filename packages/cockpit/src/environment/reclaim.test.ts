@@ -543,6 +543,32 @@ describe('runtime discovery authority', () => {
         }
     })
 
+    it('selects a local unix:// DOCKER_HOST through the default context and admits only that socket', async () => {
+        const root = await canonicalTemp('cockpit-selection-host-')
+        const host = 'unix:///tmp/synthetic-rootless.sock'
+        try {
+            const script = join(root, 'docker')
+            const bytes = Buffer.from('#!/bin/sh\nprintf \'{"context":"default","endpoint":"%s"}\\n\' "$DOCKER_HOST"\n')
+            await writeFile(script, bytes, { mode: 0o700 })
+            const runtime = { canonicalPath: script, invocationPath: script, sha256: sha(bytes.toString()), executionMode: 'staged' as const }
+            const select = async (input: { readonly context: string; readonly host: string }) => {
+                const steps = createDockerSelectionSteps({
+                    executable: runtime, cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000,
+                    context: input.context, host: input.host,
+                })
+                if (steps === undefined) return undefined
+                expect(steps[0]!.env).toEqual({ PATH: '/usr/bin:/bin', DOCKER_HOST: input.host })
+                const evidence = await Promise.all(steps.map(async (step) => ({ step, outcome: await executeProbe(step) })))
+                return admitDockerSelection(steps, evidence)
+            }
+            expect(await select({ context: 'default', host })).toBeDefined()
+            expect(await select({ context: dockerContext, host })).toBeUndefined()
+            expect(await select({ context: 'default', host: 'tcp://elsewhere:2375' })).toBeUndefined()
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+
     it('admits the decimal human sizes Docker prints', async () => {
         const root = await canonicalTemp('cockpit-discovery-sizes-')
         try {
