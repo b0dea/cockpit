@@ -38,10 +38,12 @@ const REVIEWED_EXECUTABLE_LOCK_NODES = Object.freeze([
     {"path": "node_modules/yaml", "version": "2.9.1", "hasInstallScript": false, "bin": {"yaml": "bin.mjs"}},
     {"path": "packages/cockpit", "version": "0.0.0", "hasInstallScript": false, "bin": {"cockpit": "bin/cockpit.mjs"}},
 ])
+// Only gates no file in this repository can prove. The source-revision stamp, provenance
+// and dependency cooldown are checked by `releaseDiagnostics` and are not listed here.
 const OPERATOR_GAPS = Object.freeze([
-    'package-scope-owner', 'trusted-publisher', 'source-revision-stamp', 'provenance-attestation',
-    'artifact-attachment', 'superseded-minor-deprecation', 'dependency-update-cooldown',
+    'package-scope-owner', 'trusted-publisher', 'artifact-attachment', 'superseded-minor-deprecation',
 ])
+const MINIMUM_COOLDOWN_DAYS = 7
 const STATIC_PACKAGE_FILES = Object.freeze([
     'LICENSE',
     'README.md',
@@ -368,6 +370,59 @@ function workflowDiagnostics(root, rootManifest) {
     return diagnostics
 }
 
+// Detectors for the release properties that used to be listed as operator gaps: the release
+// job stamps the source revision, publishes with provenance, and dependency updates wait out
+// a cooldown. Each is read from the files that implement it.
+function releaseDiagnostics(root) {
+    const diagnostics = []
+    const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+    const readYaml = path => {
+        try { return parse(readFileSync(resolve(root, path), 'utf8')) }
+        catch (error) {
+            diagnostics.push(diagnostic('RELEASE_CONFIG_UNREADABLE', path, `could not be read or parsed: ${error instanceof Error ? error.message : path}`))
+            return undefined
+        }
+    }
+    const workflow = readYaml('.github/workflows/release.yml')
+    const job = record(workflow?.jobs) ? workflow.jobs.release : undefined
+    if (workflow !== undefined && !record(job)) {
+        diagnostics.push(diagnostic('RELEASE_JOB_MISSING', '.github/workflows/release.yml', 'the release workflow must define a job named release'))
+    }
+    if (record(job)) {
+        const steps = Array.isArray(job.steps) ? job.steps.filter(record) : []
+        const commands = steps.flatMap(step => [step.run, step.with?.publish, step.with?.version].filter(value => typeof value === 'string'))
+        const bodies = [...commands]
+        for (const script of new Set(commands.flatMap(command => command.match(/\.github\/scripts\/[A-Za-z0-9_./-]+/g) ?? []))) {
+            try {
+                if (script.includes('..') || lstatSync(resolve(root, script)).isSymbolicLink()) throw new Error('linked or escaping path')
+                bodies.push(readFileSync(resolve(root, script), 'utf8'))
+            } catch {
+                diagnostics.push(diagnostic('RELEASE_SCRIPT_INVALID', script, 'script named by the release job is missing, linked, or outside .github/scripts'))
+            }
+        }
+        if (!bodies.some(body => body.includes('cockpitSourceRevision'))) {
+            diagnostics.push(diagnostic('RELEASE_STAMP_MISSING', '.github/workflows/release.yml', 'the release job must stamp cockpitSourceRevision with the commit before publishing'))
+        }
+        const envs = [job.env, ...steps.map(step => step.env)].filter(record)
+        const provenance = envs.some(env => String(env.NPM_CONFIG_PROVENANCE) === 'true') || bodies.some(body => /--provenance\b/.test(body))
+        if (!provenance || job.permissions?.['id-token'] !== 'write') {
+            diagnostics.push(diagnostic('RELEASE_PROVENANCE_MISSING', '.github/workflows/release.yml', 'the release job must publish with provenance (NPM_CONFIG_PROVENANCE or --provenance) and hold id-token: write'))
+        }
+    }
+    const dependabot = readYaml('.github/dependabot.yml')
+    const updates = Array.isArray(dependabot?.updates) ? dependabot.updates : []
+    if (dependabot !== undefined && updates.length === 0) {
+        diagnostics.push(diagnostic('DEPENDABOT_COOLDOWN_MISSING', '.github/dependabot.yml', 'no update entries to carry a cooldown'))
+    }
+    updates.forEach((update, index) => {
+        const days = record(update) && record(update.cooldown) ? update.cooldown['default-days'] : undefined
+        if (!Number.isInteger(days) || days < MINIMUM_COOLDOWN_DAYS) {
+            diagnostics.push(diagnostic('DEPENDABOT_COOLDOWN_MISSING', '.github/dependabot.yml', `update entry ${index} needs cooldown.default-days of at least ${MINIMUM_COOLDOWN_DAYS}`))
+        }
+    })
+    return diagnostics
+}
+
 export function inspectSupplyChain(root, packFiles) {
     const diagnostics = []
     const rootManifest = json(root, 'package.json')
@@ -438,6 +493,7 @@ export function inspectSupplyChain(root, packFiles) {
         if (packedSet.size !== packFiles.length) diagnostics.push(diagnostic('PACK_METADATA_INVALID', 'packages/cockpit', 'pack metadata contains duplicate paths'))
     }
     diagnostics.push(...workflowDiagnostics(root, rootManifest))
+    diagnostics.push(...releaseDiagnostics(root))
     return Object.freeze({ diagnostics: Object.freeze(diagnostics), operatorGaps: OPERATOR_GAPS })
 }
 

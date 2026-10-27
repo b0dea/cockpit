@@ -23,7 +23,7 @@ function fixture() {
     scratch.push(root)
     for (const path of [
         'package.json', 'package-lock.json', '.github/workflows/ci.yml', '.github/workflows/external-links.yml',
-        '.github/workflows/release.yml', '.github/workflows/dependabot-automerge.yml', '.github/scripts/release-publish.sh',
+        '.github/workflows/release.yml', '.github/workflows/dependabot-automerge.yml', '.github/scripts/release-publish.sh', '.github/dependabot.yml',
     ]) {
         mkdirSync(dirname(join(root, path)), { recursive: true })
         cpSync(join(repositoryRoot, path), join(root, path))
@@ -92,8 +92,7 @@ describe('the supply-chain readiness detector', () => {
         const result = inspect(repositoryRoot, PACK_FILES)
         expect(result.diagnostics).toEqual([])
         expect(result.operatorGaps).toEqual([
-            'package-scope-owner', 'trusted-publisher', 'source-revision-stamp', 'provenance-attestation',
-            'artifact-attachment', 'superseded-minor-deprecation', 'dependency-update-cooldown',
+            'package-scope-owner', 'trusted-publisher', 'artifact-attachment', 'superseded-minor-deprecation',
         ])
     })
 
@@ -122,6 +121,25 @@ describe('the supply-chain readiness detector', () => {
         const root = fixture()
         plant(root)
         expect(inspect(root, packFiles).diagnostics.map(row => row.code)).toContain(code)
+    })
+
+    describe('release properties are read from the files that implement them', () => {
+        const edit = (root: string, path: string, update: (text: string) => string) =>
+            writeFileSync(join(root, path), update(readFileSync(join(root, path), 'utf8')))
+        const codes = (root: string) => inspect(root, PACK_FILES).diagnostics.map(row => row.code)
+
+        it.each([
+            ['a release job that never stamps the source revision', '.github/scripts/release-publish.sh', (text: string) => text.replaceAll('cockpitSourceRevision', 'sourceRevisionRemoved'), 'RELEASE_STAMP_MISSING'],
+            ['a release job without provenance', '.github/workflows/release.yml', (text: string) => text.replace("NPM_CONFIG_PROVENANCE: 'true'", "NPM_CONFIG_PROVENANCE: 'false'"), 'RELEASE_PROVENANCE_MISSING'],
+            ['a release job without the OIDC token scope', '.github/workflows/release.yml', (text: string) => text.replace(/ +id-token: write[^\n]*\n/, ''), 'RELEASE_PROVENANCE_MISSING'],
+            ['a release workflow with no release job', '.github/workflows/release.yml', (text: string) => text.replace('  release:\n', '  other:\n'), 'RELEASE_JOB_MISSING'],
+            ['an update entry without a cooldown', '.github/dependabot.yml', (text: string) => text.replace('    cooldown:\n      default-days: 7\n', ''), 'DEPENDABOT_COOLDOWN_MISSING'],
+            ['a cooldown shorter than seven days', '.github/dependabot.yml', (text: string) => text.replace('default-days: 7', 'default-days: 6'), 'DEPENDABOT_COOLDOWN_MISSING'],
+        ])('refuses %s', (_name, path, update, code) => {
+            const root = fixture()
+            edit(root, path, update)
+            expect(codes(root)).toContain(code)
+        })
     })
 
     describe('write scopes and publication are confined to the reviewed workflow jobs', () => {
