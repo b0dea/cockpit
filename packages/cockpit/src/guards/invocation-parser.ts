@@ -348,7 +348,14 @@ export function parseGuardInput(input: unknown): GuardParseResult {
         let paths: string[] = []
         let invocations: ParsedInvocation[] = []
         if (tool === 'Bash' || tool === 'apply_patch') {
-            if (!keys(fields, ['command']) || !text(fields.command) || !fields.command) refuse('Malformed command payload.')
+            // Native Bash calls carry execution options beside the command; they are type-checked
+            // and otherwise ignored, because the command text alone decides what runs.
+            const options: Record<string, (value: JsonSnapshot | undefined) => boolean> = tool === 'Bash' ? {
+                description: text, timeout: (value) => typeof value === 'number' && Number.isFinite(value),
+                run_in_background: (value) => typeof value === 'boolean', dangerouslyDisableSandbox: (value) => typeof value === 'boolean',
+            } : {}
+            if (!keys(fields, ['command'], Object.keys(options)) || !text(fields.command) || !fields.command
+                || Object.entries(options).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
             if (tool === 'Bash') invocations = parseShell(fields.command, cwd)
             else paths = patchPaths(fields.command)
         } else if (tool === 'Edit' || tool === 'Write') {

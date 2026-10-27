@@ -419,7 +419,9 @@ function shellLiteral(value: string): string {
 }
 
 function hooksBytes(adapter: NativeRestrictionAdapter, root: string, guardPath: string, askIsDeny: boolean): string {
-    const guard = `H='${shellLiteral(`${root}/${guardPath}`)}'; test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${adapter.target}`
+    // Both hook runners block only on exit 2; any other failure (a handler that cannot load, a killed
+    // process, a missing shell) would let the tool call run, so it is folded into a blocking exit.
+    const guard = `H='${shellLiteral(`${root}/${guardPath}`)}'; test -f "$H" && test -r "$H" || { printf 'cockpit restriction guard missing: %s\\n' "$H" >&2; exit 2; }; ${askIsDeny ? 'COCKPIT_ASK_IS_DENY=1 ' : ''}/bin/bash "$H" --harness ${adapter.target}; s=$?; case $s in 0|2) exit $s;; esac; printf 'cockpit guard failed (exit %s)\\n' "$s" >&2; exit 2`
     const value = adapter.target === 'codexcli' ? {
         description: 'Generated authenticated restriction transport.',
         hooks: { PreToolUse: [{ matcher: adapter.registration.matcher, hooks: [{ type: 'command', command: guard }] }] },

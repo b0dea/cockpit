@@ -302,6 +302,23 @@ describe('restriction expansion', () => {
         }
     })
 
+    it('turns every guard failure other than the blocking exit into a blocking exit', async () => {
+        const directory = await isolatedProjectRoot('cockpit-hook-failure-')
+        const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
+        await mkdir(join(directory, '.cockpit', 'guards'), { recursive: true })
+        for (const name of ['claudecode', 'codexcli'] as const) {
+            const command = (JSON.parse(target(result, name).files[0]!.bytes) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+            }).hooks.PreToolUse[0]!.hooks[0]!.command
+            // A guard that cannot load its handler exits 1; a killed one 137. Exit 2 keeps its own reason.
+            for (const [exit, status, stderr] of [[1, 2, 'cockpit guard failed (exit 1)\n'], [137, 2, 'cockpit guard failed (exit 137)\n'], [2, 2, 'refused\n'], [0, 0, '']] as const) {
+                await writeFile(join(directory, result.sharedGuard.path), exit === 2 ? "printf 'refused\\n' >&2; exit 2\n" : `exit ${exit}\n`)
+                const run = spawnSync('/bin/sh', ['-c', command], { cwd: directory, input: '{}', encoding: 'utf8' })
+                expect({ status: run.status, stderr: run.stderr }, `${name} exit ${exit}`).toEqual({ status, stderr })
+            }
+        }
+    })
+
     it('renders every neutral policy field through versioned transport-only adapters', async () => {
         const baseInput = await input()
         const result = complete(expandRestrictions(baseInput))

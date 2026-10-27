@@ -42,6 +42,14 @@ export interface GuardDecision {
     readonly reason: string
 }
 
+// An agent able to rewrite any of these can switch the guard off: the published guard transport,
+// every harness registration that launches it, the manifest that
+// authenticates both, and Claude's local settings, where `disableAllHooks` would switch the hook
+// off. These spellings match the restriction expansion and the guard application.
+const GUARD_CONTROL_PATHS = [
+    '.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json',
+    '.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js',
+] as const
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
@@ -174,6 +182,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const resolved = capturePolicy(policy)
     if (!resolved) return unavailable('Guard policy is incomplete or malformed.')
     const secretRoot = `${resolved.canonicalRoot}/env/.secrets`
+    // Lower-cased because the default macOS volume resolves either spelling to the same file.
+    const guardControls = GUARD_CONTROL_PATHS.map((path) => `${resolved.canonicalRoot}/${path}`.toLowerCase())
     let pending: GuardDecision | undefined
     let hardDeny: GuardDecision | undefined
     const hold = (decision: GuardDecision) => {
@@ -197,6 +207,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         if (request.operation !== 'cwd' && resolved.instances.some((item) => lexical === item.path || request.operation === 'stage' && within(item.path, lexical))) {
             hold(deny('Refusing mutation or staging of a declared environment instance.'))
+        }
+        if (request.operation === 'write' && guardControls.includes(lexical.toLowerCase())) {
+            hold(deny('Refusing mutation of the guard, its hook registration or its ownership manifest.'))
         }
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }

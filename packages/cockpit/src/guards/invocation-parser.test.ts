@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from './invocation-parser.js'
-import { invocationCorpus, shellPayload } from './fixtures/invocation-corpus.js'
+import { invocationCorpus, nativeShellPayload, shellPayload } from './fixtures/invocation-corpus.js'
 
 describe('guard invocation capture', () => {
     it('preserves executable boundaries instead of joining adjacent predicates', () => {
@@ -76,6 +76,17 @@ describe('guard invocation capture', () => {
         expect(touched).toBe(false)
         expect(parseGuardInput(new Uint8Array(encoded)).status).toBe('parsed')
         expect(parseGuardInput(encoded).status).toBe('parsed')
+    })
+
+    it('captures native Bash execution options without letting them change or bypass the command', () => {
+        const command = 'git push origin feature; git push origin main'
+        expect(parseGuardInput(nativeShellPayload(command))).toEqual(parseGuardInput(shellPayload(command)))
+        const native = nativeShellPayload(command)
+        for (const [key, value] of [['description', 42], ['timeout', '120000'], ['run_in_background', 'false'], ['dangerouslyDisableSandbox', 1], ['extra', true]] as const) {
+            expect(parseGuardInput({ ...native, tool_input: { ...native.tool_input, [key]: value } }), key).toEqual({ status: 'unavailable', reason: 'Malformed command payload.' })
+        }
+        const patch = { hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: '/workspace/project', tool_input: { command: '*** Begin Patch\n*** Add File: a\n+ok\n*** End Patch', timeout: 1 } }
+        expect(parseGuardInput(patch).status).toBe('unavailable')
     })
 
     it('validates optional native fields as own well-formed scalars', () => {

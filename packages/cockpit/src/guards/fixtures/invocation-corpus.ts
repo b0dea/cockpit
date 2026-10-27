@@ -2,7 +2,7 @@ import type { ParsedInvocation, InvocationWord } from '../invocation-parser.js'
 
 export const mechanism = {
     id: 'guard-invocation-corpus', module: 'packages/cockpit/src/guards/fixtures/invocation-corpus.ts',
-    exports: ['invocationCorpus', 'shellPayload'],
+    exports: ['invocationCorpus', 'shellPayload', 'nativeShellPayload'],
 } as const
 
 const rows = [
@@ -82,4 +82,11 @@ export const invocationCorpus = [
 
 export function shellPayload(command: string, cwd = '/workspace/project') {
     return { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } }
+}
+
+// Claude Code sends execution options beside the command on every Bash call.
+export function nativeShellPayload(command: string, cwd = '/workspace/project') {
+    return { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: {
+        command, description: 'Push the feature branch', timeout: 120000, run_in_background: false, dangerouslyDisableSandbox: false,
+    } }
 }

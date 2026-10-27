@@ -255,6 +255,22 @@ describe('resolved guard evaluation', () => {
         expect(decide('git add --pathspec-from-file=list').decision).toBe('unavailable')
     })
 
+    it('denies writes that would disable the guard while permitting neighbouring harness files', () => {
+        const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+        const refusal = { decision: 'deny', reason: 'Refusing mutation of the guard, its hook registration or its ownership manifest.' }
+        for (const path of ['.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json', '.claude/settings.json',
+            '.claude/settings.local.json', '.codex/hooks.json', '.opencode/plugin/cockpit-guards.js', '.Claude/Settings.json']) {
+            for (const input of [
+                payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
+                payload('apply_patch', { command: `*** Begin Patch\n*** Update File: template\n*** Move to: ${path}\n@@\n-a\n+b\n*** End Patch` }),
+                shellPayload(`printf ok > ${path}`),
+            ]) expect(evaluateGuard(parseGuardInput(input), policy(), inspect), `${input.tool_name} ${path}`).toEqual(refusal)
+        }
+        for (const path of [`${other}/.claude/settings.json`, `${root}/.claude/agents/evaluator.md`, `${root}/.cockpit/guards/notes.md`]) {
+            expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: path, content: '{}' })), policy(), inspect).decision, path).toBe('allow')
+        }
+    })
+
     it('refuses missing, escaping, symlink or malformed path evidence and still finds later hard denies', () => {
         const input = parseGuardInput(shellPayload('npm test'))
         for (const evidence of [undefined, { status: 'resolved', path: '/outside', symlink: false }, { status: 'resolved', path: root, symlink: true }, { status: 'unavailable', reason: 'unreadable' }]) {
