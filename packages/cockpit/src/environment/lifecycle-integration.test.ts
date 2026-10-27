@@ -213,7 +213,7 @@ async function issueReclaimDiscovery(root: string, resources: readonly ReclaimRe
             for (const row of rows) await writeFile(join(root, `inspect.${row.name}`), `${JSON.stringify({ name: row.name, generation: row.generation })}\n`)
         }
         if (kind === 'network') {
-            for (const row of rows) await writeFile(join(root, `inspect.network.${row.id}`), `${JSON.stringify({ id: row.id, referenced: row.referenced })}\n`)
+            for (const row of rows) await writeFile(join(root, `inspect.network.${row.id}`), `${JSON.stringify({ id: row.id, members: '' })}\n`)
         }
         if (kind === 'container') {
             for (const row of rows) await writeFile(join(root, `inspect.container.${row.id}`), `${JSON.stringify({ id: row.id, networks: {} })}\n`)
@@ -221,7 +221,7 @@ async function issueReclaimDiscovery(root: string, resources: readonly ReclaimRe
     }
     await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
     const runtimePath = join(root, 'docker')
-    const runtimeBytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\n[ "$1" = --host ] || exit 91\nshift 2\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then /bin/cat -- "$PWD/inspect.$5"; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then /bin/cat -- "$PWD/inspect.$kind.$5"; exit; fi\n[ "$kind" = builder ] && kind=build-cache\n/bin/cat -- "$PWD/docker.$kind"\n')
+    const runtimeBytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\n[ "$1" = --host ] || exit 91\nshift 2\nkind="$1"\nif [ "$2" = inspect ]; then shift 4; status=0; for id do if [ "$kind" = image ] || [ "$kind" = volume ]; then /bin/cat -- "$PWD/inspect.$id" || status=1; else /bin/cat -- "$PWD/inspect.$kind.$id" || status=1; fi; done; exit $status; fi\n[ "$kind" = builder ] && kind=build-cache\n/bin/cat -- "$PWD/docker.$kind"\n')
     await writeFile(runtimePath, runtimeBytes, { mode: 0o700 })
     await chmod(runtimePath, 0o700)
     const executable = resolvedExecutable(runtimePath, runtimeBytes)

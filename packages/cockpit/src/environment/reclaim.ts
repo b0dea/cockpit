@@ -828,8 +828,19 @@ export function admitVolumeInspections(
     }
 }
 
+// Members are the attached endpoint ids, so a network can be told apart from the containers that
+// hold it; container ids are hex, so the space-separated list is a safe JSON string.
 function networkInspectionFormat(): string {
-    return '{"id":{{json .Id}},"referenced":{{json (gt (len .Containers) 0)}}}'
+    return '{"id":{{json .Id}},"members":"{{range $member, $endpoint := .Containers}}{{$member}} {{end}}"}'
+}
+
+// A container that carries the network's exact ownership triple belongs to the same stack, so the
+// teardown that may remove the network removes that container first (containers sort before
+// networks). Counting such containers as references left every stack's own network behind after
+// `down`. Any other holder, or one discovery did not see, still keeps the network.
+function sameStackHolder(network: ReclaimResource, container: ReclaimResource | undefined): boolean {
+    return container !== undefined && Object.values(REQUIRED_LABELS).every((name) =>
+        typeof network.labels[name] === 'string' && network.labels[name] === container.labels[name])
 }
 
 function containerNetworkInspectionFormat(): string {
@@ -873,8 +884,12 @@ export function admitNetworkInspections(
         const steps = createNetworkInspectionSteps(discovery, containers)
         if (authority === undefined || containerAuthority === undefined || steps === undefined
             || !Array.isArray(evidence) || evidence.length !== steps.length) return undefined
-        const references = new Map<string, boolean>()
-        const configuredNetworks = new Set<string>()
+        const containersById = new Map(containers.resources.map((container) => [container.id, container]))
+        const holders = new Map<string, Set<string>>()
+        const inspectedNetworks = new Set<string>()
+        const hold = (networkId: string, containerId: string) => {
+            holders.set(networkId, (holders.get(networkId) ?? new Set()).add(containerId))
+        }
         const receipts = [...authority.receipts, ...containerAuthority.receipts]
         let finishedAt = lexical(authority.finishedAt, containerAuthority.finishedAt) < 0
             ? containerAuthority.finishedAt : authority.finishedAt
@@ -890,9 +905,12 @@ export function admitNetworkInspections(
             for (const [position, record] of rows.entries()) {
                 const resourceId = ids[position]!
                 if (expected.labels.resourceKind === 'network-inspection') {
-                    if (!exactKeys(record, ['id', 'referenced']) || record.id !== resourceId
-                        || typeof record.referenced !== 'boolean' || references.has(resourceId)) return undefined
-                    references.set(resourceId, record.referenced)
+                    if (!exactKeys(record, ['id', 'members']) || record.id !== resourceId
+                        || typeof record.members !== 'string' || inspectedNetworks.has(resourceId)) return undefined
+                    const members = record.members.split(' ').filter(Boolean)
+                    if (members.length > MAX_RESOURCES || members.some((member) => !RESOURCE_ID.test(member))) return undefined
+                    inspectedNetworks.add(resourceId)
+                    for (const member of members) hold(resourceId, member)
                 } else {
                     if (expected.labels.resourceKind !== 'container-network-inspection'
                         || !exactKeys(record, ['id', 'networks']) || record.id !== resourceId
@@ -902,7 +920,7 @@ export function admitNetworkInspections(
                         if (endpoint === null || typeof endpoint !== 'object' || Array.isArray(endpoint)) return undefined
                         const networkId = (endpoint as Record<string, unknown>).NetworkID
                         if (typeof networkId !== 'string' || !RESOURCE_ID.test(networkId)) return undefined
-                        configuredNetworks.add(networkId)
+                        hold(networkId, resourceId)
                     }
                 }
             }
@@ -912,7 +930,7 @@ export function admitNetworkInspections(
         const snapshot = Object.freeze({
             observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
             resources: Object.freeze(discovery.resources.map((resource) => snapshotResource({
-                ...resource, referenced: references.get(resource.id) === true || configuredNetworks.has(resource.id),
+                ...resource, referenced: [...holders.get(resource.id) ?? []].some((holder) => !sameStackHolder(resource, containersById.get(holder))),
             })!)),
         })
         admittedDiscoveries.add(snapshot)

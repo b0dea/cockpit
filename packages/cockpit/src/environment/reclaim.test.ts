@@ -164,7 +164,8 @@ const authenticatedDiscovery = async (
         }
         if (kind === 'network') for (const row of rows) {
             await writeFile(join(root, `inspect.network.${row.id}`), `${JSON.stringify(
-                options.networkInspection?.(row) ?? { id: row.id, referenced: row.referenced },
+                // A referenced row stands for an endpoint discovery did not see, which keeps the network.
+                options.networkInspection?.(row) ?? { id: row.id, members: row.referenced ? `endpoint-${row.id} ` : '' },
             )}\n`)
         }
         if (kind === 'container') for (const row of rows) {
@@ -240,7 +241,7 @@ const authenticatedDiscovery = async (
             const networkInspection = inspections.find(({ labels: item }) => item.resourceKind === 'network-inspection')
             if (networkInspection !== undefined) {
                 expect(networkInspection.argv.slice(3, 6)).toEqual(['network', 'inspect', '--format'])
-                expect(networkInspection.argv[6]).toContain('len .Containers')
+                expect(networkInspection.argv[6]).toContain('range $member, $endpoint := .Containers')
             }
             const evidence = await Promise.all(inspections.map(async (inspection) => ({ step: inspection, outcome: await api.executeProbe(inspection) })))
             if (evidence[0] !== undefined) {
@@ -420,21 +421,30 @@ describe('reclaim classification', () => {
 })
 
 describe('runtime discovery authority', () => {
-    it('keeps stopped-container configuration referenced when the network endpoint map is empty', async () => {
+    it('keeps a network referenced by another holder and releases one held only by its own stack', async () => {
         const root = await canonicalTemp('cockpit-network-references-')
+        const foreignLabels = { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId }
         try {
             const observed = await authenticatedDiscovery(root, [
-                resource({ id: 'container-running', name: 'running-service' }),
-                resource({ id: 'container-stopped', name: 'stopped-service' }),
+                resource({ id: 'container-own', name: 'own-service' }),
+                resource({ id: 'container-running', name: 'running-service', labels: foreignLabels }),
+                resource({ id: 'container-stopped', name: 'stopped-service', labels: {} }),
                 resource({ id: 'network-orphan', name: 'owned-orphan', kind: 'network', bytes: null }),
+                resource({ id: 'network-own', name: 'owned-default', kind: 'network', bytes: null }),
                 resource({ id: 'network-running', name: 'owned-running', kind: 'network', referenced: true, bytes: null }),
                 resource({ id: 'network-stopped', name: 'owned-stopped', kind: 'network', bytes: null }),
                 resource({
                     id: 'network-foreign', name: 'owned-orphan', kind: 'network', bytes: null,
-                    labels: { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId },
+                    labels: foreignLabels,
                 }),
             ], discoveryApi, {
+                // The stack's own container is attached both as a running endpoint and by configuration.
+                networkInspection: (candidate) => ({
+                    id: candidate.id,
+                    members: candidate.id === 'network-own' ? 'container-own ' : candidate.referenced ? 'container-running ' : '',
+                }),
                 containerNetworks: {
+                    'container-own': ['network-own'],
                     'container-running': ['network-running'],
                     'container-stopped': ['network-stopped'],
                 },
@@ -442,6 +452,7 @@ describe('runtime discovery authority', () => {
             expect(observed.resources.filter(({ kind }) => kind === 'network').map(({ id, referenced }) => ({ id, referenced }))).toEqual([
                 { id: 'network-foreign', referenced: false },
                 { id: 'network-orphan', referenced: false },
+                { id: 'network-own', referenced: false },
                 { id: 'network-running', referenced: true },
                 { id: 'network-stopped', referenced: true },
             ])
@@ -454,6 +465,7 @@ describe('runtime discovery authority', () => {
                 .map(({ id, ownership, action }) => ({ id, ownership, action }))).toEqual([
                 { id: 'network-foreign', ownership: 'foreign', action: 'report-only' },
                 { id: 'network-orphan', ownership: 'current', action: 'teardown' },
+                { id: 'network-own', ownership: 'current', action: 'teardown' },
                 { id: 'network-running', ownership: 'current', action: 'report-only' },
                 { id: 'network-stopped', ownership: 'current', action: 'report-only' },
             ])
@@ -466,7 +478,7 @@ describe('runtime discovery authority', () => {
             await expect(authenticatedDiscovery(root, [
                 resource({ id: 'network-orphan', name: 'owned-orphan', kind: 'network', bytes: null }),
             ], discoveryApi, {
-                networkInspection: (candidate) => ({ id: candidate.id, referenced: 'false' }),
+                networkInspection: (candidate) => ({ id: candidate.id, members: ['container-own'] }),
             })).rejects.toThrow('network inspection evidence rejected')
         } finally { await rm(root, { recursive: true, force: true }) }
     })
