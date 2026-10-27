@@ -37,10 +37,12 @@ writeFileSync(report, JSON.stringify({ numTotalTests: 1, numPassedTests: 1, numF
     execFileSync('git', ['commit', '--quiet', '-m', 'synthetic base'], { cwd: root })
     const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
     const capture = join(root, 'capture.json')
-    const run = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, base, ...args], {
+    const runFrom = (from: string, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, from, ...args], {
         cwd: root, encoding: 'utf8', env: { ...process.env, CAPTURE_PATH: capture },
     })
-    return { root, base, capture, run }
+    const run = (...args: string[]) => runFrom(base, ...args)
+    const dispatched = () => (JSON.parse(readFileSync(capture, 'utf8')) as string[]).filter(argument => argument.endsWith('.test.ts'))
+    return { root, base, capture, run, runFrom, dispatched }
 }
 
 describe('changed adjacent-owner test runner', () => {
@@ -116,41 +118,152 @@ describe('changed adjacent-owner test runner', () => {
         ]))
     })
 
-    it('names every non-documentation path without an owner and refuses before dispatch', () => {
+    it('accepts any commit-ish as the base and keeps the ancestor check', () => {
         const fixture = repository({
-            'scripts/task.mjs': 'export const value = 1\n',
-            'scripts/task.sh': '#!/bin/sh\nexit 0\n',
-            'packages/cockpit/surfaces/template.txt': 'before\n',
-            'packages/cockpit/surfaces/skills/fix.skill.md': 'before\n',
-            'package-lock.json': '{}\n',
+            'packages/cockpit/src/example.ts': 'export const value = 1\n',
+            'packages/cockpit/src/example.test.ts': 'example\n',
         })
-        writeFileSync(join(fixture.root, 'scripts/task.mjs'), 'export const value = 2\n')
+        execFileSync('git', ['branch', 'base-branch'], { cwd: fixture.root })
+        writeFileSync(join(fixture.root, 'packages/cockpit/src/example.ts'), 'export const value = 2\n')
+
+        for (const from of ['base-branch', 'HEAD', fixture.base.slice(0, 12)]) {
+            const result = fixture.runFrom(from)
+            expect(result.status, `${from}: ${result.stderr}`).toBe(0)
+            expect(fixture.dispatched()).toContain('packages/cockpit/src/example.test.ts')
+            // The runner's own report is untracked output; clear it so the next base sees only the edit.
+            rmSync(fixture.capture)
+            rmSync(join(fixture.root, '.vitest-reports'), { recursive: true, force: true })
+        }
+
+        const unknown = fixture.runFrom('no-such-revision')
+        expect(unknown.status).toBe(2)
+        expect(unknown.stderr).toContain('CHANGED_TEST_SELECTION_INVALID: base does not identify a commit: no-such-revision')
+
+        execFileSync('git', ['checkout', '--quiet', '--orphan', 'unrelated'], { cwd: fixture.root })
+        execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'unrelated root'], { cwd: fixture.root })
+        const notAncestor = fixture.runFrom('base-branch')
+        expect(notAncestor.status).toBe(2)
+        expect(notAncestor.stderr).toContain('base must be an ancestor of HEAD')
+    })
+
+    it('names every path without an owner and refuses before dispatch', () => {
+        const fixture = repository({
+            'scripts/orphan.mjs': 'export const value = 1\n',
+            'scripts/task.sh': '#!/bin/sh\nexit 0\n',
+            'tools/helper.txt': 'before\n',
+            'fixtures/lonely/data.json': '{}\n',
+        })
+        writeFileSync(join(fixture.root, 'scripts/orphan.mjs'), 'export const value = 2\n')
         writeFileSync(join(fixture.root, 'scripts/task.sh'), '#!/bin/sh\nexit 1\n')
-        writeFileSync(join(fixture.root, 'packages/cockpit/surfaces/template.txt'), 'after\n')
-        writeFileSync(join(fixture.root, 'packages/cockpit/surfaces/skills/fix.skill.md'), 'after\n')
-        writeFileSync(join(fixture.root, 'package-lock.json'), '{"changed":true}\n')
+        writeFileSync(join(fixture.root, 'tools/helper.txt'), 'after\n')
+        writeFileSync(join(fixture.root, 'fixtures/lonely/data.json'), '{"changed":true}\n')
 
         const result = fixture.run()
 
         expect(result.status).toBe(2)
-        expect(result.stderr.match(/CHANGED_TEST_OWNER_UNMAPPED:/g)).toHaveLength(5)
-        for (const path of ['package-lock.json', 'packages/cockpit/surfaces/skills/fix.skill.md',
-            'packages/cockpit/surfaces/template.txt', 'scripts/task.mjs', 'scripts/task.sh']) {
+        expect(result.stderr.match(/CHANGED_TEST_OWNER_UNMAPPED:/g)).toHaveLength(4)
+        for (const path of ['fixtures/lonely/data.json', 'scripts/orphan.mjs', 'scripts/task.sh', 'tools/helper.txt']) {
             expect(result.stderr).toContain(`CHANGED_TEST_OWNER_UNMAPPED: ${path}`)
         }
         expect(result.stderr).toContain('--extra-test adds supplemental affected owners but does not resolve an unmapped path')
         expect(existsSync(fixture.capture)).toBe(false)
     })
 
-    it('reports documentation-only changes without dispatching or claiming a gate', () => {
-        const fixture = repository({ 'docs/guide.md': 'before\n' })
-        writeFileSync(join(fixture.root, 'docs/guide.md'), 'after\n')
+    const DOCS_TESTS = [
+        'packages/cockpit/src/docs-lint.contracts.test.ts', 'packages/cockpit/src/docs-lint.prose.test.ts',
+        'packages/cockpit/src/docs-ownership.test.ts', 'packages/cockpit/src/example-cockpit.test.ts',
+    ]
+    const OTHER = { 'packages/cockpit/src/unrelated.test.ts': 'unrelated\n' }
+    const withOwners = (files: Record<string, string>) => repository({
+        ...Object.fromEntries(DOCS_TESTS.map(path => [path, 'docs\n'])),
+        'packages/cockpit/src/packaging.test.ts': 'packaging\n',
+        'packages/cockpit/src/supply-chain.test.ts': 'supply\n',
+        'packages/cockpit/src/test-protection.test.ts': 'protection\n',
+        ...OTHER, ...files,
+    })
+    const edit = (root: string, path: string) => writeFileSync(join(root, path), 'after\n')
+
+    it.each([
+        ['root', 'README.md'],
+        ['docs tree', 'docs/guide/page.md'],
+        ['examples tree', 'examples/demo/README.md'],
+        ['package', 'packages/cockpit/README.md'],
+    ])('runs the documentation tests when %s markdown changes', (_name, path) => {
+        const fixture = withOwners({ [path]: 'before\n' })
+        edit(fixture.root, path)
 
         const result = fixture.run()
 
         expect(result.status, result.stderr).toBe(0)
-        expect(result.stdout).toContain('adjacent-owner tests: no executable or test owners changed; no tests dispatched')
-        expect(result.stdout).not.toContain('PASS')
-        expect(existsSync(fixture.capture)).toBe(false)
+        expect(fixture.dispatched()).toEqual(DOCS_TESTS)
+    })
+
+    it.each(['package.json', 'package-lock.json', 'packages/cockpit/package.json', 'packages/cockpit/package-lock.json'])(
+        'runs the packaging and supply-chain tests when %s changes', (path) => {
+            const fixture = withOwners({ [path]: '{}\n' })
+            edit(fixture.root, path)
+
+            const result = fixture.run()
+
+            expect(result.status, result.stderr).toBe(0)
+            expect(fixture.dispatched()).toEqual(['packages/cockpit/src/packaging.test.ts', 'packages/cockpit/src/supply-chain.test.ts'])
+        })
+
+    it('runs the supply-chain, workflow-contract and test-protection tests when a workflow changes', () => {
+        const fixture = withOwners({ '.github/workflows/ci.yml': 'before\n' })
+        edit(fixture.root, '.github/workflows/ci.yml')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([
+            'packages/cockpit/src/docs-lint.contracts.test.ts', 'packages/cockpit/src/supply-chain.test.ts',
+            'packages/cockpit/src/test-protection.test.ts',
+        ])
+    })
+
+    it('runs the tests that import a changed script', () => {
+        const fixture = withOwners({
+            'scripts/task.mjs': 'export const value = 1\n',
+            'scripts/task.d.mts': 'export const value: number\n',
+            'packages/cockpit/src/task.test.ts': "import { value } from '../../../scripts/task.mjs'\n",
+        })
+        edit(fixture.root, 'scripts/task.mjs')
+        edit(fixture.root, 'scripts/task.d.mts')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/task.test.ts'])
+    })
+
+    it('runs the surfaces tests when a shipped surface changes', () => {
+        const fixture = withOwners({
+            'packages/cockpit/surfaces/template.txt': 'before\n',
+            'packages/cockpit/surfaces/skills/fix.skill.md': 'before\n',
+            'packages/cockpit/src/surfaces/render.test.ts': 'render\n',
+            'packages/cockpit/src/surfaces/nested/deep.test.ts': 'deep\n',
+        })
+        edit(fixture.root, 'packages/cockpit/surfaces/template.txt')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/surfaces/nested/deep.test.ts', 'packages/cockpit/src/surfaces/render.test.ts'])
+    })
+
+    it('runs the tests that read a changed fixture directly or through test support', () => {
+        const fixture = withOwners({
+            'fixtures/estates/one/estate.json': '{}\n',
+            'packages/cockpit/src/direct.test.ts': "const dir = 'fixtures/estates'\n",
+            'packages/cockpit/test-support/estate-fixture.ts': "export const dir = 'fixtures/estates'\n",
+            'packages/cockpit/src/indirect.test.ts': "import { dir } from '../test-support/estate-fixture.js'\n",
+        })
+        edit(fixture.root, 'fixtures/estates/one/estate.json')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/indirect.test.ts'])
     })
 })

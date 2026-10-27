@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { lstatSync, readdirSync, realpathSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runTestsCli } from './run-tests.mjs'
@@ -10,7 +10,17 @@ export const mechanism = {
 
 const TEST_PATH = /^packages\/[^/]+\/src\/.+\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/
 const SOURCE_PATH = /^(packages\/[^/]+\/src\/.+)\.([cm]?[jt]s|[jt]sx)$/
-const DOCUMENTATION_PATH = /^(?:[^/]+|docs\/.+)\.md$/
+const MARKDOWN_PATH = /\.md$/
+const MANIFEST_PATH = /^(?:packages\/[^/]+\/)?package(?:-lock)?\.json$/
+const SCRIPT_PATH = /^scripts\/([^/]+)\.(?:mjs|d\.mts)$/
+const SURFACES_PATH = /^packages\/[^/]+\/surfaces\/.+/
+const FIXTURE_PATH = /^fixtures\/([^/]+)\/.+/
+const TEST_DIRECTORY = 'packages/cockpit/src'
+// Markdown is read by the documentation tests wherever it lives: they lint the pages, check
+// ownership of each fact, and run the shipped example.
+const DOCUMENTATION_TESTS = [/^docs-lint(?:\..+)?\.test\.ts$/, /^docs-ownership\.test\.ts$/, /^example-cockpit\.test\.ts$/]
+const MANIFEST_TESTS = ['packaging.test.ts', 'supply-chain.test.ts']
+const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.contracts.test.ts', 'test-protection.test.ts']
 const GENERATED_FIXTURES = 'packages/cockpit/test-support/generated-fixtures.ts'
 const GENERATED_COMMAND_TEST = /^command(?:\..+)?\.test\.ts$/
 
@@ -38,8 +48,8 @@ function existingFile(root, path) {
 
 function parseArguments(argv) {
     const [base, ...rest] = argv
-    if (!base || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(base) || /^0+$/.test(base)) {
-        throw new Error('usage: node scripts/run-changed-tests.mjs <40-or-64-character-base-commit> [--extra-test <test-path>]...')
+    if (!base || base.startsWith('-')) {
+        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--extra-test <test-path>]...')
     }
     const extraTests = []
     for (let index = 0; index < rest.length; index += 2) {
@@ -49,13 +59,60 @@ function parseArguments(argv) {
     return { base, extraTests }
 }
 
-function changedPaths(root, base) {
-    if (git(root, ['cat-file', '-t', base]).trim() !== 'commit') throw new Error('base does not identify a commit')
+function changedPaths(root, baseCommitIsh) {
+    let base
+    try {
+        base = git(root, ['rev-parse', '--verify', '--quiet', `${baseCommitIsh}^{commit}`]).trim()
+    } catch (error) {
+        throw new Error(`base does not identify a commit: ${baseCommitIsh} (${error.status === 1 ? 'unknown revision' : error.message})`)
+    }
     const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', base, 'HEAD'], { cwd: root, stdio: 'ignore' })
     if (ancestor.status !== 0) throw new Error('base must be an ancestor of HEAD')
     const tracked = git(root, ['diff', '--no-renames', '--name-only', '-z', '--diff-filter=ACDMRTUXB', base, '--']).split('\0').filter(Boolean)
     const untracked = git(root, ['ls-files', '-z', '--others', '--exclude-standard']).split('\0').filter(Boolean)
     return [...new Set([...tracked, ...untracked])].sort()
+}
+
+function walkFiles(root, directory, found = []) {
+    for (const entry of readdirSync(resolve(root, directory), { withFileTypes: true })) {
+        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.isSymbolicLink()) continue
+        const path = posix.join(directory, entry.name)
+        if (entry.isDirectory()) walkFiles(root, path, found)
+        else if (entry.isFile()) found.push(path)
+    }
+    return found
+}
+
+function packageTestFiles(root) {
+    return walkFiles(root, 'packages').filter(path => TEST_PATH.test(path))
+}
+
+function testsInDirectory(root, names) {
+    const directory = resolve(root, TEST_DIRECTORY)
+    return readdirSync(directory)
+        .filter(name => names.some(match => typeof match === 'string' ? match === name : match.test(name)))
+        .map(name => posix.join(TEST_DIRECTORY, name))
+        .filter(candidate => existingFile(root, candidate))
+}
+
+// Tests that name the script file, found by reading the tests rather than keeping a second list.
+function testsReferencing(root, needle) {
+    return packageTestFiles(root).filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
+}
+
+// A fixture directory is read either by a test directly or through a test-support module that a
+// test imports, so the lookup follows one level of import.
+function testsReadingFixtures(root, directory) {
+    const needle = `fixtures/${directory}`
+    const readers = walkFiles(root, 'packages')
+        .filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
+        .filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
+    const direct = readers.filter(path => TEST_PATH.test(path))
+    const supports = readers.filter(path => !TEST_PATH.test(path)).map(path => basename(path).replace(/\.ts$/, ''))
+    if (!supports.length) return direct
+    const imports = new RegExp(`/(?:${supports.join('|')})(?:\\.js)?['"]`)
+    const indirect = packageTestFiles(root).filter(path => imports.test(readFileSync(resolve(root, path), 'utf8')))
+    return [...new Set([...direct, ...indirect])]
 }
 
 function ownerTests(root, paths, extras) {
@@ -90,7 +147,19 @@ function ownerTests(root, paths, extras) {
             else unmapped.push(path)
             continue
         }
-        if (!DOCUMENTATION_PATH.test(path)) unmapped.push(path)
+        const script = SCRIPT_PATH.exec(path)
+        const fixture = FIXTURE_PATH.exec(path)
+        const mapped = []
+        if (MARKDOWN_PATH.test(path)) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
+        if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS))
+        if (path.startsWith('.github/')) mapped.push(...testsInDirectory(root, WORKFLOW_TESTS))
+        if (SURFACES_PATH.test(path)) {
+            mapped.push(...packageTestFiles(root).filter(candidate => candidate.startsWith(`${TEST_DIRECTORY}/surfaces/`)))
+        }
+        if (script) mapped.push(...testsReferencing(root, `${script[1]}.mjs`))
+        if (fixture) mapped.push(...testsReadingFixtures(root, fixture[1]))
+        if (mapped.length) for (const candidate of mapped) selected.add(candidate)
+        else unmapped.push(path)
     }
     for (const path of extras) {
         if (posix.normalize(path) !== path || !TEST_PATH.test(path) || !existingFile(root, path)) {
