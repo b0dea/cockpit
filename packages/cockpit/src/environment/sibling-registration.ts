@@ -320,17 +320,24 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
         var: input.varName === undefined ? 'derived from the slug' : '--var',
         purpose: '--purpose',
     }
+    // Creating a hosted repository is outward-facing, so cockpit only hands the commands over. The
+    // JSON result carries them too: an agent reading --json would otherwise never see them.
+    const publish = Object.freeze({
+        command: `gh repo create <owner>/${slug.data} --private --source ${JSON.stringify(target)} --remote origin`,
+        recordRemote: `cockpit sibling add ${slug.data} --config ${configPath} --remote <url>`,
+    })
     const note = mode === 'create'
         ? `initialised ${target} and recorded sibling "${slug.data}" (acquire "none") in ${configPath}.\n`
           + `Creating a GitHub remote is outward-facing, so cockpit does not do it. To publish it yourself:\n`
-          + `  gh repo create <owner>/${slug.data} --private --source ${JSON.stringify(target)} --remote origin\n`
-          + `then record the remote:\n  cockpit sibling add ${slug.data} --config ${configPath} --remote <url>`
+          + `  ${publish.command}\n`
+          + `then record the remote:\n  ${publish.recordRemote}`
         : mode === 'from'
             ? `recorded sibling "${slug.data}" with remote ${remote} read from the origin of ${source} (acquire "auto") in ${configPath}. The original checkout was not touched; \`cockpit setup\` clones a fresh copy to ${target}.`
             : mode === 'remote'
                 ? `recorded sibling "${slug.data}" with remote ${remote} (acquire "auto") in ${configPath}; \`cockpit setup\` clones it to ${target}.`
                 : `recorded the existing directory ${target} as sibling "${slug.data}" (acquire "none") in ${configPath}.`
-    return success(mode === 'create' ? 'created' : 'added', configPath, added, sources, note, { path: target, ...(source === undefined ? {} : { from: source }) })
+    return success(mode === 'create' ? 'created' : 'added', configPath, added, sources, note, { path: target,
+        ...(source === undefined ? {} : { from: source }), ...(mode === 'create' ? { publish } : {}) })
 }
 
 function success(action: string, configPath: string, row: unknown, sources: Record<string, string>, note: string, extra: Record<string, unknown> = {}): SiblingOutcome {

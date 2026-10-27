@@ -80,9 +80,13 @@ describe('sibling add', () => {
         const row = (await loaded(configPath)).sibling.find((sibling) => sibling.slug === 'billing-api')
         expect(row).toMatchObject({ dir: 'billing-api', acquire: 'none', mount: 'always', var: 'BILLING_API_DIR', purpose: 'Billing service' })
         expect(row?.remote).toBeUndefined()
-        expect(outcome.artifact).toContain('gh repo create <owner>/billing-api')
-        expect(outcome.artifact).toContain('sibling add billing-api')
-        expect(outcome.artifact).toContain('--remote <url>')
+        const publish = {
+            command: `gh repo create <owner>/billing-api --private --source ${JSON.stringify(join(siblings, 'billing-api'))} --remote origin`,
+            recordRemote: `cockpit sibling add billing-api --config ${configPath} --remote <url>`,
+        }
+        expect(outcome.result).toMatchObject({ action: 'created', publish })
+        expect(outcome.artifact).toContain(publish.command)
+        expect(outcome.artifact).toContain(publish.recordRemote)
     })
 
     it('--create grows a cockpit whose only sibling is its own root', async () => {
