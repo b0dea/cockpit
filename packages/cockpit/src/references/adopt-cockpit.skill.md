@@ -3,6 +3,8 @@ name: adopt-cockpit
 description: "Set up or adopt cockpit for a project, bring a multi-repo product up for AI agents, or start a new product with cockpit. Use whenever the user wants cockpit set up, adopted or extended with another repository, or wants their repositories organised and their stack brought up for agents, even when they name no cockpit command. Routes by what is on disk to cockpit's non-interactive commands, asks before writing into product repositories, and never invents configuration values."
 ---
 
+<!-- cockpit:verified version=0.0.0 -->
+
 # Adopt cockpit
 
 Use this when a human asks you to set cockpit up, adopt it, or bring their product up for
