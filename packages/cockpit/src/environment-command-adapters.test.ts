@@ -410,7 +410,7 @@ else if (args.includes('exec')) {
                 }
                 const none = async () => []
                 const producers: HealthObservationProducers = { generated, data: none, external: none, claims: none, git: none,
-                    host: none, installs: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none }
+                    host: none, installs: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none, envSchema: none }
                 const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                     cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({
                     checkout, configuration: fresh.result, preflight: { authorities: [posture], stages: [stage.authority] },
@@ -524,7 +524,7 @@ else if (args.includes('exec')) {
                     const produce = async () => [row.value]
                     const none = async () => []
                     const producers: HealthObservationProducers = { generated: none, data: none, external: none, claims: none,
-                        git: none, host: none, installs: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none,
+                        git: none, host: none, installs: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none, envSchema: none,
                         [row.producer]: produce }
                     const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                         cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({

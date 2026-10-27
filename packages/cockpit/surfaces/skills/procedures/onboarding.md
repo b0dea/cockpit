@@ -56,6 +56,9 @@ adopted Varlock, explicit product-change authority is required to add and lock i
 provider login, encryption and secret migration remain human/operator actions; preview their file and
 provider scope instead of running them automatically.
 
+Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
+names the keys, and `varlock load` in that sibling shows why.
+
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order
 evidence. Varlock's credential proxy is preview software and same-user code is not confined here;

@@ -409,3 +409,137 @@ describe('production health adapter composition', () => {
         }
     })
 })
+
+describe('env schema health', () => {
+    // Distinctive enough that any copy of it in output or state is unmistakable.
+    const SECRET = 'sentinel-resolved-value-7c1e94'
+    const schemaOwner = 'env-schema-observation'
+
+    async function withVarlock(candidate: Awaited<ReturnType<typeof fixture>>, body: string | undefined) {
+        await writeFile(join(candidate.checkout, 'siblings', 'api', '.env.schema'), 'API_KEY=\n')
+        if (body === undefined) return
+        const path = join(candidate.root, 'varlock')
+        await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o700 })
+        await chmod(path, 0o700)
+    }
+
+    // A varlock report whose values and messages both carry the secret, as a real one can.
+    const report = (errors?: Record<string, string>) => JSON.stringify({
+        blobFormatVersion: 1,
+        config: { API_KEY: { value: SECRET, isSensitive: true }, REGION: { value: SECRET, isSensitive: false } },
+        ...(errors ? { errors: { configItems: errors } } : {}),
+    })
+    const printing = (json: string, exitCode: number) =>
+        `cat <<'JSON'\n${json}\nJSON\nprintf '%s\\n' '${SECRET}' >&2\nexit ${exitCode}`
+
+    async function health(candidate: Awaited<ReturnType<typeof fixture>>, options: { readonly path?: string; readonly timeoutMs?: number } = {}) {
+        const execute = vi.fn(executeProbe)
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: options.path ?? `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            timeoutMs: options.timeoutMs ?? 5_000,
+        }, execute)
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+        const row = (result: typeof doctor | typeof preflight) => result.result.checks.find(({ owner }) => owner === schemaOwner)
+        return { execute, doctor, preflight, row }
+    }
+
+    const varlockCalls = (execute: { readonly mock: { readonly calls: readonly (readonly [Parameters<typeof executeProbe>[0], ...unknown[]])[] } }) =>
+        execute.mock.calls.map(([step]) => step).filter(({ id }) => id.startsWith('env-schema:'))
+
+    async function files(directory: string): Promise<string[]> {
+        const { readdir } = await import('node:fs/promises')
+        const found: string[] = []
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+            const path = join(directory, entry.name)
+            if (entry.isDirectory()) found.push(...await files(path))
+            else if (entry.isFile()) found.push(path)
+        }
+        return found
+    }
+
+    it('reports a valid env schema for a sibling that contains .env.schema', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report(), 0))
+
+        const { execute, doctor, preflight, row } = await health(candidate)
+
+        expect(varlockCalls(execute)).toHaveLength(2)
+        expect(varlockCalls(execute)[0]!.argv.slice(1)).toEqual([
+            'load', '--agent', '--format', 'json-full', '--path', join(candidate.checkout, 'siblings', 'api'),
+        ])
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({
+                code: 'ENV_SCHEMA_UNHEALTHY', verdict: 'pass', measured: [{ sibling: 'api', state: 'valid', keys: 2 }],
+            })
+        }
+    })
+
+    it('does not run varlock for a sibling without .env.schema', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report(), 0))
+        await rm(join(candidate.checkout, 'siblings', 'api', '.env.schema'))
+
+        const { execute, doctor, row } = await health(candidate)
+
+        expect(varlockCalls(execute)).toEqual([])
+        expect(row(doctor)).toMatchObject({ verdict: 'pass', measured: [] })
+    })
+
+    it('never carries a resolved value into output, diagnostics or persisted state', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report({ API_KEY: `Value ${SECRET} is required but is currently empty`, REGION: `bad value ${SECRET}` }), 1))
+
+        const { doctor, preflight } = await health(candidate)
+
+        const everything = JSON.stringify([doctor, preflight])
+        expect(everything).toContain('API_KEY')
+        expect(everything).not.toContain(SECRET)
+        const persisted = await Promise.all((await files(candidate.home)).map((path) => readFile(path, 'utf8')))
+        expect(persisted.length).toBeGreaterThan(0)
+        expect(persisted.join('\n')).not.toContain(SECRET)
+    })
+
+    it('warns, without failing the row, when varlock is not installed', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, undefined)
+
+        const { doctor, preflight, row } = await health(candidate)
+
+        for (const result of [doctor, preflight]) {
+            expect(row(result)).toMatchObject({ verdict: 'pass', measured: [{ sibling: 'api', state: 'tool-missing' }] })
+            expect(result.diagnostics).toContainEqual(expect.objectContaining({
+                severity: 'warning', code: 'ENV_SCHEMA_TOOL_MISSING', target: 'api', fix: expect.stringContaining('https://varlock.dev'),
+            }))
+        }
+    })
+
+    it('fails preflight naming the invalid keys and the fix', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report({ DATABASE_URL: 'Value is required but is currently empty', PORT: 'Unable to coerce string to number' }), 1))
+
+        const { preflight, row } = await health(candidate)
+
+        expect(row(preflight)).toMatchObject({ verdict: 'fail', remedy: expect.stringContaining('varlock load') })
+        expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'error',
+            code: 'ENV_SCHEMA_UNHEALTHY',
+            message: expect.stringMatching(/api .*missing required DATABASE_URL.*invalid PORT/),
+            fix: expect.stringContaining('varlock load'),
+        }))
+    })
+
+    it('names a varlock timeout instead of hanging', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, 'sleep 30')
+
+        const { preflight, row } = await health(candidate, { timeoutMs: 400 })
+
+        expect(row(preflight)).toMatchObject({ verdict: 'unavailable' })
+        expect(preflight.diagnostics).toContainEqual(expect.objectContaining({
+            code: 'ENV_SCHEMA_UNHEALTHY',
+            message: expect.stringMatching(/api .*varlock timed out after 400 ms/),
+        }))
+    })
+})

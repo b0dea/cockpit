@@ -171,6 +171,14 @@ need explicit product and provider authority. Current commands and limitations a
 the [Varlock CLI reference](https://varlock.dev/reference/cli/load-and-run/) and
 [AI tools guide](https://varlock.dev/guides/ai-tools/).
 
+`cockpit preflight` and `cockpit doctor` check every sibling that contains a `.env.schema`, and skip
+the rest. Each runs `varlock load --agent --format json-full --path <sibling>` from your `PATH`
+with the command's timeout and a 256 KiB output cap, and keeps only key names and a validity category;
+values and Varlock's messages are discarded. `ENV_SCHEMA_UNHEALTHY` fails the row and names the
+sibling and its keys, or is unavailable when Varlock times out, exits without a readable report or
+a provider cannot resolve. Run `varlock load` in that sibling to see why. `ENV_SCHEMA_TOOL_MISSING`
+is a warning, not a failure, when Varlock is not installed (<https://varlock.dev>).
+
 Report variable names, validation state, exit status and provenance only. Raw resolver output,
 resolved values and browser state do not belong in work-order evidence. Generated guards refuse
 mutation and staging beneath secrets directories, including staging an ancestor of the central

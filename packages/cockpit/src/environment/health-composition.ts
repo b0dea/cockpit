@@ -10,6 +10,7 @@ import {
     withLifecycleConfiguration,
 } from './application.js'
 import { observeClaimState } from './claims.js'
+import { observeEnvSchemas } from './env-schema-observation.js'
 import {
     ENVIRONMENT_CODES,
     type EnvironmentObservation,
@@ -487,6 +488,14 @@ function producers(input: {
             }
             return Object.freeze([])
         },
+        envSchema: async () => Object.freeze(await observeEnvSchemas({
+            stackId: input.stack,
+            siblings: input.config.result.config.sibling.map((sibling) => ({
+                slug: sibling.slug, dir: sibling.dir, root: resolve(siblingRoot, sibling.dir),
+            })),
+            env: input.env,
+            timeoutMs: input.timeoutMs,
+        }, { execute: input.execute })),
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
         }),

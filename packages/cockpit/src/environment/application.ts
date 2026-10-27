@@ -192,6 +192,7 @@ import {
     type PreflightContext,
     type PreflightEvaluation,
 } from './observations.js'
+import { envSchemaToolMissing, VARLOCK_INSTALL_URL } from './env-schema-observation.js'
 import {
     createComparisonRemoteRefStep,
     createGitObservationStep,
@@ -3662,6 +3663,7 @@ export interface ComparisonRemoteInput {
 export interface HealthObservationProducers {
     readonly generated: () => Promise<readonly EnvironmentObservation[]>
     readonly data: () => Promise<readonly EnvironmentObservation[]>
+    readonly envSchema: () => Promise<readonly EnvironmentObservation[]>
     readonly external: () => Promise<readonly EnvironmentObservation[]>
     readonly claims: () => Promise<readonly EnvironmentObservation[]>
     readonly git: () => Promise<readonly EnvironmentObservation[]>
@@ -3922,7 +3924,7 @@ const issuedHealthObservationSources = new WeakMap<object, PreparedHealthObserva
 
 const healthProducerNames = Object.freeze([
     'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-    'generated', 'data', 'external',
+    'generated', 'data', 'external', 'envSchema',
 ] as const)
 
 function applicationDiagnostic(
@@ -4213,7 +4215,16 @@ function healthDiagnostics(health: HealthEvaluation): readonly EnvironmentDiagno
         producer,
         `restore the ${producer} observation producer`,
     ))
-    return Object.freeze([...checks, ...producerFailures, ...comparisons])
+    // Varlock is optional for cockpit, so a sibling that adopted it but cannot be checked here warns
+    // instead of failing the row.
+    const advisories = health.preflight.checks.flatMap((check) => envSchemaToolMissing(check).map((sibling): EnvironmentDiagnostic => Object.freeze({
+        severity: 'warning',
+        code: ENVIRONMENT_CODES.ENV_SCHEMA_TOOL_MISSING,
+        message: `sibling ${sibling} has an .env.schema but varlock is not installed, so its env schema was not checked`,
+        target: sibling,
+        fix: `install Varlock (${VARLOCK_INSTALL_URL}) and put it on PATH`,
+    })))
+    return Object.freeze([...checks, ...advisories, ...producerFailures, ...comparisons])
 }
 
 const unavailableSurfaceOverrideInspection = Object.freeze({

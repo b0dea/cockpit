@@ -22,6 +22,7 @@ import type { CockpitId } from './contract.js'
 import { observationDeclarations as claimDeclarations } from './claims.js'
 import { observationDeclarations as generatedDeclarations } from './generated-stack.js'
 import { observationDeclarations as dataDeclarations } from './data-plane.js'
+import { observationDeclarations as envSchemaDeclarations } from './env-schema-observation.js'
 import { observationDeclarations as externalDeclarations } from './external-dependencies.js'
 import { observationDeclarations as gitDeclarations } from './git-observation.js'
 import { observationDeclarations as hostDeclarations } from './host-observation.js'
@@ -162,6 +163,7 @@ export const allObservationDeclarations: readonly ObservationDeclaration[] = Obj
     ...claimDeclarations,
     ...generatedDeclarations,
     ...dataDeclarations,
+    ...envSchemaDeclarations,
     ...externalDeclarations,
     ...gitDeclarations,
     ...hostDeclarations,
