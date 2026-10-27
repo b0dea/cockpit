@@ -18,6 +18,7 @@ The command table supplies this list.
 - `cockpit session`: Keep the environment available for one command, then release it.
 - `cockpit down`: Remove the selected generated runtime.
 - `cockpit reset`: Preview or interactively approve an exact reset.
+- `cockpit runtime`: Measure the local container runtime (runtime measure) and record its support row.
 - `cockpit preflight`: Evaluate the authenticated environment gate.
 - `cockpit doctor`: Report read-only environment diagnostics.
 - `cockpit logs`: Collect bounded logs for one declared service.

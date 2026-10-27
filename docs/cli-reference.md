@@ -498,6 +498,29 @@ Configuration: `unavailable`. Owners: none.
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
+## cockpit runtime
+
+Measure the local container runtime (runtime measure) and record its support row.
+
+Configuration: `unavailable`. Owners: none.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--image` | string | unset |
+| `--write` | boolean | `false` |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+| Diagnostic | Implementing owners | Source remedy |
+| --- | --- | --- |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts` | no static remedy captured; inspect implementing owners |
+
 ## cockpit preflight
 
 Evaluate the authenticated environment gate.

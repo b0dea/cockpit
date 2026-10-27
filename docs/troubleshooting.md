@@ -229,7 +229,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `CLI_COMMAND_REQUIRED` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_UNKNOWN_COMMAND` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
-| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
+| `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_REVISION_INVALID` | `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_FIXTURE_INVALID` | `packages/cockpit/src/comparison/contract.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_NORMALIZATION_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
