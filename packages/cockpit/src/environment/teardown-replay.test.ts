@@ -101,8 +101,10 @@ const authenticatedInput = async (
         if (kind === 'volume') for (const row of rows) await writeFile(join(root, `inspect.${row.name}`), `${JSON.stringify({
             name: row.name, generation: row.generation ?? '',
         })}\n`)
+        // Network inspection prints attached endpoint ids; a referenced row stands for an endpoint
+        // discovery did not see, which keeps the network.
         if (kind === 'network') for (const row of rows) await writeFile(join(root, `inspect.network.${row.id}`), `${JSON.stringify({
-            id: row.id, referenced: row.referenced,
+            id: row.id, members: row.referenced ? `endpoint-${row.id} ` : '',
         })}\n`)
         if (kind === 'container') for (const row of rows) await writeFile(join(root, `inspect.container.${row.id}`), `${JSON.stringify({
             id: row.id,
@@ -111,7 +113,8 @@ const authenticatedInput = async (
     }
     await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
     const script = join(root, 'docker')
-    const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then /bin/cat -- "$PWD/inspect.$5"; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then /bin/cat -- "$PWD/inspect.$kind.$5"; exit; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
+    // Inspection is chunked, so the fake answers every id of one call, as Docker does.
+    const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$id"; done; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$kind.$id"; done; exit; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
     const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'staged' as const }
@@ -210,7 +213,9 @@ const authenticatedInput = async (
 describe('teardown replay', () => {
     it('retains a network referenced only by persisted container configuration', async () => {
         const network = resource({ id: 'network-1', name: 'network-1', kind: 'network', referenced: false, bytes: null })
-        const container = resource({ id: 'container-1' })
+        // The stack's own containers no longer hold its network, since teardown removes them first;
+        // another stack's container configuration still does.
+        const container = resource({ id: 'container-1', labels: { ...labels, 'dev.b0dea.cockpit.stack-id': `stack:${sha('other stack')}` } })
         const authenticated = await authenticatedInput([network, container], undefined, { [container.id]: [network.id] })
         try {
             expect(authenticated.value.discovery.resources.find(({ id }) => id === network.id)?.referenced).toBe(true)
