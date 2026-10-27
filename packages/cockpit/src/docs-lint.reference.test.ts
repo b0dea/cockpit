@@ -125,7 +125,7 @@ describe('maintainer reference boundary', () => {
             const expectedCommands = [
                 'baseline-record', 'browser-accessibility', 'browser-debugger', 'browser-drive', 'browser-screenshot',
                 'check', 'compare', 'doctor', 'document', 'down', 'init', 'logs', 'preflight', 'registry-resolve', 'reset', 'runtime', 'selftest',
-                'session', 'setup', 'sleep', 'sync', 'test-run', 'up', 'upgrade', 'work-accept', 'work-execute', 'work-grade',
+                'session', 'setup', 'sibling', 'sleep', 'sync', 'test-run', 'up', 'upgrade', 'work-accept', 'work-execute', 'work-grade',
                 'work-intake', 'work-metrics', 'work-programme-mint', 'work-record', 'work-recover', 'work-renew', 'work-resume',
                 'work-reverse', 'work-review', 'work-status', 'work-sweep',
             ].map(name => `command:${name}`).sort()
