@@ -133,6 +133,7 @@ import {
     admitRuntimeServiceRevalidation,
     createRuntimeServiceHealthPlan,
     createRuntimeServicePlan,
+    admitBuiltImageLauncher,
     createRuntimeServiceRevalidationPlan,
     observeRuntimeServiceColdStart,
     resolveRuntimeServiceOrder,
@@ -2101,6 +2102,9 @@ type ServiceAdmission =
     | { readonly kind: 'stale' }
     | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence | RuntimeServiceObservation }
 
+/** A start can also be refused before Compose starts anything, with a diagnostic of its own. */
+type ServiceStart = ServiceAdmission | { readonly kind: 'refused'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
+
 async function inspectService(
     healthPlan: Extract<RuntimeServiceHealthPlan, { kind: 'planned' }>,
     adapters: Pick<UpCommandAdapters, 'execute'>,
@@ -2141,9 +2145,16 @@ async function startService(
     topology: RuntimeTopologyEvidence,
     service: string,
     adapters: UpCommandAdapters,
-): Promise<ServiceAdmission> {
+): Promise<ServiceStart> {
     const plan = createRuntimeServicePlan({ topology, service })
     if (plan.kind !== 'planned') return { kind: 'failure' }
+    if (plan.build && plan.launcher) {
+        const buildOutcome = await adapters.execute(plan.build)
+        const admitted = admitBuiltImageLauncher(buildOutcome.kind === 'complete'
+            ? { plan, buildOutcome, launcherOutcome: await adapters.execute(plan.launcher) }
+            : { plan, buildOutcome })
+        if (admitted.kind === 'refusal') return { kind: 'refused', diagnostics: admitted.diagnostics }
+    }
     const start = await adapters.execute(plan.start)
     const startAdmission = admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: start })
     if (startAdmission.kind === 'failure') return { kind: 'failure', logs: startAdmission.evidence }
@@ -2724,6 +2735,7 @@ async function executeUpRound(
         for (let index = issuance.firstIncompleteServiceIndex; index < orderedServices.length; index += 1) {
             const service = orderedServices[index]!
             const admitted = await startService(issuance.topology, service.id, adapters)
+            if (admitted.kind === 'refused') return { kind: 'complete' as const, result: forwardedRefusal(admitted.diagnostics) }
             if (admitted.kind !== 'complete') {
                 const logDiagnostics = await collectFailureLogs(
                     admitted.kind === 'failure' ? admitted.logs : undefined,

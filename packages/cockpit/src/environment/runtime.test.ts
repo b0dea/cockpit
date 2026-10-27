@@ -29,6 +29,7 @@ import {
     runtimeIdentity,
     createRuntimeServiceHealthPlan,
     createRuntimeServicePlan,
+    admitBuiltImageLauncher,
     createRuntimeServiceRevalidationPlan,
     createRuntimeTopologyPlan,
     createRuntimeStopPlan,
@@ -1192,6 +1193,9 @@ describe('authenticated runtime topology and service health', () => {
         const stopExitCode = Array.isArray(containers) && containers[0] !== null && typeof containers[0] === 'object'
             ? Number((containers[0] as Record<string, unknown>).StopExitCode ?? 0)
             : 0
+        const buildExitCode = Number(controls.BuildExitCode ?? 0)
+        const launcherExitCode = Number(controls.LauncherExitCode ?? 0)
+        const launcherStderr = typeof controls.LauncherStderr === 'string' ? controls.LauncherStderr : ''
         const source = `#!/bin/sh
 has_argument() {
   expected=$1
@@ -1229,6 +1233,17 @@ suffix_5_is_running() {
   shift $(( $# - 5 ))
   [ "$1" = ps ] && [ "$2" = --format ] && [ "$3" = json ] && [ "$4" = --status ] && [ "$5" = running ]
 }
+suffix_4_is_build() {
+  [ "$#" -ge 4 ] || return 1
+  shift $(( $# - 4 ))
+  [ "$1" = --progress ] && [ "$2" = quiet ] && [ "$3" = build ] && [ "$4" = api ]
+}
+suffix_11_is_launcher() {
+  [ "$#" -ge 11 ] || return 1
+  shift $(( $# - 11 ))
+  [ "$1" = --progress ] && [ "$2" = quiet ] && [ "$3" = run ] && [ "$4" = --rm ] && [ "$5" = --no-deps ] && [ "$6" = --entrypoint ] \
+    && [ "$7" = /bin/sh ] && [ "$8" = api ] && [ "$9" = -eu ] && [ "\${10}" = -c ] && [ "\${11}" = : ]
+}
 suffix_1_is_stop() {
   [ "$#" -ge 1 ] || return 1
   shift $(( $# - 1 ))
@@ -1261,6 +1276,11 @@ elif suffix_4_is_identity "$@"; then
   exit ${identityExitCode}
 elif suffix_1_is_stop "$@"; then
   exit ${stopExitCode}
+elif suffix_4_is_build "$@"; then
+  exit ${buildExitCode}
+elif suffix_11_is_launcher "$@"; then
+  printf '%s' ${shellQuote(launcherStderr)} >&2
+  exit ${launcherExitCode}
 elif suffix_5_is_running "$@"; then
   exit 0
 elif has_argument inspect "$@" && has_mounts_argument "$@"; then
@@ -1586,10 +1606,30 @@ fi
         const builtStart = createRuntimeServicePlan({ topology: builtEvidence.topology, service: 'api' })
         if (builtStart.kind !== 'planned') throw new Error('built service plan unavailable')
         expect(builtStart.start.timeoutMs).toBe(60_000)
+        // The built image gets the launcher check a pinned image gets before start: it is built
+        // first, then must run the generated entrypoint's /bin/sh, or start is refused by name.
+        const launcherCheck = async (controls: Readonly<Record<string, unknown>>) => {
+            const evidence = (await topologyEvidence(built, [controls], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
+            if (evidence.kind !== 'complete') throw new Error(evidence.reason)
+            const plan = createRuntimeServicePlan({ topology: evidence.topology, service: 'api' })
+            if (plan.kind !== 'planned' || !plan.build || !plan.launcher) throw new Error('built image launcher plan unavailable')
+            expect(plan.build.timeoutMs).toBe(60_000)
+            expect(plan.launcher.argv.slice(-9)).toEqual(['run', '--rm', '--no-deps', '--entrypoint', '/bin/sh', 'api', '-eu', '-c', ':'])
+            const buildOutcome = await executeProbe(plan.build)
+            return admitBuiltImageLauncher(buildOutcome.kind === 'complete'
+                ? { plan, buildOutcome, launcherOutcome: await executeProbe(plan.launcher!) } : { plan, buildOutcome })
+        }
+        expect(await launcherCheck({})).toEqual({ kind: 'complete' })
+        expect(await launcherCheck({ LauncherExitCode: 1, LauncherStderr: 'exec: "/bin/sh": stat /bin/sh: no such file or directory\n' })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'RUNTIME_LAUNCHER_UNAVAILABLE', target: 'api',
+                message: expect.stringContaining('cannot run /bin/sh, which the generated entrypoint needs (exec: "/bin/sh": stat /bin/sh: no such file or directory)') }],
+        })
+        expect(await launcherCheck({ BuildExitCode: 1 })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api' }] })
         const pinnedEvidence = (await topologyEvidence(topology, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
         if (pinnedEvidence.kind !== 'complete') throw new Error(pinnedEvidence.reason)
         const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
         if (pinnedStart.kind !== 'planned') throw new Error('pinned service plan unavailable')
+        expect(pinnedStart).not.toHaveProperty('build')
         expect(pinnedStart.start.timeoutMs).toBe(10_000)
         for (const build of [{ context: 'relative', dockerfile: 'Dockerfile' }, { context: directory }, { context: directory, dockerfile: 'Dockerfile', args: {} }]) {
             expect((await topologyEvidence({ ...topology, services: { api: { ...unpinned, build } } })).admitted.kind).toBe('unavailable')

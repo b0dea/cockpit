@@ -19,7 +19,9 @@ import {
     REFUSAL_CODES,
     snapshotExecutionPlan,
     snapshotJson,
+    type EnvironmentCode,
     type EnvironmentCommandOutcome,
+    type EnvironmentDiagnostic,
     type EnvironmentObservation,
     type ExecutionFailureCode,
     type ExecutionPlan,
@@ -49,7 +51,7 @@ import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, 
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -1796,7 +1798,9 @@ function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ inde
 }
 
 export type RuntimeServicePlan =
-    | { readonly kind: 'planned'; readonly service: string; readonly start: ExecutionStep; readonly status: ExecutionStep; readonly identity: ExecutionStep }
+    | { readonly kind: 'planned'; readonly service: string; readonly start: ExecutionStep; readonly status: ExecutionStep; readonly identity: ExecutionStep
+        /** Present for a built generated service: run before start and admitted by admitBuiltImageLauncher. */
+        readonly build?: ExecutionStep; readonly launcher?: ExecutionStep }
     | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
 
 export type RuntimeServiceHealthPlan =
@@ -1965,13 +1969,77 @@ export function createRuntimeServicePlan(input: { readonly topology: RuntimeTopo
             || Date.now() > Date.parse(topologyContract.observationWindow.expiresAt)) return unavailableRuntimeService(serviceId)
         const issuanceId = randomBytes(32).toString('hex')
         const steps = runtimeServiceInitialSteps(topologyContract, service, issuanceId)
-        if (!steps) return unavailableRuntimeService(serviceId)
-        const plan = Object.freeze({ kind: 'planned' as const, service: serviceId, ...steps })
+        const built = typeof service.generation === 'string' && service.image === null
+        const launcher = built ? builtImageLauncherSteps(topologyContract, service, issuanceId) : undefined
+        if (!steps || built && !launcher) return unavailableRuntimeService(serviceId)
+        const plan = Object.freeze({ kind: 'planned' as const, service: serviceId, ...steps, ...launcher })
         issuedRuntimeServicePlans.set(plan, Object.freeze({ topology, topologyContract, service }))
+        if (launcher) issuedBuiltImageLauncherPlans.set(plan, Object.freeze({ service: serviceId }))
         return plan
     } catch {
         return unavailableRuntimeService('')
     }
+}
+
+export type BuiltImageLauncherAdmission =
+    | { readonly kind: 'complete' }
+    | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
+
+const issuedBuiltImageLauncherPlans = new WeakMap<object, { readonly service: string }>()
+
+// A pinned image's `/bin/sh` launcher is checked before start; a built service has no image until
+// Compose builds it, so its first start used to fail opaquely inside `up --wait` when the image
+// shipped no shell. A built generated service's plan therefore builds first and checks its image
+// with the same entrypoint the generated wrapper runs, before the service starts.
+function builtImageLauncherSteps(
+    topologyContract: TopologyEvidenceContract,
+    service: RuntimeTopologyService,
+    issuanceId: string,
+): Readonly<{ build: ExecutionStep; launcher: ExecutionStep }> | undefined {
+    const names = topologyContract.runtime.generatedPortNames
+    // The build is the expensive part of a built service's first start, so it gets the start's
+    // cold-start bound rather than the ordinary command budget.
+    const build = derivedComposeStep(
+        { ...topologyContract.step, timeoutMs: Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis) },
+        `runtime:docker-compose:build:${service.id}`, 'build', ['--progress', 'quiet', 'build', service.id],
+        OUTPUT_LIMIT_BYTES, issuanceId, MAX_OBSERVATION_WINDOW_MS, undefined, names,
+    )
+    const launcher = derivedComposeStep(
+        topologyContract.step,
+        `runtime:docker-compose:launcher:${service.id}`, 'run',
+        ['--progress', 'quiet', 'run', '--rm', '--no-deps', '--entrypoint', '/bin/sh', service.id, '-eu', '-c', ':'],
+        OUTPUT_LIMIT_BYTES, issuanceId, 30_000, undefined, names,
+    )
+    return build && launcher ? Object.freeze({ build, launcher }) : undefined
+}
+
+export function admitBuiltImageLauncher(input: {
+    readonly plan: RuntimeServicePlan
+    readonly buildOutcome: ExecuteProbeOutcome
+    readonly launcherOutcome?: ExecuteProbeOutcome
+}): BuiltImageLauncherAdmission {
+    const plan = input?.plan
+    const contract = plan && typeof plan === 'object' ? issuedBuiltImageLauncherPlans.get(plan) : undefined
+    const refuse = (code: EnvironmentCode, message: string) => Object.freeze({ kind: 'refusal' as const, diagnostics: Object.freeze([Object.freeze({
+        severity: 'error' as const, code, message, target: contract?.service ?? 'built-image-launcher',
+    })]) })
+    if (!contract || plan.kind !== 'planned' || !plan.build || !plan.launcher) {
+        return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image launcher evidence is unavailable')
+    }
+    issuedBuiltImageLauncherPlans.delete(plan)
+    const build = authenticatedExecutionOutcome(input.buildOutcome, plan.build)
+    if (!build) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image build evidence is unauthenticated')
+    if (build.kind !== 'complete') {
+        return refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
+            `the image for built service ${contract.service} did not build (${build.code}); fix its build context, then rerun cockpit up`)
+    }
+    const launcher = input.launcherOutcome === undefined ? undefined : authenticatedExecutionOutcome(input.launcherOutcome, plan.launcher)
+    if (!launcher) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image launcher evidence is unauthenticated')
+    if (launcher.kind === 'complete') return Object.freeze({ kind: 'complete' })
+    const detail = new TextDecoder().decode(launcher.stderr.subarray(0, 4_096)).split('\n').find((line) => line.trim() !== '')?.slice(0, 300)
+    return refuse(ENVIRONMENT_CODES.RUNTIME_LAUNCHER_UNAVAILABLE,
+        `the built image for service ${contract.service} cannot run /bin/sh, which the generated entrypoint needs`
+        + `${detail ? ` (${detail})` : ''}; build it from a base image that ships /bin/sh`)
 }
 
 export function createRuntimeServiceRevalidationPlan(input: {
