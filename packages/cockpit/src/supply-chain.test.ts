@@ -21,7 +21,10 @@ afterEach(() => scratch.splice(0).forEach(path => rmSync(path, { recursive: true
 function fixture() {
     const root = mkdtempSync(join(tmpdir(), 'cockpit-supply-chain-'))
     scratch.push(root)
-    for (const path of ['package.json', 'package-lock.json', '.github/workflows/ci.yml', '.github/workflows/external-links.yml']) {
+    for (const path of [
+        'package.json', 'package-lock.json', '.github/workflows/ci.yml', '.github/workflows/external-links.yml',
+        '.github/workflows/release.yml', '.github/workflows/dependabot-automerge.yml', '.github/scripts/release-publish.sh',
+    ]) {
         mkdirSync(dirname(join(root, path)), { recursive: true })
         cpSync(join(repositoryRoot, path), join(root, path))
     }
@@ -108,7 +111,7 @@ describe('the supply-chain readiness detector', () => {
         ['type target', (root: string) => mutate(root, 'packages/cockpit/package.json', value => { value.types = './dist/missing.d.ts' }), PACK_FILES, 'PACKAGE_EXPORTS_CHANGED'],
         ['runtime dependency', (root: string) => mutate(root, 'packages/cockpit/package.json', value => { value.dependencies.extra = '1.0.0' }), PACK_FILES, 'RUNTIME_DEPENDENCIES_CHANGED'],
         ['mutable action', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace(/actions\/checkout@[a-f0-9]{40}/, 'actions/checkout@v7')), PACK_FILES, 'WORKFLOW_ACTION_MUTABLE'],
-        ['broad permissions', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace('contents: read', 'contents: write')), PACK_FILES, 'WORKFLOW_PERMISSIONS_BROAD'],
+        ['broad permissions', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace('permissions:\n      contents: read', 'permissions:\n      contents: write')), PACK_FILES, 'WORKFLOW_PERMISSIONS_BROAD'],
         ['missing invocation', (root: string) => writeFileSync(join(root, '.github/workflows/ci.yml'), readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8').replace('npm run lint:supply-chain', 'npm run typecheck')), PACK_FILES, 'WORKFLOW_LINT_NOT_INVOKED'],
         ['unscanned tarball', (_root: string) => {}, [], 'PACK_METADATA_MISSING'],
         ['audience leak', (_root: string) => {}, [...PACK_FILES, 'src/private.ts'], 'PACKAGE_AUDIENCE_LEAK'],
@@ -119,6 +122,59 @@ describe('the supply-chain readiness detector', () => {
         const root = fixture()
         plant(root)
         expect(inspect(root, packFiles).diagnostics.map(row => row.code)).toContain(code)
+    })
+
+    describe('write scopes and publication are confined to the reviewed workflow jobs', () => {
+        const edit = (root: string, name: string, update: (text: string) => string) => {
+            const path = join(root, `.github/workflows/${name}.yml`)
+            writeFileSync(path, update(readFileSync(path, 'utf8')))
+        }
+        const codes = (root: string) => inspect(root, PACK_FILES).diagnostics.map(row => row.code)
+        const publisher = (steps: string[]) => [
+            'name: Other', 'on: push', 'permissions: {}', 'jobs:', '  other:', '    runs-on: ubuntu-latest', '    steps:', ...steps, '',
+        ].join('\n')
+
+        it.each([
+            ['an extra scope in the release job', 'release', (text: string) => text.replace('id-token: write ', 'packages: write\n      id-token: write ')],
+            ['id-token in the auto-merge job', 'dependabot-automerge', (text: string) => text.replace('pull-requests: write', 'pull-requests: write\n      id-token: write')],
+            ['a scope widened past the release job', 'ci', (text: string) => text.replace('permissions:\n      contents: read', 'permissions:\n      contents: write')],
+            ['the release grants under another job name', 'release', (text: string) => text.replace('  release:\n', '  publish:\n')],
+            ['a write default for the whole workflow', 'release', (text: string) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write')],
+        ])('refuses %s', (_name, workflow, update) => {
+            const root = fixture()
+            edit(root, workflow, update)
+            expect(codes(root)).toContain('WORKFLOW_PERMISSIONS_BROAD')
+        })
+
+        it('refuses a publish command in any workflow but the release job', () => {
+            const root = fixture()
+            writeWorkflow(root, 'other', publisher(['      - run: npm publish --provenance']))
+            expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
+        })
+
+        it('refuses a publish command hidden in a script that another workflow runs', () => {
+            const root = fixture()
+            mkdirSync(join(root, '.github/scripts'), { recursive: true })
+            writeFileSync(join(root, '.github/scripts/ship.sh'), '#!/usr/bin/env bash\nnpx changeset publish\n')
+            writeWorkflow(root, 'other', publisher(['      - run: bash .github/scripts/ship.sh']))
+            expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
+        })
+
+        it('refuses the release action publish input outside the release job', () => {
+            const root = fixture()
+            writeWorkflow(root, 'other', publisher([
+                '      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51',
+                '        with:',
+                '          publish: node ship.mjs',
+            ]))
+            expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
+        })
+
+        it('refuses a missing or escaping script path instead of skipping it', () => {
+            const root = fixture()
+            writeWorkflow(root, 'other', publisher(['      - run: bash .github/scripts/absent.sh']))
+            expect(codes(root)).toContain('WORKFLOW_SCRIPT_INVALID')
+        })
     })
 
     it('checks reusable workflow jobs and every external edge inside local composite actions', () => {

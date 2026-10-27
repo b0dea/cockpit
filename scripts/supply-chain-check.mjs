@@ -69,6 +69,15 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'surfaces/skills/fix.skill.md',
     'surfaces/skills/procedures/onboarding.md',
 ])
+// The only jobs allowed to hold a write scope, and exactly which ones. Everything else is
+// read-only. Widening this list is a security-policy change: review it as one.
+const WRITE_GRANTS = Object.freeze({
+    '.github/workflows/release.yml#release': Object.freeze(['contents', 'pull-requests', 'id-token']),
+    '.github/workflows/dependabot-automerge.yml#automerge': Object.freeze(['contents', 'pull-requests']),
+})
+// The only job allowed to publish, or to invoke a repository script that does.
+const PUBLICATION_JOBS = new Set(['.github/workflows/release.yml#release'])
+const PUBLICATION_COMMAND = /(?:npm\s+(?:publish|login)|(?:changeset|pnpm|yarn)\s+publish|registry\.npmjs\.org)/i
 const EXACT_VERSION = /^(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|workspace:\*)$/
 
 function diagnostic(code, path, message) { return { code, path, message } }
@@ -260,7 +269,9 @@ function workflowDiagnostics(root, rootManifest) {
         inspectWorkflow(workflowPath)
     }
     const inspectWorkflow = absolute => {
-        const path = relative(root, absolute).replaceAll('\\', '/')
+        // `absolute` is canonical (symlinks resolved), so the root must be too, or a root reached
+        // through a symlink such as /tmp yields a `../..` path that matches no job allowance.
+        const path = relative(realpathSync(root), absolute).replaceAll('\\', '/')
         if (activeWorkflows.has(absolute)) {
             add('WORKFLOW_ACTION_CYCLE', path, `local reusable workflow dependency cycle reaches ${path}`)
             return
@@ -282,8 +293,11 @@ function workflowDiagnostics(root, rootManifest) {
             return
         }
         const permissions = workflow.permissions
-        if (!permissions || Object.keys(permissions).some(key => key !== 'contents') || permissions.contents !== 'read') {
-            add('WORKFLOW_PERMISSIONS_BROAD', path, 'workflow permissions must be exactly contents: read')
+        // `{}` grants nothing and `contents: read` is the checkout minimum; both are the
+        // ceiling every job inherits. Write scopes are granted per job below, never here.
+        if (!record(permissions) || Object.keys(permissions).some(key => key !== 'contents')
+            || (permissions.contents !== undefined && permissions.contents !== 'read')) {
+            add('WORKFLOW_PERMISSIONS_BROAD', path, 'workflow permissions must be {} or exactly contents: read')
         }
         if (!record(workflow.jobs)) add('WORKFLOW_INVALID', path, 'workflow jobs must be one mapping')
         for (const [jobName, job] of Object.entries(record(workflow.jobs) ? workflow.jobs : {})) {
@@ -291,9 +305,16 @@ function workflowDiagnostics(root, rootManifest) {
                 add('WORKFLOW_INVALID', `${path}#${jobName}`, 'job must be one mapping')
                 continue
             }
-            if (job.permissions && Object.values(job.permissions).some(value => !['none', 'read'].includes(value))) {
-                add('WORKFLOW_PERMISSIONS_BROAD', `${path}#${jobName}`, 'job grants a write permission')
+            if (job.permissions !== undefined && !record(job.permissions)) {
+                add('WORKFLOW_PERMISSIONS_BROAD', `${path}#${jobName}`, 'job permissions must be one mapping')
             }
+            const writable = WRITE_GRANTS[`${path}#${jobName}`] ?? []
+            for (const [scope, value] of Object.entries(record(job.permissions) ? job.permissions : {})) {
+                if (['none', 'read'].includes(value)) continue
+                if (value === 'write' && writable.includes(scope)) continue
+                add('WORKFLOW_PERMISSIONS_BROAD', `${path}#${jobName}`, `job grants ${scope}: ${String(value)}, which is not on the reviewed write allowance`)
+            }
+            const publishes = PUBLICATION_JOBS.has(`${path}#${jobName}`)
             if (typeof job.uses === 'string') inspectWorkflowReference(job.uses, `${path}#${jobName}`)
             if (job.steps !== undefined && !Array.isArray(job.steps)) add('WORKFLOW_INVALID', `${path}#${jobName}`, 'job steps must be one sequence')
             for (const step of Array.isArray(job.steps) ? job.steps : []) {
@@ -303,8 +324,33 @@ function workflowDiagnostics(root, rootManifest) {
                 }
                 if (typeof step.uses === 'string') inspectAction(step.uses, path)
                 if (typeof step.run === 'string' && /npm run lint:supply-chain(?:\s|$)/.test(step.run)) invokesDetector = true
-                if (typeof step.run === 'string' && /(?:npm\s+publish|npm\s+login|registry\.npmjs\.org)/i.test(step.run)) {
-                    add('PUBLICATION_PATH_PRESENT', path, 'workflow contains a registry or publication command')
+                // `with.publish` and `with.version` are command lines the release action runs,
+                // so they are scanned like `run`. A repository script named by any of them is
+                // scanned too: moving a publish command into a script must not hide it.
+                const commands = [step.run, step.with?.publish, step.with?.version].filter(value => typeof value === 'string')
+                if (!publishes) {
+                    if (typeof step.with?.publish === 'string') {
+                        add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release job may run a publish command')
+                    }
+                    for (const command of commands) {
+                        if (PUBLICATION_COMMAND.test(command)) {
+                            add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release job may contain a registry or publication command')
+                        }
+                        for (const script of command.match(/\.github\/scripts\/[A-Za-z0-9_./-]+/g) ?? []) {
+                            const scriptPath = resolve(root, script)
+                            let body
+                            try {
+                                if (script.includes('..') || lstatSync(scriptPath).isSymbolicLink()) throw new Error('linked or escaping script path')
+                                body = readFileSync(scriptPath, 'utf8')
+                            } catch {
+                                add('WORKFLOW_SCRIPT_INVALID', `${path}#${jobName}`, `invoked script is missing, linked, or outside .github/scripts: ${script}`)
+                                continue
+                            }
+                            if (PUBLICATION_COMMAND.test(body)) {
+                                add('PUBLICATION_PATH_PRESENT', script, `script invoked by ${path}#${jobName} contains a registry or publication command`)
+                            }
+                        }
+                    }
                 }
             }
         }
