@@ -1,27 +1,40 @@
-# Cockpit guides
+# Cockpit documentation
 
 <!-- cockpit:verified version=0.0.0 -->
 
-These guides explain cockpit's public commands, configuration, environment lifecycle, safety
-boundaries, and agent-tool surfaces. They are for people installing or operating cockpit.
+This index lists every page for people using cockpit on their own products, grouped by what you
+are trying to do. Contributor documentation lives separately under docs/contributing/.
 
-## Start here
+## Learn
 
-- [Getting started](getting-started.md)
-- [Concepts](concepts.md)
-- [Incremental adoption](adoption.md)
-- [Environment lifecycle](environment.md)
-- [Environment comparison](parallel-run.md)
-- [Work and browser workflows](work-and-browser.md)
-- [Safety and autonomy](safety-and-autonomy.md)
-- [Harness surfaces](harness-surfaces.md)
-- [Troubleshooting](troubleshooting.md)
+- [Tutorial](tutorial.md): run the synthetic example end to end.
+- [Getting started](getting-started.md): install cockpit and bring up your own product.
+- [Concepts](concepts.md): the glossary and the terms diagnostics use.
+- [FAQ](faq.md): short answers, including when not to use cockpit.
+
+## Guides
+
+- [Incremental adoption](adoption.md): move an existing setup over one layer at a time.
+- [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
+- [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
+- [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
+- [Work and browser workflows](work-and-browser.md): work orders, grading, browser evidence and
+  test tiers.
+- [Environment comparison](parallel-run.md): compare an existing bring-up path with cockpit.
 
 ## Reference
+
+These pages are generated from the source and change with it.
 
 - [Command list](command-list.md)
 - [CLI reference](cli-reference.md)
 - [Configuration reference](configuration-reference.md)
 - [Capability matrix](capability-matrix.md)
-- [Architecture and extension](architecture.md)
-- [Release policy](release-policy.md)
+- [Troubleshooting](troubleshooting.md): hand-written remedies followed by the generated
+  diagnostic index.
+
+## Background
+
+- [Architecture and design](architecture.md): why cockpit is shaped this way, non-goals, and
+  extension seams.
+- [Release policy](release-policy.md): supported runtimes, deprecation and migration.

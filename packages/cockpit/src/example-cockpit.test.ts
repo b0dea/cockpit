@@ -17,15 +17,16 @@ const runtime = { kind: 'human-only', reason: 'runtime or destructive environmen
 const executed = { kind: 'executed', reason: 'run by the synthetic example acceptance test' } as const
 const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof sourceInstall | typeof operator | typeof runtime | typeof executed)[]>([
     ['CONTRIBUTING.md', [developer, developer, developer]],
-    ['README.md', [sourceInstall, developer, runtime]],
+    ['README.md', [sourceInstall, operator]],
     ['docs/adoption.md', [operator, operator, operator, runtime]],
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [operator, runtime]],
-    ['docs/getting-started.md', [sourceInstall, operator, operator, operator, operator, runtime]],
+    ['docs/getting-started.md', [sourceInstall, operator, operator, operator, runtime, runtime]],
     ['docs/harness-surfaces.md', [operator, operator]],
     ['docs/parallel-run.md', [operator, runtime, operator]],
     ['docs/release-policy.md', [operator, operator]],
     ['docs/troubleshooting.md', [operator, operator, developer, developer]],
+    ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
     ['examples/synthetic/README.md', [sourceInstall, executed, operator, executed, runtime]],
 ])
 
