@@ -12,10 +12,9 @@ on:
   push:
     branches: [main]
 
-# Read-only. Nothing here publishes, comments, or writes back to the repository. Jobs below
-# narrow this further rather than widen it.
-permissions:
-  contents: read
+# Nothing here publishes, comments, or writes back to the repository. The default grants
+# nothing; each job that checks out code asks for contents: read and no more.
+permissions: {}
 
 # A superseded pull request push has nothing left to prove. A push to main is never cancelled,
 # so the post-merge record is complete for every commit.
@@ -86,6 +85,8 @@ jobs:
     name: anonymisation scan and documentation
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       # Actions are pinned to a full-length commit SHA, never a tag: a tag is mutable and
       # resolves to wherever its owner last moved it, so a tag reference is a dependency that
@@ -98,6 +99,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      # The reference-documentation tests derive command and diagnostic inventories from the
+      # compiled package, so a docs-only change still needs the build.
+      - run: npm run build
       - name: nothing consumer-identifying reaches the tracked tree
         # Fails closed. vitest exits non-zero when a path matches no test file, so a scan
         # that has been renamed or deleted turns this job red rather than passing over
@@ -116,6 +120,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       # One platform's failure must not hide the other's: a macOS-only path bug is exactly
       # what this matrix exists to find.
@@ -169,6 +175,8 @@ jobs:
     name: test protection
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -194,6 +202,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
