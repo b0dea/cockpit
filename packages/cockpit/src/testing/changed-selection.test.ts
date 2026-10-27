@@ -266,4 +266,68 @@ describe('changed adjacent-owner test runner', () => {
         expect(result.status, result.stderr).toBe(0)
         expect(fixture.dispatched()).toEqual(['packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/indirect.test.ts'])
     })
+
+    it('runs the tests that import a source file named differently from its tests, directly or through one module', () => {
+        const fixture = withOwners({
+            'packages/cockpit/src/table.ts': 'export const table = 1\n',
+            'packages/cockpit/src/config/table.ts': 'export const other = 1\n',
+            'packages/cockpit/src/commands.test.ts': "import { table } from './table.js'\n",
+            'packages/cockpit/src/barrel.ts': "export { table } from './table.js'\n",
+            'packages/cockpit/src/barrel-user.test.ts': "import { table } from './barrel.js'\n",
+            'packages/cockpit/test-support/table-helper.ts': "import { table } from '../src/table.js'\n",
+            'packages/cockpit/src/helper-user.test.ts': "import { build } from '../test-support/table-helper.js'\n",
+            'packages/cockpit/src/config-user.test.ts': "import { other } from './config/table.js'\n",
+        })
+        edit(fixture.root, 'packages/cockpit/src/table.ts')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([
+            ARCHITECTURE, 'packages/cockpit/src/barrel-user.test.ts', 'packages/cockpit/src/commands.test.ts',
+            'packages/cockpit/src/helper-user.test.ts',
+        ])
+    })
+
+    it('refuses a source file that no test imports', () => {
+        const fixture = withOwners({
+            'packages/cockpit/src/lonely.ts': 'export const lonely = 1\n',
+            'packages/cockpit/src/user.test.ts': "import { other } from './other.js'\n",
+        })
+        edit(fixture.root, 'packages/cockpit/src/lonely.ts')
+
+        const result = fixture.run()
+
+        expect(result.status).toBe(2)
+        expect(result.stderr).toContain('CHANGED_TEST_OWNER_UNMAPPED: packages/cockpit/src/lonely.ts')
+        expect(existsSync(fixture.capture)).toBe(false)
+    })
+
+    it('runs the tests that read the checked-in schema when it changes', () => {
+        const fixture = withOwners({
+            'packages/cockpit/cockpit.schema.json': '{}\n',
+            'packages/cockpit/src/schema-json.test.ts': "new URL('../cockpit.schema.json', import.meta.url)\n",
+        })
+        edit(fixture.root, 'packages/cockpit/cockpit.schema.json')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/schema-json.test.ts'])
+    })
+
+    it.each(['examples/demo/api/server.mjs', 'examples/demo/cockpit.toml'])(
+        'runs the example tests and the tests that read the example when %s changes', (path) => {
+            const fixture = withOwners({
+                [path]: 'before\n',
+                'packages/cockpit/src/reader.test.ts': "const dir = '../../../examples/demo'\n",
+                'packages/cockpit/src/other-reader.test.ts': "const dir = '../../../examples/elsewhere'\n",
+            })
+            edit(fixture.root, path)
+
+            const result = fixture.run()
+
+            expect(result.status, result.stderr).toBe(0)
+            expect(fixture.dispatched()).toEqual(['packages/cockpit/src/example-cockpit.test.ts', 'packages/cockpit/src/reader.test.ts'])
+        })
 })

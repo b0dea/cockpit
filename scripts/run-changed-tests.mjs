@@ -15,6 +15,12 @@ const MANIFEST_PATH = /^(?:packages\/[^/]+\/)?package(?:-lock)?\.json$/
 const SCRIPT_PATH = /^scripts\/([^/]+)\.(?:mjs|d\.mts)$/
 const SURFACES_PATH = /^packages\/[^/]+\/surfaces\/.+/
 const FIXTURE_PATH = /^fixtures\/([^/]+)\/.+/
+const EXAMPLE_PATH = /^examples\/([^/]+)\/.+/
+const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
+const EXAMPLE_TEST = 'example-cockpit.test.ts'
+const MODULE_PATH = /^packages\/[^/]+\/(?:src|test-support)\/.+\.[cm]?tsx?$/
+const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
+const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g
 const TEST_DIRECTORY = 'packages/cockpit/src'
 // Markdown is read by the documentation tests wherever it lives: they lint the pages, check
 // ownership of each fact, and run the shipped example.
@@ -115,10 +121,37 @@ function testsReadingFixtures(root, directory) {
     return [...new Set([...direct, ...indirect])]
 }
 
+// A source file whose tests carry another name is owned by the tests that import it, directly or
+// through one module in between (a re-export or a test-support helper). Static specifiers are
+// resolved against the importing file, so a same-named file in another directory never matches.
+function importedModules(root) {
+    const imports = new Map()
+    for (const path of walkFiles(root, 'packages').filter(candidate => MODULE_PATH.test(candidate) && !candidate.endsWith('.d.ts'))) {
+        const targets = new Set()
+        for (const match of readFileSync(resolve(root, path), 'utf8').matchAll(IMPORT_SPECIFIER)) {
+            targets.add(posix.join(dirname(path), match[1]).replace(MODULE_EXTENSION, ''))
+        }
+        imports.set(path, targets)
+    }
+    return imports
+}
+
+function testsImporting(imports, source) {
+    const importers = module => {
+        const stem = module.replace(MODULE_EXTENSION, '')
+        const names = new Set([stem, stem.replace(/\/index$/, '')])
+        return [...imports].filter(([, targets]) => [...names].some(name => targets.has(name))).map(([path]) => path)
+    }
+    const direct = importers(source)
+    const viaModule = direct.filter(path => !TEST_PATH.test(path)).flatMap(importers)
+    return [...new Set([...direct, ...viaModule])].filter(path => TEST_PATH.test(path))
+}
+
 function ownerTests(root, paths, extras) {
     const selected = new Set()
     const unmapped = []
     let sourceChanged = false
+    let imports
     for (const path of paths) {
         if (path === GENERATED_FIXTURES) {
             const directory = 'packages/cockpit/src/generated-environment'
@@ -144,11 +177,17 @@ function ownerTests(root, paths, extras) {
                 .map(name => posix.join(directory, name))
                 .filter(candidate => existingFile(root, candidate))
             if (candidates.length) for (const candidate of candidates) selected.add(candidate)
-            else unmapped.push(path)
+            else {
+                imports ??= importedModules(root)
+                const importing = testsImporting(imports, path)
+                if (importing.length) for (const candidate of importing) selected.add(candidate)
+                else unmapped.push(path)
+            }
             continue
         }
         const script = SCRIPT_PATH.exec(path)
         const fixture = FIXTURE_PATH.exec(path)
+        const example = EXAMPLE_PATH.exec(path)
         const mapped = []
         if (MARKDOWN_PATH.test(path)) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
         if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS))
@@ -157,6 +196,10 @@ function ownerTests(root, paths, extras) {
             mapped.push(...packageTestFiles(root).filter(candidate => candidate.startsWith(`${TEST_DIRECTORY}/surfaces/`)))
         }
         if (script) mapped.push(...testsReferencing(root, `${script[1]}.mjs`))
+        if (path === SCHEMA_ARTIFACT) mapped.push(...testsReferencing(root, 'cockpit.schema.json'))
+        if (example && !MARKDOWN_PATH.test(path)) {
+            mapped.push(...testsReferencing(root, `examples/${example[1]}`), ...testsInDirectory(root, [EXAMPLE_TEST]))
+        }
         if (fixture) mapped.push(...testsReadingFixtures(root, fixture[1]))
         if (mapped.length) for (const candidate of mapped) selected.add(candidate)
         else unmapped.push(path)
