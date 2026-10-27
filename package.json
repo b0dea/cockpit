@@ -1,5 +1,5 @@
 {
-  "name": "b0-cockpit",
+  "name": "cockpit-workspace",
   "private": true,
   "type": "module",
   "workspaces": [

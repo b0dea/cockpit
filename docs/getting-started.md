@@ -2,96 +2,132 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide is for an operator bringing up one product from a source checkout of cockpit. Cockpit
-is currently private at version `0.0.0`, so these steps do not claim that an npm registry install
-or a clean external machine has been verified.
+This guide takes you from a source install to your own product running under cockpit. It is
+for developers setting up cockpit for a product made of several repositories. To see cockpit
+work first on a throwaway example, follow the [tutorial](tutorial.md).
 
-## Install the current source
+## Install cockpit
 
-Building this checkout requires Node.js 22.13 or newer on a supported release line (22, 24, or 26).
-Docker with Compose and Git are required by the environment
-commands used below.
+You need Node.js `^22.13.0 || ^24.0.0 || ^26.0.0`, Git, and macOS or Linux. The commands that
+run the stack also need Docker with Compose.
 
 ```sh
 git clone https://github.com/b0dea/cockpit.git
 cd cockpit
 npm ci --ignore-scripts
 npm run build
-node packages/cockpit/bin/cockpit.mjs --help
+npm link --workspace @b0dea/cockpit
 ```
 
-Keep the absolute launcher path for the remaining commands:
+`npm link` puts a `cockpit` command on your PATH that runs this checkout, so a later
+`git pull && npm run build` updates it. Every page in these docs writes commands as `cockpit
+<command>`. If you prefer not to link, use `node /path/to/cockpit/packages/cockpit/bin/cockpit.mjs`
+in place of `cockpit`.
+
+Check the install:
+
+<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
+```console
+$ cockpit --help
+Usage: cockpit <command> [options]
+
+Commands:
+  init                   Preview or accept one explicit bootstrap target in an existing checkout
+  ...
+  session                Keep the environment available for one command, then release it
+  ...
+```
+
+The [CLI reference](cli-reference.md) lists every command and flag.
+
+## Choose a starting point
+
+| Your situation | Start with |
+|---|---|
+| A product with no cockpit yet | `cockpit init`, below |
+| An existing cockpit driven by a shell registry | [Incremental adoption](adoption.md) |
+| You would rather write the configuration by hand | The annotated example in the [tutorial](tutorial.md#read-the-configuration) |
+
+Put the product's repositories side by side under one directory. That directory becomes the
+cockpit checkout and holds <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`.
+
+## Bootstrap a new product
+
+Pick the agent harness you will use first: `claudecode`, `codexcli` or `opencode`. From the
+directory that will hold the configuration, preview the bootstrap:
 
 ```sh
-export COCKPIT_LAUNCHER=/absolute/path/to/cockpit/packages/cockpit/bin/cockpit.mjs
+cockpit init "$(pwd)" --target codexcli --json
 ```
 
-The package is not yet public, and no literal clean-machine run of this sequence is recorded.
-Treat both publication and clean-machine execution as operator-held evidence.
-
-## Prepare a product checkout
-
-From the root that will contain <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`, preview one explicit harness bootstrap target:
+The preview writes nothing. It returns the files it would install (the bootstrap skill for that
+harness), a `previewSha256` digest and the next step. To accept, run the same command
+interactively in a terminal and type the digest it shows:
 
 ```sh
-node "$COCKPIT_LAUNCHER" init "$(pwd)" --target codexcli --json
+cockpit init "$(pwd)" --target codexcli --interactive
 ```
 
-Replace `codexcli` with `claudecode` or `opencode` when that is the harness being bootstrapped.
-The preview does not publish files. Interactive mode displays the selected files and requires its
-exact digest before publication:
+`init` then looks at the repositories under the directory and asks for every fact it cannot
+read from them: commands, images, health checks and the port map. Each accepted answer records
+where it came from, and a changed repository invalidates earlier answers instead of reusing
+them. Re-running the same command resumes where it stopped. A single repository gets stack
+scope: the environment without the multi-repository registry and guide projection. A directory
+with nothing runnable is refused by name.
+
+Review the port map, the generated environment declaration and the defaults before accepting
+the configuration.
+
+## Bring the product up
+
+This is the canonical sequence. Every other page links here rather than repeating it.
 
 ```sh
-node "$COCKPIT_LAUNCHER" init "$(pwd)" --target codexcli --interactive
+cockpit setup --config ./cockpit.toml
+cockpit sync --config ./cockpit.toml --dry-run
+cockpit sync --config ./cockpit.toml
+cockpit check --config ./cockpit.toml
 ```
 
-For an existing registry, add `--registry /absolute/path/to/registry.toml`. Otherwise, init observes
-bounded public package manifests and asks for unresolved configuration facts. Accepted answers are
-bound to that observation and persisted for resume. Review the port map, generated environment
-declaration and defaults before accepting the rendered configuration. Commands, images and health
-checks that the checkout cannot establish need explicit operator answers.
+- `setup` clones or verifies each declared repository and checks its remote.
+- `sync --dry-run` lists every write and removal. Read it.
+- `sync` publishes all generated files as one recoverable transaction. If it would remove a
+  stale generated file, plain `sync` refuses; review the request and use
+  `sync --interactive` to approve exactly that removal.
+- `check` confirms nothing has drifted. It never changes a file.
 
-With one repository, init offers stack scope: environment, seed and postures without estate registry,
-projection or drift outputs. A checkout with no runnable product receives a named refusal and no
-Compose output. Neither outcome establishes a running environment.
-
-To inspect an established product before adopting it, use the read-only documentation path and
-review every attributed value and gap:
+Review and commit the generated files, then start the stack and run the gate:
 
 ```sh
-node "$COCKPIT_LAUNCHER" document "$(pwd)" --json
+cockpit up --config ./cockpit.toml
+cockpit preflight --config ./cockpit.toml
 ```
 
-The read-only document preview reports unresolved values, including <!-- cockpit:ref schema=ports.bases --> `ports.bases` when the source
-does not establish a product port map. Complete those questions through interactive init; the draft
-alone is not evidence of a valid configuration. A changed source observation invalidates prior
-answers rather than silently reusing them.
+`up` starts or resumes the stack. `preflight` is the gate: a successful `up` is not proof the
+environment is healthy, `preflight` is. In `--json` mode a successful `up` reports the stack
+identifier, whether it `started`, `resumed` or was `unchanged`, the entrypoints with their leased
+ports, and, for services it started, the cold-start time against your configured limit. (This
+result shape is read from the source; the synthetic example has no runnable services.)
 
-The complete flags and outputs stay in the generated [CLI reference](cli-reference.md). The
-generated [configuration reference](configuration-reference.md) is the source for fields and
-defaults.
+## Run an agent inside the environment
 
-## Bring up a reviewed configuration
-
-After <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` has been reviewed, run the lifecycle in order:
+`session` is the everyday command. It runs `up`, keeps the stack held while your agent runs, and
+releases it when the agent exits:
 
 ```sh
-node "$COCKPIT_LAUNCHER" setup --config ./cockpit.toml
-node "$COCKPIT_LAUNCHER" sync --config ./cockpit.toml --dry-run
-node "$COCKPIT_LAUNCHER" sync --config ./cockpit.toml
-node "$COCKPIT_LAUNCHER" check --config ./cockpit.toml
-node "$COCKPIT_LAUNCHER" up --config ./cockpit.toml
-node "$COCKPIT_LAUNCHER" preflight --config ./cockpit.toml
+cockpit session --config ./cockpit.toml -- codex
 ```
 
-`sync --dry-run` is the mutation preview. Plain `sync` refuses any stale removal that needs
-approval; use its named interactive procedure only after reviewing the exact request. A successful
-`up` does not replace `preflight`: the latter is the authenticated environment gate. A
-[Cockpit lifecycle record](concepts.md#cockpit-lifecycle-record) supports safe resume, but does not prove a
-new attempt completed.
+Put the agent command after `--`, with its own arguments. Once the command's process group has
+stopped, `session` calls `sleep`, which shuts the stack down only if no other checkout still
+holds it. Interrupting `session` stops only the process group it started. A second
+`cockpit session` inside the first is refused.
+Use plain `up` only when the stack should outlive one command.
 
-Read [Environment](environment.md) for lifecycle, ownership, and recovery semantics,
-[Harness surfaces](harness-surfaces.md) for generated agent configuration, and
-[Troubleshooting](troubleshooting.md) for current diagnostic remedies. Native harness loading,
-in-session skill behavior, and a literal product run on a clean machine remain operator-held until
-their dated evidence exists.
+## Next steps
+
+- [Environment lifecycle](environment.md): ownership, resources, cold-start limits and recovery.
+- [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool.
+- [Safety and autonomy](safety-and-autonomy.md): what the guards allow, ask about and deny.
+- [Troubleshooting](troubleshooting.md): every diagnostic code and its remedy.
+- [FAQ](faq.md): short answers to common questions.
