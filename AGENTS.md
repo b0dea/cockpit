@@ -1,5 +1,7 @@
 # AGENTS.md
 
+<!-- cockpit:verified version=0.0.0 -->
+
 Guide for AI coding agents and humans changing cockpit itself. For using cockpit, see the
 [README](README.md); for contribution process (branches, changesets, review), see
 [CONTRIBUTING.md](CONTRIBUTING.md).
