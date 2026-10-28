@@ -100,7 +100,7 @@ export function describePublicOption(name: string): string {
     return description
 }
 
-type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'tail' | 'since' | 'sha256' | 'surface-target'
+type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -147,14 +147,16 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Preview or accept one explicit bootstrap target in an existing checkout',
         handler: 'init',
         visibility: 'public',
-        ordinary: ordinary('init', { target: value('surface-target', true), registry: value('confined-path'), json: flag }, {
+        ordinary: ordinary('init', { target: value('surface-target', true), registry: value('confined-path'),
+            'reset-answer': value('field'), 'accept-reset': value('sha256'), json: flag }, {
             configuration: 'none',
             positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
             forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']), values: Object.freeze([]) }),
         }),
         options: { target: { type: 'string' }, registry: { type: 'string' },
             interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
-            answers: { type: 'string' }, 'accept-preview': { type: 'string' }, 'accept-defaults': { type: 'string' } },
+            answers: { type: 'string' }, 'accept-preview': { type: 'string' }, 'accept-defaults': { type: 'string' },
+            'reset-answer': { type: 'string' }, 'accept-reset': { type: 'string' } },
     },
     {
         name: 'document',
@@ -530,6 +532,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         const valid = option.role === 'confined-path' ? confined(text)
             : option.role === 'resolved-config' ? confined(text) && resolve(source.canonicalRoot, text) === source.configPath
             : option.role === 'declared-service' ? source.services.includes(text)
+            : option.role === 'field' ? /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(text) && text.length <= 256
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))

@@ -12,6 +12,7 @@ import {
     authenticateStatePublication,
     lifecycleHistoryAddress,
     readState,
+    resetBootstrapAnswer,
     inspectStateLock,
     issueStateScopedLock,
     SERIALIZED_RECORD_BYTE_LIMIT,
@@ -395,6 +396,63 @@ describe('bootstrap state', () => {
             }] } } },
         ]) await expect(transactState(namespace, address, { ownerId }, () => changed as BootstrapStateRecord))
             .resolves.toMatchObject({ kind: 'refusal' })
+    })
+
+    it('resets one recorded bootstrap answer only through an exact revision-bound owner operation', async () => {
+        const { namespace, address } = await selectedBootstrapNamespace()
+        const ownerId = bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'reset-session' })
+        const questions = ['sibling', 'ports.bases', 'guards'].map((field, index) => ({
+            id: `question:${String(index + 1).repeat(64)}`, field, source: `configuration:${index}`, why: `${field} is unresolved`,
+        }))
+        const answers = questions.map((question, index) => {
+            const bytes = JSON.stringify({ value: index })
+            return { questionId: question.id, bytes, sha256: createHash('sha256').update(bytes).digest('hex'),
+                provenance: 'operator-confirmed' as const }
+        })
+        const base: BootstrapStateRecord = { ...bootstrapRecord(address), value: { ...bootstrapRecord(address).value,
+            stage: 'surface-published', destination: null, artifactBytes: null, artifactSha256: null,
+        } }
+        expect(await transactState(namespace, address, { ownerId }, () => base)).toMatchObject({ kind: 'complete' })
+        let recorded: BootstrapStateRecord = { ...base, revision: 1, value: { ...base.value,
+            greenfield: { stage: 'question-pending' as const,
+                classification: 'incomplete-multi-repository' as const, sourceObservationSha256: '6'.repeat(64),
+                notice: 'configuration answers were recorded',
+                questions: questions.slice(0, 1), answers: [] },
+        } }
+        expect(await transactState(namespace, address, { ownerId }, () => recorded)).toMatchObject({ kind: 'complete' })
+        for (let index = 1; index < questions.length; index += 1) {
+            const next = { ...recorded, revision: recorded.revision + 1, value: { ...recorded.value,
+                greenfield: { stage: 'question-pending' as const,
+                    classification: 'incomplete-multi-repository' as const, sourceObservationSha256: '6'.repeat(64),
+                    notice: 'configuration answers were recorded',
+                    questions: questions.slice(0, index + 1), answers: answers.slice(0, index) },
+            } }
+            const written = await transactState(namespace, address, { ownerId }, () => next)
+            expect(written).toMatchObject({ kind: 'complete' })
+            recorded = next
+        }
+        recorded = { ...recorded, revision: recorded.revision + 1, value: { ...recorded.value,
+            greenfield: { ...recorded.value.greenfield!, stage: 'answers-recorded', answers },
+        } }
+        expect(await transactState(namespace, address, { ownerId }, () => recorded)).toMatchObject({ kind: 'complete' })
+
+        const preview = await resetBootstrapAnswer(namespace, address, { ownerId, field: 'ports.bases', updatedAt: '2026-09-07T12:01:00.000Z' })
+        expect(preview).toMatchObject({ kind: 'pending', preview: { revision: 4, field: 'ports.bases',
+            invalidatedFields: ['ports.bases', 'guards'], previewSha256: expect.stringMatching(/^[a-f0-9]{64}$/) } })
+        expect(await readState(address)).toEqual({ kind: 'complete', value: recorded })
+
+        await expect(transactState(namespace, address, { ownerId }, current => ({ ...current!, revision: current!.revision + 1,
+            value: { ...current!.value, greenfield: { ...current!.value.greenfield!, stage: 'question-pending' as const,
+                questions: questions.slice(0, 2), answers: answers.slice(0, 1) } },
+        }))).resolves.toMatchObject({ kind: 'refusal' })
+        const accepted = await resetBootstrapAnswer(namespace, address, { ownerId, field: 'ports.bases', updatedAt: '2026-09-07T12:01:00.000Z',
+            acceptedPreviewSha256: preview.kind === 'pending' ? preview.preview.previewSha256 : '' })
+        expect(accepted).toMatchObject({ kind: 'complete', preview: { revision: 4, field: 'ports.bases' }, record: {
+            revision: 5, value: { stage: 'surface-published', greenfield: { stage: 'question-pending',
+                questions: questions.slice(0, 2), answers: answers.slice(0, 1) } } } })
+        expect(await resetBootstrapAnswer(namespace, address, { ownerId, field: 'ports.bases', updatedAt: '2026-09-07T12:01:00.000Z',
+            acceptedPreviewSha256: preview.kind === 'pending' ? preview.preview.previewSha256 : '' }))
+            .toMatchObject({ kind: 'refusal', code: 'BOOTSTRAP_ANSWER_RESET_STALE' })
     })
 
     it('refuses target, root, record, owner, size and filesystem authority substitution', async () => {

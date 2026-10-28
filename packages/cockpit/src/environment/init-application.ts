@@ -11,6 +11,7 @@ import { bootstrapHolderId } from './identity.js'
 import {
     authenticateStatePublication,
     readState,
+    resetBootstrapAnswer,
     selectBootstrapStateRoot,
     transactState,
     type BootstrapStateAddress,
@@ -45,6 +46,7 @@ export interface InitApplicationInput {
         bytes: string
         provenance: 'operator-confirmed'
     }>
+    readonly resetAnswer?: Readonly<{ field: string; acceptedPreviewSha256?: string }>
     /**
      * The operator's answer to where the cockpit lives, required when root is a product repository.
      * For "dedicated", root is the new cockpit folder and firstSibling the product repository beside it.
@@ -197,6 +199,7 @@ export interface InitResult {
     readonly estate?: GreenfieldResult
     readonly interview?: InterviewPlan
     readonly cockpitRoot?: CockpitRootQuestion
+    readonly resetAnswer?: Readonly<{ field: string; revision: number; invalidatedFields: readonly string[]; previewSha256: string }>
 }
 
 interface InitOutcomeBase {
@@ -237,7 +240,7 @@ function result(
     projection: BootstrapProjection,
     ownerOutcome?: OwnerOutcome,
     greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan;
-        cockpitRoot?: CockpitRootQuestion }>,
+        cockpitRoot?: CockpitRootQuestion; resetAnswer?: InitResult['resetAnswer'] }>,
 ): InitResult {
     return Object.freeze({ stage, root: projection.root, target: projection.target,
         previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]),
@@ -245,7 +248,8 @@ function result(
         ...(greenfield?.question === undefined ? {} : { question: greenfield.question }),
         ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }),
         ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }),
-        ...(greenfield?.cockpitRoot === undefined ? {} : { cockpitRoot: greenfield.cockpitRoot }) })
+        ...(greenfield?.cockpitRoot === undefined ? {} : { cockpitRoot: greenfield.cockpitRoot }),
+        ...(greenfield?.resetAnswer === undefined ? {} : { resetAnswer: greenfield.resetAnswer }) })
 }
 
 // The repository's directory name becomes the first sibling's slug and the cockpit's name stem.
@@ -377,6 +381,9 @@ export async function runInitApplication(
     if (!isAbsolute(input.root) || resolve(input.root) !== input.root) {
         return refused('INIT_ROOT_INVALID', 'init requires one canonical absolute checkout root', input.root)
     }
+    if (input.resetAnswer !== undefined && (input.greenfieldAnswer !== undefined || input.accepted)) {
+        return refused('INIT_ANSWER_RESET_CONFLICT', 'resetting a recorded answer is a standalone operation')
+    }
     if (input.greenfieldAnswer !== undefined && !input.accepted) {
         return refused('GREENFIELD_ANSWER_UNEXPECTED', 'configuration answers require an accepted bootstrap preview')
     }
@@ -442,6 +449,21 @@ export async function runInitApplication(
     const expectedCommand = commandDigest(input)
     if (current !== null && !evidenceMatches(current, projection, expectedCommand)) {
         return refused('INIT_STATE_STALE', 'bootstrap state does not match the current root, target, command, sources, or preview', address.path)
+    }
+    let appliedReset: InitResult['resetAnswer']
+    if (input.resetAnswer !== undefined) {
+        const reset = await resetBootstrapAnswer(namespace, address, {
+            ownerId: bootstrapHolderId({ checkoutId: namespace.checkoutId, sessionId: input.sessionId }),
+            field: input.resetAnswer.field, updatedAt: adapters.now(),
+            ...(input.resetAnswer.acceptedPreviewSha256 === undefined ? {}
+                : { acceptedPreviewSha256: input.resetAnswer.acceptedPreviewSha256 }),
+        })
+        if (reset.kind === 'refusal') return refused(reset.code.replace('BOOTSTRAP_', 'INIT_'), reset.message, reset.target)
+        const publicPreview = Object.freeze({ ...reset.preview })
+        if (reset.kind === 'pending') return { kind: 'pending', status: 0, artifact: null, destination: null,
+            diagnostics: [], result: result(current!.value.stage, projection, undefined, { resetAnswer: publicPreview }) }
+        current = reset.record
+        appliedReset = publicPreview
     }
     if (rootQuestion) return { kind: 'pending', status: 0, artifact: null, destination: null,
         diagnostics: [...(resumed?.diagnostics ?? prepared!.diagnostics)],
@@ -546,7 +568,8 @@ export async function runInitApplication(
                 const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
                 return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
                     result: result('surface-published', projection, undefined,
-                        { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
+                        { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
+                            ...(appliedReset ? { resetAnswer: appliedReset } : {}) }) }
             }
             const questions = [...(state?.questions ?? []),
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]

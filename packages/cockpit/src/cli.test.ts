@@ -193,7 +193,7 @@ describe('closed ordinary invocation metadata', () => {
             if (row.ordinary.availability !== 'available') continue
             const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(row.name === 'selftest' ? ['--probe-specifications', 'p'] : row.name === 'logs' ? ['--service', 'app'] : [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
-                const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m' : name.endsWith('sha256') ? 'a'.repeat(64) : 'path']
+                const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m' : name.endsWith('sha256') || name === 'accept-reset' ? 'a'.repeat(64) : 'path']
                 let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
                 if (row.name === 'document' && name === 'registry') baseline = []
                 if (name === 'release-evidence') baseline.push('--release-evidence-sha256', 'a'.repeat(64))
@@ -2304,6 +2304,41 @@ describe('init command admission', () => {
             message: expect.stringContaining('is not valid UTF-8'),
             target: '--answers',
         }] })
+    })
+
+    it('routes a recorded-answer reset preview and only its exact explicit acceptance', async () => {
+        const digest = 'd'.repeat(64)
+        const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
+            kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
+            result: { stage: 'surface-published' as const, root: input.root, target: input.target,
+                previewSha256: 'a'.repeat(64), files: [], nextCommand: 'answer configuration', resetAnswer: {
+                    field: input.resetAnswer!.field, revision: 7, invalidatedFields: ['ports.bases', 'guards'],
+                    previewSha256: digest,
+                } },
+        }))
+        let stdout = ''
+        const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true } }
+        const base = ['init', process.cwd(), '--target', 'codexcli', '--reset-answer', 'ports.bases', '--json']
+
+        expect(await runCli(base, io, { init: application })).toBe(0)
+        expect(application).toHaveBeenLastCalledWith(expect.objectContaining({ accepted: false,
+            resetAnswer: { field: 'ports.bases' } }))
+        expect(JSON.parse(stdout).result.resetAnswer).toMatchObject({ revision: 7, previewSha256: digest })
+        stdout = ''; application.mockClear()
+        expect(await runCli([...base, '--accept-reset', digest], io, { init: application })).toBe(0)
+        expect(application).toHaveBeenLastCalledWith(expect.objectContaining({ accepted: false,
+            resetAnswer: { field: 'ports.bases', acceptedPreviewSha256: digest } }))
+
+        for (const refused of [
+            [...base, '--accept-reset', 'not-a-digest'],
+            [...base, '--accept-reset', digest, '--accept-preview', 'a'.repeat(64)],
+            [...base, '--accept-reset', digest, '--answers', 'answers.toml'],
+            ['init', process.cwd(), '--target', 'codexcli', '--accept-reset', digest, '--json'],
+        ]) {
+            application.mockClear()
+            expect(await runCli(refused, io, { init: application })).toBe(2)
+            expect(application).not.toHaveBeenCalled()
+        }
     })
 
     it('refuses missing, extra or duplicate root and target before dispatch', async () => {

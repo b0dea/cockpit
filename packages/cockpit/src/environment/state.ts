@@ -25,7 +25,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'lifecycleHistoryAddress', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'lifecycleHistoryAddress', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -37,6 +37,7 @@ const issuedObservations = new WeakMap<object, number>()
 const issuedNamespaces = new WeakSet<object>()
 const issuedBootstrapNamespaces = new WeakSet<object>()
 const issuedScopedLocks = new WeakMap<object, Readonly<{ namespace: StateNamespace; path: string }>>()
+const issuedBootstrapAnswerResets = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
@@ -1110,10 +1111,11 @@ function validateRecordForAddress(
                     const delta = stages.indexOf(nextGreenfield.stage) - stages.indexOf(currentGreenfield.stage)
                     return delta === 0 || delta === 1
                 })()
+        const authorizedReset = currentBootstrap !== null && issuedBootstrapAnswerResets.has(value as object)
         return record.checkoutId === address.checkoutId && record.target === address.target
             && record.value.checkoutRoot === address.checkoutRoot && record.value.target === address.target
             && record.revision === expectedRevision && immutableEvidenceMatches && stageAdvances
-            && publishedEvidenceMatches && draftEvidenceMatches && greenfieldEvidenceMatches ? record : undefined
+            && publishedEvidenceMatches && draftEvidenceMatches && (greenfieldEvidenceMatches || authorizedReset) ? record : undefined
     }
     const validated = StateRecordSchema.safeParse(value)
     if (!validated.success) return undefined
@@ -1126,6 +1128,93 @@ function validateRecordForAddress(
         || record.revision !== expectedRevision
     ) return undefined
     return record
+}
+
+export interface BootstrapAnswerResetPreview {
+    readonly revision: number
+    readonly field: string
+    readonly invalidatedFields: readonly string[]
+    readonly previewSha256: string
+}
+
+export type BootstrapAnswerResetResult =
+    | Readonly<{ kind: 'pending'; preview: BootstrapAnswerResetPreview }>
+    | Readonly<{ kind: 'complete'; preview: BootstrapAnswerResetPreview; record: BootstrapStateRecord }>
+    | Readonly<{ kind: 'refusal'; code: string; message: string; target: string }>
+
+function answerResetRefusal(code: string, message: string, target: string): BootstrapAnswerResetResult {
+    return Object.freeze({ kind: 'refusal', code, message, target })
+}
+
+function bootstrapAnswerResetPreview(record: BootstrapStateRecord | null, field: string, target: string): BootstrapAnswerResetResult {
+    if (record === null || record.value.stage !== 'surface-published' || !record.value.greenfield) {
+        return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_UNAVAILABLE',
+            'recorded answers can be reset only after surface publication and before configuration publication', target)
+    }
+    if (typeof field !== 'string' || field.length < 1 || field.length > 256) {
+        return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_FIELD_INVALID', 'reset answer field is malformed', field)
+    }
+    const matches = record.value.greenfield.questions
+        .map((question, index) => ({ question, index }))
+        .filter(({ question, index }) => question.field === field && index < record.value.greenfield!.answers.length)
+    if (matches.length !== 1) {
+        return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_FIELD_INVALID',
+            'reset answer field must name exactly one recorded answer', field)
+    }
+    const index = matches[0]!.index
+    const invalidatedFields = Object.freeze(record.value.greenfield.questions.slice(index).map(question => question.field))
+    const previewSha256 = createHash('sha256').update(JSON.stringify({
+        checkoutId: record.checkoutId, target: record.target, revision: record.revision,
+        field, questionId: matches[0]!.question.id, invalidatedFields,
+    })).digest('hex')
+    return Object.freeze({ kind: 'pending', preview: Object.freeze({
+        revision: record.revision, field, invalidatedFields, previewSha256,
+    }) })
+}
+
+export async function resetBootstrapAnswer(
+    namespace: BootstrapStateNamespace,
+    address: BootstrapStateAddress,
+    input: Readonly<{ ownerId: BootstrapLockOwnerId; field: string; updatedAt: string; acceptedPreviewSha256?: string }>,
+): Promise<BootstrapAnswerResetResult> {
+    let stableInput: typeof input
+    try {
+        stableInput = Object.freeze({ ownerId: input.ownerId, field: input.field, updatedAt: input.updatedAt,
+            ...(input.acceptedPreviewSha256 === undefined ? {} : { acceptedPreviewSha256: input.acceptedPreviewSha256 }) })
+    } catch {
+        return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_FIELD_INVALID',
+            'recorded answer reset input could not be read safely', 'recorded answer reset input')
+    }
+    let acceptedPreview: BootstrapAnswerResetPreview | undefined
+    const outcome = await transactState(namespace, address, { ownerId: stableInput.ownerId }, current => {
+        const preview = bootstrapAnswerResetPreview(current, stableInput.field, address.path)
+        if (preview.kind !== 'pending') return abortStateTransaction(stableInput.acceptedPreviewSha256 === undefined ? preview
+            : answerResetRefusal('BOOTSTRAP_ANSWER_RESET_STALE',
+                'recorded answer reset preview no longer matches the exact state revision', address.path))
+        if (stableInput.acceptedPreviewSha256 === undefined) return abortStateTransaction(preview)
+        if (stableInput.acceptedPreviewSha256 !== preview.preview.previewSha256) {
+            return abortStateTransaction(answerResetRefusal('BOOTSTRAP_ANSWER_RESET_STALE',
+                'recorded answer reset preview no longer matches the exact state revision', address.path))
+        }
+        acceptedPreview = preview.preview
+        const greenfield = current!.value.greenfield!
+        const index = greenfield.questions.findIndex((question, questionIndex) =>
+            question.field === stableInput.field && questionIndex < greenfield.answers.length)
+        const record: BootstrapStateRecord = {
+            ...current!, revision: current!.revision + 1, updatedAt: stableInput.updatedAt,
+            value: { ...current!.value, greenfield: { ...greenfield, stage: 'question-pending',
+                questions: greenfield.questions.slice(0, index + 1), answers: greenfield.answers.slice(0, index) } },
+        }
+        issuedBootstrapAnswerResets.add(record)
+        return record
+    })
+    if ('aborted' in outcome) return outcome.value as BootstrapAnswerResetResult
+    if (outcome.kind === 'refusal') return answerResetRefusal(outcome.code, outcome.message, outcome.target)
+    if (outcome.kind !== 'complete') return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_INDETERMINATE',
+        'recorded answer reset durability could not be confirmed', address.path)
+    if (!acceptedPreview) return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_STALE',
+        'recorded answer reset did not retain its authenticated preview', address.path)
+    return Object.freeze({ kind: 'complete', preview: acceptedPreview, record: outcome.value })
 }
 
 async function inspectLock(

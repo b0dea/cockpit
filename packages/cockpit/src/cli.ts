@@ -874,6 +874,25 @@ async function decodeRequest(
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return usageOutcome('CLI_USAGE_INVALID', 'init supports macOS and Linux state ownership')
         }
+        const resetField = parsed.values['reset-answer']
+        const acceptedReset = parsed.values['accept-reset']
+        if (resetField !== undefined || acceptedReset !== undefined) {
+            if (typeof resetField !== 'string' || !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(resetField)
+                || resetField.length > 256 || acceptedReset !== undefined
+                    && (typeof acceptedReset !== 'string' || !/^[a-f0-9]{64}$/.test(acceptedReset))) {
+                return usageOutcome('CLI_USAGE_INVALID', '--reset-answer requires one recorded field; --accept-reset requires its printed sha256 digest')
+            }
+            if (parsed.values.interactive || parsed.values.answers !== undefined || parsed.values['accept-preview'] !== undefined
+                || parsed.values['accept-defaults'] !== undefined) {
+                return usageOutcome('CLI_USAGE_INVALID', '--reset-answer is a standalone preview or exact acceptance operation')
+            }
+            return { handler, input: { root: absoluteRoot, target: target as SurfaceTarget,
+                ...(typeof registry === 'string' ? { registry: resolve(absoluteRoot, registry) } : {}),
+                accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
+                ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
+                resetAnswer: { field: resetField, ...(typeof acceptedReset === 'string'
+                    ? { acceptedPreviewSha256: acceptedReset } : {}) } } }
+        }
         const unattended = await decodeUnattendedInit(parsed.values as {
             interactive?: boolean; answers?: string; 'accept-preview'?: string; 'accept-defaults'?: string })
         if ('status' in unattended) return unattended

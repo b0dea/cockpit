@@ -181,8 +181,11 @@ vendor_endpoint_hosts = []
 
 Answers an earlier run recorded are kept, so the same file can be passed on every run as long as
 it repeats them. A different value for a recorded field is refused (`INIT_ANSWER_CONFLICT`) before
-anything is published: drop that field from the file to keep the recorded answer. `init` has no
-command to reset a recorded answer. A field the interview never asked for is reported as
+anything is published: drop that field from the file to keep the recorded answer. Before
+`cockpit.toml` is prepared, preview resetting that answer and every later dependent answer with
+`cockpit init <root> --target <target> --reset-answer <field> --json`, then repeat the command with
+`--accept-reset <previewSha256>`. The reset keeps earlier answers and the resumed interview requires
+explicit answers and defaults acceptance again. A field the interview never asked for is reported as
 `INIT_ANSWER_UNUSED`. The proposed values come from
 cheap, exact sources only: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, the variable names
 (never the values) in env templates such as `.env.example` and `.env.staging.example`, an

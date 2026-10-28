@@ -16,6 +16,7 @@ export interface InitCommandInput {
     readonly platform?: 'darwin' | 'linux'
     readonly home?: string
     readonly xdgStateHome?: string
+    readonly resetAnswer?: InitApplicationInput['resetAnswer']
 }
 
 /**
@@ -176,7 +177,9 @@ async function drive(
         platform: input.platform ?? (process.platform === 'darwin' ? 'darwin' : 'linux'),
         home: input.home ?? process.env.HOME,
         ...(input.xdgStateHome === undefined ? {} : { xdgStateHome: input.xdgStateHome }),
+        ...(input.resetAnswer === undefined ? {} : { resetAnswer: input.resetAnswer }),
     }
+    if (input.resetAnswer !== undefined) return application({ ...shared, accepted: false })
     const unattended = options.unattended
     const supplied = unattended ? answersByField(unattended.answers) : undefined
     if (supplied && supplied.unknown.length > 0) return refusal('INIT_ANSWER_FIELD_UNKNOWN',

@@ -336,6 +336,53 @@ describe('init application', () => {
         expect(await readFile(path)).toEqual(before)
     })
 
+    it('previews and accepts an exact recorded-answer reset while retaining earlier answers', async () => {
+        const f = fixture()
+        const fields = ['sibling', 'estate.runnable', 'ports.bases']
+        const gaps = fields.map((field, index) => ({ field, source: `repository-${index}/package.json`, why: 'runnable command is unknown' }))
+        const classified: EstateClassificationOutcome = { kind: 'complete', status: 0, diagnostics: [], result: {
+            sourceObservationSha256: digest('9'), classification: 'incomplete-multi-repository',
+            applicability: { stack: true, seed: true, postures: true, registry: true, projection: true, drift: true, compose: 'unknown' },
+            notice: 'three unresolved facts', gaps,
+            runnable: gaps.map((_, index) => ({ slug: `repository-${index}`, path: `repository-${index}`,
+                disposition: 'unknown' as const })),
+        } as EstateClassificationResult & { readonly sourceObservationSha256: string } }
+        const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: async () => classified,
+            document: interviewDocument(f.destination, fields) }
+        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        let outcome = await runInitApplication(accepted, adapters)
+        for (const value of ['first', 'second']) {
+            outcome = await runInitApplication({ ...accepted, greenfieldAnswer: {
+                questionId: outcome.result!.question!.id, bytes: JSON.stringify(value), provenance: 'operator-confirmed',
+            } }, adapters)
+        }
+        expect(outcome).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' },
+            interview: { answered: ['sibling', 'estate.runnable'] } } })
+
+        const selected = await selectBootstrapStateRoot({ platform: 'linux', home: f.input.home,
+            xdgStateHome: f.input.xdgStateHome, checkoutRoot: f.root, target: 'codexcli' })
+        if (selected.kind !== 'complete') throw new Error('expected selected bootstrap namespace')
+        const address = selected.value.paths.bootstrap('codexcli')
+        const before = await readFile(address.path)
+        const preview = await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
+            field: 'estate.runnable',
+        } }, adapters)
+        expect(preview).toMatchObject({ kind: 'pending', result: { resetAnswer: { field: 'estate.runnable',
+            invalidatedFields: ['estate.runnable', 'ports.bases'], revision: expect.any(Number),
+            previewSha256: expect.stringMatching(/^[a-f0-9]{64}$/) } } })
+        expect(await readFile(address.path)).toEqual(before)
+
+        const reset = preview.result!.resetAnswer!
+        const applied = await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
+            field: reset.field, acceptedPreviewSha256: reset.previewSha256,
+        } }, adapters)
+        expect(applied).toMatchObject({ kind: 'pending', result: { question: { field: 'estate.runnable' },
+            interview: { answered: ['sibling'] }, resetAnswer: { previewSha256: reset.previewSha256 } } })
+        expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
+            field: reset.field, acceptedPreviewSha256: reset.previewSha256,
+        } }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
+    })
+
     it.each([
         ['one-sibling', 'GREENFIELD_FLOOR_RENDER_PENDING'],
         ['no-runnable-product', 'GREENFIELD_NO_RUNNABLE_PRODUCT'],
