@@ -183,6 +183,8 @@ describe('shipped skill contract', () => {
 
         const projections = SURFACE_TARGETS.map(target => projectInspectedSkillOutputs(result, target, 'cockpit-setup'))
         expect(projections.map(projection => projection.kind === 'complete' ? projection.files.length : 0)).toEqual([2, 3, 2])
+        expect(projections.flatMap(projection => projection.kind === 'complete' ? projection.files : [])
+            .every(file => !file.bytes.includes('cockpit:verified'))).toBe(true)
         expect(projections[1]).toMatchObject({ kind: 'complete', target: 'codexcli', skill: 'cockpit-setup', files: [
             { path: '.agents/skills/cockpit-setup/SKILL.md' },
             { path: '.agents/skills/cockpit-setup/agents/openai.yaml' },
@@ -250,7 +252,18 @@ describe('shipped skill contract', () => {
         expect(body).toContain('cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive')
         expect(body).toContain('result.orders[0].state.attempts')
         expect(body).toContain('cockpit test-run --config cockpit.toml --gate declared-gate-id')
-        expect(body).toContain('It owns the independent simplification, code/spec and security review sequence')
+        const work = body.slice(body.indexOf('## Work'))
+        const installedReview = work.indexOf("Run the harness's installed simplification and code-review skills")
+        expect(installedReview).toBeGreaterThan(-1)
+        expect(work.indexOf('cockpit work-review')).toBeGreaterThan(installedReview)
+        expect(body).toContain('npm install --save-dev --save-exact @b0dea/cockpit@<version>')
+        expect(body).not.toContain('`npm update` moves the pinned')
+        expect(body).toContain('cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json')
+        expect(body).toContain('cockpit sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json')
+        expect(body).toContain('cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json')
+        expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
+        expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
+        expect(body).toContain('a human runs `cockpit sync --config cockpit.toml` in a terminal')
         expect(body).not.toContain('--gate unit')
         expect(body).not.toContain('`work-accept --interactive`')
         const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-explain/SKILL.md')
@@ -358,6 +371,9 @@ describe('shipped skill descriptions', () => {
             expect(description.startsWith('Use when '), name).toBe(true)
             total += Buffer.byteLength(description)
         }
+        const browser = await readFile(join(surfaceRoot, 'cockpit-browser.skill.md'), 'utf8')
+        expect(browser).toContain('cockpit browser-accessibility --config cockpit.toml --json')
+        expect(browser).toContain('cockpit browser-screenshot --config cockpit.toml --json')
         // Rendered frontmatter adds per-harness keys; the neutral descriptions alone must leave room for them.
         expect(total).toBeLessThan(8192 / 4)
     })
@@ -373,9 +389,15 @@ describe('shipped onboarding commands', () => {
             const handler = async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } }
             let output = ''
             const sink = { write: (text: string) => { output += text; return true } }
-            const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256 }, {
+            const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256,
+                confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [], nextCommand: 'accept exact preview' } } },
+                beginOperatorWorkApplication: async () => ({ digest: 'a'.repeat(64), prompt: 'Confirm the documented work-order command.',
+                    decide: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } } }),
                 ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),
+                sync: async input => { invoked = true; return { status: 0, diagnostics: [], result: {
+                    action: 'sync' as const, dryRun: input.dryRun === true, changes: [],
+                } } },
             })
             expect(status, `${argv.join(' ')}: ${output}`).toBe(0)
             expect(invoked, argv.join(' ')).toBe(true)

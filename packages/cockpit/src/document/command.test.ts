@@ -391,7 +391,8 @@ describe('public estate observation', () => {
         configuration.answers.push(answerQuestion(pending.question!, {
             app: { runnable: true, service: 'app', command: ['node', 'server.mjs'] },
         }))
-        for (const value of [{ APP_HOST_PORT: 4100 }, generatedConfig.environment.install_policies]) {
+        for (const value of [{ APP_HOST_PORT: 4100 }, generatedConfig.environment.install_policies,
+            { seeded_data: false, signed_in_users: false }]) {
             pending = await documentObservedCommand({ root: canonical, configuration })
             configuration.answers.push(answerQuestion(pending.question!, value))
         }

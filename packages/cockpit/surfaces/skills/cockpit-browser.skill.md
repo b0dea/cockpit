@@ -18,8 +18,9 @@ yourself has nobody left to check it, so hand it to whoever owns the repository.
    human can see what you skipped. A change under test sets the priority: its routes first, then the routes
    that share its data. Done when the list is written down before the first page opens.
 3. **Drive with the real commands.** `cockpit browser-drive --config cockpit.toml --json` visits every
-   declared route; `cockpit browser-accessibility` collects accessibility observations and
-   `cockpit browser-screenshot` captures each surface, each with `--role <role>` for a signed-in persona. Use the
+   declared route; `cockpit browser-accessibility --config cockpit.toml --json` collects accessibility
+   observations and `cockpit browser-screenshot --config cockpit.toml --json` captures each surface. Add
+   `--role <role>` to any of them for a signed-in persona. Use the
    browser tools below for anything the declared routes do not reach. For signed-in testing read
    `../cockpit-setup/references/test-data-and-personas.md` first: it explains how state is minted per
    persona, and why a stale or shared session looks like a product bug.

@@ -19,6 +19,7 @@ import {
     type SurfaceSourceFile,
     type SurfaceTarget,
 } from './contract.js'
+import { stripDevelopmentMarkers } from './development-markers.js'
 
 /** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
 export const SETUP_SKILL = 'cockpit-setup' as const

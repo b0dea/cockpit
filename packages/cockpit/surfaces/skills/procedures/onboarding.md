@@ -123,17 +123,25 @@ report secure agent secret use as unavailable unless a separate measured sandbox
 
 Use this on an installed cockpit when a product gains another repository. The `sibling` command edits
 `cockpit.toml` so the new repository is declared once, with its purpose, instead of reached by path.
-Pick the form by where the repository is: `cockpit sibling add billing --config cockpit.toml --from ../billing`
-for a checkout already on disk, `--create` for a new one, `--remote <url>` to record where it publishes.
-Show the human the `--json` result before accepting, then run `cockpit sync --config cockpit.toml` and
-`cockpit check --config cockpit.toml --json`. Done when the check exits 0.
+Read the repository and ask the human for the purpose when no source states it. Show the human the proposed
+sibling declaration before invoking the command: slug, purpose, source mode, directory and exported variable.
+Pick the form by where the repository is. For a checkout already on disk run
+`cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json`;
+for a new one run `cockpit sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json`;
+for a known remote run
+`cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json`.
+The command writes cockpit.toml immediately; `--json` changes only its output format, so it is neither a preview
+nor an acceptance gate. After the edit, a human runs `cockpit sync --config cockpit.toml` in a terminal because
+the changed declaration affects the guard. Then run `cockpit check --config cockpit.toml --json`. Done when the
+check exits 0.
 
 ## After upgrading cockpit
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
 applied silently.
 
-1. `npm update` moves the pinned `@b0dea/cockpit` dev dependency. Done when the lockfile shows the new version.
+1. Run `npm install --save-dev --save-exact @b0dea/cockpit@<version>`, replacing `<version>` with the reviewed
+   release. Done when both the manifest and lockfile show that exact version.
 2. Preview without writing: `cockpit upgrade --config cockpit.toml` (a read-only plan) or
    `cockpit sync --dry-run --config cockpit.toml`.
 3. A human runs `cockpit sync --interactive --config cockpit.toml` in a terminal and approves the exact
@@ -244,10 +252,12 @@ contract and the independent grading, not the thinking: reuse the planning skill
 3. **Run the criterion's declared gate** with `cockpit test-run --config cockpit.toml --gate declared-gate-id`,
    replacing `declared-gate-id` with its ID from `[testing.gates]`. Only the complete declared gate can PASS; a
    subset reports PARTIAL. Done when that gate reports PASS.
-4. **Before grading,** run `cockpit work-review --config cockpit.toml --work-order WO-001`. It owns the
-   independent simplification, code/spec and security review sequence, persists their findings and reruns
-   affected proof after a fixed finding. Security review weighs authentication, secrets, guards and reach to
-   non-local hosts most heavily. Fix every blocking finding, then repeat the command until all three reviews pass.
+4. **Before grading, run reviews.** Run the harness's installed simplification and code-review skills. Apply security emphasis
+   when the change touches authentication, secrets, guards or reach to non-local hosts. Fix their blocking
+   findings and re-run affected proof. Then run
+   `cockpit work-review --config cockpit.toml --work-order WO-001` to run and persist cockpit's independent
+   simplification, code/spec and security findings. Fix every blocking finding and repeat the command until all
+   three reviews pass.
 5. **Hand off to the evaluator subagent** through `cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
    your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
    criterion is one of the four in the evaluator's instructions; anything but "passed with current

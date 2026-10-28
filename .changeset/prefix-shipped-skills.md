@@ -1,8 +1,8 @@
-<!-- cockpit:verified version=0.0.0 -->
-
 ---
 "@b0dea/cockpit": minor
 ---
+
+<!-- cockpit:verified version=0.0.0 -->
 
 The shipped skills now carry a `cockpit-` prefix so they do not collide with a project's own skills:
 `bootstrap` is `cockpit-setup`, and `explain`, `fix` and `browser` are `cockpit-explain`, `cockpit-fix` and
