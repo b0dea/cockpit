@@ -160,8 +160,10 @@ Unavailable or malformed decisions exit 2 on every target. Adapter exit 0 alone 
 not mean permission was granted.
 
 Guard transport uses a fixed handler argument vector, normalized absolute handler and
-working-directory paths, bounded standard input, a five-second timeout, and bounded standard
-output and error. Copied plans, failed transport, signals, oversized output, nonzero handler
+working-directory paths, bounded standard input, and bounded output and error. Its
+[transport owner](../packages/cockpit/src/guards/harness-adapter.ts) sets the bounded timeout so
+a stalled handler cannot hold a guarded call indefinitely. Copied plans, failed transport,
+signals, oversized output, nonzero handler
 status, and invalid JSON become unavailable with exit 2. Lexical path normalization in this
 adapter does not itself authenticate filesystem identity.
 

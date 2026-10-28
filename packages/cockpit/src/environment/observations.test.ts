@@ -1019,8 +1019,8 @@ describe('deterministic preflight and doctor', () => {
         })).toThrow('lifecycle stage authority')
     })
 
-    it('does not let callers replace the production declaration set', async () => {
-        const result = evaluatePreflight([], { ...await context(), declarations: [] })
+    it('uses the complete production declaration set', async () => {
+        const result = evaluatePreflight([], await context())
         expect(result.checks).toHaveLength(allObservationDeclarations.length + 2)
     })
 
@@ -1102,7 +1102,7 @@ describe('deterministic preflight and doctor', () => {
         String.prototype.localeCompare = () => { throw new Error('locale must not decide protocol order') }
         try {
             expect(evaluatePreflight([await observation() ], {
-                ...await context(), declarations: [],
+                ...await context(),
             }).checks).toHaveLength(allObservationDeclarations.length + 2)
         } finally {
             String.prototype.localeCompare = original

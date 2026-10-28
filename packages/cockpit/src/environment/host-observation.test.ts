@@ -116,7 +116,7 @@ describe('host capacity evidence', () => {
         const raised = { memoryBytes: floor.memoryBytes + 1_048_576, cpuMillis: floor.cpuMillis + 1_000, freeDiskBytes: floor.freeDiskBytes + 1_048_576 }
         const below = await evidence(8_589_934_592, 2, 10_240, raised)
         expect(evaluatePreflight(observeHostCapacity({ evidence: below }), {
-            ...await evaluationContext(below.observedAt), declarations: [],
+            ...await evaluationContext(below.observedAt),
         }).verdict).toBe('fail')
         expect(observations.map(({ observed }) => observed)).toEqual(expect.arrayContaining([
             { state: 'available', value: 8_589_934_592, observedAt: exact.observedAt },

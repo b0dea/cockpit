@@ -454,8 +454,6 @@ function evaluate(observation: EnvironmentObservation): EvaluatedObservation {
 }
 
 export interface PreflightContext {
-    /** @deprecated Production declarations are always authoritative. */
-    readonly declarations?: readonly ObservationDeclaration[]
     readonly authorities: readonly ResolvedPostureAuthority[]
     readonly stages: readonly LifecycleStageAuthority[]
 }
