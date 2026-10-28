@@ -187,6 +187,11 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         ))
         const launcher = join(installed, 'bin/cockpit.mjs')
         const options = { cwd: packScratch, env: { ...npmEnvironment(), CI: '1' }, encoding: 'utf8' as const }
+        const initialized = execFileSync(process.execPath, ['--input-type=module', '--eval',
+            `import { initializeTeamMetadata } from ${JSON.stringify(pathToFileURL(join(installed, 'dist/team-metadata.js')).href)};
+            console.log(JSON.stringify(await initializeTeamMetadata(${JSON.stringify(configPath)})));`,
+        ], options)
+        expect(JSON.parse(initialized)).toMatchObject({ kind: 'complete' })
         execFileSync(process.execPath, [launcher, 'sync', '--config', configPath, '--json'], options)
         execFileSync(process.execPath, [launcher, 'check', '--config', configPath, '--json'], options)
         const version = execFileSync(process.execPath, [launcher, '--version'], options)
