@@ -62,7 +62,7 @@ The runtime schema and defaults are the configuration authorities.
 
 ## Governed standing cost
 
-Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `64ca4dc9589f6c81802f2c09a81422876c233c1f5820ee77973df32fe153be76`.
+Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `9001bbdd2c698f5db7792a12a7581e2060a82384c014442e8c465bb1776bcb52`.
 
 | Target | Metric | Cap | Displacement |
 | --- | --- | --- | --- |
@@ -72,11 +72,12 @@ Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-25
 
 | Entrypoint | Metric | Cap | Displacement |
 | --- | --- | --- | --- |
-| `packages/cockpit/surfaces/skills/bootstrap.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| `packages/cockpit/surfaces/skills/explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
-| `packages/cockpit/surfaces/skills/fix.skill.md` | lines | 12 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `717e0e07d1b50c89bf6b0a3f1d20a551e1de76047150fbe7672072e73a6b6904`.
+Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `d65b4ce58e3b6a7713ee783fc2914b0261455305f005b83af721d62a26f1b6c9`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` derives from the registry schema (default 200 lines); measured guide costs are instance-specific and come from the sibling projection owner.
 

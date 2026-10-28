@@ -139,9 +139,18 @@ resume; changed bytes or ownership require repair. The command validates the con
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
 named gaps. Native discovery, a real interview and clean-machine proof require separate evidence.
 
+When init runs inside a product repository (a git checkout with a root package manifest), its
+`--json` preview carries `result.cockpitRoot`: a question, its options and a recommended answer.
+Relay that question to the human and write their answer under the `cockpit.root` key of the answers
+file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
+lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
+creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
+Explain the trade-off in a sentence or two from [Where the cockpit lives](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
+
 After accepted initialization, and only with explicit authorization to change product-owned fixtures
-or auth setup, follow **Authenticated testing** as a separate product change. Bootstrap does not
-discover provider identities or create browser state.
+or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
+it as a separate product change. Bootstrap does not discover provider identities or create browser
+state.
 
 For environment or secret adoption, follow **Secret handling** after sync has established its owned
 ignore boundary.
@@ -168,6 +177,10 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    ports and restore, and an explicit vendor posture for every third-party endpoint. Cockpit renders
    a subject with no decision as undecided, which keeps the gap visible. Done when each unknown is
    named with who can resolve it, and nothing in the declaration was filled in to make it load.
+   Answer `environment.test_data` with exact booleans for `seeded_data` and `signed_in_users`. A false
+   answer is retained as a not-declared decision. A true answer is only a requirement: it remains unresolved
+   until product-owned seed operations or browser authentication states are declared, and never proves that
+   data or a login exists.
 5. Decide where the runnable pieces live. A Dockerfile or Compose file written into a product
    repository is a product change, so ask the human first and show the exact path and contents.
    Without that authorisation, declare an environment cockpit renders itself and leave the product
