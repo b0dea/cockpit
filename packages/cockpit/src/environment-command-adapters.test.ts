@@ -34,7 +34,7 @@ import { observeSetupCheckout, withSetupCheckoutProjection } from './environment
 import { observeConfiguration, selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage } from './environment/lifecycle-stage.js'
 import { resolveObservationPostures, unavailableProducerObservations, type PreflightContext } from './environment/observations.js'
-import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan, observeRuntimeExecution } from './environment/runtime.js'
+import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan, observeRuntimeExecution, projectRuntimeExecutionEnvironment } from './environment/runtime.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
 import { observeGeneratedApplication, projectGeneratedApplicationRuntimeAuthority } from './environment/generated-application.js'
 import { admitGeneratedObservation, createGeneratedObservationExecution, inspectGeneratedRuntimeAuthority } from './environment/generated-stack.js'
@@ -191,10 +191,15 @@ describe('environment observation command adapters', () => {
             const compose = readFileSync(composePath, 'utf8')
             const renderedCompose = parseYaml(compose)
             const renderedService = renderedCompose.services.app
-            const labels = renderedService.labels
             const cockpit = deriveCockpitId({ name: 'generated-environment', mainCheckoutPath: root })
             const checkout = deriveCheckoutId({ checkoutPath: root })
             const stack = deriveStackId({ cockpitId: cockpit, checkoutId: checkout, variant: { kind: 'shared' } })
+            expect(renderedService.labels['dev.b0dea.cockpit.stack-id'])
+                .toBe('${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}')
+            expect(renderedService.labels['dev.b0dea.cockpit.owner-id'])
+                .toBe('${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}')
+            const labels = { ...renderedService.labels,
+                'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.owner-id': cockpit }
             const holder = deriveHolderId({ stackId: stack, checkoutId: checkout, sessionId: 'synthetic-http-health' })
             const state = await selectStateRoot({ platform: 'linux', home: root, cockpitId: cockpit })
             if (state.kind !== 'complete') throw new Error('generated health state root was refused')
@@ -227,7 +232,12 @@ describe('environment observation command adapters', () => {
             const docker = join(root, 'docker')
             const script = `#!${process.execPath}
 const args = process.argv.slice(2)
-if (args.includes('config')) process.stdout.write(${JSON.stringify(JSON.stringify(topologyDocument))})
+if (args.includes('config')) {
+    if (process.env.COCKPIT_STACK_ID !== ${JSON.stringify(stack)} || process.env.COCKPIT_OWNER_ID !== ${JSON.stringify(cockpit)}) {
+        throw new Error('synthetic Compose requires authenticated runtime identity variables')
+    }
+    process.stdout.write(${JSON.stringify(JSON.stringify(topologyDocument))})
+}
 else if (args.includes('exec')) {
     const command = args.slice(args.indexOf('-T') + 2)
     if (command[0] === 'node' && (command[1] === '-e' || command[1] === '--version')) {
@@ -257,12 +267,14 @@ else if (args.includes('exec')) {
             if (planned.kind !== 'planned') throw new Error(planned.reason)
             const topology = admitRuntimeTopology({ plan: planned, outcome: await executeProbe(planned.step) })
             if (topology.kind !== 'complete') throw new Error(topology.reason)
+            const publicEnv = projectRuntimeExecutionEnvironment(topology.topology)
+            if (!publicEnv) throw new Error('generated health runtime environment authority was refused')
             const canonicalNode = await realpath(process.execPath)
             const nodeExecutable = resolvedExecutable({ canonicalPath: canonicalNode, invocationPath: process.execPath,
                 sha256: createHash('sha256').update(readFileSync(canonicalNode)).digest('hex'), executionMode: 'verified-path' })!
             const harness = { topology: topology.topology, runtime: { root, executable,
                 composeFiles: [{ path: composePath, sha256: composeSha256 }], projectName: 'synthetic',
-                publicEnv: { APP_HOST_PORT: String(effectivePort) }, hostExecutables: { [process.execPath]: nodeExecutable },
+                publicEnv, hostExecutables: { [process.execPath]: nodeExecutable },
                 stdoutLimitBytes: 4_096, stderrLimitBytes: 1_024 } }
             const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
             if (git.state !== 'available') throw new Error('generated health Git executable was unavailable')

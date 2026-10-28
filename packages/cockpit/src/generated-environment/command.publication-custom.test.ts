@@ -364,7 +364,10 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             await expect(lstat(join(fixture.root, '.sibling-app-CLAUDE.md'))).rejects.toMatchObject({ code: 'ENOENT' })
             await expect(lstat(join(fixture.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
             expect(await readlink(join(fixture.root, '.sibling-app-docs-CONVENTIONS.md'))).toBe('docs/CONVENTIONS.md')
-            expect(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')).toContain(fixture.root)
+            expect(parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8'))).toEqual({
+                sandbox_mode: 'workspace-write',
+                sandbox_workspace_write: { writable_roots: ['.'] },
+            })
         }, 180_000)
 
         it('refuses changed stale ownership and preserves consumer bytes', async () => {
