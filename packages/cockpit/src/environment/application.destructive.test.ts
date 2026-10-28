@@ -721,7 +721,7 @@ describe('destructive application contracts', () => {
             observe: async () => resetObservation(instance, failedRecord), execute,
         })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED',
-            message: expect.stringContaining(`cockpit down --config ${JSON.stringify(context.source.path)}`),
+            message: expect.stringContaining('will not overlap it with another destructive action'),
         }] })
         expect(recover).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()

@@ -787,14 +787,58 @@ describe('sleep drain recovery ownership', () => {
         vi.useFakeTimers()
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         expect(await inspectSleepDrainRecovery({ namespace: active, stackId, holderId: holderA }))
-            .toMatchObject({ kind: 'recoverable' })
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
         expect(await readState(active.paths.coordination(stackId))).toMatchObject({
-            kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } },
+            kind: 'complete', value: { value: { drain: { attempt: { status: 'active' } } } },
         })
     })
 })
 
 describe('destructive drain recovery inspection', () => {
+    it.skipIf(process.platform === 'win32')('does not retry an expired attempt while its orphaned executor is still alive', async () => {
+        const state = await namespace()
+        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
+        const reserved = await reserveDrain({ namespace: state, request: {
+            purpose: 'down', stackId, holderId: holderA, requesterId: holderA,
+            configSha256: '2'.repeat(64), planDigest: '3'.repeat(64), operationBasis: '4'.repeat(64),
+            generation: '5'.repeat(64), targetIds: [stackId],
+            actions: [{ stage: 'runtime-stop', targetId: stackId, validForMs: 50 }], expectedCoordinationRevision: 0,
+        } })
+        if (reserved.kind !== 'complete') throw new Error('expected destructive reservation')
+        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        if (attempted.kind !== 'complete') throw new Error('expected destructive attempt')
+
+        const marker = join(state.cockpitRoot, 'orphan-pid')
+        const source = [
+            "const { spawn } = require('node:child_process')",
+            "const { writeFileSync } = require('node:fs')",
+            "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })",
+            'writeFileSync(process.argv[1], String(child.pid))',
+            'child.unref()',
+        ].join(';')
+        await new Promise<void>((resolve, reject) => {
+            const parent = spawn(process.execPath, ['-e', source, marker], { stdio: 'ignore' })
+            parent.once('error', reject)
+            parent.once('exit', code => code === 0 ? resolve() : reject(new Error(`executor parent exited ${code}`)))
+        })
+        const orphanPid = Number(await readFile(marker, 'utf8'))
+        try {
+            await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(attempted.attempt.validThrough) - Date.now() + 20)))
+            expect(() => process.kill(orphanPid, 0)).not.toThrow()
+            let retryStarts = 0
+            const inspected = await inspectDestructiveDrainRecovery({
+                namespace: state, stackId, holderId: holderA, purpose: 'down',
+            })
+            if (inspected.kind === 'recoverable') retryStarts += 1
+            expect(inspected).toMatchObject({
+                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }],
+            })
+            expect(retryStarts).toBe(0)
+        } finally {
+            try { process.kill(orphanPid, 'SIGKILL') } catch { /* The synthetic orphan may already be gone. */ }
+        }
+    })
+
     it('distinguishes missing and drain-free coordination state', async () => {
         const missing = await namespace()
         await expect(inspectDestructiveDrainRecovery({ namespace: missing, stackId, holderId: holderA, purpose: 'down' }))
@@ -897,9 +941,9 @@ describe('destructive drain recovery inspection', () => {
         vi.useFakeTimers()
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
-            .resolves.toEqual({ kind: 'recoverable', request })
+            .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
         await expect(readState(state.paths.coordination(stackId))).resolves.toMatchObject({
-            kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } },
+            kind: 'complete', value: { value: { drain: { attempt: { status: 'active' } } } },
         })
 
         const malformed = await namespace()

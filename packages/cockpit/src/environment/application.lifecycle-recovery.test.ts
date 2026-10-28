@@ -1103,7 +1103,7 @@ describe('lifecycle application contracts', () => {
 
         expect(withRuntimeReadiness).not.toHaveBeenCalled()
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }] })
-        expect(result.diagnostics[0]?.message).toContain(`cockpit sleep --config ${JSON.stringify(context.source.path)}`)
+        expect(result.diagnostics[0]?.message).toContain('will not overlap it with another destructive action')
     })
 
     it('recovers a failed persisted sleep attempt from its exact reservation', async () => {

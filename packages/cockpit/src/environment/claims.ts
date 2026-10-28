@@ -2219,47 +2219,6 @@ export type DestructiveDrainRecoveryInspection =
     | { readonly kind: 'recoverable'; readonly request: DrainReservationRequest }
     | ClaimMutationRefusal
 
-// An active attempt survives a process crash, but its execution permit does not. Once that
-// bounded permit has expired, record only that the attempt is interrupted (not whether its
-// action completed). The normal recovery path can then retry the same idempotent action and
-// reconcile the observed result instead of stranding the stack forever.
-async function failExpiredDrainAttempt(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly purpose: DrainReservation['purpose']
-}): Promise<StateResult<StateRecord> | ClaimMutationRefusal> {
-    const now = Date.now()
-    let failedAt: string
-    try { failedAt = new Date(now).toISOString() } catch {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'drain repair clock is unavailable', input.stackId)
-    }
-    return transactClaim(input.namespace, input.stackId, input.holderId, (current) => {
-        const value = decodeCoordinationRecord(current, input.stackId)
-        const reservation = value?.drain
-        const attempt = reservation?.attempt
-        if (!current || !value || !reservation || !attempt || attempt.status !== 'active'
-            || reservation.holderId !== input.holderId || reservation.requesterId !== input.holderId
-            || reservation.purpose !== input.purpose) {
-            return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                'active drain repair no longer matches the persisted holder and purpose', input.stackId))
-        }
-        if (now <= Date.parse(attempt.validThrough)) {
-            return abortStateTransaction(refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-                `the interrupted drain action can be retried after its execution window ends at ${attempt.validThrough}`,
-                input.stackId))
-        }
-        return coordinationStateRecord(input.namespace, input.stackId, current, failedAt, Object.freeze({
-            ...value,
-            drain: Object.freeze({
-                ...reservation,
-                attempt: Object.freeze({ ...attempt, status: 'failed' as const,
-                    failedRevision: current.revision + 1, failedAt }),
-            }),
-        }))
-    })
-}
-
 export async function inspectDestructiveDrainRecovery(input: {
     readonly namespace: StateNamespace
     readonly stackId: StackId
@@ -2298,8 +2257,8 @@ export async function inspectDestructiveDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'destructive recovery requires current coordination state', address.path)
     }
     if (stored.kind !== 'complete') return stateRefusal(stored)
-    let record = stored.value
-    let value = decodeCoordinationRecord(record, stackId)
+    const record = stored.value
+    const value = decodeCoordinationRecord(record, stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', address.path)
     if (value.drain == null) {
         if (value.holders.length !== 1 || value.holders[0]?.holderId !== holderId
@@ -2308,7 +2267,7 @@ export async function inspectDestructiveDrainRecovery(input: {
         }
         return Object.freeze({ kind: 'none' })
     }
-    let reservation = value.drain
+    const reservation = value.drain
     if (reservation.holderId !== holderId || reservation.requesterId !== holderId) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain belongs to another holder', stackId)
     }
@@ -2316,20 +2275,8 @@ export async function inspectDestructiveDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'persisted drain requires explicit repair', stackId)
     }
     if (reservation.attempt?.status === 'active') {
-        const repaired = await failExpiredDrainAttempt({ namespace, stackId, holderId, purpose })
-        if (repaired.kind !== 'complete') {
-            if ('diagnostics' in repaired) return repaired
-            if (repaired.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-                'active destructive drain repair found no coordination record', repaired.path)
-            return stateRefusal(repaired)
-        }
-        record = repaired.value
-        value = decodeCoordinationRecord(record, stackId)
-        const repairedReservation = value?.drain
-        if (!repairedReservation || repairedReservation.attempt?.status !== 'failed') {
-            return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'repaired destructive drain is malformed', repaired.value.subjectId)
-        }
-        reservation = repairedReservation
+        return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
+            'the interrupted destructive executor has no authenticated termination evidence', stackId)
     }
     const request = snapshotDrainRequest({
         purpose: reservation.purpose,
@@ -2379,11 +2326,11 @@ export async function inspectSleepDrainRecovery(input: {
     const stored = await readState(address)
     if (stored.kind === 'missing') return Object.freeze({ kind: 'none' })
     if (stored.kind !== 'complete') return stateRefusal(stored)
-    let record = stored.value
-    let value = decodeCoordinationRecord(record, stackId)
+    const record = stored.value
+    const value = decodeCoordinationRecord(record, stackId)
     if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', address.path)
     if (value.drain == null) return Object.freeze({ kind: 'none' })
-    let reservation = value.drain
+    const reservation = value.drain
     if (reservation.holderId !== holderId || reservation.requesterId !== holderId) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'persisted drain belongs to another holder', stackId)
     }
@@ -2391,20 +2338,8 @@ export async function inspectSleepDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'persisted drain requires explicit repair', stackId)
     }
     if (reservation.attempt?.status === 'active') {
-        const repaired = await failExpiredDrainAttempt({ namespace, stackId, holderId, purpose: 'sleep' })
-        if (repaired.kind !== 'complete') {
-            if ('diagnostics' in repaired) return repaired
-            if (repaired.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-                'active sleep drain repair found no coordination record', repaired.path)
-            return stateRefusal(repaired)
-        }
-        record = repaired.value
-        value = decodeCoordinationRecord(record, stackId)
-        const repairedReservation = value?.drain
-        if (!repairedReservation || repairedReservation.attempt?.status !== 'failed') {
-            return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'repaired sleep drain is malformed', repaired.value.subjectId)
-        }
-        reservation = repairedReservation
+        return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
+            'the interrupted sleep executor has no authenticated termination evidence', stackId)
     }
     const runtimeStop = reservation.actions[0]
     const fingerprint = exactRecordFingerprint(record)

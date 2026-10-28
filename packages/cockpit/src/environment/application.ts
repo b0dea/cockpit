@@ -3131,7 +3131,7 @@ export async function runSleep(
         kind: 'refusal', status: 2, result: null,
         diagnostics: recovery.diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED
             ? ownerDiagnostic(diagnostic.code,
-                `cockpit cannot tell whether the interrupted sleep action completed; after its bounded execution window expires, run \`cockpit sleep --config ${JSON.stringify(context.source.path)}\` to retry that persisted action safely`,
+                'cockpit cannot prove the interrupted sleep executor stopped, so it will not overlap it with another destructive action; preserve the coordination state for explicit repair',
                 diagnostic.target ?? context.stackId)
             : diagnostic),
     }
@@ -3275,7 +3275,7 @@ export async function runSleep(
 function repairRequired(context: LifecycleRunContext): SleepCommandResult {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-        `cockpit cannot tell whether the interrupted sleep action completed; after its bounded execution window expires, run \`cockpit sleep --config ${JSON.stringify(context.source.path)}\` to retry that persisted action safely`,
+        'cockpit cannot prove the interrupted sleep executor stopped, so it will not overlap it with another destructive action; preserve the coordination state for explicit repair',
         context.stackId,
     )
 }
@@ -3372,7 +3372,7 @@ function destructiveRefusal(
 function destructiveRepairRequired(context: DestructiveRunContext): Extract<DownCommandResult, { kind: 'refusal' }> {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-        `cockpit cannot tell whether the interrupted destructive action completed; after its bounded execution window expires, run \`cockpit down --config ${JSON.stringify(context.source.path)}\` to resume down work, or approve \`cockpit reset --config ${JSON.stringify(context.source.path)}\` again to resume reset work`,
+        'cockpit cannot prove the interrupted destructive executor stopped, so it will not overlap it with another destructive action; preserve the coordination state for explicit repair',
         context.stackId,
     )
 }
