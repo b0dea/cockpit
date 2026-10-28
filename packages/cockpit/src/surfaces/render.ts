@@ -463,7 +463,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         harnesses: [...configuredSet], scope: 'always', capability: 'instructed', bytes: browserRunner.bytes as string,
     })
     for (const target of BUILT_INS) if (configuredSet.has(target)) for (const reference of skillReferences) {
-        add(whole, `${SKILL_DIRECTORY[target]}/${reference.skill}/${reference.path}`, {
+        add(whole, `${harnessFact(target).outputs.skills}/${reference.skill}/${reference.path}`, {
             harnesses: [target], scope: 'always', capability: 'instructed', bytes: stripDevelopmentMarkers(reference.bytes),
         })
     }
