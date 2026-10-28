@@ -31,6 +31,7 @@ const MANIFEST_TESTS = ['packaging.test.ts', 'supply-chain.test.ts']
 const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.contracts.test.ts', 'test-protection.test.ts']
 const GENERATED_FIXTURES = 'packages/cockpit/test-support/generated-fixtures.ts'
 const GENERATED_COMMAND_TEST = /^command(?:\..+)?\.test\.ts$/
+const SHARED_TEST_CONFIGURATION = new Set(['vitest.config.ts', 'packages/cockpit/src/test-support/git-isolation.ts'])
 
 function git(root, args) {
     return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -108,23 +109,17 @@ function testsReferencing(root, needle) {
     return packageTestFiles(root).filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
 }
 
-// A fixture directory is read either by a test directly or through a test-support module that a
-// test imports, so the lookup follows one level of import.
-function testsReadingFixtures(root, directory) {
+// Fixture readers can be shared through several helpers; use the same exact import graph as sources.
+function testsReadingFixtures(root, directory, imports) {
     const needle = `fixtures/${directory}`
     const readers = walkFiles(root, 'packages')
         .filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
         .filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
-    const direct = readers.filter(path => TEST_PATH.test(path))
-    const supports = readers.filter(path => !TEST_PATH.test(path)).map(path => basename(path).replace(/\.ts$/, ''))
-    if (!supports.length) return direct
-    const imports = new RegExp(`/(?:${supports.join('|')})(?:\\.js)?['"]`)
-    const indirect = packageTestFiles(root).filter(path => imports.test(readFileSync(resolve(root, path), 'utf8')))
-    return [...new Set([...direct, ...indirect])]
+    return [...new Set(readers.flatMap(path => TEST_PATH.test(path) ? [path] : testsImporting(imports, path)))]
 }
 
 // A source file whose tests carry another name is owned by the tests that import it, directly or
-// through one module in between (a re-export or a test-support helper). Static specifiers are
+// through re-exports and test-support helpers. Static specifiers are
 // resolved against the importing file, so a same-named file in another directory never matches.
 function importedModules(root) {
     const imports = new Map()
@@ -144,9 +139,18 @@ function testsImporting(imports, source) {
         const names = new Set([stem, stem.replace(/\/index$/, '')])
         return [...imports].filter(([, targets]) => [...names].some(name => targets.has(name))).map(([path]) => path)
     }
-    const direct = importers(source)
-    const viaModule = direct.filter(path => !TEST_PATH.test(path)).flatMap(importers)
-    return [...new Set([...direct, ...viaModule])].filter(path => TEST_PATH.test(path))
+    const visited = new Set([source])
+    const pending = [source]
+    const tests = new Set()
+    while (pending.length) {
+        for (const path of importers(pending.pop())) {
+            if (visited.has(path)) continue
+            visited.add(path)
+            if (TEST_PATH.test(path)) tests.add(path)
+            else pending.push(path)
+        }
+    }
+    return [...tests]
 }
 
 function ownerTests(root, paths, extras) {
@@ -155,6 +159,10 @@ function ownerTests(root, paths, extras) {
     let sourceChanged = false
     let imports
     for (const path of paths) {
+        if (SHARED_TEST_CONFIGURATION.has(path)) {
+            for (const test of packageTestFiles(root)) selected.add(test)
+            continue
+        }
         if (path === GENERATED_FIXTURES) {
             const directory = 'packages/cockpit/src/generated-environment'
             for (const name of readdirSync(resolve(root, directory)).filter(name => GENERATED_COMMAND_TEST.test(name))) {
@@ -191,6 +199,10 @@ function ownerTests(root, paths, extras) {
         const fixture = FIXTURE_PATH.exec(path)
         const example = EXAMPLE_PATH.exec(path)
         const mapped = []
+        if (MODULE_PATH.test(path)) {
+            imports ??= importedModules(root)
+            mapped.push(...testsImporting(imports, path))
+        }
         if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
         if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS))
         if (path.startsWith('.github/')) mapped.push(...testsInDirectory(root, WORKFLOW_TESTS))
@@ -202,7 +214,10 @@ function ownerTests(root, paths, extras) {
         if (example && !MARKDOWN_PATH.test(path)) {
             mapped.push(...testsReferencing(root, `examples/${example[1]}`), ...testsInDirectory(root, [EXAMPLE_TEST]))
         }
-        if (fixture) mapped.push(...testsReadingFixtures(root, fixture[1]))
+        if (fixture) {
+            imports ??= importedModules(root)
+            mapped.push(...testsReadingFixtures(root, fixture[1], imports))
+        }
         if (mapped.length) for (const candidate of mapped) selected.add(candidate)
         else unmapped.push(path)
     }

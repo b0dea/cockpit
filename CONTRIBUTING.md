@@ -82,6 +82,11 @@ npm run lint:supply-chain
 
 A targeted pass proves only its target. The full suite takes several minutes.
 
+`npm run test:changed -- <base-commit>` follows imports through shared test helpers to select
+their owners. A change to the Vitest configuration or shared Git-isolation setup selects every
+package test because it can change how all tests run. Unmapped paths still refuse before dispatch;
+review their ownership rather than treating an empty selection as a pass.
+
 The generated references (the CLI, configuration, command list, capability matrix and the
 troubleshooting index) are checked against committed `HEAD`, so `npm run lint:docs` refuses while
 an implementation change is uncommitted. Commit the change, rebuild (`npm run build`), run `npm run references`, commit the regenerated

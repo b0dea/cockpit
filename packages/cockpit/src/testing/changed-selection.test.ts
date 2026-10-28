@@ -46,6 +46,38 @@ writeFileSync(report, JSON.stringify({ numTotalTests: 1, numPassedTests: 1, numF
 }
 
 describe('changed adjacent-owner test runner', () => {
+    it.each(['vitest.config.ts', 'packages/cockpit/src/test-support/git-isolation.ts'])(
+        'selects every package test when shared test configuration %s changes', path => {
+            const fixture = repository({
+                [path]: 'before\n',
+                'packages/cockpit/src/first.test.ts': 'first\n',
+                'packages/cockpit/src/nested/second.test.ts': 'second\n',
+            })
+            writeFileSync(join(fixture.root, path), 'after\n')
+            const result = fixture.run()
+            expect(result.status, result.stderr).toBe(0)
+            expect(fixture.dispatched()).toEqual([ARCHITECTURE, 'packages/cockpit/src/first.test.ts',
+                'packages/cockpit/src/nested/second.test.ts'])
+        },
+    )
+
+    it('finds exact transitive owners of a changed test-support module', () => {
+        const path = 'packages/cockpit/test-support/factory.ts'
+        const fixture = repository({
+            [path]: 'export const factory = 1\n',
+            'packages/cockpit/test-support/compose.ts': "export { factory } from './factory.js'\nexport { estate } from './estate.js'\n",
+            'packages/cockpit/test-support/estate.ts': "export { factory } from './compose.js'\n",
+            'packages/cockpit/src/owner.test.ts': "import { factory } from '../test-support/estate.js'\n",
+            'packages/cockpit/src/other.test.ts': 'other\n',
+            'packages/cockpit/src/other/factory.ts': 'export const factory = 3\n',
+            'packages/cockpit/src/unrelated.test.ts': "import { factory } from './other/factory.js'\n",
+        })
+        writeFileSync(join(fixture.root, path), 'export const factory = 2\n')
+        const result = fixture.run()
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/owner.test.ts'])
+    })
+
     it('accepts a base commit from a SHA-256 repository', () => {
         const fixture = repository({
             'packages/cockpit/src/example.ts': 'export const value = 1\n',
@@ -261,13 +293,15 @@ describe('changed adjacent-owner test runner', () => {
             'packages/cockpit/src/direct.test.ts': "const dir = 'fixtures/estates'\n",
             'packages/cockpit/test-support/estate-fixture.ts': "export const dir = 'fixtures/estates'\n",
             'packages/cockpit/src/indirect.test.ts': "import { dir } from '../test-support/estate-fixture.js'\n",
+            'packages/cockpit/test-support/fixture-chain.ts': "export { dir } from './estate-fixture.js'\n",
+            'packages/cockpit/src/chained.test.ts': "import { dir } from '../test-support/fixture-chain.js'\n",
         })
         edit(fixture.root, 'fixtures/estates/one/estate.json')
 
         const result = fixture.run()
 
         expect(result.status, result.stderr).toBe(0)
-        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/indirect.test.ts'])
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/chained.test.ts', 'packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/indirect.test.ts'])
     })
 
     it('runs the tests that import a source file named differently from its tests, directly or through one module', () => {
