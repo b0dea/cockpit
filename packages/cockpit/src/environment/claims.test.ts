@@ -46,6 +46,7 @@ import {
     settleReclaimDrainSuccess,
     settleRuntimeDrainFailure,
     settleRuntimeDrainSuccess,
+    settleInterruptedDrainRepair,
     readActiveStackInventory,
     type ClaimHolder,
     type DrainReservationRequest,
@@ -57,7 +58,7 @@ import {
     type RestoreExecutionAuthority,
     type SleepDrainRecoveryAuthority,
 } from './claims.js'
-import { executeProbe } from '../environment-exec/execute.js'
+import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
 import { resolvedExecutable } from './executable.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import { abortStateTransaction, readState, selectStateRoot, transactState, type StateNamespace, type StateRecord } from './state.js'
@@ -783,11 +784,11 @@ describe('sleep drain recovery ownership', () => {
         expect(attempted).toMatchObject({ kind: 'complete' })
         if (attempted.kind !== 'complete') throw new Error('expected active sleep attempt')
         expect(await inspectSleepDrainRecovery({ namespace: active, stackId, holderId: holderA }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
+            .toMatchObject({ kind: 'repairable' })
         vi.useFakeTimers()
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         expect(await inspectSleepDrainRecovery({ namespace: active, stackId, holderId: holderA }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
+            .toMatchObject({ kind: 'repairable' })
         expect(await readState(active.paths.coordination(stackId))).toMatchObject({
             kind: 'complete', value: { value: { drain: { attempt: { status: 'active' } } } },
         })
@@ -795,6 +796,36 @@ describe('sleep drain recovery ownership', () => {
 })
 
 describe('destructive drain recovery inspection', () => {
+    it('records authenticated fenced termination before exposing the exact failed attempt for retry', async () => {
+        const state = await namespace()
+        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
+        const request = {
+            purpose: 'down' as const, stackId, holderId: holderA, requesterId: holderA,
+            configSha256: '2'.repeat(64), planDigest: '3'.repeat(64), operationBasis: '4'.repeat(64),
+            generation: '5'.repeat(64), targetIds: [stackId],
+            actions: [{ stage: 'runtime-stop' as const, targetId: stackId, validForMs: 30_000 }], expectedCoordinationRevision: 0,
+        }
+        const reserved = await reserveDrain({ namespace: state, request })
+        if (reserved.kind !== 'complete') throw new Error('expected destructive reservation')
+        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        if (attempted.kind !== 'complete') throw new Error('expected destructive attempt')
+        const repairable = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
+        if (repairable.kind !== 'repairable') throw new Error('expected repairable execution fence')
+        const outcome = await executeProbe({
+            id: 'synthetic-fenced-action', argv: [process.execPath, '-e', 'process.exit(0)'], argv0: process.execPath,
+            cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' }, timeoutMs: 10_000,
+            stdoutLimitBytes: 1_024, stderrLimitBytes: 1_024, paths: [], ports: [], labels: {}, expected: [],
+            consumedFiles: [], filesystemChecks: [], executionFence: repairable.fence, compensation: [],
+        })
+        expect(outcome.kind).toBe('complete')
+        const termination = await repairFencedExecution(repairable.fence)
+        if (termination.kind !== 'complete') throw new Error('expected authenticated termination')
+        const settled = await settleInterruptedDrainRepair({ authority: repairable.authority, evidence: termination.evidence })
+        expect(settled).toMatchObject({ kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } } })
+        expect(await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
+            .toEqual({ kind: 'recoverable', request })
+    })
+
     it.skipIf(process.platform === 'win32')('does not retry an expired attempt while its orphaned executor is still alive', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
@@ -830,9 +861,7 @@ describe('destructive drain recovery inspection', () => {
                 namespace: state, stackId, holderId: holderA, purpose: 'down',
             })
             if (inspected.kind === 'recoverable') retryStarts += 1
-            expect(inspected).toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }],
-            })
+            expect(inspected).toMatchObject({ kind: 'repairable' })
             expect(retryStarts).toBe(0)
         } finally {
             try { process.kill(orphanPid, 'SIGKILL') } catch { /* The synthetic orphan may already be gone. */ }
@@ -937,11 +966,11 @@ describe('destructive drain recovery inspection', () => {
         expect(attempted).toMatchObject({ kind: 'complete' })
         if (attempted.kind !== 'complete') throw new Error('expected active destructive attempt')
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
-            .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
+            .resolves.toMatchObject({ kind: 'repairable' })
         vi.useFakeTimers()
         vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
-            .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
+            .resolves.toMatchObject({ kind: 'repairable' })
         await expect(readState(state.paths.coordination(stackId))).resolves.toMatchObject({
             kind: 'complete', value: { value: { drain: { attempt: { status: 'active' } } } },
         })

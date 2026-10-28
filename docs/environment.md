@@ -117,10 +117,13 @@ revalidated before an action. Set `DOCKER_CONTEXT` explicitly for destructive co
 `unix://` `DOCKER_HOST` with `DOCKER_CONTEXT` unset, so discovery and deletion address the same
 Docker daemon. A remote or conflicting Docker host and a TLS override are refused.
 
-If an interrupted drain reports `DRAIN_ATTEMPT_REPAIR_REQUIRED`, do not rerun another destructive
-action or remove its state. An execution deadline does not prove that a detached executor stopped,
-so cockpit preserves the active attempt rather than risking overlapping cleanup. Preserve the
-coordination state for explicit repair until termination evidence can be authenticated.
+Every destructive action starts behind a durable execution fence. If cockpit itself is interrupted,
+the detached supervisor retains that exact attempt identity. The next `sleep`, `down`, or approved
+`reset` asks that supervisor to terminate its owned action group, proves the group is gone, records
+the active attempt as failed, and retries only the persisted action. `DRAIN_ATTEMPT_REPAIR_REQUIRED`
+means the marker, supervisor identity, control socket, or termination proof did not match; cockpit
+then preserves the active attempt and refuses overlapping cleanup. Do not remove its state or runtime
+resources by hand because that destroys the evidence needed for safe repair.
 
 ## Measure the container runtime
 

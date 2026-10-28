@@ -3,6 +3,7 @@ import { lstatSync } from 'node:fs'
 import { lstat, opendir } from 'node:fs/promises'
 import { dirname, isAbsolute, join, normalize } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
+import { platform } from 'node:os'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
     ENVIRONMENT_CODES,
@@ -23,10 +24,11 @@ import {
     type EnvironmentCommandOutcome,
     type ExecutionPlan,
     type ExecutionStep,
+    type ExecutionFence,
     type JsonSnapshot,
     type StackId,
 } from './contract.js'
-import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, consumeFencedExecutionTermination, type ExecuteProbeOutcome, type FencedExecutionTermination } from '../environment-exec/execute.js'
 import { resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import { observeConfigSource } from '../config/load.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
@@ -52,7 +54,7 @@ export const mechanism = {
     exports: [
         'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
-        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
+        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
 
@@ -593,8 +595,8 @@ const drainFailureProgressAuthorities = new WeakMap<object, {
     readonly failure: DrainAttemptFailure
 }>()
 const drainExecutions = new WeakMap<object,
-    | { readonly kind: 'runtime-stop'; readonly permit: DrainAttemptPermit<RuntimeStopped> }
-    | { readonly kind: 'reclaim'; readonly permit: ReclaimAttemptPermit; readonly continuation: object }>()
+    | { readonly kind: 'runtime-stop'; readonly permit: DrainAttemptPermit<RuntimeStopped>; readonly fence: ExecutionFence }
+    | { readonly kind: 'reclaim'; readonly permit: ReclaimAttemptPermit; readonly continuation: object; readonly fence: ExecutionFence }>()
 const drainOutcomes = new WeakMap<object,
     | { readonly kind: 'success'; readonly authority: DrainAttemptSuccessAuthority; readonly provenance: DrainAttemptProvenance }
     | { readonly kind: 'failure'; readonly authority: DrainAttemptFailureAuthority; readonly provenance: DrainAttemptProvenance }>()
@@ -1828,9 +1830,29 @@ export function openRuntimeDrainExecution(input: {
         owned.authority as DrainAttemptAuthority, owned.candidate as DrainAttemptCandidate,
     )
     if (!permit) return undefined
+    const fence = drainExecutionFence({ attempt: permit.attempt, address: permit.provenance.address })
+    if (!fence) return undefined
     const execution = Object.freeze({}) as RuntimeDrainExecutionAuthority
-    drainExecutions.set(execution, Object.freeze({ kind: 'runtime-stop', permit }))
+    drainExecutions.set(execution, Object.freeze({ kind: 'runtime-stop', permit, fence }))
     return execution
+}
+
+function drainExecutionFence(input: { readonly attempt: DrainAttempt; readonly address: StateAddress }): ExecutionFence | undefined {
+    const attemptId = input.attempt.attemptId
+    const markerPath = `${input.address.path}.${attemptId}.executor.json`
+    const socketRoot = join(platform() === 'darwin' ? '/private/tmp' : '/tmp', `cockpit-exec-${process.getuid?.() ?? 0}`)
+    const socketPath = join(socketRoot, `${attemptId.slice(0, 24)}.sock`)
+    return /^[a-f0-9]{64}$/.test(attemptId) && isAbsolute(markerPath) && normalize(markerPath) === markerPath
+        && isAbsolute(socketPath) && normalize(socketPath) === socketPath && Buffer.byteLength(socketPath) <= 103
+        ? Object.freeze({ attemptId, markerPath, socketPath }) : undefined
+}
+
+export function inspectDrainExecutionFence(
+    authority: RuntimeDrainExecutionAuthority | ReclaimDrainExecutionAuthority,
+): ExecutionFence | undefined {
+    if (!authority || typeof authority !== 'object') return undefined
+    const execution = drainExecutions.get(authority)
+    return execution ? Object.freeze({ ...execution.fence }) : undefined
 }
 
 export function openReclaimDrainExecution(input: {
@@ -1846,8 +1868,10 @@ export function openReclaimDrainExecution(input: {
         owned.planningRecord as StateRecord,
     )
     if (!permit) return undefined
+    const fence = drainExecutionFence({ attempt: permit.attempt, address: permit.provenance.address })
+    if (!fence) return undefined
     const execution = Object.freeze({}) as ReclaimDrainExecutionAuthority
-    drainExecutions.set(execution, Object.freeze({ kind: 'reclaim', permit, continuation }))
+    drainExecutions.set(execution, Object.freeze({ kind: 'reclaim', permit, continuation, fence }))
     drainContinuationEvidence.set(continuation, Object.freeze({
         kind: 'progress', authority: permit.progressAuthority,
     }))
@@ -2206,6 +2230,7 @@ function reduceDrainAttemptFailure(input: {
 
 export type SleepDrainRecoveryInspection =
     | { readonly kind: 'none' }
+    | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly authority: DrainRepairAuthority }
     | {
           readonly kind: 'recoverable'
           readonly generation: string
@@ -2216,8 +2241,59 @@ export type SleepDrainRecoveryInspection =
 
 export type DestructiveDrainRecoveryInspection =
     | { readonly kind: 'none' }
+    | { readonly kind: 'repairable'; readonly fence: ExecutionFence; readonly authority: DrainRepairAuthority }
     | { readonly kind: 'recoverable'; readonly request: DrainReservationRequest }
     | ClaimMutationRefusal
+
+declare const drainRepairAuthorityBrand: unique symbol
+export interface DrainRepairAuthority { readonly [drainRepairAuthorityBrand]: true }
+const drainRepairs = new WeakMap<object, {
+    readonly namespace: StateNamespace
+    readonly address: StateAddress
+    readonly recordFingerprint: string
+    readonly reservation: DrainReservation
+    readonly fence: ExecutionFence
+}>()
+
+function issueDrainRepair(namespace: StateNamespace, address: StateAddress, record: StateRecord, reservation: DrainReservation):
+    Extract<SleepDrainRecoveryInspection, { kind: 'repairable' }> | undefined {
+    if (!reservation.attempt || reservation.attempt.status !== 'active') return undefined
+    const fence = drainExecutionFence({ attempt: reservation.attempt, address })
+    const recordFingerprint = exactRecordFingerprint(record)
+    if (!fence || !recordFingerprint) return undefined
+    const authority = Object.freeze({}) as DrainRepairAuthority
+    drainRepairs.set(authority, { namespace, address: Object.freeze({ ...address }), recordFingerprint,
+        reservation: snapshotDrainReservation(reservation), fence })
+    return Object.freeze({ kind: 'repairable', fence, authority })
+}
+
+export async function settleInterruptedDrainRepair(input: {
+    readonly authority: DrainRepairAuthority
+    readonly evidence: FencedExecutionTermination
+}): Promise<StateResult<StateRecord> | ClaimMutationRefusal> {
+    const owned = exactDataProperties(input, ['authority', 'evidence'])
+    const authority = owned?.authority as DrainRepairAuthority | undefined
+    const repair = authority && typeof authority === 'object' ? drainRepairs.get(authority) : undefined
+    if (!repair || !consumeFencedExecutionTermination(owned!.evidence as FencedExecutionTermination, repair.fence)) {
+        return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'interrupted drain termination evidence is unavailable', 'drain repair')
+    }
+    drainRepairs.delete(authority!)
+    const failedAt = new Date().toISOString()
+    return transactClaim(repair.namespace, repair.reservation.stackId, repair.reservation.holderId, current => {
+        const value = decodeCoordinationRecord(current, repair.reservation.stackId)
+        const attempt = value?.drain?.attempt
+        if (!current || exactRecordFingerprint(current) !== repair.recordFingerprint || !value?.drain || !attempt
+            || attempt.status !== 'active' || !sameDrainAttempt(attempt, repair.reservation.attempt!)) {
+            return abortStateTransaction(refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
+                'interrupted drain changed before executor termination could be recorded', repair.reservation.stackId))
+        }
+        return coordinationStateRecord(repair.namespace, repair.reservation.stackId, current, failedAt, Object.freeze({
+            ...value,
+            drain: Object.freeze({ ...value.drain, attempt: Object.freeze({ ...attempt, status: 'failed' as const,
+                failedRevision: current.revision + 1, failedAt }) }),
+        }))
+    })
+}
 
 export async function inspectDestructiveDrainRecovery(input: {
     readonly namespace: StateNamespace
@@ -2275,8 +2351,9 @@ export async function inspectDestructiveDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'persisted drain requires explicit repair', stackId)
     }
     if (reservation.attempt?.status === 'active') {
-        return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-            'the interrupted destructive executor has no authenticated termination evidence', stackId)
+        return issueDrainRepair(namespace, address, record, reservation)
+            ?? refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
+                'the interrupted destructive executor has no repairable execution fence', stackId)
     }
     const request = snapshotDrainRequest({
         purpose: reservation.purpose,
@@ -2338,8 +2415,9 @@ export async function inspectSleepDrainRecovery(input: {
         return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED, 'persisted drain requires explicit repair', stackId)
     }
     if (reservation.attempt?.status === 'active') {
-        return refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-            'the interrupted sleep executor has no authenticated termination evidence', stackId)
+        return issueDrainRepair(namespace, address, record, reservation)
+            ?? refuse(ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
+                'the interrupted sleep executor has no repairable execution fence', stackId)
     }
     const runtimeStop = reservation.actions[0]
     const fingerprint = exactRecordFingerprint(record)

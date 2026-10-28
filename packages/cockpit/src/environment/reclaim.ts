@@ -8,6 +8,7 @@ import {
     decodeCoordinationRecord,
     consumeFailedReclaimRecovery,
     inspectDrainAttemptAuthority,
+    inspectDrainExecutionFence,
     inspectFailedReclaimRecovery,
     matchReclaimDrainContinuation,
     openReclaimDrainExecution,
@@ -2354,17 +2355,20 @@ export async function redeemReclaimAction(input: {
         planningRecord: pending.coordinationRecord, continuation: pending.continuation,
     })
     if (!execution) return undefined
+    const fence = inspectDrainExecutionFence(execution)
+    const fencedStep = fence && snapshotExecutionStep({ ...step, executionFence: fence })
+    if (!fencedStep) return undefined
     pendingResetActions.delete(actionAuthority)
     pendingTeardownActions.delete(actionAuthority)
     consumedPendingTeardownActions.add(actionAuthority)
     const authority = Object.freeze({})
     pendingReclaimExecutions.set(authority, Object.freeze({
-        step, targetId,
+        step: fencedStep, targetId,
         reservation: candidate.reservation, attempt: candidate.attempt, execution, continuation: pending.continuation,
         targetIds: pending.targetIds, removedTargetIds: pending.removedTargetIds,
         targetIdentities,
     }))
-    return Object.freeze({ step, authority })
+    return Object.freeze({ step: fencedStep, authority })
 }
 
 export const redeemTeardownAction = redeemReclaimAction

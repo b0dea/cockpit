@@ -18,6 +18,7 @@ import {
     EXECUTION_FAILURE_CODES,
     REFUSAL_CODES,
     snapshotExecutionPlan,
+    snapshotExecutionStep,
     snapshotJson,
     type EnvironmentCode,
     type EnvironmentCommandOutcome,
@@ -34,6 +35,7 @@ import {
 import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     inspectDrainAttemptAuthority,
+    inspectDrainExecutionFence,
     openRuntimeDrainExecution,
     settleRuntimeDrainFailure,
     settleRuntimeDrainSuccess,
@@ -3237,7 +3239,10 @@ export function createRuntimeStopPlan(input: {
         if (!step) return unavailableRuntimeStop()
         const execution = openRuntimeDrainExecution({ authority: attemptAuthority!, candidate: candidate! })
         if (!execution) return unavailableRuntimeStop()
-        const plan = Object.freeze({ kind: 'planned' as const, step })
+        const fence = inspectDrainExecutionFence(execution)
+        const fencedStep = fence && snapshotExecutionStep({ ...step, executionFence: fence })
+        if (!fencedStep) return unavailableRuntimeStop()
+        const plan = Object.freeze({ kind: 'planned' as const, step: fencedStep })
         issuedRuntimeStopPlans.set(plan, Object.freeze({ topology: topologyContract, reservation, execution }))
         return plan
     } catch { return unavailableRuntimeStop() }

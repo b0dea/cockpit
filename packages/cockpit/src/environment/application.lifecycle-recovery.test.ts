@@ -16,6 +16,11 @@ import type { ExecutionStep, StackId } from './contract.js'
 import { createMachineFloorPlan, collectMachineFloorEvidence, issueMachineFloorAuthority } from './runtime.js'
 import { observeHostCapacity } from './host-observation.js'
 import { projectMachineFloorConfig } from '../config/load.js'
+const executionFence = (id: string) => {
+    const attemptId = createHash('sha256').update(`${process.pid}:${id}`).digest('hex')
+    const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+    return { attemptId, markerPath: join(tmpdir(), `cockpit-test-${attemptId}.json`), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+}
 type LifecycleOverrides = Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'planAdmittedUp' | 'planSleep' | 'planDown' | 'planResetLifecycle' | 'consumeLifecycleIssuance'>>
 type RuntimeOverrides = Partial<Pick<typeof import('./runtime.js'),
     | 'createRuntimeServicePlan' | 'createRuntimeServiceHealthPlan'
@@ -1007,7 +1012,7 @@ describe('lifecycle application contracts', () => {
             events.push('attempt')
             return { kind: 'complete', authority: attemptAuthority } as never
         }
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop' } }) as never
+        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop', executionFence: executionFence('sleep-stop') } }) as never
         applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'postcheck' } }) as never
         applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: {} }) as never
         applicationOwners.runtime.consumeRuntimeStopped = () => outcomeAuthority as never
@@ -1067,7 +1072,7 @@ describe('lifecycle application contracts', () => {
         } as never)
         applicationOwners.claims.reserveDrain = async () => ({ kind: 'complete', authority: {} }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop' } }) as never
+        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop', executionFence: executionFence('sleep-indeterminate') } }) as never
         applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'postcheck' } }) as never
         applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: {} }) as never
         applicationOwners.runtime.consumeRuntimeStopped = () => ({}) as never
@@ -1139,7 +1144,7 @@ describe('lifecycle application contracts', () => {
         }
         applicationOwners.claims.reserveDrain = async () => { events.push('reserve'); return {} as never }
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop' } }) as never
+        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'stop', executionFence: executionFence('sleep-recovery') } }) as never
         applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'postcheck' } }) as never
         applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: {} }) as never
         applicationOwners.runtime.consumeRuntimeStopped = () => ({}) as never

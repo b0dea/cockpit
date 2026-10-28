@@ -1,12 +1,14 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { chmodSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { snapshotJson, type ExecutionPlan, type ExecutionStep } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, snapshotJson, type ExecutionPlan, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
-import { executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, executionReceiptMatches } from './execute.js'
+import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, executionReceiptMatches, repairFencedExecution } from './execute.js'
 
 const nodeStep = (id: string, script: string, overrides: Partial<ExecutionStep> = {}): ExecutionStep => ({
     id, argv: [process.execPath, '-e', script], argv0: process.execPath, cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' },
@@ -46,11 +48,272 @@ async function waitForPath(path: string, timeoutMs = 10_000): Promise<void> {
     }
 }
 
+async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() <= deadline) {
+        try { process.kill(pid, 0) } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+            throw error
+        }
+        await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    return false
+}
+
 afterEach(() => {
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
 })
 
 describe('mechanical environment executor', () => {
+    it.skipIf(process.platform === 'win32')('cancels a delayed fenced starter before any destructive effect can begin', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-cancel-race-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const effect = join(directory, 'effect')
+
+        const execution = executeProbe(nodeStep('fenced-cancel-race',
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`, { executionFence: fence }))
+        const repaired = await repairFencedExecution(fence)
+        const outcome = await execution
+
+        expect(repaired.kind).toBe('complete')
+        expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
+        expect(existsSync(effect)).toBe(false)
+    })
+
+    it.skipIf(process.platform === 'win32')('refuses swapped, oversized and blocking execution markers', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-hostile-marker-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const target = join(directory, 'target')
+        writeFileSync(target, '{}')
+        symlinkSync(target, fence.markerPath)
+        await expect(repairFencedExecution(fence)).resolves.toMatchObject({ kind: 'refusal' })
+
+        rmSync(fence.markerPath, { force: true })
+        writeFileSync(fence.markerPath, 'x'.repeat(2_048))
+        await expect(repairFencedExecution(fence)).resolves.toMatchObject({ kind: 'refusal' })
+
+        rmSync(fence.markerPath, { force: true })
+        execFileSync('mkfifo', [fence.markerPath])
+        await expect(repairFencedExecution(fence)).resolves.toMatchObject({ kind: 'refusal' })
+
+        rmSync(fence.markerPath, { force: true })
+        writeFileSync(fence.markerPath, '{}')
+        const identity = statSync(fence.markerPath, { bigint: true })
+        const parent = statSync(directory, { bigint: true })
+        writeFileSync(fence.markerPath, `${JSON.stringify({ format: 'cockpit-executor/v1', attemptId,
+            supervisorPid: process.pid, markerDev: String(identity.dev), markerIno: String(identity.ino + 1n),
+            parentDev: String(parent.dev), parentIno: String(parent.ino), status: 'active' })}\n`)
+        await expect(repairFencedExecution(fence)).resolves.toMatchObject({ kind: 'refusal' })
+    })
+
+    it.skipIf(process.platform === 'win32')('repairs an exact attempt that ended before durable execution acknowledgement', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-unstarted-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = {
+            attemptId,
+            markerPath: join(directory, 'executor.json'),
+            socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`),
+        }
+
+        const repaired = await repairFencedExecution(fence)
+        expect(repaired.kind).toBe('complete')
+        if (repaired.kind !== 'complete') throw new Error('unstarted fenced repair unavailable')
+        expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(true)
+    })
+
+    it.skipIf(process.platform === 'win32')('starts no effect when durable fence acknowledgement is refused', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-gate-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const markerPath = join(directory, 'executor.json')
+        const effect = join(directory, 'effect')
+        writeFileSync(markerPath, 'occupied')
+        const outcome = await executeProbe(nodeStep('fenced-gate',
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`, {
+                executionFence: { attemptId, markerPath, socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) },
+            }))
+        expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
+        expect(existsSync(effect)).toBe(false)
+    })
+
+    it.skipIf(process.platform === 'win32')('repairs an orphaned fenced executor only after its exact action group is gone', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-orphan-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const fence = {
+            attemptId,
+            markerPath: join(directory, 'executor.json'),
+            socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`),
+        }
+        const effect = join(directory, 'effect')
+        const step = nodeStep('fenced-orphan', [
+            "const { writeFileSync } = require('node:fs')",
+            `writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
+            "process.on('SIGTERM', () => {})",
+            'setInterval(() => {}, 1000)',
+        ].join(';'), { timeoutMs: 30_000, executionFence: fence })
+        const executeModule = fileURLToPath(new URL('./execute.ts', import.meta.url))
+        const source = `import { executeProbe } from ${JSON.stringify(executeModule)}; await executeProbe(JSON.parse(process.argv[1]))`
+        const parent = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source, JSON.stringify(step)], { stdio: 'ignore' })
+        try {
+            await waitForPath(effect)
+            const actionPid = Number(readFileSync(effect, 'utf8'))
+            expect(() => process.kill(actionPid, 0)).not.toThrow()
+            parent.kill('SIGKILL')
+            await new Promise<void>((resolve, reject) => { parent.once('exit', () => resolve()); parent.once('error', reject) })
+
+            const mismatch = await repairFencedExecution({ ...fence, attemptId: 'f'.repeat(64) })
+            expect(mismatch).toEqual({ kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED })
+            expect(() => process.kill(actionPid, 0)).not.toThrow()
+
+            const repaired = await repairFencedExecution(fence)
+            expect(repaired.kind).toBe('complete')
+            if (repaired.kind !== 'complete') throw new Error('fenced repair unavailable')
+            expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(true)
+            expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(false)
+            expect(() => process.kill(actionPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+            await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+            expect(existsSync(fence.markerPath)).toBe(false)
+        } finally {
+            if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGKILL')
+            try {
+                const actionPid = Number(readFileSync(effect, 'utf8'))
+                process.kill(-actionPid, 'SIGKILL')
+            } catch { /* repaired or never started */ }
+        }
+    })
+
+    it.skipIf(process.platform === 'win32')('confirms the fenced action group is gone before issuing a timeout receipt', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-timeout-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const effect = join(directory, 'effect')
+        const outcome = await executeProbe(nodeStep('fenced-timeout', [
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
+            "process.on('SIGTERM', () => {})",
+            'setInterval(() => {}, 1000)',
+        ].join(';'), {
+            timeoutMs: 500,
+            executionFence: {
+                attemptId,
+                markerPath: join(directory, 'executor.json'),
+                socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`),
+            },
+        }))
+        const actionPid = Number(readFileSync(effect, 'utf8'))
+        expect(outcome).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_TIMEOUT,
+            execution: { started: true }, receipt: expect.any(Object) })
+        expect(() => process.kill(actionPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    })
+
+    it.skipIf(process.platform === 'win32')('retains the fenced group leader until same-group descendants are gone', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-group-leader-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const descendant = join(directory, 'descendant')
+        const script = [
+            "const { spawn } = require('node:child_process')",
+            "const { writeFileSync } = require('node:fs')",
+            `const child = spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)")}], { stdio: 'ignore' })`,
+            'child.unref()',
+            `writeFileSync(${JSON.stringify(descendant)}, String(child.pid))`,
+        ].join(';')
+        const outcome = await executeProbe(nodeStep('fenced-group-leader', script, {
+            executionFence: { attemptId, markerPath: join(directory, 'executor.json'),
+                socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) },
+        }))
+        const descendantPid = Number(readFileSync(descendant, 'utf8'))
+        expect(outcome).toMatchObject({ kind: 'complete', receipt: expect.any(Object) })
+        expect(() => process.kill(descendantPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+    })
+
+    it.skipIf(process.platform === 'win32')('stops the action group and leaves durable repair evidence when the supervisor pipe is lost', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-pipe-loss-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const action = join(directory, 'action')
+        const descendant = join(directory, 'descendant')
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const script = [
+            "const { spawn } = require('node:child_process')",
+            "const { writeFileSync } = require('node:fs')",
+            `writeFileSync(${JSON.stringify(action)}, String(process.pid))`,
+            `const child = spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)")}], { stdio: 'ignore' })`,
+            `writeFileSync(${JSON.stringify(descendant)}, String(child.pid))`,
+            "process.on('SIGTERM', () => {})",
+            'setInterval(() => {}, 1000)',
+        ].join(';')
+        const execution = executeProbe(nodeStep('fenced-pipe-loss', script, { timeoutMs: 30_000, executionFence: fence }))
+        let actionPid: number | undefined
+        let descendantPid: number | undefined
+        try {
+            await waitForPath(action)
+            await waitForPath(descendant)
+            actionPid = Number(readFileSync(action, 'utf8'))
+            descendantPid = Number(readFileSync(descendant, 'utf8'))
+            const marker = JSON.parse(readFileSync(fence.markerPath, 'utf8')) as { supervisorPid: number }
+            process.kill(marker.supervisorPid, 'SIGKILL')
+            await execution
+
+            expect(await waitForProcessGone(actionPid)).toBe(true)
+            expect(await waitForProcessGone(descendantPid)).toBe(true)
+            const repaired = await repairFencedExecution(fence)
+            expect(repaired.kind).toBe('complete')
+            if (repaired.kind !== 'complete') throw new Error('pipe-loss repair unavailable')
+            expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(true)
+            await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+        } finally {
+            for (const pid of [actionPid, descendantPid]) {
+                if (pid !== undefined) try { process.kill(pid, 'SIGKILL') } catch { /* already stopped */ }
+            }
+        }
+    })
+
+    it.skipIf(process.platform === 'win32')('stops the action even when pipe-loss evidence cannot be published', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-pipe-loss-refusal-'))
+        scratch.push(directory)
+        const attemptId = sha256(directory)
+        const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+        const effect = join(directory, 'effect')
+        const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+        const execution = executeProbe(nodeStep('fenced-pipe-loss-refusal', [
+            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
+            "process.on('SIGTERM', () => {})",
+            'setInterval(() => {}, 1000)',
+        ].join(';'), { timeoutMs: 30_000, executionFence: fence }))
+        let actionPid: number | undefined
+        try {
+            await waitForPath(effect)
+            actionPid = Number(readFileSync(effect, 'utf8'))
+            const marker = JSON.parse(readFileSync(fence.markerPath, 'utf8')) as { supervisorPid: number }
+            chmodSync(directory, 0o500)
+            process.kill(marker.supervisorPid, 'SIGKILL')
+            await execution
+
+            expect(await waitForProcessGone(actionPid)).toBe(true)
+            chmodSync(directory, 0o700)
+            await expect(repairFencedExecution(fence)).resolves.toEqual({
+                kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
+            })
+        } finally {
+            chmodSync(directory, 0o700)
+            if (actionPid !== undefined) try { process.kill(actionPid, 'SIGKILL') } catch { /* already stopped */ }
+        }
+    })
+
     it('treats a live silent foreground process as active and confirms its process group is gone', async () => {
         const resolved = await resolveExecutablePath(process.execPath)
         expect(resolved.state).toBe('available')

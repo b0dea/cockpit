@@ -445,7 +445,14 @@ export interface ExecutionStep {
     expected: readonly ExpectedObservation[]
     consumedFiles: readonly ConsumedFile[]
     filesystemChecks: readonly FilesystemCheck[]
+    executionFence?: ExecutionFence
     compensation: readonly ExecutionStep[]
+}
+
+export interface ExecutionFence {
+    readonly attemptId: string
+    readonly markerPath: string
+    readonly socketPath: string
 }
 
 export interface ExecutionPlan {
@@ -588,8 +595,10 @@ interface ExecutionTraversal { count: number; readonly ids: Set<string> }
 function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: ExecutionTraversal): ExecutionStep | undefined {
     if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
     const item = snapshot as unknown as ExecutionStep
-    if (!(exactKeys(snapshot, ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation'])
-        || exactKeys(snapshot, ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'spawnNotAfter', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation']))
+    const baseKeys = ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation']
+    const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter', item.executionFence === undefined ? undefined : 'executionFence']
+        .filter((key): key is string => key !== undefined)
+    if (!exactKeys(snapshot, [...baseKeys, ...optionalKeys])
         || typeof item.id !== 'string' || item.id.length === 0 || item.id.includes('\0') || traversal.count >= 256
         || traversal.ids.has(item.id) || !stringTuple(item.argv) || typeof item.argv0 !== 'string' || item.argv0.length === 0 || item.argv0.includes('\0')
         || item.argv[0].length === 0 || !canonicalPaths([item.cwd]) || !stringRecord(item.env)
@@ -600,6 +609,10 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
         || !Array.isArray(item.ports) || new Set(item.ports).size !== item.ports.length || item.ports.some((port) => !Number.isSafeInteger(port) || port < 1 || port > 65_535)
         || !stringRecord(item.labels) || !expectedObservations(item.expected) || !consumedFiles(item.consumedFiles, item.argv)
         || !filesystemChecks(item.filesystemChecks) || item.filesystemChecks.some((check) => item.consumedFiles.some((file) => file.path === check.path))
+        || item.executionFence !== undefined && (!exactKeys(item.executionFence, ['attemptId', 'markerPath', 'socketPath'])
+            || typeof item.executionFence.attemptId !== 'string' || !/^[a-f0-9]{64}$/.test(item.executionFence.attemptId)
+            || !canonicalPaths([item.executionFence.markerPath, item.executionFence.socketPath])
+            || item.executionFence.markerPath === item.executionFence.socketPath || Buffer.byteLength(item.executionFence.socketPath) > 103)
         || !Array.isArray(item.compensation) || item.argv.length > 1_024 || Object.keys(item.env).length > 1_024 || Object.keys(item.labels).length > 1_024
         || item.paths.length > 1_024 || item.ports.length > 1_024 || item.expected.length > 1_024
         || item.consumedFiles.length > 1_024 || item.filesystemChecks.length > 1_024 || item.compensation.length > 1_024

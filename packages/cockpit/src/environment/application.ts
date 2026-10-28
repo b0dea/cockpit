@@ -5,7 +5,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url'
 import {
     authenticatedExecutionOutcome,
+    cleanupFencedExecution,
     executeProbe,
+    repairFencedExecution,
     type ExecutePlanOutcome,
     type ExecuteProbeOutcome,
     type ForegroundProcessInput,
@@ -20,6 +22,7 @@ import {
     type ExecutionPlan,
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
+    type ExecutionFence,
     type ExecutionStep,
     type HolderId,
     type LifecycleProgress,
@@ -157,6 +160,7 @@ import {
     finalizeDrainOutcome,
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
+    settleInterruptedDrainRepair,
     prepareDrainOutcomePublication,
     recoverDrainReservation,
     recoverSleepDrainReservation,
@@ -3122,11 +3126,23 @@ export async function runSleep(
         )
     }
     const context = loaded.result
-    const recovery = await inspectSleepDrainRecovery({
+    let recovery = await inspectSleepDrainRecovery({
         namespace: context.namespace,
         stackId: context.stackId,
         holderId: context.holderId,
     })
+    if (recovery.kind === 'repairable') {
+        const terminated = await repairFencedExecution(recovery.fence)
+        if (terminated.kind !== 'complete') return repairRequired(context)
+        const repaired = await settleInterruptedDrainRepair({ authority: recovery.authority, evidence: terminated.evidence })
+        if (repaired.kind !== 'complete') return repairRequired(context)
+        if (!await cleanupFencedExecution(recovery.fence)) return lifecycleRefusal(
+            ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
+            'the interrupted sleep executor stopped but its durable execution fence could not be removed',
+            recovery.fence.markerPath,
+        )
+        recovery = await inspectSleepDrainRecovery({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId })
+    }
     if (recovery.kind === 'refusal') return {
         kind: 'refusal', status: 2, result: null,
         diagnostics: recovery.diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED
@@ -3236,13 +3252,15 @@ export async function runSleep(
         )
         const stop = createRuntimeStopPlan({ topology: issuance.topology, attempt: attempted.authority })
         if (stop.kind !== 'planned') return repairRequired(context)
+        const fence = stop.step.executionFence
+        if (!fence) return repairRequired(context)
         const stopped = await adapters.execute(stop.step)
         if (stopped.kind === 'refusal') {
             const failure = admitRuntimeStopFailure({ plan: stop, outcome: stopped })
             if (failure.kind !== 'complete') return repairRequired(context)
             const authority = consumeRuntimeStopFailure(failure.authority)
             if (!authority) return repairRequired(context)
-            const finalized = await publishDrainOutcome(context, authority)
+            const finalized = await publishDrainOutcome(context, authority, fence)
             return finalized ?? lifecycleRefusal(stopped.code, 'runtime stop did not start', context.stackId)
         }
         const observationPlan = createRuntimeStopObservationPlan({ plan: stop, outcome: stopped })
@@ -3258,7 +3276,7 @@ export async function runSleep(
             planned.request.generation,
         )
         if (invalidated) return invalidated
-        const finalized = await publishDrainOutcome(context, authority)
+        const finalized = await publishDrainOutcome(context, authority, fence)
         if (finalized) return finalized
         return {
             kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
@@ -3321,6 +3339,7 @@ async function invalidateCompletedLifecycle(
 async function publishDrainOutcome(
     context: LifecycleRunContext,
     authority: DrainOutcomeAuthority,
+    fence: ExecutionFence,
 ): Promise<SleepCommandResult | undefined> {
     const publication = await prepareDrainOutcomePublication({
         authority,
@@ -3345,7 +3364,12 @@ async function publishDrainOutcome(
         publication,
         address: context.namespace.paths.coordination(context.stackId),
     })
-    return finalized ? undefined : repairRequired(context)
+    if (!finalized) return repairRequired(context)
+    return await cleanupFencedExecution(fence) ? undefined : lifecycleRefusal(
+        ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
+        'the drain outcome was published but its durable execution fence could not be removed',
+        fence.markerPath,
+    )
 }
 
 function exactCommandConfigPath(input: unknown): string | undefined {
@@ -3455,8 +3479,9 @@ function destructiveRepairAfterObservation(
 async function publishDestructiveOutcome(
     context: DestructiveRunContext,
     authority: DrainOutcomeAuthority,
+    fence: ExecutionFence,
 ): Promise<Extract<DownCommandResult, { kind: 'refusal' }> | undefined> {
-    const result = await publishDrainOutcome(context, authority)
+    const result = await publishDrainOutcome(context, authority, fence)
     return result?.kind === 'refusal' ? result : undefined
 }
 
@@ -3465,23 +3490,26 @@ async function executeRuntimeDrain(
     adapters: DestructiveCommandAdapters,
     topology: RuntimeTopologyEvidence,
     attempt: Awaited<ReturnType<typeof reserveDrainAttempt>>,
-): Promise<DrainOutcomeAuthority | Extract<DownCommandResult, { kind: 'refusal' }>> {
+): Promise<{ readonly authority: DrainOutcomeAuthority; readonly fence: ExecutionFence } | Extract<DownCommandResult, { kind: 'refusal' }>> {
     if (attempt.kind !== 'complete') return destructiveRefusal(attempt.diagnostics)
     const stop = createRuntimeStopPlan({ topology, attempt: attempt.authority })
     if (stop.kind !== 'planned') return destructiveRepairRequired(context)
+    const fence = stop.step.executionFence
+    if (!fence) return destructiveRepairRequired(context)
     const outcome = await adapters.execute(stop.step)
     if (outcome.kind === 'refusal') {
         const failure = admitRuntimeStopFailure({ plan: stop, outcome })
         if (failure.kind !== 'complete') return destructiveRepairRequired(context)
         const authority = consumeRuntimeStopFailure(failure.authority)
-        return authority ?? destructiveRepairRequired(context)
+        return authority ? Object.freeze({ authority, fence }) : destructiveRepairRequired(context)
     }
     const observationPlan = createRuntimeStopObservationPlan({ plan: stop, outcome })
     if (observationPlan.kind !== 'planned') return destructiveRepairRequired(context)
     const observed = await adapters.execute(observationPlan.step)
     const admitted = admitRuntimeStopped({ plan: observationPlan, outcome: observed })
     if (admitted.kind !== 'complete') return destructiveRepairRequired(context)
-    return consumeRuntimeStopped(admitted.authority) ?? destructiveRepairRequired(context)
+    const authority = consumeRuntimeStopped(admitted.authority)
+    return authority ? Object.freeze({ authority, fence }) : destructiveRepairRequired(context)
 }
 
 async function executeDestructivePlan(
@@ -3506,7 +3534,7 @@ async function executeDestructivePlan(
         const runtimeAttempt = await reserveDrainAttempt({ namespace: context.namespace, authority: reserved.authority })
         const runtimeOutcome = await executeRuntimeDrain(context, adapters, issuance.topology, runtimeAttempt)
         if ('kind' in runtimeOutcome) return runtimeOutcome
-        const runtimePublished = await publishDestructiveOutcome(context, runtimeOutcome)
+        const runtimePublished = await publishDestructiveOutcome(context, runtimeOutcome.authority, runtimeOutcome.fence)
         if (runtimePublished) return runtimePublished
     }
 
@@ -3525,7 +3553,9 @@ async function executeDestructivePlan(
             if (admitted.kind !== 'complete') return destructiveRepairRequired(context)
             const authority = consumeReclaimFailure(admitted.authority)
             if (!authority) return destructiveRepairRequired(context)
-            const published = await publishDestructiveOutcome(context, authority)
+            const fence = execution.step.executionFence
+            if (!fence) return destructiveRepairRequired(context)
+            const published = await publishDestructiveOutcome(context, authority, fence)
             return published ?? destructiveRefusal(Object.freeze([Object.freeze({
                 severity: 'error', code: outcome.code,
                 message: 'destructive action did not start', target: context.stackId,
@@ -3541,7 +3571,9 @@ async function executeDestructivePlan(
         if (reconciled.kind === 'refusal' || reconciled.authority === null) return destructiveRepairRequired(context)
         const authority = consumeReclaimCompleted(reconciled.authority)
         if (!authority) return destructiveRepairRequired(context)
-        const published = await publishDestructiveOutcome(context, authority)
+        const fence = execution.step.executionFence
+        if (!fence) return destructiveRepairRequired(context)
+        const published = await publishDestructiveOutcome(context, authority, fence)
         if (published) return published
         if (reconciled.continuation === null) {
             plan = Object.freeze({ ...plan, actionAuthority: null, continuation: null, remaining: 0 })
@@ -3616,6 +3648,22 @@ async function prepareDown(
     return { runtime: previewObservation.runtime, ports: previewObservation.ports, observation, preview }
 }
 
+async function inspectDestructiveRecoveryWithRepair(context: DestructiveRunContext, purpose: 'down' | 'reset') {
+    let inspection = await inspectDestructiveDrainRecovery({
+        namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, purpose,
+    })
+    if (inspection.kind !== 'repairable') return inspection
+    const terminated = await repairFencedExecution(inspection.fence)
+    if (terminated.kind !== 'complete') return inspection
+    const repaired = await settleInterruptedDrainRepair({ authority: inspection.authority, evidence: terminated.evidence })
+    if (repaired.kind !== 'complete') return inspection
+    if (!await cleanupFencedExecution(inspection.fence)) return inspection
+    inspection = await inspectDestructiveDrainRecovery({
+        namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, purpose,
+    })
+    return inspection
+}
+
 export async function runDown(
     input: DownCommandInput,
     adapters: DownCommandAdapters,
@@ -3627,10 +3675,9 @@ export async function runDown(
     if ('diagnostics' in prepared) return prepared
     const projection = projectTeardownActionTargets(prepared.preview)
     if (!projection) return destructivePreconditionRefusal(context, undefined)
-    const inspection = await inspectDestructiveDrainRecovery({
-        namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, purpose: 'down',
-    })
+    const inspection = await inspectDestructiveRecoveryWithRepair(context, 'down')
     if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
+    if (inspection.kind === 'repairable') return destructiveRepairRequired(context)
     const persistedRequest = inspection.kind === 'recoverable' ? inspection.request : undefined
     const basis = destructivePlanningBasis(persistedRequest)
     const lifecycle = planDown({
@@ -3737,10 +3784,7 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
         if (noop.kind !== 'complete' || !noop.noop || noop.actionAuthority !== null) {
             return noop.kind === 'refusal' ? destructiveRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
         }
-        const inspection = await inspectDestructiveDrainRecovery({
-            namespace: session.context.namespace, stackId: session.context.stackId,
-            holderId: session.context.holderId, purpose: 'reset',
-        })
+        const inspection = await inspectDestructiveRecoveryWithRepair(session.context, 'reset')
         if (inspection.kind !== 'none') return inspection.kind === 'refusal'
             ? destructiveRefusal(inspection.diagnostics) : destructiveRepairRequired(session.context)
         return Object.freeze({
@@ -3748,11 +3792,9 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
             result: Object.freeze({ stackId: session.context.stackId, change: 'unchanged' }),
         })
     }
-    const inspection = await inspectDestructiveDrainRecovery({
-        namespace: session.context.namespace, stackId: session.context.stackId,
-        holderId: session.context.holderId, purpose: 'reset',
-    })
+    const inspection = await inspectDestructiveRecoveryWithRepair(session.context, 'reset')
     if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
+    if (inspection.kind === 'repairable') return destructiveRepairRequired(session.context)
     const persistedRequest = inspection.kind === 'recoverable' ? inspection.request : undefined
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: session.context.namespace, request: persistedRequest })

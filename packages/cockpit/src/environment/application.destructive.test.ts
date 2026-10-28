@@ -16,6 +16,11 @@ import type { ExecutionStep, StackId } from './contract.js'
 import { createMachineFloorPlan, collectMachineFloorEvidence, issueMachineFloorAuthority } from './runtime.js'
 import { observeHostCapacity } from './host-observation.js'
 import { projectMachineFloorConfig } from '../config/load.js'
+const executionFence = (id: string) => {
+    const attemptId = createHash('sha256').update(`${process.pid}:${id}`).digest('hex')
+    const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+    return { attemptId, markerPath: join(tmpdir(), `cockpit-test-${attemptId}.json`), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+}
 type LifecycleOverrides = Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'planAdmittedUp' | 'planSleep' | 'planDown' | 'planResetLifecycle' | 'consumeLifecycleIssuance'>>
 type RuntimeOverrides = Partial<Pick<typeof import('./runtime.js'),
     | 'createRuntimeServicePlan' | 'createRuntimeServiceHealthPlan'
@@ -589,7 +594,7 @@ describe('destructive application contracts', () => {
             events.push('attempt')
             return { kind: 'complete', authority: Object.freeze({}) } as never
         }
-        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'runtime-stop' } }) as never
+        applicationOwners.runtime.createRuntimeStopPlan = () => ({ kind: 'planned', step: { id: 'runtime-stop', executionFence: executionFence('reset-stop') } }) as never
         applicationOwners.runtime.createRuntimeStopObservationPlan = () => ({ kind: 'planned', step: { id: 'runtime-observe' } }) as never
         applicationOwners.runtime.admitRuntimeStopped = () => ({ kind: 'complete', authority: Object.freeze({}) }) as never
         applicationOwners.runtime.consumeRuntimeStopped = () => Object.freeze({}) as never
@@ -675,7 +680,7 @@ describe('destructive application contracts', () => {
         }
         applicationOwners.reclaim.redeemReclaimAction = async () => {
             events.push('redeem')
-            return { step: { id: 'reclaim' }, authority: {} } as never
+            return { step: { id: 'reclaim', executionFence: executionFence('recovered-down') }, authority: {} } as never
         }
         applicationOwners.reclaim.reconcileReclaimAction = () => ({
             kind: 'complete', continuation: null, authority: {},
@@ -759,7 +764,7 @@ describe('destructive application contracts', () => {
         }) as never
         applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
         applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
-        applicationOwners.reclaim.redeemReclaimAction = async () => ({ step: { id: 'reclaim' }, authority: {} }) as never
+        applicationOwners.reclaim.redeemReclaimAction = async () => ({ step: { id: 'reclaim', executionFence: executionFence('reclaim-loop') }, authority: {} }) as never
         const continuation = Object.freeze({})
         let reconciliations = 0
         applicationOwners.reclaim.reconcileReclaimAction = ({ discovery }) => {
@@ -824,7 +829,7 @@ describe('destructive application contracts', () => {
         }
         applicationOwners.reclaim.redeemReclaimAction = async () => {
             events.push('redeem')
-            return { step: { id: 'reclaim' }, authority: {} } as never
+            return { step: { id: 'reclaim', executionFence: executionFence('recovered-reset') }, authority: {} } as never
         }
         applicationOwners.reclaim.reconcileReclaimAction = () => {
             events.push('reconcile')
