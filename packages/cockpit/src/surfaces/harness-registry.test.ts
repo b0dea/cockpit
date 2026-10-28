@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
     GUARD_SURFACE_TARGETS,
     HARNESS_REGISTRY,
+    SURFACE_EXECUTION_CONTROL_PATHS,
     SURFACE_PUBLICATION_ANCHORS,
     SURFACE_TARGETS,
     type GuardSurfaceTarget,
@@ -33,6 +34,11 @@ describe('shipped harness registry', () => {
         ])
         expect(GUARD_SURFACE_TARGETS).toEqual(['claudecode', 'codexcli', 'opencode'])
         expect(SURFACE_PUBLICATION_ANCHORS).toEqual(['.agents', '.claude', '.codex', '.cursor', '.grok', '.opencode'])
+        expect(SURFACE_EXECUTION_CONTROL_PATHS).toEqual([
+            '.claude/settings.json', '.codex/config.toml', '.cursor/cli.json', '.cursor/mcp.json',
+            '.grok/config.toml', '.mcp.json', 'opencode.jsonc',
+        ])
+        expect(Object.isFrozen(SURFACE_EXECUTION_CONTROL_PATHS)).toBe(true)
         expect(Object.isFrozen(HARNESS_REGISTRY)).toBe(true)
         expect(HARNESS_REGISTRY.every(row => Object.isFrozen(row) && Object.isFrozen(row.outputs)
             && Object.isFrozen(row.outputs.permissions)

@@ -6,6 +6,7 @@ import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
 import { classifyReadOnlyInvocation, type ReadOnlyAccess } from './read-only.js'
+import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 
 export const mechanism = {
     id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts', exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'guardIdentity'],
@@ -70,15 +71,13 @@ export interface GuardDecision {
 // An agent able to rewrite any of these can switch the guard off, grant itself commands or run code
 // when a harness starts: the published guard transport, every harness registration that launches it,
 // the manifest that authenticates both, Claude's local settings, where `disableAllHooks` would switch
-// the hook off, the generated MCP server declarations, the generated Codex and OpenCode configurations,
-// and the generated Codex command rules. These spellings match the restriction expansion, the guard
-// application and the generated surface outputs. An adopted copy of a registration or configuration
-// file is merged into it on the next sync, so it is a control too.
+// the hook off, and every registry-owned native MCP or permission output. These spellings match the
+// restriction expansion, the guard application and the generated surface outputs. An adopted copy
+// of a registration or configuration file is merged into it on the next sync, so it is a control too.
 const GUARD_CONTROL_FILES = [
     '.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json',
-    '.claude/settings.json', '.claude/settings.local.json', '.mcp.json',
-    '.codex/hooks.json', '.codex/config.toml', '.codex/rules/rulesync.rules',
-    'opencode.json', 'opencode.jsonc',
+    ...SURFACE_EXECUTION_CONTROL_PATHS,
+    '.claude/settings.local.json', '.codex/hooks.json', 'opencode.json',
     'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml',
 ] as const
 // OpenCode loads every module in its plugin directories at start, and the generated Claude plugin
@@ -220,6 +219,125 @@ function gitInvocation(invocation: ParsedInvocation): GitInvocation | undefined 
 
 const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash'])
 
+interface TransferOperands { readonly sources: readonly string[]; readonly writes: readonly string[]; readonly uncertain: boolean }
+
+/** Visible source and destination paths for copy/install/move without inferring filesystem state. */
+function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly string[]): TransferOperands {
+    const operands: string[] = []
+    let targetDirectory: string | undefined
+    let noTargetDirectory = false
+    let installDirectories = false
+    let uncertain = false
+    let options = true
+    const plainShort = command === 'cp' ? 'afHiLlnPpRrsvXx' : command === 'mv' ? 'fhinuv' : 'bCcpSsUv'
+    const valueShort = command === 'install' ? new Set(['f', 'g', 'm', 'o', 'M', 'h', 'B', 'l', 'N']) : new Set<string>()
+    const plainLong = new Set(command === 'cp' ? ['archive', 'force', 'interactive', 'link', 'no-clobber', 'no-dereference', 'preserve', 'recursive', 'reflink', 'remove-destination', 'sparse', 'symbolic-link', 'update', 'verbose']
+        : command === 'mv' ? ['force', 'interactive', 'no-clobber', 'no-target-directory', 'update', 'verbose']
+            : ['backup', 'compare', 'directory', 'preserve-timestamps', 'strip', 'verbose'])
+    const valueLong = new Set(command === 'install' ? ['group', 'mode', 'owner', 'suffix'] : ['suffix'])
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (options && arg === '--') { options = false; continue }
+        if (options && (arg === '-t' || arg === '--target-directory')) {
+            targetDirectory = args[++index]
+            if (targetDirectory === undefined) uncertain = true
+            continue
+        }
+        if (options && arg.startsWith('--target-directory=')) {
+            targetDirectory = arg.slice('--target-directory='.length)
+            if (!targetDirectory) uncertain = true
+            continue
+        }
+        if (options && (arg === '-T' || arg === '--no-target-directory')) { noTargetDirectory = true; continue }
+        if (options && command === 'install' && (arg === '-d' || arg === '--directory')) { installDirectories = true; continue }
+        if (options && arg.startsWith('--')) {
+            const [option, attached] = arg.slice(2).split(/=(.*)/s)
+            if (valueLong.has(option!)) {
+                if (attached === undefined && args[++index] === undefined) uncertain = true
+            } else if (!plainLong.has(option!)) uncertain = true
+            if (command === 'cp' && ['recursive', 'archive'].includes(option!)) uncertain = true
+            continue
+        }
+        if (options && arg.startsWith('-') && arg !== '-') {
+            const letters = arg.slice(1)
+            const valueAt = [...letters].findIndex(letter => valueShort.has(letter))
+            if (valueAt >= 0) {
+                if (valueAt !== letters.length - 1) uncertain = true
+                else if (args[++index] === undefined) uncertain = true
+            } else if ([...letters].some(letter => !plainShort.includes(letter))) uncertain = true
+            if (command === 'cp' && /[Rr]/.test(letters)) uncertain = true
+            continue
+        }
+        operands.push(arg)
+    }
+    if (installDirectories) return { sources: [], writes: operands, uncertain: uncertain || targetDirectory !== undefined || noTargetDirectory }
+    if (targetDirectory !== undefined) return {
+        sources: operands,
+        writes: [targetDirectory, ...operands.map(source => posix.join(targetDirectory!, posix.basename(source)))],
+        uncertain: uncertain || noTargetDirectory,
+    }
+    if (operands.length < 2) return { sources: [], writes: [], uncertain: true }
+    const sources = operands.slice(0, -1)
+    const destination = operands.at(-1)!
+    return {
+        sources,
+        writes: [destination, ...(!noTargetDirectory ? sources.map(source => posix.join(destination, posix.basename(source))) : [])],
+        uncertain,
+    }
+}
+
+interface VisibleWrites { readonly paths: readonly string[]; readonly uncertain: boolean }
+
+/** Destinations exposed directly by bounded filesystem writer grammars. */
+function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined {
+    if (invocation.executable === null) return undefined
+    const name = posix.basename(invocation.executable)
+    if (name === 'cp' || name === 'install' || name === 'mv') {
+        const transfer = transferOperands(name, invocation.argv)
+        return { paths: transfer.writes, uncertain: transfer.uncertain }
+    }
+    if (name === 'dd') {
+        const paths = invocation.argv.filter(arg => arg.startsWith('of=')).map(arg => arg.slice(3)).filter(Boolean)
+        return { paths, uncertain: invocation.argv.some(arg => !/^[a-z_]+=/i.test(arg)) }
+    }
+    const scan = (plain: Set<string>, valued: Set<string>) => {
+        const operands: string[] = []
+        let uncertain = false
+        let options = true
+        for (let index = 0; index < invocation.argv.length; index++) {
+            const arg = invocation.argv[index]!
+            if (options && arg === '--') { options = false; continue }
+            if (options && arg.startsWith('-') && arg !== '-') {
+                const option = arg.split('=')[0]!
+                if (valued.has(option)) {
+                    if (!arg.includes('=') && invocation.argv[++index] === undefined) uncertain = true
+                } else if (option.startsWith('--') ? !plain.has(option) : [...option.slice(1)].some(letter => !plain.has(`-${letter}`))) uncertain = true
+                continue
+            }
+            operands.push(arg)
+        }
+        return { operands, uncertain }
+    }
+    if (name === 'tee') {
+        const result = scan(new Set(['-a', '-i', '-p', '--append', '--ignore-interrupts', '--output-error']), new Set())
+        return { paths: result.operands, uncertain: result.uncertain }
+    }
+    if (name === 'touch') {
+        const result = scan(new Set(['-a', '-c', '-h', '-m', '--no-create']), new Set(['-A', '-d', '-r', '-t', '--date', '--reference', '--time']))
+        return { paths: result.operands, uncertain: result.uncertain }
+    }
+    if (name === 'truncate') {
+        const result = scan(new Set(['-c', '--no-create']), new Set(['-r', '-s', '--reference', '--size']))
+        return { paths: result.operands, uncertain: result.uncertain }
+    }
+    if (name === 'chmod') {
+        const result = scan(new Set(['-f', '-h', '-v', '-R', '-H', '-L', '-P', '-E', '-C', '-N', '-i', '-I']), new Set(['--reference']))
+        const hasMode = result.operands.length > 1 && /^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxXstugo,]+)$/.test(result.operands[0]!)
+        return { paths: result.operands.slice(hasMode ? 1 : 0), uncertain: result.uncertain || result.operands.length === 0 }
+    }
+    return undefined
+}
+
 /** Paths an invocation deletes or renames away; undefined when it does neither. */
 function removedOperands(invocation: ParsedInvocation, git: GitInvocation | undefined): { readonly cwd: string; readonly paths: readonly string[] } | undefined {
     if (invocation.executable === null) return undefined
@@ -228,20 +346,15 @@ function removedOperands(invocation: ParsedInvocation, git: GitInvocation | unde
         const end = args.indexOf('--')
         return [...(end < 0 ? args : args.slice(0, end)).filter((arg) => !arg.startsWith('-')), ...(end < 0 ? [] : args.slice(end + 1))]
     }
-    // `mv a b` renames a; `mv -t dir a b` moves every operand.
-    const sources = (args: readonly string[]) => {
-        const operands = positionals(args)
-        return args.some((arg) => arg === '-t' || arg.startsWith('--target-directory')) ? operands : operands.slice(0, -1)
-    }
     if (REMOVERS.has(name)) return { cwd: invocation.cwd, paths: positionals(invocation.argv) }
-    if (name === 'mv') return { cwd: invocation.cwd, paths: sources(invocation.argv) }
+    if (name === 'mv') return { cwd: invocation.cwd, paths: transferOperands('mv', invocation.argv).sources }
     if (name === 'find' && invocation.argv.includes('-delete')) {
         const roots = []
         for (const arg of invocation.argv) { if (arg.startsWith('-') || arg === '!' || arg === '(') break; roots.push(arg) }
         return { cwd: invocation.cwd, paths: roots.length ? roots : ['.'] }
     }
     if (git?.verb === 'rm') return { cwd: git.cwd, paths: positionals(git.args) }
-    if (git?.verb === 'mv') return { cwd: git.cwd, paths: sources(git.args) }
+    if (git?.verb === 'mv') return { cwd: git.cwd, paths: positionals(git.args).slice(0, -1) }
     return undefined
 }
 
@@ -332,7 +445,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             && Array.isArray(evidence.ancestors) && evidence.ancestors.every(identity) ? evidence : undefined
     }
     let pathCount = input.paths.length + input.invocations.reduce((sum, item) => sum + item.redirects.length, 0)
-    const inspectPath = (request: PathInspectionRequest) => {
+    const inspectPath = (request: PathInspectionRequest, controlCoverage = false) => {
         if (!scalar(request.path) || Buffer.byteLength(request.path) > GUARD_INPUT_LIMITS.pathBytes || !canonical(request.cwd)) {
             hold(unavailable('Guard path or working directory is malformed.'))
             return
@@ -367,17 +480,43 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const { is, below, covers } = evidenceFacts(evidence)
         if (below(secretRoot) || staging && covers(secretRoot)) hold(secretDenial)
         if (resolved.instances.some((item) => is(item.path) || staging && covers(item.path))) hold(instanceDenial)
-        if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below))) hold(controlDenial)
+        if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
+            || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
     }
-    // Removal is a hard boundary on the two files every guarded call reads. Missing or escaped
-    // evidence never softens a decision here: the spelling check alone already denies.
+    // Removing a control, anything below a control directory, or a directory containing one can
+    // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
     const inspectRemoval = (path: string, cwd: string) => {
         if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return
         const lexical = posix.resolve(cwd, path)
         if (structural.some((target) => within(fold(target), fold(lexical)))) { hold(structuralDenial); return }
+        if (controlFiles.some((target) => within(fold(target), fold(lexical)))
+            || controlDirectories.some((target) => within(fold(target), fold(lexical)) || within(fold(lexical), fold(target)))) {
+            hold(controlDenial)
+            return
+        }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
         const evidence = resolvedEvidence({ path, cwd, operation: 'remove' })
-        if (evidence && structural.some(evidenceFacts(evidence).covers)) hold(structuralDenial)
+        if (!evidence) return
+        const { below, covers } = evidenceFacts(evidence)
+        if (structural.some(covers)) { hold(structuralDenial); return }
+        if (controlFiles.some(covers) || controlDirectories.some((target) => covers(target) || below(target))) hold(controlDenial)
+    }
+    const inspectPossibleControlOperand = (path: string, cwd: string) => {
+        if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return
+        const lexical = posix.resolve(cwd, path)
+        if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
+        const folded = fold(lexical)
+        if (controlFiles.some((target) => folded === fold(target))
+            || controlDirectories.some((target) => within(folded, fold(target)))) {
+            hold(unavailable('Invocation names a guard control but its filesystem effect is not classified.'))
+            return
+        }
+        const evidence = resolvedEvidence({ path, cwd, operation: 'write' })
+        if (!evidence) return
+        const { is, below } = evidenceFacts(evidence)
+        if (controlFiles.some(is) || controlDirectories.some(below)) {
+            hold(unavailable('Invocation names a guard control but its filesystem effect is not classified.'))
+        }
     }
     // A read-only command is allowed only when every path it touches is evidenced inside the
     // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
@@ -409,6 +548,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return safe
     }
     const readOnly = new Set<ParsedInvocation>()
+    let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) inspectRemoval(path, input.cwd)
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })
@@ -430,6 +570,24 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) inspectRemoval(path, removed!.cwd)
         const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
+        const writes = git?.verb === 'mv' ? (() => {
+            const transfer = transferOperands('mv', git.args)
+            return { paths: transfer.writes, uncertain: transfer.uncertain }
+        })() : visibleWrites(invocation)
+        if (writes) {
+            for (const path of writes.paths) {
+                pathCount++
+                inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
+            }
+            if (writes.uncertain) hold(unavailable('Unsupported visible writer option.'))
+        } else if (!access) {
+            for (const arg of git?.args ?? invocation.argv) {
+                if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
+                    inspectPossibleControlOperand(arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, invocation.cwd)
+                }
+            }
+            if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))
+        }
         if (access && inspectReadOnly(access)) readOnly.add(invocation)
         if (!git) continue
         inspectPath({ path: git.cwd, cwd: invocation.cwd, operation: 'cwd' })

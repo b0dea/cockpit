@@ -69,6 +69,21 @@ session directory rather than from an enclosing Git repository. Native enforceme
 the paired probes in the
 [capability matrix](capability-matrix.md); generating a hook alone does not establish it.
 
+Removing, renaming or directly overwriting a guard control is also a hard denial, as is removing a
+directory that contains one or an executable control below a protected plugin directory. The
+protected files include every harness's native MCP and permission outputs derived from the shipped
+harness registry. Otherwise an exact command allow could disable a hook or change a program that a
+harness starts before the next guarded call. This boundary follows folded path spellings and
+authenticated filesystem identities, so alternate case and aliases do not bypass it.
+
+The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `git mv`, `tee`,
+`dd`, `touch`, `truncate` and `chmod` forms. An unsupported option is unavailable, and an
+unclassified non-read-only command that visibly names a control is unavailable before declared
+allows. This screening does not inspect arbitrary approved script bodies; such a script remains
+authority granted by its exact command contract, not a filesystem sandbox. To restore or
+intentionally replace generated controls, stop the guarded session and have a human run
+`cockpit sync --config cockpit.toml` in a terminal.
+
 Pushes to declared protected branches are hard denials. This includes explicit protected
 destinations and `git push --all` or `git push --mirror` when protected branches are declared. Missing or unresolved
 destinations, including ambiguous source-only revisions, symbolic aliases, and wildcards, require

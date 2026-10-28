@@ -1,7 +1,7 @@
 export const mechanism = {
     id: 'shipped-harness-registry',
     module: 'packages/cockpit/src/surfaces/harness-registry.ts',
-    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget'],
+    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_EXECUTION_CONTROL_PATHS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget'],
 } as const
 
 const pendingNative = (measuredOn: '2026-09-26') => Object.freeze({
@@ -59,6 +59,10 @@ export const SURFACE_TARGETS = Object.freeze(HARNESS_REGISTRY.map(row => row.tar
 export const GUARD_SURFACE_TARGETS = Object.freeze(HARNESS_REGISTRY
     .filter((row): row is Extract<HarnessRegistryRow, { readonly guard: { readonly capability: 'instructed' } }> => row.guard.capability === 'instructed')
     .map(row => row.target)) as readonly GuardSurfaceTarget[]
+// Native MCP and permission outputs can select executable programs or relax harness authority.
+// The guard derives its protected files from this owner so a new harness cannot omit the boundary.
+export const SURFACE_EXECUTION_CONTROL_PATHS = Object.freeze([...new Set(HARNESS_REGISTRY.flatMap(row =>
+    [row.outputs.mcp, ...row.outputs.permissions]))].sort())
 export const SURFACE_PUBLICATION_ANCHORS = Object.freeze([...new Set(HARNESS_REGISTRY.flatMap(row =>
     [row.outputs.instruction, row.outputs.skills, row.outputs.mcp, ...row.outputs.permissions]
         .filter(path => path.includes('/')).map(path => path.split('/')[0]!).filter(path => path.startsWith('.'))))].sort())

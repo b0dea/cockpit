@@ -297,8 +297,9 @@ describe('resolved guard evaluation', () => {
         const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
         const refusal = { decision: 'deny', reason: 'Refusing mutation of the guard, its hook registration or its ownership manifest.' }
         for (const path of ['.cockpit/guards/bash-guard.sh', '.cockpit/generated-environment-ownership.json', '.claude/settings.json',
-            '.claude/settings.local.json', '.mcp.json', '.codex/hooks.json', '.codex/config.toml', '.codex/rules/rulesync.rules',
-            'opencode.json', 'opencode.jsonc', '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
+            '.claude/settings.local.json', '.mcp.json', '.codex/hooks.json', '.codex/config.toml',
+            '.cursor/mcp.json', '.cursor/cli.json', '.grok/config.toml', 'opencode.json', 'opencode.jsonc',
+            '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
             '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json',
             'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
@@ -566,6 +567,7 @@ describe('built-in read-only profile', () => {
 
 describe('cockpit structure protection', () => {
     const removal = 'Refusing to delete, rename or truncate cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
+    const controlRemoval = 'Refusing mutation of the guard, its hook registration or its ownership manifest.'
     const patch = (body: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: root,
         tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` } }), policy(), inspect)
 
@@ -585,6 +587,102 @@ describe('cockpit structure protection', () => {
             return { status: 'resolved', path: resolved, symlink: false, identity: resolved.endsWith('/alias.toml') ? '7:5' : null, ancestors: [] }
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('rm alias.toml')), linked, facts)).toEqual({ decision: 'deny', reason: removal })
+    })
+
+    it('denies removal of every guard control file and directory despite declared command grants', () => {
+        for (const protection of GUARD_ROOT_PROTECTIONS.filter(({ path }) => path !== 'env/.secrets')) {
+            const target = protection.type === 'directory' ? `${protection.path}/installed-control` : protection.path
+            const configured = policy()
+            configured.declaredAllows.push({ argv: ['rm'], reason: 'Repository cleanup is declared safe.' })
+            expect(evaluateGuard(parseGuardInput(shellPayload(`rm -rf ${target}`)), configured, inspect), target)
+                .toEqual({ decision: 'deny', reason: protection.path === '.cockpit/generated-environment-ownership.json' ? removal : controlRemoval })
+        }
+    })
+
+    it('denies removal through command and patch forms, case variants and containing directories', () => {
+        const commands = [
+            'rm .codex/hooks.json', 'git rm .claude/settings.json', 'mv opencode.json archived.json', 'find .codex -delete',
+            'rm -rf .claude', 'rm -rf .opencode/plugin/installed-control', 'rm -rf cockpit/adopted', 'unlink .CODEX/HOOKS.JSON',
+        ]
+        for (const command of commands) {
+            const configured = policy()
+            configured.declaredAllows.push({ argv: [command.split(' ')[0]!], reason: 'Repository cleanup is declared safe.' })
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({ decision: 'deny', reason: controlRemoval })
+        }
+        expect(patch('*** Delete File: .mcp.json')).toEqual({ decision: 'deny', reason: controlRemoval })
+    })
+
+    it('denies visible writer destinations before declared command grants', () => {
+        const commands = [
+            'cp replacement .codex/hooks.json', 'cp replacement .CODEX/HOOKS.JSON', 'cp hooks.json .codex',
+            'cp -t .codex hooks.json', 'cp --target-directory=.codex hooks.json', 'cp --target-directory .codex hooks.json',
+            'install replacement .claude/settings.json', 'install -m 644 replacement .claude/settings.json',
+            'install -t .claude settings.json', 'tee .mcp.json', 'tee -a .cursor/mcp.json',
+            'mv replacement opencode.json', 'mv -t .grok config.toml', 'git mv replacement .grok/config.toml',
+            'dd if=replacement of=.codex/hooks.json', 'touch .claude/settings.json',
+            'truncate -s 0 .codex/config.toml', 'chmod 600 opencode.json',
+        ]
+        for (const command of commands) {
+            const configured = policy()
+            configured.declaredAllows.push({ argv: [command.split(' ')[0]!], reason: 'Repository file writing is declared safe.' })
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({ decision: 'deny', reason: controlRemoval })
+        }
+        const configured = policy()
+        configured.declaredAllows.push({ argv: ['cp'], reason: 'Repository file writing is declared safe.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('cp --parents src/file archive')), configured, inspect)).toEqual({
+            decision: 'unavailable', reason: 'Unsupported visible writer option.',
+        })
+    })
+
+    it('denies a visible writer destination that shares a guard control identity', () => {
+        const control = `${root}/.codex/hooks.json`
+        const alias = `${root}/notes/registration.json`
+        const directoryAlias = `${root}/notes/codex-copy`
+        const linked = policy()
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], { [control]: { identity: '7:8', ancestors: ['7:1', '7:2'] } })
+        linked.declaredAllows.push({ argv: ['cp'], reason: 'Repository file writing is declared safe.' })
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            return { status: 'resolved', path: resolved, symlink: false,
+                identity: resolved === alias ? '7:8' : resolved === directoryAlias ? '7:2' : null, ancestors: [] }
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('cp replacement notes/registration.json')), linked, facts)).toEqual({ decision: 'deny', reason: controlRemoval })
+        expect(evaluateGuard(parseGuardInput(shellPayload('cp -t notes/codex-copy hooks.json')), linked, facts)).toEqual({ decision: 'deny', reason: controlRemoval })
+        linked.declaredAllows.push({ argv: ['custom-mutator'], reason: 'The custom mutator is declared safe.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('custom-mutator notes/registration.json')), linked, facts)).toEqual({
+            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        })
+    })
+
+    it('does not let an unclassified command grant authorize a visible guard control operand', () => {
+        const configured = policy()
+        configured.declaredAllows.push({ argv: ['custom-mutator'], reason: 'The custom mutator is declared safe.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('custom-mutator .cursor/cli.json')), configured, inspect)).toEqual({
+            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        })
+    })
+
+    it('denies removing identity aliases of a control, its ancestor or its protected directory subtree', () => {
+        const control = `${root}/.codex/hooks.json`
+        const directory = `${root}/.opencode/plugin`
+        const linked = policy()
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], {
+            [control]: { identity: '7:8', ancestors: ['7:1', '7:2'] },
+            [directory]: { identity: '7:4', ancestors: ['7:1', '7:3'] },
+        })
+        linked.declaredAllows.push({ argv: ['rm'], reason: 'Repository cleanup is declared safe.' })
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            const aliases: IdentityFacts = {
+                [`${root}/notes/registration.json`]: { identity: '7:8', ancestors: [] },
+                [`${root}/notes/codex-copy`]: { identity: '7:2', ancestors: [] },
+                [`${root}/notes/plugin/control.js`]: { identity: null, ancestors: ['7:4'] },
+            }
+            return { status: 'resolved', path: resolved, symlink: false, ...(aliases[resolved] ?? { identity: null, ancestors: [] }) }
+        }
+        for (const command of ['rm notes/registration.json', 'rm -rf notes/codex-copy', 'rm notes/plugin/control.js']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), linked, facts), command).toEqual({ decision: 'deny', reason: controlRemoval })
+        }
     })
 
     it('keeps editing the configuration and removing ordinary files outside the boundary', () => {
