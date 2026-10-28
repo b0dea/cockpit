@@ -785,6 +785,7 @@ describe('operator-confirmed document completion', () => {
         } })
 
         expect(complete).toMatchObject({ kind: 'complete', status: 0, question: null })
+        expect(parseToml(defaults.artifact!)).toEqual(parseToml(complete.artifact!))
         expect(CockpitConfig.parse(parseToml(complete.artifact!)).guards).toMatchObject(guardHosts)
         const configPath = temporaryPath('cockpit.toml')
         writeFileSync(configPath, complete.artifact!)
@@ -887,6 +888,7 @@ describe('operator-confirmed document completion', () => {
                 confirmDefaults(defaults.question!)],
         } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
+        expect(parseToml(defaults.artifact!)).toEqual(parseToml(complete.artifact!))
         expect(complete.artifact).toContain('# Decision: seeded data: not declared')
         expect(complete.artifact).toContain('# Decision: signed-in users: not declared')
         const declared = await documentCommand({ ...base, configuration: {
@@ -1148,6 +1150,7 @@ describe('operator-confirmed document completion', () => {
         configuration.answers.push(confirmDefaults(pending.question!))
         const completed = await documentCommand({ root: estateRoot, configuration })
         expect(completed).toMatchObject({ kind: 'complete', status: 0 })
+        expect(parseToml(pending.artifact!)).toEqual(parseToml(completed.artifact!))
         expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED' }))
         expect(completed.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE' }))
         expect(completed.artifact).toMatch(/^# Decision: guards: the operator stated that no non-local environment/m)

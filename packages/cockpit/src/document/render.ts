@@ -48,11 +48,15 @@ function draftConfig(model: DocumentModel): Record<string, unknown> {
     }
 }
 
-export function renderIncompleteDocument(model: DocumentModel, schemaDirective: string): string {
-    const config = draftConfig(model)
+export function renderIncompleteDocument(
+    model: DocumentModel, schemaDirective: string, configuration?: CockpitConfig,
+): string {
+    const config = configuration ?? draftConfig(model)
     return [
         `#:schema ${schemaDirective}\n`,
-        '# COCKPIT DOCUMENT: INCOMPLETE DRAFT — this file intentionally fails validation.\n',
+        configuration
+            ? '# COCKPIT DOCUMENT: REVIEW DRAFT — confirm the inferred and default values before publication.\n'
+            : '# COCKPIT DOCUMENT: INCOMPLETE DRAFT — this file intentionally fails validation.\n',
         renderAttributions(model.attributions),
         emitGaps(model.gaps),
         emitToml(config as CockpitConfig),

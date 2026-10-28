@@ -734,10 +734,11 @@ function pendingConfiguration(
     model: DocumentModel,
     destination: string | null,
     question: DocumentConfigurationQuestion,
+    configuration?: CockpitConfig,
 ): GapDraftOutcome {
     const unresolved = [questionGap(question)]
     return {
-        kind: 'gap-draft', artifact: renderIncompleteDocument({ ...model, gaps: unresolved }, schemaDirective(destination)),
+        kind: 'gap-draft', artifact: renderIncompleteDocument({ ...model, gaps: unresolved }, schemaDirective(destination), configuration),
         destination, diagnostics: diagnosticsFor(model.attributions, unresolved), result: null, status: 2, question,
     }
 }
@@ -1066,7 +1067,7 @@ function completeConfigurationDocument(
     const defaultsQuestion = configurationQuestion(context, 'configuration.defaults', QUESTION_WHY.defaults, expectedSha256)
     const defaultsRead = readConfigurationAnswer(configuration.answers, answerIndex, defaultsQuestion)
     if (defaultsRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-        attributions, gaps: [] }, destination, defaultsQuestion)
+        attributions, gaps: [] }, destination, defaultsQuestion, candidate.data)
     if (defaultsRead.kind === 'refusal') return defaultsRead.outcome
     if (!defaultsRead.value || typeof defaultsRead.value !== 'object' || Array.isArray(defaultsRead.value)
         || Object.keys(defaultsRead.value).sort().join(',') !== 'confirmed,sha256'
