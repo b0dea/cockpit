@@ -507,7 +507,9 @@ export function projectGeneratedRuntimeAuthority(input: {
     const declaration = authority.declaration
     const declaredPortVariables = new Set(declaration.services.flatMap((service) => service.ports.map(({ host_variable }) => host_variable)))
     const executionEnvironment = projectRuntimeExecutionEnvironment(current)
-    if (!executionEnvironment || !isDeepStrictEqual(runtime.publicEnv, executionEnvironment)
+    const expectedExecutionEnvironment = executionEnvironment && Object.freeze({ ...executionEnvironment,
+        COCKPIT_OWNER_ID: authority.cockpitId, COCKPIT_STACK_ID: authority.stackId })
+    if (!expectedExecutionEnvironment || !isDeepStrictEqual(runtime.publicEnv, expectedExecutionEnvironment)
         || runtime.publicEnv.COCKPIT_OWNER_ID !== authority.cockpitId
         || runtime.publicEnv.COCKPIT_STACK_ID !== authority.stackId
         || [...declaredPortVariables].some((name) => !Object.hasOwn(runtime.publicEnv, name)

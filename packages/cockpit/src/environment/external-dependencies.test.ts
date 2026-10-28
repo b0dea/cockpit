@@ -146,6 +146,7 @@ async function authoritativeHarness(root: string, vendors = [vendor()]) {
     const stack = `stack:${createHash('sha256').update('synthetic stack').digest('hex')}` as StackId
     const configSha256 = createHash('sha256').update('synthetic configuration').digest('hex')
     const generation = '9'.repeat(64)
+    const cockpitId = `cockpit:external-dependency:${'e'.repeat(64)}`
     const batchId = createHash('sha256').update('synthetic batch').digest('hex')
     const containerId = createHash('sha256').update('synthetic backend container').digest('hex')
     const requiresGuard = vendors.some((item) => 'egress_guard' in item && item.egress_guard !== undefined)
@@ -211,7 +212,7 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
     if (!parsedDeclaration.success) throw new Error(parsedDeclaration.error.message)
     const rendered = renderGeneratedEnvironment({
         declaration, sourceSha256: configSha256, generation, stackId: stack,
-        cockpitId: `cockpit:external-dependency:${'e'.repeat(64)}`, portDefaults: { APP_HOST_PORT: 4100 }, siblingDirectories: { app: 'app', web: 'web' },
+        cockpitId, portDefaults: { APP_HOST_PORT: 4100 }, siblingDirectories: { app: 'app', web: 'web' },
     })
     if (rendered.kind !== 'complete') throw new Error(rendered.reason)
     const composePath = runtime.composeFiles[0]!.path
@@ -251,11 +252,13 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
     writeFileSync(composePath, rendered.compose)
     const generatedAuthority = projectGeneratedRuntimeAuthority({
         rendered, topology: admittedTopology.topology,
-        runtime: { ...runtime, executable: runtimeExecutable, composeFiles: [compose], projectName: 'synthetic-stack', serviceAuthority: { topology: admittedTopology.topology, evidence: health.evidence } },
+        runtime: { ...runtime, publicEnv: { ...runtime.publicEnv, COCKPIT_OWNER_ID: cockpitId, COCKPIT_STACK_ID: stack },
+            executable: runtimeExecutable, composeFiles: [compose], projectName: 'synthetic-stack', serviceAuthority: { topology: admittedTopology.topology, evidence: health.evidence } },
     })
     if (!generatedAuthority) throw new Error('generated runtime authority unavailable')
     const authorityRuntime = {
         ...runtime,
+        publicEnv: { ...runtime.publicEnv, COCKPIT_OWNER_ID: cockpitId, COCKPIT_STACK_ID: stack },
         executable: runtimeExecutable,
         composeFiles: [compose],
         projectName: 'synthetic-stack',
