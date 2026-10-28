@@ -33,7 +33,9 @@ The runtime schema and defaults are the configuration authorities.
     ],
     "ask_is_deny_on": [
       "codex"
-    ]
+    ],
+    "allow": [],
+    "deny": []
   },
   "mcp": {
     "approved": []
@@ -2616,6 +2618,167 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "allow": {
+          "default": [],
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "argv": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                }
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "allOf": [
+                  {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                  }
+                ]
+              },
+              "cwd": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "."
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "argv",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "deny": {
+          "default": [],
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "prefix": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "allOf": [
+                      {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                      }
+                    ]
+                  },
+                  "fix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "allOf": [
+                      {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "prefix",
+                  "reason"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "contains": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\uD800-\\uDFFF]{1,128}(?![\\s\\S])"
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "allOf": [
+                      {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                      }
+                    ]
+                  },
+                  "fix": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "allOf": [
+                      {
+                        "type": "string",
+                        "pattern": "\\S"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]+$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "contains",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            ]
           }
         }
       },
