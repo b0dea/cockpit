@@ -192,7 +192,10 @@ cheap, exact sources only: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, the 
 existing Compose file, and the `services:` of GitHub workflows. A variable whose name suggests a
 database or a vendor endpoint, such as `DATABASE_URL`, is proposed under `guards` as a question
 about which host it points at, not as a host. Each is a proposal to confirm, not an answer; an unreadable source is listed in
-`interview.inferenceSkipped`. A run that declares a runtime ends with `preflight`, which needs the Docker runtime named in
+`interview.inferenceSkipped`. Compose files outside the cockpit directory are listed there too:
+`environment.compose_files` accepts confined paths inside the cockpit. Choose a generated
+environment, or place a reviewed Compose file inside the cockpit and rerun the same `init` command.
+A run that declares a runtime ends with `preflight`, which needs the Docker runtime named in
 [Install cockpit](#install-cockpit); without it the run stops there and resumes when you rerun.
 
 ## Bring the product up
