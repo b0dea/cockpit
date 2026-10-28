@@ -1,4 +1,4 @@
-import type { Diagnostic, SetupRefusalEvidence } from './environment/contract.js'
+import { snapshotJson, type Diagnostic, type SetupRefusalEvidence } from './environment/contract.js'
 import type { InvocationRecord } from './invocation.js'
 import { admitDiagnosticFix, type FixContext } from './fix-catalogue.js'
 
@@ -7,8 +7,71 @@ export type { Diagnostic } from './environment/contract.js'
 export const mechanism = {
     id: 'diagnostic-envelope',
     module: 'packages/cockpit/src/diagnostics.ts',
-    exports: ['renderHumanDiagnostics', 'renderJsonResponse'],
+    exports: ['renderHumanDiagnostics', 'renderHumanValue', 'renderJsonResponse'],
 } as const
+
+const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; fix: string }>>> = Object.freeze({
+    INIT_CANONICAL_OWNERSHIP_MISSING: Object.freeze({
+        why: 'init cannot safely resume when its recorded bootstrap state and generated ownership disagree',
+        fix: 'restore the committed ownership metadata, then rerun cockpit init',
+    }),
+    SURFACE_SOURCE_UNAVAILABLE: Object.freeze({
+        why: 'generated instructions cannot be trusted without the declared sibling source',
+        fix: 'restore the named sibling checkout at its declared path, then rerun cockpit sync',
+    }),
+    SURFACE_OWNERSHIP_INVALID: Object.freeze({
+        why: 'cockpit cannot prove which generated settings it is allowed to replace',
+        fix: 'restore the last committed generated ownership metadata, then rerun cockpit sync',
+    }),
+    SURFACE_STATE_CONFLICT: Object.freeze({
+        why: 'sync would overwrite settings that cockpit does not own',
+        fix: 'review the named file and use cockpit sync --adopt <path> only with human approval',
+    }),
+    GENERATED_ARTIFACT_DRIFT: Object.freeze({
+        why: 'generated files no longer match the canonical cockpit configuration',
+        fix: 'run cockpit sync with the same configuration file, then retry',
+    }),
+    GENERATED_OWNERSHIP_INVALID: Object.freeze({
+        why: 'publication cannot safely update files without authenticated ownership metadata',
+        fix: 'restore the committed ownership metadata and rerun cockpit sync',
+    }),
+    GUARD_AUTHORITY_UNAVAILABLE: Object.freeze({
+        why: 'the guard cannot make a safe allow or deny decision without current generated authority',
+        fix: 'restore cockpit.toml and the generated guard files, then have a human run cockpit sync',
+    }),
+    GUARD_REFUSED: Object.freeze({
+        why: 'the requested command is outside the current cockpit guard policy',
+        fix: 'follow the refusal reason or ask a human to change cockpit.toml and run cockpit sync',
+    }),
+    RUNTIME_UNAVAILABLE: Object.freeze({
+        why: 'cockpit cannot start or inspect the declared environment without a reachable container runtime',
+        fix: 'start the configured container runtime and verify docker info succeeds, then retry',
+    }),
+    RUNTIME_UNMEASURED: Object.freeze({
+        why: 'the current runtime has no measured support row, so its timing and capability bounds are unknown',
+        fix: 'run cockpit runtime measure --image <ref> --write, review the change, then retry',
+    }),
+    CLAIM_CO_TENANT: Object.freeze({
+        why: 'another holder still owns or is using the same stack',
+        fix: 'run cockpit up to resume your holder or cockpit down to release the stack when it is safe',
+    }),
+    PORT_FAMILY_COLLISION: Object.freeze({
+        why: 'one or more ports selected for this stack are already in use',
+        fix: 'stop the named listener or release the inactive stack, then retry',
+    }),
+    PORT_LEASE_EXHAUSTED: Object.freeze({
+        why: 'every declared port family is leased or occupied',
+        fix: 'release an inactive stack or extend ports.count after checking host capacity',
+    }),
+    SETUP_MANUAL_MISSING: Object.freeze({
+        why: 'a manually managed sibling must already exist before cockpit can wire it',
+        fix: 'create the named checkout at its declared path, then run cockpit setup again',
+    }),
+    SETUP_REMOTE_MISMATCH: Object.freeze({
+        why: 'rewiring an existing checkout to a different repository could replace the wrong source',
+        fix: 'correct the checkout remote or the sibling declaration, then run cockpit setup again',
+    }),
+})
 
 interface HumanReviewOutcome {
     readonly status: number
@@ -39,6 +102,39 @@ function terminalSafeJson(value: unknown, space?: number): string {
         (character) => `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}`)
 }
 
+function humanLines(value: import('./environment/contract.js').JsonSnapshot, depth: number): string[] {
+    const indent = '  '.repeat(depth)
+    if (value === null) return [`${indent}none`]
+    if (typeof value === 'string') return [`${indent}${escapeForTerminal(value)}`]
+    if (typeof value === 'boolean' || typeof value === 'number') return [`${indent}${String(value)}`]
+    if (Array.isArray(value)) {
+        if (value.length === 0) return [`${indent}(none)`]
+        return value.flatMap((item) => {
+            if (item === null || typeof item !== 'object') {
+                const [line] = humanLines(item, 0)
+                return [`${indent}- ${line}`]
+            }
+            return [`${indent}-`, ...humanLines(item, depth + 1)]
+        })
+    }
+    const entries = Object.entries(value)
+    if (entries.length === 0) return [`${indent}(none)`]
+    return entries.flatMap(([key, item]) => {
+        const label = `${indent}${escapeForTerminal(key)}:`
+        if (item === null || typeof item !== 'object') {
+            const [line] = humanLines(item, 0)
+            return [`${label} ${line}`]
+        }
+        return [label, ...humanLines(item, depth + 1)]
+    })
+}
+
+export function renderHumanValue(value: unknown): string {
+    const captured = snapshotJson(value)
+    return captured === undefined ? 'Result is not available as bounded human-readable text.\n'
+        : `${humanLines(captured, 0).join('\n')}\n`
+}
+
 interface Guidance {
     readonly code: string
     readonly target?: string
@@ -59,6 +155,9 @@ function projectDiagnostics(input: readonly Diagnostic[], context?: FixContext):
         diagnostics.set(JSON.stringify(diagnostic), diagnostic)
         if (fix !== undefined && !admitted) {
             const row = { ...identity, text: fix }
+            guidance.set(JSON.stringify(row), row)
+        } else if (fix === undefined && COMMON_REFUSAL_GUIDANCE[code]) {
+            const row = { ...identity, text: COMMON_REFUSAL_GUIDANCE[code].fix }
             guidance.set(JSON.stringify(row), row)
         }
     }
@@ -88,7 +187,7 @@ export function renderHumanDiagnostics(
                 : `${records.map(record => escapeForTerminal(`${String(record.timestamp)} ${String(record.stream)} ${String(record.message)}`)).join('\n')}\n`
         }
         if (command === 'selftest' || command === 'upgrade' || command === 'doctor' || command === 'init') {
-            return `${terminalSafeJson(outcome.result, 2)}\n`
+            return renderHumanValue(outcome.result)
         }
         return ''
     }
@@ -98,10 +197,18 @@ export function renderHumanDiagnostics(
     return `${projected.diagnostics
         .map((diagnostic) => {
             const target = diagnostic.target ? ` [${escapeForTerminal(diagnostic.target)}]` : ''
-            const fix = diagnostic.fix ? ` Fix: ${escapeForTerminal(diagnostic.fix)}` : ''
             const guidance = projected.guidance.filter(row => row.code === diagnostic.code && row.target === diagnostic.target)
-                .map(row => ` Guidance: ${escapeForTerminal(row.text)}`).join('')
-            return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}: ${escapeForTerminal(diagnostic.message)}${fix}${guidance}`
+            const common = COMMON_REFUSAL_GUIDANCE[diagnostic.code]
+            if (common) {
+                const fix = diagnostic.fix ?? guidance[0]?.text ?? common.fix
+                return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}\n`
+                    + `What failed: ${escapeForTerminal(diagnostic.message)}\n`
+                    + `Why it matters: ${escapeForTerminal(common.why)}\n`
+                    + `Fix: ${escapeForTerminal(fix)}`
+            }
+            const fix = diagnostic.fix ? ` Fix: ${escapeForTerminal(diagnostic.fix)}` : ''
+            const renderedGuidance = guidance.map(row => ` Guidance: ${escapeForTerminal(row.text)}`).join('')
+            return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}: ${escapeForTerminal(diagnostic.message)}${fix}${renderedGuidance}`
         })
         .join('\n')}\n${hint}`
 }

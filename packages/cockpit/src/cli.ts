@@ -14,7 +14,7 @@ import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-ada
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
 import type { FixContext } from './fix-catalogue.js'
-import { type Diagnostic, renderHumanDiagnostics, renderJsonResponse } from './diagnostics.js'
+import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, documentCommand, documentObservedCommand, observeCockpitRoot, observePublicEstate, type DocumentCommandInput } from './document/command.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { deriveInferredFacts } from './init/derive.js'
@@ -651,7 +651,7 @@ function renderCommandHelp(definition: CommandDefinition): string {
     const optionLines = Object.entries(definition.options).map(([name, option]) => {
         const usage = option.type === 'string' ? `--${name} <value>` : `--${name}`
         const fallback = option.default === undefined || option.default === false ? '' : ` (default: ${String(option.default)})`
-        return [usage, fallback.trim()] as const
+        return [usage, `${definition.optionDescriptions[name]}${fallback}`] as const
     })
     const width = Math.max(...optionLines.map(([usage]) => usage.length), '-h, --help'.length)
     return [`Usage: cockpit ${definition.name} [options]`, '', definition.summary,
@@ -1104,7 +1104,7 @@ async function invokeHandler(
         confirm: async preview => {
             if (io.confirmInit) return io.confirmInit(preview)
             if (!io.stdin) return undefined
-            io.stderr.write(`${JSON.stringify(preview)}\n`)
+            io.stderr.write(renderHumanValue(preview))
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
             try { return await prompt.question('Type the exact bootstrap preview digest to accept: ') } finally { prompt.close() }
         },
@@ -1119,9 +1119,9 @@ async function invokeHandler(
         answerQuestion: async question => {
             if (io.answerInitQuestion) return io.answerInitQuestion(question)
             if (!io.stdin) return undefined
-            io.stderr.write(`${JSON.stringify(question)}\n`)
+            io.stderr.write(renderHumanValue(question))
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-            try { return await prompt.question(`Enter the JSON answer for ${question.field}: `) } finally { prompt.close() }
+            try { return await prompt.question(`Enter an answer for ${question.field}: `) } finally { prompt.close() }
         },
     }, handlers.init ?? (async () => ({ kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))
@@ -1167,7 +1167,7 @@ function operatorRefusal(message: string): CommandOutcome {
 async function confirmOperatorReset(io: CliIo, preview: CommandOutcome): Promise<boolean> {
     if (io.confirmReset) return io.confirmReset(preview)
     if (!io.stdin) return false
-    io.stderr.write(`${JSON.stringify(preview.result)}\n`)
+    io.stderr.write(renderHumanValue(preview.result))
     const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
     try {
         return (await prompt.question('Approve this exact reset? [y/N] ')).trim().toLowerCase() === 'y'
@@ -1183,7 +1183,7 @@ function baselineOperatorRefusal(message: string): CommandOutcome {
 async function confirmOperatorBaseline(io: CliIo, preview: CommandOutcome): Promise<boolean> {
     if (io.confirmBaseline) return io.confirmBaseline(preview)
     if (!io.stdin) return false
-    io.stderr.write(`${JSON.stringify(preview.result)}\n`)
+    io.stderr.write(renderHumanValue(preview.result))
     const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
     try {
         return (await prompt.question('Record this exact environment baseline? [y/N] ')).trim().toLowerCase() === 'y'

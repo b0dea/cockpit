@@ -264,6 +264,11 @@ const inventory = root => {
 const warningMessage = entries => {
   const one = entries.length === 1;
   const details = entries.map(({ label, reason }) => "'" + label + "' — " + reason).join('; ');
+  return 'Claude Code permissions: writing ' + entries.length + ' trust-affecting ' + (one ? 'setting' : 'settings') + ' to .claude/settings.json; review ' + (one ? 'it' : 'them') + ' as you would a hook because synced agent settings can widen filesystem access or approve project servers. ' + details + '.';
+};
+const nativeWarningMessage = entries => {
+  const one = entries.length === 1;
+  const details = entries.map(({ label, reason }) => "'" + label + "' — " + reason).join('; ');
   return 'Claude Code permissions: writing ' + entries.length + ' trust-affecting ' + (one ? 'setting' : 'settings') + " to .claude/settings.json; review " + (one ? 'it' : 'them') + " as you would a hook, especially if this permissions file came from 'rulesync fetch'. " + details + '.';
 };
 const knownWarningEntries = [
@@ -298,7 +303,7 @@ const authenticateWarnings = ({ job, captured, actualFiles }) => {
   if (entries.length === 0 || additionalDirectories !== undefined && (!Array.isArray(additionalDirectories) || !additionalDirectories.every(value => typeof value === 'string'))
     || enabledMcpjsonServers !== undefined && (!Array.isArray(enabledMcpjsonServers) || !enabledMcpjsonServers.every(value => typeof value === 'string'))) return undefined;
   const expected = warningMessage(entries);
-  if (captured.length !== 1 || captured[0] !== expected) return undefined;
+  if (captured.length !== 1 || captured[0] !== expected && captured[0] !== nativeWarningMessage(entries)) return undefined;
   return [{ severity: 'warning', code: 'SURFACE_GENERATOR_TRUST_WARNING', target: job.target, path: '.claude/settings.json', message: expected }];
 };
 const writeReceipt = (target, value) => {

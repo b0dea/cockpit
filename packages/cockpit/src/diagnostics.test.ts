@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import { renderHumanDiagnostics, renderJsonResponse } from './diagnostics.js'
+import { renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
 
 describe('diagnostic envelope', () => {
+    it('explains the common refusal families as what failed, why it matters, and how to fix it', () => {
+        const codes = [
+            'INIT_CANONICAL_OWNERSHIP_MISSING', 'SURFACE_SOURCE_UNAVAILABLE', 'SURFACE_OWNERSHIP_INVALID',
+            'SURFACE_STATE_CONFLICT', 'GENERATED_ARTIFACT_DRIFT', 'GENERATED_OWNERSHIP_INVALID',
+            'GUARD_AUTHORITY_UNAVAILABLE', 'GUARD_REFUSED', 'RUNTIME_UNAVAILABLE', 'RUNTIME_UNMEASURED',
+            'CLAIM_CO_TENANT', 'PORT_FAMILY_COLLISION', 'PORT_LEASE_EXHAUSTED', 'SETUP_MANUAL_MISSING',
+            'SETUP_REMOTE_MISMATCH',
+        ] as const
+
+        for (const code of codes) {
+            const rendered = renderHumanDiagnostics([{ severity: 'error', code, message: 'synthetic failure', target: 'subject' }])
+            expect(rendered).toContain(`ERROR ${code} [subject]\n`)
+            expect(rendered).toContain('What failed: synthetic failure\n')
+            expect(rendered).toMatch(/Why it matters: .+\n/)
+            expect(rendered).toMatch(/Fix: .+\n/)
+        }
+    })
+
+    it('renders nested human review data as terminal-safe text rather than JSON', () => {
+        const rendered = renderHumanValue({ verdict: 'pass', checks: [{ code: 'READY', detail: 'safe\u202e' }] })
+
+        expect(rendered).toBe('checks:\n  -\n    code: READY\n    detail: safe\\u202e\nverdict: pass\n')
+        expect(rendered).not.toContain('{')
+        expect(rendered).not.toContain('}')
+        expect(rendered).not.toContain('"verdict"')
+    })
+
     it('preserves partial lifecycle progress in a JSON refusal', () => {
         const progress = { applied: ['publication', 'generated'], attempted: ['dependency:app:load'], notApplied: ['dependencies', 'data', 'seeded'] }
         const outcome = { result: null, diagnostics: [{ severity: 'error' as const,
@@ -56,7 +83,10 @@ describe('diagnostic envelope', () => {
         expect(JSON.parse(renderJsonResponse(outcome, context))).toEqual({ result: outcome.result,
             diagnostics: [{ ...diagnostic, fix: command }] })
         expect(renderHumanDiagnostics([diagnostic], undefined, context)).toBe(
-            `ERROR GENERATED_ARTIFACT_DRIFT [fixtures/personas.generated.ts]: Owned artifact differs Fix: ${command}\n`,
+            'ERROR GENERATED_ARTIFACT_DRIFT [fixtures/personas.generated.ts]\n'
+            + 'What failed: Owned artifact differs\n'
+            + 'Why it matters: generated files no longer match the canonical cockpit configuration\n'
+            + `Fix: ${command}\n`,
         )
         const unbound = JSON.parse(renderJsonResponse(outcome))
         expect(unbound.diagnostics[0]).not.toHaveProperty('fix')

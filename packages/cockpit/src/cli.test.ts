@@ -267,7 +267,17 @@ describe('CLI help', () => {
         expect(result).toMatchObject({ status: 0, stderr: '' })
         expect(result.stdout).toContain('Usage: cockpit check [options]')
         expect(result.stdout).toContain('--config <value>')
+        expect(result.stdout).toContain('Path to cockpit.toml')
         expect(result.stdout).toContain('--json')
+        expect(result.stdout).toContain('Emit one machine-readable JSON response')
+    })
+
+    it('keeps a command-table description for every public flag', () => {
+        for (const command of commands) {
+            expect(command).toHaveProperty('optionDescriptions')
+            expect(Object.keys((command as { optionDescriptions?: object }).optionDescriptions ?? {}).sort())
+                .toEqual(Object.keys(command.options).sort())
+        }
     })
 
     it('labels experimental command-specific help without labeling stable commands', async () => {
@@ -479,7 +489,10 @@ describe('generated environment process contract', () => {
         expect(await runCli(['doctor', '--config', 'cockpit.toml'], capture.io, {
             doctor: async () => ({ status: 0, diagnostics: [], result: { verdict: 'pass', checks: [], comparisons: [], surfaceOverrides } }),
         })).toBe(0)
-        expect(JSON.parse(capture.output().stdout).surfaceOverrides).toEqual(surfaceOverrides)
+        expect(capture.output().stdout).toContain('surfaceOverrides:')
+        expect(capture.output().stdout).toContain('activeOverrides:')
+        expect(capture.output().stdout).toContain('name: review')
+        expect(capture.output().stdout).not.toContain('{')
     })
 
     it.each(['sync', 'check'] as const)('routes %s in JSON and human modes', async (command) => {
@@ -849,12 +862,14 @@ describe('generated environment process contract', () => {
             upgrade: async () => ({ status: 0, diagnostics: [], result: { commands: ['cockpit sync --dry-run'] } }),
         })).toBe(0)
         expect(upgrade.output().stdout).toContain('cockpit sync --dry-run')
+        expect(upgrade.output().stdout).not.toContain('{')
 
         const selftest = captureIo()
         expect(await runCli(['selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json'], selftest.io, {
             selftest: async () => ({ status: 0, diagnostics: [], result: { evidence: { human_needed: ['native'] } } }),
         })).toBe(0)
         expect(selftest.output().stdout).toContain('human_needed')
+        expect(selftest.output().stdout).not.toContain('{')
     })
 })
 
@@ -2162,7 +2177,10 @@ it('shows a human init preview without accepting or writing it', async () => {
         stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true },
     }, { init: application })
     expect(status).toBe(0)
-    expect(JSON.parse(stdout)).toMatchObject({ stage: 'surface-previewed', previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/cockpit-setup/SKILL.md' }] })
+    expect(stdout).toContain('stage: surface-previewed')
+    expect(stdout).toContain(`previewSha256: ${'a'.repeat(64)}`)
+    expect(stdout).toContain('path: .agents/skills/cockpit-setup/SKILL.md')
+    expect(stdout).not.toContain('{')
     expect(application).toHaveBeenCalledOnce()
     expect(application.mock.calls[0]![0].accepted).toBe(false)
 })

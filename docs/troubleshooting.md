@@ -6,6 +6,31 @@ This page takes you from a cockpit diagnostic code to its remedy, the code that 
 test that pins it. Look the code up in the index at the end; remedies grouped by family are in
 the [environment reference](environment.md#respond-to-diagnostic-codes).
 
+Human output spells common refusals as **What failed**, **Why it matters**, and **Fix**. Result
+previews and interactive questions use plain text; use `--json` only when a program needs the
+machine-readable envelope. Every public flag is described by its command help, for example
+`cockpit sync --help`.
+
+## Common refusal guidance
+
+| Diagnostic | Why it stops | Fix |
+| --- | --- | --- |
+| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun `cockpit init`. |
+| `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be authenticated. | Restore the named checkout at its declared path, then rerun `cockpit sync`. |
+| `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot prove which settings it may replace. | Restore the last committed ownership metadata, then rerun `cockpit sync`. |
+| `SURFACE_STATE_CONFLICT` | Sync would overwrite settings cockpit does not own. | Review the file and use `cockpit sync --adopt <path>` only with human approval. |
+| `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `cockpit sync`, then retry. |
+| `GENERATED_OWNERSHIP_INVALID` | Publication has no authenticated file ownership. | Restore the committed ownership metadata, then rerun `cockpit sync`. |
+| `GUARD_AUTHORITY_UNAVAILABLE` | The guard has no current authority for a safe decision. | Restore `cockpit.toml` and generated guard files, then have a human run `cockpit sync`. |
+| `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `cockpit sync`. |
+| `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached. | Start it, verify `docker info`, then retry. |
+| `RUNTIME_UNMEASURED` | The current runtime has no measured support row. | Run `cockpit runtime measure --image <ref> --write`, review the change, then retry. |
+| `CLAIM_CO_TENANT` | Another holder owns or uses the stack. | Run `cockpit up` to resume, or `cockpit down` to release it when safe. |
+| `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
+| `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
+| `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `cockpit setup`. |
+| `SETUP_REMOTE_MISMATCH` | The checkout remote and declaration name different sources. | Correct the remote or declaration, then rerun `cockpit setup`. |
+
 ## GENERATED_ARTIFACT_DRIFT
 
 **Cause.** An owned whole file, symlink target, or shared region differs from the canonical state

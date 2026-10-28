@@ -277,7 +277,7 @@ const trustPermissionSource = {
     bytes: '{"permission":{},"claudecode":{"permissions":{"additionalDirectories":["../shared"]},"enabledMcpjsonServers":["synthetic"]}}\n',
 } as const
 
-const expectedTrustWarning = "Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook, especially if this permissions file came from 'rulesync fetch'. 'permissions.additionalDirectories' — moves the boundary of what Claude Code may read and edit outside the project; 'enabledMcpjsonServers' — auto-approves the named servers in the project `.mcp.json`."
+const expectedTrustWarning = "Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook because synced agent settings can widen filesystem access or approve project servers. 'permissions.additionalDirectories' — moves the boundary of what Claude Code may read and edit outside the project; 'enabledMcpjsonServers' — auto-approves the named servers in the project `.mcp.json`."
 
 function completeBatch() {
     return {

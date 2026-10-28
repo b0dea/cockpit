@@ -43,9 +43,62 @@ export interface CommandDefinition {
     summary: string
     handler: HandlerIdentifier
     options: NonNullable<ParseArgsConfig['options']>
+    optionDescriptions: Readonly<Record<string, string>>
     visibility: 'public'
     experimental?: true
     ordinary: OrdinaryCommandMetadata
+}
+
+const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
+    'accept-defaults': 'Accept the displayed defaults with their exact SHA-256 digest',
+    'accept-preview': 'Accept the displayed init preview with its exact SHA-256 digest',
+    adopt: 'Move one existing harness settings path under cockpit ownership',
+    adoption: 'Path to the legacy adoption shell data',
+    answers: 'Path to the init answers file',
+    apply: 'Apply the displayed reversible operation',
+    approach: 'Record the selected work approach',
+    candidate: 'Relative path to the candidate source',
+    config: 'Path to cockpit.toml',
+    create: 'Create a new local sibling repository',
+    dir: 'Directory for the sibling checkout',
+    'dry-run': 'Preview generated changes without writing them',
+    'event-file': 'Path to the bounded work event file',
+    follow: 'Continue collecting logs until cancelled',
+    from: 'Path to an existing local repository',
+    gate: 'Declared product gate to run',
+    image: 'Pinned container image used for runtime measurement',
+    intent: 'Human-readable work intent',
+    interactive: 'Ask for explicit approval in a terminal',
+    item: 'Declared programme item key',
+    json: 'Emit one machine-readable JSON response',
+    lock: 'Interrupted work lock identifier',
+    mode: 'Declared gate execution mode',
+    output: 'Write the generated artifact to this new file',
+    'probe-specifications': 'Path to measured harness probe specifications',
+    programme: 'Declared programme identifier',
+    purpose: 'Short purpose of the sibling repository',
+    registry: 'Path to the legacy registry input',
+    'release-evidence': 'Path to authenticated release evidence',
+    'release-evidence-sha256': 'Expected SHA-256 of the release evidence',
+    remote: 'Repository remote URL recorded for the sibling',
+    role: 'Declared browser role',
+    select: 'Optional bounded gate selection',
+    service: 'Declared service whose logs are collected',
+    'siblings-root': 'Root directory containing sibling checkouts',
+    since: 'Collect logs no older than this duration',
+    tail: 'Maximum number of log records to collect',
+    target: 'Agent surface target to initialize',
+    var: 'Environment variable mapping for the sibling',
+    'work-order': 'Work-order identifier',
+    write: 'Write the measured runtime support row to cockpit.toml',
+})
+
+function describeOptions(options: NonNullable<ParseArgsConfig['options']>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(Object.keys(options).map(name => {
+        const description = FLAG_DESCRIPTIONS[name]
+        if (!description) throw new Error(`Public option --${name} has no help description.`)
+        return [name, description]
+    })))
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'tail' | 'since' | 'sha256' | 'surface-target'
@@ -89,7 +142,7 @@ export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIde
     return value.startsWith('work-') || value.startsWith('browser-') || value === 'test-run'
 }
 
-export const commands = [
+const commandDefinitions = [
     {
         name: 'init',
         summary: 'Preview or accept one explicit bootstrap target in an existing checkout',
@@ -390,7 +443,12 @@ export const commands = [
     { name: 'test-run', handler: 'test-run', summary: 'Run a declared product gate with honest selection', visibility: 'public',
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ gate: { type: 'string' }, mode: { type: 'string', default: 'canonical' }, select: { type: 'string' } } } },
-] as const satisfies readonly CommandDefinition[]
+] as const satisfies readonly Omit<CommandDefinition, 'optionDescriptions'>[]
+
+export const commands: readonly CommandDefinition[] = Object.freeze(commandDefinitions.map(command => Object.freeze({
+    ...command,
+    optionDescriptions: describeOptions(command.options),
+})))
 
 export interface InternalCommandDefinition {
     readonly name: 'guard-evaluate'
