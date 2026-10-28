@@ -80,8 +80,10 @@ The cockpit lives in a folder of its own beside the product's repositories, whic
 explains the default, the new-product case and why a product repository is not the default root.
 For a valid hand-written configuration, the first `sync` also adds the exact `cockpit:*` scripts,
 package pin and marked `.gitignore` region that `init` would create. Preview them with `sync
---dry-run`; an existing conflicting pin, script or edited marked region is refused rather than
-overwritten.
+--dry-run`; an existing conflicting pin, a cockpit declaration in `dependencies`,
+`optionalDependencies` or `peerDependencies`, a conflicting script, or an edited marked region is
+refused rather than overwritten. Keep the exact cockpit pin only in `devDependencies` so the team
+has one version authority.
 
 ## Bootstrap a new product
 

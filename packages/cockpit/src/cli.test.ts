@@ -16,6 +16,7 @@ import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/con
 import type { SetupResult } from './environment/setup.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
+import { installedPackageMetadata } from './package-metadata.js'
 
 // Human-mode runs publish no invocation record; it exists only in the --json envelope on stdout.
 function humanStderr(stderr: string): string {
@@ -490,6 +491,12 @@ describe('generated environment process contract', () => {
 
     it.each([
         ['a conflicting package pin', JSON.stringify({ devDependencies: { '@b0dea/cockpit': '9.9.9' } }), 'operator-owned\n'],
+        ['a dependencies package slot', JSON.stringify({ dependencies: {
+            [installedPackageMetadata.name]: installedPackageMetadata.version } }), 'operator-owned\n'],
+        ['an optionalDependencies package slot', JSON.stringify({ optionalDependencies: {
+            [installedPackageMetadata.name]: installedPackageMetadata.version } }), 'operator-owned\n'],
+        ['a peerDependencies package slot', JSON.stringify({ peerDependencies: {
+            [installedPackageMetadata.name]: installedPackageMetadata.version } }), 'operator-owned\n'],
         ['a conflicting cockpit script', JSON.stringify({ scripts: { 'cockpit:sync': 'custom sync' } }), 'operator-owned\n'],
         ['an edited owned ignore block', '{"private":true}\n', '# cockpit:ignore:start\n/human-edit/\n# cockpit:ignore:end\n'],
     ])('refuses %s before public sync changes team metadata', async (_name, packageBytes, ignoreBytes) => {
@@ -499,6 +506,7 @@ describe('generated environment process contract', () => {
         writeFileSync(configPath, readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
             .replace('name = "generated-environment"', 'name = "conflicting-metadata"'))
         writeFileSync(join(directory, 'package.json'), packageBytes)
+        writeFileSync(join(directory, 'package-lock.json'), '{"lockfileVersion":3,"canary":"unchanged"}\n')
         writeFileSync(join(directory, '.gitignore'), ignoreBytes)
         const capture = captureIo()
 
@@ -508,6 +516,7 @@ describe('generated environment process contract', () => {
             expect.objectContaining({ severity: 'error', code: 'TEAM_METADATA_UNAVAILABLE' }),
         ])
         expect(readFileSync(join(directory, 'package.json'), 'utf8')).toBe(packageBytes)
+        expect(readFileSync(join(directory, 'package-lock.json'), 'utf8')).toBe('{"lockfileVersion":3,"canary":"unchanged"}\n')
         expect(readFileSync(join(directory, '.gitignore'), 'utf8')).toBe(ignoreBytes)
     })
 

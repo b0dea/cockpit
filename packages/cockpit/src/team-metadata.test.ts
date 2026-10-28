@@ -86,6 +86,44 @@ describe('team metadata', () => {
             message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
     })
 
+    it.each(['dependencies', 'optionalDependencies', 'peerDependencies'] as const)(
+        'refuses the cockpit package in the unowned %s slot without changing team metadata', async (section) => {
+            const root = await fixture()
+            const manifest = `${JSON.stringify({ private: true,
+                [section]: { [installedPackageMetadata.name]: installedPackageMetadata.version } }, null, 2)}\n`
+            const lock = '{"lockfileVersion":3,"canary":"unchanged"}\n'
+            const ignore = 'operator-owned\n'
+            await writeFile(join(root, 'package.json'), manifest)
+            await writeFile(join(root, 'package-lock.json'), lock)
+            await writeFile(join(root, '.gitignore'), ignore)
+
+            expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({
+                kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE', target: join(root, 'package.json'),
+                message: expect.stringContaining('devDependencies'),
+            })
+            expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
+            expect(await readFile(join(root, 'package-lock.json'), 'utf8')).toBe(lock)
+            expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe(ignore)
+
+            const validationRoot = await fixture()
+            expect(await initializeTeamMetadata(join(validationRoot, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+            const initialized = JSON.parse(await readFile(join(validationRoot, 'package.json'), 'utf8'))
+            const validationManifest = `${JSON.stringify({ ...initialized,
+                [section]: { [installedPackageMetadata.name]: installedPackageMetadata.version } }, null, 2)}\n`
+            const validationLock = '{"lockfileVersion":3,"canary":"validation-unchanged"}\n'
+            const validationIgnore = await readFile(join(validationRoot, '.gitignore'), 'utf8')
+            await writeFile(join(validationRoot, 'package.json'), validationManifest)
+            await writeFile(join(validationRoot, 'package-lock.json'), validationLock)
+            expect(await validateTeamMetadata(join(validationRoot, 'cockpit.toml'))).toMatchObject({
+                kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE', target: join(validationRoot, 'package.json'),
+                message: expect.stringContaining('devDependencies'),
+            })
+            expect(await readFile(join(validationRoot, 'package.json'), 'utf8')).toBe(validationManifest)
+            expect(await readFile(join(validationRoot, 'package-lock.json'), 'utf8')).toBe(validationLock)
+            expect(await readFile(join(validationRoot, '.gitignore'), 'utf8')).toBe(validationIgnore)
+        },
+    )
+
     it('does not normalize an unauthenticated local package reference', async () => {
         const root = await fixture()
         const spec = 'file:../archives/cockpit.tgz'

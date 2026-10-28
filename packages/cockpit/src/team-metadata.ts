@@ -22,6 +22,7 @@ const SCRIPTS = Object.freeze({
 })
 const START = '# cockpit:ignore:start'
 const END = '# cockpit:ignore:end'
+const OTHER_DEPENDENCY_SECTIONS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const
 
 export interface TeamMetadataChange {
     readonly operation: 'write'
@@ -121,19 +122,45 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
     }
 }
 
-function packageCandidate(bytes: string | undefined, authenticatedSourceSpec?: string): Readonly<{ bytes: string; valid: boolean }> {
+interface PackageDependencySlots {
+    readonly devDependencies: Record<string, unknown>
+    readonly misplaced: readonly string[]
+}
+
+function packageDependencySlots(manifest: Record<string, unknown>): PackageDependencySlots | undefined {
+    const devDependencies = manifest.devDependencies === undefined ? {} : manifest.devDependencies
+    if (!object(devDependencies)) return undefined
+    const misplaced: string[] = []
+    for (const section of OTHER_DEPENDENCY_SECTIONS) {
+        const dependencies = manifest[section]
+        if (dependencies !== undefined && !object(dependencies)) return undefined
+        if (object(dependencies) && dependencies[PACKAGE] !== undefined) misplaced.push(section)
+    }
+    return { devDependencies, misplaced: Object.freeze(misplaced) }
+}
+
+function misplacedDependencyMessage(sections: readonly string[]): string {
+    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run cockpit sync again`
+}
+
+function packageCandidate(bytes: string | undefined, authenticatedSourceSpec?: string): Readonly<{
+    bytes: string
+    valid: boolean
+    misplaced?: readonly string[]
+}> {
     let parsed: unknown = {}
     try { parsed = bytes === undefined || bytes.trim() === '' ? {} : JSON.parse(bytes) } catch { return { bytes: '', valid: false } }
     if (!object(parsed)) return { bytes: '', valid: false }
-    const dependencies = parsed.devDependencies === undefined ? {} : parsed.devDependencies
+    const slots = packageDependencySlots(parsed)
     const scripts = parsed.scripts === undefined ? {} : parsed.scripts
-    if (!object(dependencies) || !object(scripts)) return { bytes: '', valid: false }
-    const conflictingDependency = dependencies[PACKAGE] !== undefined && dependencies[PACKAGE] !== VERSION
-        && dependencies[PACKAGE] !== authenticatedSourceSpec
+    if (!slots || !object(scripts)) return { bytes: '', valid: false }
+    if (slots.misplaced.length > 0) return { bytes: '', valid: false, misplaced: slots.misplaced }
+    const conflictingDependency = slots.devDependencies[PACKAGE] !== undefined && slots.devDependencies[PACKAGE] !== VERSION
+        && slots.devDependencies[PACKAGE] !== authenticatedSourceSpec
     const conflictingScript = Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== undefined && scripts[name] !== command)
     if (conflictingDependency || conflictingScript) return { bytes: '', valid: false }
     return { valid: true, bytes: `${JSON.stringify({ ...parsed,
-        scripts: { ...scripts, ...SCRIPTS }, devDependencies: { ...dependencies, [PACKAGE]: VERSION },
+        scripts: { ...scripts, ...SCRIPTS }, devDependencies: { ...slots.devDependencies, [PACKAGE]: VERSION },
     }, null, 2)}\n` }
 }
 
@@ -228,6 +255,8 @@ export async function initializeTeamMetadata(configPath: string, options: Readon
         const packageBefore = await readOptional(authority, packagePath)
         const sourceInstall = await sourceInstallCandidate(authority, packageBefore?.bytes)
         const candidate = packageCandidate(packageBefore?.bytes, sourceInstall?.spec)
+        if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
+            misplacedDependencyMessage(candidate.misplaced), packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
             `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run cockpit init again`, packagePath)
         const ignorePath = join(root, '.gitignore')
@@ -263,7 +292,12 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const current = await readOptional(authority, packagePath)
         let parsed: unknown
         try { parsed = current ? JSON.parse(current.bytes) : undefined } catch { parsed = undefined }
-        const pinned = object(parsed) && object(parsed.devDependencies) ? parsed.devDependencies[PACKAGE] : undefined
+        const slots = object(parsed) ? packageDependencySlots(parsed) : undefined
+        if (object(parsed) && !slots) return refuse('TEAM_METADATA_UNAVAILABLE',
+            'package.json direct npm dependency sections must be objects; repair package.json, then run cockpit sync again', packagePath)
+        if (slots?.misplaced.length) return refuse('TEAM_METADATA_UNAVAILABLE',
+            misplacedDependencyMessage(slots.misplaced), packagePath)
+        const pinned = slots?.devDependencies[PACKAGE]
         if (pinned !== VERSION) return refuse('COCKPIT_VERSION_MISMATCH',
             `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, packagePath)
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
