@@ -129,10 +129,10 @@ async function surfaceOverrideFixture() {
         'purpose = "Synthetic application"\nguides = ["AGENTS.md"]',
     )}
 [[surfaces.overlays]]
-name = "bootstrap"
+name = "cockpit-setup"
 feature = "skills"
 source = "surfaces/bootstrap-override.json"
-replaces = { name = "bootstrap", sha256 = "${'a'.repeat(64)}" }
+replaces = { name = "cockpit-setup", sha256 = "${'a'.repeat(64)}" }
 sources = [
   { path = "skills/cockpit-setup/SKILL.md", bytes = ${JSON.stringify(entryPoint.replace('Bootstrap this cockpit', 'Bootstrap this synthetic cockpit'))} },
   { path = "skills/cockpit-setup/procedures/onboarding.md", bytes = ${JSON.stringify(procedure)} },
@@ -156,14 +156,14 @@ describe('production health adapter composition', () => {
         expect(result).toMatchObject({
             kind: 'complete',
             activeOverrides: [{
-                name: 'bootstrap',
+                name: 'cockpit-setup',
                 feature: 'skills',
                 recordedSha256: 'a'.repeat(64),
                 overlaySource: 'surfaces/bootstrap-override.json',
             }],
             changedOverrideOriginals: [{
                 code: 'OVERRIDDEN_CORE_CHANGED',
-                name: 'bootstrap',
+                name: 'cockpit-setup',
                 recordedSha256: 'a'.repeat(64),
                 overlaySource: 'surfaces/bootstrap-override.json',
             }],
