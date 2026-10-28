@@ -38,7 +38,7 @@ Malformed or null object IDs refuse instead of becoming durable source evidence.
 
 <!-- cockpit:ref command=work-metrics --> Metrics expose their retained history coverage. Creation-to-first-movement time uses bounded Git creation evidence and immutable current-generation movement history when available. Missing history remains partial or unavailable; it is never converted to a zero-duration result.
 
-<!-- cockpit:ref command=work-sweep --> <!-- cockpit:ref command=work-reverse --> The sweep groups untouched drafts by creation day and programme. When a group contains three or more, it proposes retaining the earliest identity and parking the others. Applying it persists the prior status; reversal checks the current parked state and its recorded provenance. Human parking is not automatically reversed.
+<!-- cockpit:ref command=work-sweep --> <!-- cockpit:ref command=work-reverse --> The sweep groups untouched drafts by creation day and programme. When a group reaches the threshold owned by the [work-order composition](../packages/cockpit/src/work-orders/composition.ts), it proposes retaining the earliest identity and parking the others. Applying it persists the prior status; reversal checks the current parked state and its recorded provenance. Human parking is not automatically reversed.
 
 ## Verify and grade independently
 

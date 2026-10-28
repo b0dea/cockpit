@@ -17,7 +17,7 @@ are the canonical runtime support record. Configuration, generation, `setup` and
 without Docker.
 
 ```sh
-npm install -D @b0dea/cockpit
+npm install --save-dev --save-exact @b0dea/cockpit
 ./node_modules/.bin/cockpit --help
 ```
 

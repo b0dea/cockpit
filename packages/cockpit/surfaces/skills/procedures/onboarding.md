@@ -20,7 +20,7 @@ The CLI owns registry interpretation, preview, durable state, artifact publicati
 Do not re-derive those decisions in this procedure.
 
 Explore the repository estate before asking questions. Ask only for facts the repositories
-and CLI output cannot answer, with at most three questions per round. Present inferred facts
+and CLI output cannot answer, in a small answerable round. Present inferred facts
 for confirmation. These conversation controls are instructed; no harness enforces their count.
 
 Show the exact preview before mutation. In a human terminal, run
@@ -255,11 +255,11 @@ contract and the independent grading, not the thinking: reuse the planning skill
 
 0. **Is this a work order?** Ask whether anyone besides you must certify the result, or whether the work
    must survive a handoff or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
-   ceremony costs more than it proves. Then check there is room: `cockpit work-status --config cockpit.toml --json` lists open orders, and `workorders.wip_cap` (at most three, one per programme) bounds them. With no
+   ceremony costs more than it proves. Then check there is room: `cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** Run the harness's installed brainstorming and planning skills, then compile their output into
    the work-order schema with `cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
-   The contract needs three to seven acceptance criteria, each a Given/When/Then that two people could not
+   The contract needs the parser-admitted number of acceptance criteria, each a Given/When/Then that independent reviewers could not
    disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from
    intake, then a human accepts it in a terminal with `cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,
    replacing `WO-001` with that ID. JSON and CI refuse, so an agent cannot accept its own work. Done when
@@ -275,12 +275,12 @@ contract and the independent grading, not the thinking: reuse the planning skill
    findings and re-run affected proof. Then run
    `cockpit work-review --config cockpit.toml --work-order WO-001` to run and persist cockpit's independent
    simplification, code/spec and security findings. Fix every blocking finding and repeat the command until all
-   three reviews pass.
+   all required review lanes pass.
 5. **Hand off to the evaluator subagent** through `cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
    your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
-   criterion is one of the four in the evaluator's instructions; anything but "passed with current
+   criterion is one of the verdicts in the evaluator's instructions; anything but "passed with current
    supporting evidence" sends you back to step 2 for that criterion.
-6. **Two strikes.** After two failed attempts on one criterion, make a different move, for example a
+6. **Attempt cap.** At the configured failed-attempt cap for one criterion, make a different move, for example a
    root-cause diagnosis in a fresh context, before a third try. Read the count from work-order state, not
    from memory: `cockpit work-status --config cockpit.toml --work-order WO-001 --json` returns the selected
    order under `result.orders[0]`, with the counters at `result.orders[0].state.attempts`

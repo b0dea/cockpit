@@ -60,7 +60,8 @@ stack stops only when no holder remains, so one agent cannot stop another agent'
 ### Work order
 
 A bounded Markdown contract for one piece of agent work: its source, the paths it may change,
-three to seven acceptance criteria, the commands that verify them, and the ordered steps.
+schema-bounded acceptance criteria, the commands that verify them, and the ordered steps. The
+[work-order parser](../packages/cockpit/src/work-orders/contract.ts) owns the current bounds.
 cockpit validates it before work starts and grades the result against it.
 
 ### Evaluator

@@ -69,7 +69,7 @@ for cockpit to manage:
 ```sh
 cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo" && cd "${TMPDIR:-/tmp}/cockpit-demo"
 npm init --yes
-npm install -D @b0dea/cockpit
+npm install --save-dev --save-exact @b0dea/cockpit
 ./node_modules/.bin/cockpit --help
 ```
 
