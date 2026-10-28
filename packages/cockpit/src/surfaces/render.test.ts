@@ -42,6 +42,18 @@ function input() {
 }
 
 describe('surface rendering', () => {
+    it('publishes shared instructions once and makes Claude import the common guide', () => {
+        const result = renderSurfaceSet({ ...input(), instructions: '# Working here\nUse the cockpit.\n' })
+        expect(result).toMatchObject({ kind: 'complete' })
+        if (result.kind !== 'complete') return
+        expect(result.entries.find(entry => entry.path === 'AGENTS.md')).toMatchObject({
+            kind: 'shared-region', region: { bytes: expect.stringContaining('# Working here\nUse the cockpit.\n') },
+        })
+        expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
+            kind: 'shared-region', region: { bytes: '@AGENTS.md\n' },
+        })
+    })
+
     it('retains unavailable browser rows without emitting an unissued native transport', () => {
         const value = input()
         const browser = {
@@ -294,8 +306,11 @@ describe('surface rendering', () => {
         })
         expect(result.entries.find(entry => entry.path === '.claude/skills/cockpit-browser/SKILL.md')).toMatchObject({ bytes: skill })
         expect(result.entries.find(entry => entry.path === '.claude/skills/cockpit-browser/references/browser.md')).toMatchObject({ bytes: reference })
-        expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
+        expect(result.entries.find(entry => entry.path === 'AGENTS.md')).toMatchObject({
             kind: 'shared-region', region: { bytes: expect.stringContaining(tierGuide.trimEnd()) },
+        })
+        expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
+            kind: 'shared-region', region: { bytes: '@AGENTS.md\n' },
         })
         expect(result.entries.find(entry => entry.path === '.githooks/pre-push')).toMatchObject({ bytes: hookBytes })
 

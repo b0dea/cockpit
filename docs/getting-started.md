@@ -241,6 +241,21 @@ npx cockpit sibling add api --config ./cockpit.toml --remote git@example.com:tea
 `--dir <relative dir>` sets the directory under the siblings root (default: the slug), `--var <NAME>`
 the exported variable (default: the slug as `API_DIR`). `--purpose "<text>"` says what the
 repository is for; it is required for a new sibling and never defaulted.
+`--instruction-pointer` opts a separate sibling into a marked link from its **AGENTS.md** to the
+cockpit instructions. This changes what agents in that repository load, so setup first reports the
+proposal without writing it:
+
+```sh
+cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders" --instruction-pointer
+cockpit setup --config ./cockpit.toml --json
+# after a human approves the exact AGENTS.md block
+cockpit setup --config ./cockpit.toml --write-instruction-pointers
+```
+
+The approved write preserves existing team text and appends only the marked block. If **AGENTS.md**
+is missing, the proposal is a new guide containing that block. An edited, partial or duplicate
+pointer is refused rather than replaced. The root sibling (`dir = "."`) cannot opt in because its
+guide already is the cockpit guide.
 A duplicate slug, directory or variable is refused by name. `--create` never creates a GitHub
 repository: it prints the `gh repo create` command to run and the `--remote` call that records
 the result, and with `--json` returns them as `result.publish.command` and

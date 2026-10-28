@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
@@ -312,6 +312,38 @@ describe('setup application choreography', () => {
             expect(execute).not.toHaveBeenCalled()
         },
     )
+
+    it('refuses an adapter-owned instruction pointer result that is not bound to the sibling guide', async () => {
+        const { configPath, adapters } = await sequenceFixture({ instruction_pointer: true })
+        adapters.syncInstructionPointer = async () => ({
+            kind: 'unchanged', path: '/synthetic/wrong/AGENTS.md', target: '../wrong/AGENTS.md', privateValue: 'pointer-secret-canary',
+        } as never)
+
+        const outcome = await runSetupSequence({ configPath }, adapters)
+
+        expect(outcome).toMatchObject({ kind: 'refusal', result: null })
+        expect(outcome.diagnostics).toContainEqual(expect.objectContaining({ code: 'SETUP_INSTRUCTION_POINTER_INVALID' }))
+        expect(JSON.stringify(outcome)).not.toContain('pointer-secret-canary')
+    })
+
+    it('reports an approved sibling pointer proposal without granting write authority', async () => {
+        const { configPath, context, adapters } = await sequenceFixture({ instruction_pointer: true })
+        const siblingRoot = resolve(context.siblingsRoot, 'api')
+        const syncInstructionPointer = vi.fn(async () => ({
+            kind: 'offered' as const,
+            path: resolve(siblingRoot, 'AGENTS.md'),
+            target: relative(siblingRoot, resolve(context.mainCheckoutPath, 'AGENTS.md')).split(sep).join('/'),
+        }))
+        adapters.syncInstructionPointer = syncInstructionPointer
+
+        const outcome = await runSetupSequence({ configPath }, adapters)
+
+        expect(outcome).toMatchObject({ kind: 'complete' })
+        expect(outcome.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'info', code: 'SETUP_INSTRUCTION_POINTER_OFFERED', target: resolve(siblingRoot, 'AGENTS.md'),
+        }))
+        expect(syncInstructionPointer).toHaveBeenCalledWith(expect.objectContaining({ write: false }))
+    })
 
     it.each([
         ['complete clone', 'complete', 'absent', 'clone', true],

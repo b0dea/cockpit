@@ -25,7 +25,8 @@ const planSetup = (input: Omit<PlanSetupInput, 'gitExecutable'>) =>
     planSetupRaw({ ...input, gitExecutable } as PlanSetupInput)
 const sibling = (overrides: Partial<Sibling> = {}): Sibling => ({
     slug: 'api', dir: 'api', remote: 'ssh://example.invalid/api.git', branch: 'main', mount: 'always',
-    acquire: 'auto', var: 'API_DIR', toolchain: 'node', guides: [], purpose: 'Synthetic API', ...overrides,
+    acquire: 'auto', var: 'API_DIR', toolchain: 'node', guides: [], purpose: 'Synthetic API', instruction_pointer: false,
+    ...overrides,
 })
 const observed = (value: SetupPathEvidence): SetupObservation => ({
     state: 'available', value, observedAt: '2026-09-07T00:00:00.000Z', producer: 'synthetic-test',

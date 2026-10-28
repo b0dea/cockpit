@@ -34,6 +34,13 @@ resume; changed bytes or ownership require repair. The command validates the con
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
 named gaps. Native discovery, a real interview and clean-machine proof require separate evidence.
 
+For a dedicated cockpit, offer an instruction pointer for each product repository during the
+preview. Do not enable or write one without human approval: it changes what every agent session in
+that repository loads. If the product has no **AGENTS.md**, show the exact proposed file as a draft;
+if it has one, show the marked block that would be appended without changing the team's text. After
+approval, record `instruction_pointer = true` on that sibling and follow **Add a repository** to
+apply it. An in-repository cockpit already uses the root guide and must not point it at itself.
+
 When init runs inside a product repository (a git checkout with a root package manifest), its
 `--json` preview carries `result.cockpitRoot`: a question, its options and a recommended answer.
 Relay that question to the human and write their answer under the `cockpit.root` key of the answers
@@ -134,6 +141,13 @@ The command writes cockpit.toml immediately; `--json` changes only its output fo
 nor an acceptance gate. After the edit, a human runs `cockpit sync --config cockpit.toml` in a terminal because
 the changed declaration affects the guard. Then run `cockpit check --config cockpit.toml --json`. Done when the
 check exits 0.
+
+Add `--instruction-pointer` only after the human approves the exact marked block. First run
+`cockpit setup --config cockpit.toml --json`; it reports the proposed **AGENTS.md** path without
+writing it. If the guide is missing, show the exact new-file draft; otherwise show the appended
+block and the preserved team text. After approval, run
+`cockpit setup --config cockpit.toml --write-instruction-pointers`, which writes only the marked
+block and refuses an edited or ambiguous existing block.
 
 ## After upgrading cockpit
 

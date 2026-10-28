@@ -289,14 +289,14 @@ describe('CLI help', () => {
     it('lists every sibling flag in `sibling --help` and routes add and remove to their handlers', async () => {
         const help = await runInProcess(['sibling', '--help'])
         expect(help.status).toBe(0)
-        for (const flag of ['--config', '--create', '--from', '--remote', '--dir', '--var', '--purpose', '--json']) expect(help.stdout).toContain(flag)
+        for (const flag of ['--config', '--create', '--from', '--remote', '--dir', '--var', '--purpose', '--instruction-pointer', '--json']) expect(help.stdout).toContain(flag)
 
         const seen: unknown[] = []
         const sibling = async (request: unknown) => { seen.push(request); return { status: 0, result: null, diagnostics: [] } }
-        await runInProcess(['sibling', 'add', 'api', '--config', 'cockpit.toml', '--remote', 'https://git.invalid/a.git', '--dir', 'svc'], { sibling } as never)
+        await runInProcess(['sibling', 'add', 'api', '--config', 'cockpit.toml', '--remote', 'https://git.invalid/a.git', '--dir', 'svc', '--instruction-pointer'], { sibling } as never)
         await runInProcess(['sibling', 'remove', 'api', '--config', 'cockpit.toml'], { sibling } as never)
         expect(seen).toEqual([
-            { operation: 'add', input: { configPath: 'cockpit.toml', slug: 'api', create: false, remote: 'https://git.invalid/a.git', dir: 'svc' } },
+            { operation: 'add', input: { configPath: 'cockpit.toml', slug: 'api', create: false, remote: 'https://git.invalid/a.git', dir: 'svc', instructionPointer: true } },
             { operation: 'remove', input: { configPath: 'cockpit.toml', slug: 'api' } },
         ])
 
@@ -1189,6 +1189,15 @@ describe('setup process contract', () => {
         expect(status).toBe(0)
         expect(JSON.parse(capture.output().stdout)).toEqual({ invocation: jsonInvocation(capture.output().stdout, status, 'setup', resolve('cockpit.toml')), result: setupOutcome().result, diagnostics: [] })
         expect(capture.output().stderr).toBe('')
+    })
+
+    it('routes explicit instruction-pointer write authority to setup', async () => {
+        const seen: unknown[] = []
+        const capture = captureIo()
+        expect(await runCli(['setup', '--config', 'cockpit.toml', '--write-instruction-pointers'], capture.io, {
+            setup: async input => { seen.push(input); return setupOutcome() },
+        })).toBe(0)
+        expect(seen).toEqual([{ configPath: 'cockpit.toml', writeInstructionPointers: true }])
     })
 
     it('keeps setup refusals off stdout for humans and null in JSON mode', async () => {

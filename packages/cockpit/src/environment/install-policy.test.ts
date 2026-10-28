@@ -21,7 +21,7 @@ const scratch: string[] = []
 const source = { path: '/synthetic/cockpit.toml', byteLength: 17, sha256: 'b'.repeat(64) }
 const baseSibling = {
     slug: 'service', dir: 'service', remote: 'https://example.invalid/service.git',
-    mount: 'always', acquire: 'auto', var: 'SERVICE_DIR', purpose: 'Synthetic service', guides: [],
+    mount: 'always', acquire: 'auto', var: 'SERVICE_DIR', purpose: 'Synthetic service', guides: [], instruction_pointer: false,
 } satisfies Omit<Sibling, 'toolchain'>
 
 const policy = (patch: Partial<InstallPolicy> = {}): InstallPolicy => ({

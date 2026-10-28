@@ -30,8 +30,8 @@ volumes and ports, started against the sibling checkouts on your disk.
 
 ### Surface
 
-A file cockpit generates for an agent harness: root instructions such as AGENTS.md and
-CLAUDE.md, skills, subagents, hooks, MCP server entries and permissions. Surface templates ship
+A file cockpit generates for an agent harness: the shared root instructions in AGENTS.md,
+the Claude import in CLAUDE.md, skills, subagents, hooks, MCP server entries and permissions. Surface templates ship
 in the package; `cockpit sync` renders them for each configured harness.
 
 ### Overlay

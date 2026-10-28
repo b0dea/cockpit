@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
-import { Browser, EntrypointDerivative, Environment, GeneratedService, InstallPolicy, Testing, Workorders } from './schema.js'
+import { Browser, EntrypointDerivative, Environment, GeneratedService, InstallPolicy, Sibling, Testing, Workorders } from './schema.js'
 import { CockpitConfig, CustomHarness, Guards, SurfaceDeclaration, SurfaceOverlay } from './schema.js'
 import { renderCockpitSchema } from './schema-json.js'
 import { compileDraft04Schema } from '../test-support/draft04-validator.js'
@@ -16,6 +16,13 @@ const provenance = { source: 'overlay.toml', observed_on: '2026-09-26', kind: 'd
 const publishedCockpitValidator = compileDraft04Schema(JSON.parse(renderCockpitSchema()))
 
 describe('bounded exact project command declarations', () => {
+    it('requires sibling instruction pointers to be explicitly opted in', () => {
+        const sibling = { slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', purpose: 'Synthetic source' }
+        expect(Sibling.parse(sibling).instruction_pointer).toBe(false)
+        expect(Sibling.parse({ ...sibling, instruction_pointer: true }).instruction_pointer).toBe(true)
+        expect(Sibling.safeParse({ ...sibling, dir: '.', instruction_pointer: true }).success).toBe(false)
+    })
+
     it('bounds build and test by Unicode scalars without changing install or load probes', () => {
         const base = { toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'x'.repeat(20_000)], load_probe: ['node', ...Array(4_097).fill('probe')] }
         expect(InstallPolicy.safeParse(base).success).toBe(true)

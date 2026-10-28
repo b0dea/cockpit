@@ -278,7 +278,7 @@ function readySeed(siblingRoot: string): Extract<EnvironmentSeedPlan, { kind: 'r
 
 const baseSibling = {
     slug: 'api', dir: 'api', remote: 'ssh://example.invalid/api.git', acquire: 'auto',
-    mount: 'always', var: 'API_DIR', toolchain: 'none', guides: [], purpose: 'Synthetic API',
+    mount: 'always', var: 'API_DIR', toolchain: 'none', guides: [], purpose: 'Synthetic API', instruction_pointer: false,
 } satisfies Sibling
 
 function tomlValue(value: unknown): string {

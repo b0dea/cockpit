@@ -99,7 +99,7 @@ Exit code 0: nothing has drifted.
 
 | Generated | What it is |
 |---|---|
-| AGENTS.md, CLAUDE.md | Root instructions for the agents, in a cockpit-owned region you can write around |
+| AGENTS.md, CLAUDE.md | Shared root instructions in AGENTS.md; CLAUDE.md imports them with `@AGENTS.md`. Existing team text remains outside cockpit-owned regions. |
 | .claude/, .codex/, .opencode/, .cursor/, .grok/, opencode.jsonc, .agents/skills/ | Each harness's generated skills, subagents, hooks and supported permissions, in its own spelling |
 | .cockpit/guards/bash-guard.sh | The shared guard every harness hook calls before a tool runs |
 | compose.generated.yml | The Docker Compose project for the declared services, volumes and ports |

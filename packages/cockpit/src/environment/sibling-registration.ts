@@ -36,6 +36,7 @@ export interface SiblingAddInput {
     readonly dir?: string
     readonly purpose?: string
     readonly varName?: string
+    readonly instructionPointer?: boolean
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
@@ -356,7 +357,8 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     }
 
     const acquire = remote === undefined ? 'none' : 'auto'
-    const row: SiblingTableRow = { slug: slug.data, dir, ...(remote === undefined ? {} : { remote }), mount: 'always', acquire, var: varName, toolchain: 'none', purpose }
+    const row: SiblingTableRow = { slug: slug.data, dir, ...(remote === undefined ? {} : { remote }), mount: 'always', acquire, var: varName,
+        toolchain: 'none', ...(input.instructionPointer === true ? { instruction_pointer: true } : {}), purpose }
     const original = await sourceText(configPath, loaded.result.source.sha256)
     if (typeof original !== 'string') return original
     const edit = appendSiblingTable(original, row, config.sibling.length)

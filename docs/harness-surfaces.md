@@ -29,6 +29,12 @@ conflicts to reconcile. A team's existing `.claude/settings.json`, `.codex/confi
 `.codex/hooks.json` is not overwritten: [adopt it](adoption.md#adopt-existing-agent-settings) and
 cockpit renders a merge of the team's copy and its own output.
 
+Common root instructions are written once, in the owned region of **AGENTS.md**. Claude's owned
+region contains only `@AGENTS.md`. When an existing team **CLAUDE.md** already has that exact active
+import, cockpit leaves the file and its ownership alone; removing the import makes `check` report
+drift. A person approves instruction-structure changes and runs `sync`, because changing which file
+imports which changes what every agent session loads.
+
 Core declarations and `[surfaces].overlays` merge by stable name. A colliding overlay must use
 `replaces` with the core name and the recorded SHA-256 of that original. `permissions` and `mcp`
 remain core authority and cannot be replaced by an overlay. When a later cockpit version changes

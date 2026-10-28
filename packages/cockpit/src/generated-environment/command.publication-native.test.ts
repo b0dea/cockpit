@@ -311,7 +311,7 @@ native_hooks = { install = "inspect" }
                 }
                 if (variant.remote) expect(await readFile(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'), 'utf8')).toContain('name: cockpit-browser')
                 else await expect(lstat(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
-                expect(await readFile(join(fixture.root, 'CLAUDE.md'), 'utf8')).toContain('`focused` (unit)')
+                expect(await readFile(join(fixture.root, 'CLAUDE.md'), 'utf8')).toContain('@AGENTS.md')
                 expect(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')).toContain('`focused` (unit)')
                 await expect(lstat(join(fixture.root, '.githooks/pre-push'))).rejects.toMatchObject({ code: 'ENOENT' })
                 const checked = await checkGeneratedEnvironment({ configPath: fixture.configPath })

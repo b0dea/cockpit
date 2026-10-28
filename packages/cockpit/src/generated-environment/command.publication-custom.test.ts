@@ -381,6 +381,33 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(await readFile(join(changed.root, 'custom/rules.md'), 'utf8')).toBe('consumer bytes\n')
         })
 
+        it('preserves an active unmanaged Claude import without claiming ownership', async () => {
+            const imported = await surfaceConsumer('existing-claude-import', { rules: true })
+            const teamGuide = '# Team notes\n\n@AGENTS.md\n\nKeep this text.\n'
+            await writeFile(join(imported.root, 'CLAUDE.md'), teamGuide)
+            expect(await syncGeneratedEnvironment({ configPath: imported.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(imported.root, 'CLAUDE.md'), 'utf8')).toBe(teamGuide)
+            const importedOwnership = await ownership(imported.root) as { entries: readonly { path: string }[] }
+            expect(importedOwnership.entries.some(entry => entry.path === 'CLAUDE.md')).toBe(false)
+            expect(await checkGeneratedEnvironment({ configPath: imported.configPath })).toMatchObject({ kind: 'complete' })
+            await writeFile(join(imported.root, 'CLAUDE.md'), '# Team notes\n\nKeep this text.\n')
+            expect(await checkGeneratedEnvironment({ configPath: imported.configPath })).toMatchObject({ kind: 'refusal' })
+        })
+
+        it('removes a superseded owned Claude region when an active import exists', async () => {
+            const migratedImport = await surfaceConsumer('migrated-claude-import', { rules: true })
+            await writeFile(join(migratedImport.root, 'CLAUDE.md'), '# Team guide\n')
+            expect(await syncGeneratedEnvironment({ configPath: migratedImport.configPath })).toMatchObject({ kind: 'complete' })
+            const ownedClaude = await readFile(join(migratedImport.root, 'CLAUDE.md'), 'utf8')
+            await writeFile(join(migratedImport.root, 'CLAUDE.md'), `${ownedClaude}@AGENTS.md\n`)
+            expect(await syncGeneratedEnvironment({ configPath: migratedImport.configPath }, {
+                authorizeStaleRemoval: async request => Object.freeze({ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }),
+            })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(migratedImport.root, 'CLAUDE.md'), 'utf8')).toBe('# Team guide\n\n@AGENTS.md\n')
+            const migratedOwnership = await ownership(migratedImport.root) as { entries: readonly { path: string }[] }
+            expect(migratedOwnership.entries.some(entry => entry.path === 'CLAUDE.md')).toBe(false)
+        })
+
         it('preserves shared outside bytes and refuses ambiguous OpenCode ownership', async () => {
             const accepted = await surfaceConsumer('shared-preservation', { rules: true })
             const markdown = 'consumer heading\n\nconsumer tail\n'
@@ -414,6 +441,19 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 expect(await readFile(join(control.root, candidates[index]![0]), 'utf8')).toBe(candidates[index]![1])
                 await expect(lstat(join(control.root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
             }))
+        })
+
+        it('refuses duplicate Claude imports and does not treat a fenced import as active', async () => {
+            const duplicateImport = await surfaceConsumer('duplicate-claude-import', { rules: true })
+            await writeFile(join(duplicateImport.root, 'CLAUDE.md'), '@AGENTS.md\n\n@AGENTS.md\n')
+            expect(await syncGeneratedEnvironment({ configPath: duplicateImport.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_STATE_CONFLICT' })],
+            })
+
+            const fencedImport = await surfaceConsumer('fenced-claude-import', { rules: true })
+            await writeFile(join(fencedImport.root, 'CLAUDE.md'), '# Team guide\n\n```text\n@AGENTS.md\n```\n')
+            expect(await syncGeneratedEnvironment({ configPath: fencedImport.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(fencedImport.root, 'CLAUDE.md'), 'utf8')).toContain('<!-- cockpit:instructions:start -->')
         })
 
         it('refuses a replaced guide after every publication group is prepared', async () => {

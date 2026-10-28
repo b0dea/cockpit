@@ -471,7 +471,9 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
             || !configuredSet.has(candidate.target) || !validFileFields(candidate)) return refuse('SURFACE_INPUT_INVALID', 'generated surface output is malformed')
         const contribution = { harnesses: [candidate.target], scope: 'always' as const, capability: 'instructed' as const, bytes: stripDevelopmentMarkers(candidate.bytes as string) }
-        add(MARKDOWN_PATHS.has(candidate.path as string) ? markdown : whole, candidate.path as string, contribution)
+        if (candidate.path !== 'CLAUDE.md') {
+            add(MARKDOWN_PATHS.has(candidate.path as string) ? markdown : whole, candidate.path as string, contribution)
+        }
     }
     if (browser && Array.isArray(browser.files)) for (const candidate of browser.files) {
         if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
@@ -489,7 +491,8 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
             browserMcp.set(path, contribution)
         } else return refuse('SURFACE_INPUT_INVALID', 'browser emitted an unsupported physical path', path)
     }
-    const instructionPaths = [['claudecode', 'CLAUDE.md'], ['codexcli', 'AGENTS.md'], ['opencode', 'AGENTS.md']] as const
+    const instructionPaths = [['claudecode', 'AGENTS.md'], ['codexcli', 'AGENTS.md'], ['opencode', 'AGENTS.md']] as const
+    add(markdown, 'CLAUDE.md', { harnesses: ['claudecode'], scope: 'always', capability: 'instructed', bytes: '@AGENTS.md' })
     if (typeof captured.instructions === 'string') for (const [target, path] of instructionPaths) {
         add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: captured.instructions })
     }

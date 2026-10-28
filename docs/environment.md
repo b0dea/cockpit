@@ -81,6 +81,13 @@ cockpit never substitutes a similarly named directory inside its own checkout. T
 checkout; `acquire` controls how it reaches disk. They are independent. Setup inspects declared
 secret-file paths without reading or copying their contents.
 
+A sibling with `instruction_pointer = true` asks setup to connect its product-owned **AGENTS.md**
+to the cockpit guide. Ordinary `cockpit setup --config cockpit.toml` only reports the proposed
+path, so an agent cannot silently change the instructions loaded by future sessions. After a human
+reviews the exact block, `cockpit setup --config cockpit.toml --write-instruction-pointers` appends
+that marked block while preserving all other bytes. Missing guides are created only by the approved
+write; edited, partial or duplicate marked blocks are refused for human reconciliation.
+
 `up` starts or resumes the selected stack. It records a newly acquired holder separately from
 an existing holder so a failed start compensates only ownership acquired by that attempt.
 Persisted progress is first admitted against the current lifecycle, runtime, and port authority.

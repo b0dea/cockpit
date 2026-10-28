@@ -24,6 +24,7 @@ export interface SiblingTableRow {
     readonly acquire: string
     readonly var: string
     readonly toolchain: string
+    readonly instruction_pointer?: boolean
     readonly purpose: string
 }
 
@@ -126,6 +127,7 @@ export function siblingTable(row: SiblingTableRow): string {
         `acquire = ${quote(row.acquire)}`,
         `var = ${quote(row.var)}`,
         `toolchain = ${quote(row.toolchain)}`,
+        ...(row.instruction_pointer === true ? ['instruction_pointer = true'] : []),
         `purpose = ${quote(row.purpose)}`, ''].join('\n')
 }
 

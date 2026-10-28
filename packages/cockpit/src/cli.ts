@@ -73,6 +73,7 @@ import {
 } from './environment/contract.js'
 import { loadCockpitConfig, observeConfigSource } from './config/load.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
+import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
@@ -360,6 +361,7 @@ async function loadSetupContext(input: SetupCommandInput): Promise<EnvironmentCo
             stackId: currentStackId,
             holderId: holderId({ stackId: currentStackId, checkoutId: checkout.checkoutId, sessionId }),
             sessionId,
+            writeInstructionPointers: input.writeInstructionPointers === true,
         }),
     )
     if (!issued) {
@@ -387,6 +389,7 @@ const defaultSetupAdapters: SetupCommandAdapters = {
         env: context.env,
         gitExecutable: context.gitExecutable,
     }),
+    syncInstructionPointer: synchronizeInstructionPointer,
     execute: executePlan,
     observeSource: observeConfigSource,
     recordStarted: recordLifecycleStarted,
@@ -892,12 +895,13 @@ async function decodeRequest(
     }
 
     if (handler === 'setup') {
-        const values = parsed.values as { config?: string; json?: boolean }
+        const values = parsed.values as { config?: string; json?: boolean; 'write-instruction-pointers'?: boolean }
         if (parsed.positionals.length > 0) {
             return usageOutcome(ENVIRONMENT_CODES.SETUP_POSITIONAL_UNSUPPORTED, 'setup accepts named inputs only')
         }
         if (!values.config) return usageOutcome(ENVIRONMENT_CODES.SETUP_CONFIG_REQUIRED, 'provide --config <file>', '--config')
-        return { handler, input: { configPath: values.config } }
+        return { handler, input: { configPath: values.config,
+            ...(values['write-instruction-pointers'] === true ? { writeInstructionPointers: true } : {}) } }
     }
 
     if (handler === 'sync') {
@@ -1025,7 +1029,7 @@ async function decodeRequest(
     }
 
     if (handler === 'sibling') {
-        const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string }
+        const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
         const shape = 'cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"], or cockpit sibling remove <slug> --config <file>'
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
@@ -1033,7 +1037,7 @@ async function decodeRequest(
         }
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (operation === 'remove') {
-            const stray = ['create', 'from', 'remote', 'dir', 'var', 'purpose'].find((name) => (values as Record<string, unknown>)[name] !== undefined && (values as Record<string, unknown>)[name] !== false)
+            const stray = ['create', 'from', 'remote', 'dir', 'var', 'purpose', 'instruction-pointer'].find((name) => (values as Record<string, unknown>)[name] !== undefined && (values as Record<string, unknown>)[name] !== false)
             if (stray) return usageOutcome('CLI_USAGE_INVALID', `sibling remove takes only --config and --json; --${stray} belongs to sibling add`, `--${stray}`)
             return { handler, input: { operation, input: { configPath: values.config, slug } } }
         }
@@ -1042,6 +1046,7 @@ async function decodeRequest(
             ...(values.from === undefined ? {} : { from: values.from }), ...(values.remote === undefined ? {} : { remote: values.remote }),
             ...(values.dir === undefined ? {} : { dir: values.dir }), ...(values.var === undefined ? {} : { varName: values.var }),
             ...(values.purpose === undefined ? {} : { purpose: values.purpose }),
+            ...(values['instruction-pointer'] === true ? { instructionPointer: true } : {}),
         } } }
     }
 
@@ -1366,8 +1371,8 @@ export async function runCli(
         ['registry', 'siblings-root', 'adoption'].some((name) => optionCount(optionArgs, name) > 1)
     ) {
         outcome = usageOutcome('REGISTRY_OPTION_DUPLICATE', 'each registry-resolve input may be supplied only once')
-    } else if (definition.handler === 'setup' && optionCount(optionArgs, 'config') > 1) {
-        outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, 'the setup config may be supplied only once', '--config')
+    } else if (definition.handler === 'setup' && ['config', 'write-instruction-pointers'].some(name => optionCount(optionArgs, name) > 1)) {
+        outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, 'each setup option may be supplied only once', '--config')
     } else if (
         definition.handler !== 'document' && definition.handler !== 'registry-resolve' && definition.handler !== 'setup'
         && Object.entries(definition.options).some(([name, option]) => name !== 'json' && !('multiple' in option && option.multiple === true) && optionCount(optionArgs, name) > 1)

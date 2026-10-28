@@ -33,6 +33,7 @@ import {
     snapshotJson,
 } from './contract.js'
 import { gitEnvironment, type SetupObservation, type SetupResult } from './setup.js'
+import type { InstructionPointerResult } from './instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolvedExecutable, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
@@ -1086,6 +1087,7 @@ function lifecycleContextRefusal(
 
 export interface SetupCommandInput {
     configPath: string
+    writeInstructionPointers?: boolean
     env?: Readonly<Record<string, string>>
     gitExecutable?: ResolvedExecutable
 }
@@ -1108,6 +1110,7 @@ export interface SetupRunContext {
     readonly namespace: StateNamespace
     readonly stackId: StackId
     readonly holderId: HolderId
+    readonly writeInstructionPointers: boolean
 }
 
 export interface SetupRunContextInput {
@@ -1124,6 +1127,7 @@ export interface SetupRunContextInput {
     readonly stackId: StackId
     readonly holderId: HolderId
     readonly sessionId: string
+    readonly writeInstructionPointers?: boolean
 }
 
 const issuedSetupRuns = new WeakSet<object>()
@@ -1191,6 +1195,7 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             namespace,
             stackId: expectedStackId,
             holderId: expectedHolderId,
+            writeInstructionPointers: input.writeInstructionPointers === true,
         })
         issuedSetupRuns.add(context)
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
@@ -1214,6 +1219,7 @@ export interface SetupCommandAdapters {
     observedAt(): string
     observeGit(input: SiblingOperationInput): Promise<SetupObservation>
     planGit(input: SiblingOperationInput & { readonly observation: SetupObservation }): Promise<EnvironmentCommandOutcome<SetupResult>>
+    syncInstructionPointer?(input: Readonly<{ cockpitRoot: string; siblingRoot: string; write: boolean }>): Promise<InstructionPointerResult>
     execute(plan: ExecutionPlan): Promise<ExecutePlanOutcome>
     observeSource(path: string): Promise<ConfigSourceSnapshot>
     recordStarted(input: Pick<SetupRunContext, 'namespace' | 'stackId' | 'holderId'> & {
@@ -1368,6 +1374,28 @@ function exactSetupResult(
         action: action as SetupResult['action'],
         changed: result.changed,
     })
+}
+
+function exactInstructionPointerResult(
+    value: unknown,
+    cockpitRoot: string,
+    siblingRoot: string,
+): InstructionPointerResult | undefined {
+    const snapshot = snapshotJson(value)
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
+    const result = snapshot as Record<string, unknown>
+    const path = resolve(siblingRoot, 'AGENTS.md')
+    if (result.kind === 'refusal') {
+        if (Object.keys(result).sort().join('\0') !== ['kind', 'path', 'reason'].join('\0')
+            || result.path !== path || typeof result.reason !== 'string' || result.reason.length === 0
+            || Buffer.byteLength(result.reason) > 4_096 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(result.reason)) return undefined
+        return Object.freeze({ kind: 'refusal', path, reason: result.reason })
+    }
+    const target = relative(siblingRoot, resolve(cockpitRoot, 'AGENTS.md')).split(sep).join('/')
+    if (Object.keys(result).sort().join('\0') !== ['kind', 'path', 'target'].join('\0')
+        || !['offered', 'written', 'unchanged'].includes(result.kind as string)
+        || result.path !== path || result.target !== target) return undefined
+    return Object.freeze({ kind: result.kind as 'offered' | 'written' | 'unchanged', path, target })
 }
 
 type ReadyEnvironmentSeedPlan = Extract<EnvironmentSeedPlan, { kind: 'ready' }>
@@ -1790,6 +1818,49 @@ export async function runSetup(
             }
             diagnostics.push(...checked.diagnostics)
             siblingResult = checkedResult
+        }
+
+        if (sibling.instruction_pointer) {
+            if (!adapters.syncInstructionPointer) {
+                return sequenceRefusal(context, adapters, [...diagnostics, ownerDiagnostic(
+                    ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_INVALID,
+                    'instruction pointer support is unavailable',
+                    siblingResult.target,
+                )], executionEvidence(completedStepIds, mutationMayHaveOccurred))
+            }
+            if (context.writeInstructionPointers) {
+                const lifecycleFailure = await startLifecycle()
+                if (lifecycleFailure) return lifecycleFailure
+                const sourceFailure = await refuseSourceDrift()
+                if (sourceFailure) return sourceFailure
+            }
+            const pointer = exactInstructionPointerResult(await adapters.syncInstructionPointer({
+                cockpitRoot: context.mainCheckoutPath,
+                siblingRoot: siblingResult.target,
+                write: context.writeInstructionPointers,
+            }), context.mainCheckoutPath, siblingResult.target)
+            if (!pointer) {
+                return sequenceRefusal(context, adapters, [...diagnostics, ownerDiagnostic(
+                    ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_INVALID,
+                    'instruction pointer result was not bound to the declared sibling guide',
+                    siblingResult.target,
+                )], executionEvidence(completedStepIds, mutationMayHaveOccurred))
+            }
+            if (pointer.kind === 'refusal') {
+                return sequenceRefusal(context, adapters, [...diagnostics, ownerDiagnostic(
+                    ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_INVALID,
+                    pointer.reason,
+                    pointer.path,
+                )], executionEvidence(completedStepIds, mutationMayHaveOccurred))
+            }
+            if (pointer.kind === 'offered') diagnostics.push({
+                severity: 'info',
+                code: ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_OFFERED,
+                message: 'the declared sibling has no cockpit instruction pointer',
+                target: pointer.path,
+                fix: 'review the proposed AGENTS.md block, then run cockpit setup --config <file> --write-instruction-pointers',
+            })
+            mutationMayHaveOccurred ||= pointer.kind === 'written'
         }
 
         for (const [environmentFileIndex, environmentFile] of (sibling.environment_files ?? []).entries()) {

@@ -703,6 +703,8 @@ export const Sibling = z
         // own guide and report nothing. Defaulted rather than required: most repositories use
         // one or both of these, and one that does not is a row that says so.
         guides: z.array(SafeRelativePath).default(['CLAUDE.md', 'AGENTS.md']),
+        // Setup writes this repository only when the declaration and its command-line approval agree.
+        instruction_pointer: z.boolean().default(false),
         // Printed when the checkout is missing, so it says what the absence costs.
         purpose: z.string().min(1),
         environment_files: z.array(EnvironmentFile).optional(),
@@ -726,6 +728,10 @@ export const Sibling = z
     .refine((s) => (!requiresOperatorGate(s) ? true : s.gate === 'operator'), {
         message: 'a live, production, hardware, simulator, or host lane needs gate = "operator"',
         path: ['gate'],
+    })
+    .refine((s) => !s.instruction_pointer || s.dir !== '.', {
+        message: 'the cockpit root already loads AGENTS.md and cannot point that file at itself',
+        path: ['instruction_pointer'],
     })
     .refine(
         (s) => !s.environment_files || !hasDuplicate(s.environment_files.map((file) => file.instance)),
@@ -1168,6 +1174,7 @@ export function configurationDefaults() {
         sibling: {
             toolchain: Sibling.shape.toolchain.parse(undefined),
             guides: Sibling.shape.guides.parse(undefined),
+            instruction_pointer: Sibling.shape.instruction_pointer.parse(undefined),
         },
         ports: {
             step: Ports.shape.step.parse(undefined),

@@ -247,6 +247,32 @@ interface AuthenticatedSiblingRoots {
     readonly siblings: ReadonlyMap<string, Readonly<{ root: string; identity: DirectoryIdentity }>>
 }
 
+function activeClaudeImports(bytes: string): readonly number[] {
+    const imports: number[] = []
+    let fence: '`' | '~' | undefined
+    let inComment = false
+    for (const [index, line] of bytes.split(/\r?\n/u).entries()) {
+        const trimmed = line.trimStart()
+        if (inComment) {
+            if (trimmed.includes('-->')) inComment = false
+            continue
+        }
+        if (trimmed.startsWith('<!--')) {
+            if (!trimmed.includes('-->')) inComment = true
+            continue
+        }
+        const marker = /^(?<fence>`{3,}|~{3,})/u.exec(trimmed)?.groups?.fence
+        if (marker) {
+            const candidate = marker[0] as '`' | '~'
+            if (!fence) fence = candidate
+            else if (fence === candidate) fence = undefined
+            continue
+        }
+        if (!fence && line === '@AGENTS.md') imports.push(index)
+    }
+    return imports
+}
+
 async function siblingRootsCurrent(authority: AuthenticatedSiblingRoots): Promise<boolean> {
     try {
         if (await realpath(authority.declaredRoot) !== authority.canonicalRoot) return false
@@ -2252,7 +2278,35 @@ async function prepareSurfaces(
     if (rendered.kind !== 'complete') return refuse(rendered.diagnostic.code, rendered.diagnostic.message, rendered.diagnostic.target)
     const adopted = await mergeAdoptedSurfaces(prepared, rendered.entries, configuredHarnesses, adapters)
     if ('status' in adopted) return adopted
-    for (const entry of adopted.entries) if (entry.kind === 'symlink') {
+    let adoptedEntries = adopted.entries
+    if (adopted.entries.some(entry => entry.path === 'CLAUDE.md')) {
+        const existingClaude = await readAnchoredEntry(prepared.root, 'CLAUDE.md', MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
+        if (existingClaude.kind === 'invalid') return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide could not be observed safely', 'CLAUDE.md')
+        if (existingClaude.kind === 'file') {
+            let bytes: string
+            try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(existingClaude.bytes) } catch {
+                return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide is not UTF-8', 'CLAUDE.md')
+            }
+            const priorClaude = priorOwned.find(entry => entry.path === 'CLAUDE.md')
+            let unmanaged = bytes
+            if (priorClaude?.kind === 'shared-region' && priorClaude.region.format === 'markdown-delimited') {
+                const start = bytes.indexOf(priorClaude.region.begin)
+                const end = bytes.indexOf(priorClaude.region.end, start + priorClaude.region.begin.length)
+                if (start >= 0 && end > start) unmanaged = `${bytes.slice(0, start)}${bytes.slice(end + priorClaude.region.end.length)}`
+            }
+            const imports = activeClaudeImports(unmanaged)
+            if (imports.length > 1) {
+                return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide contains ambiguous AGENTS.md imports', 'CLAUDE.md')
+            }
+            if (priorClaude === undefined && bytes.includes('<!-- cockpit:')) {
+                return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide contains an unowned cockpit marker', 'CLAUDE.md')
+            }
+            if (imports.length === 1) {
+                adoptedEntries = adopted.entries.filter(entry => entry.path !== 'CLAUDE.md')
+            }
+        }
+    }
+    for (const entry of adoptedEntries) if (entry.kind === 'symlink') {
         const offset = relative(entry.source.root, entry.source.path)
         const destinationTarget = resolve(prepared.root, dirname(entry.path), entry.target)
         if (offset === '..' || offset.startsWith(`..${sep}`) || isAbsolute(offset) || destinationTarget !== entry.source.path
@@ -2261,7 +2315,7 @@ async function prepareSurfaces(
             return refuse('SURFACE_STATE_CONFLICT', 'a projected symlink target is not bound to its authenticated sibling source', entry.path)
         }
     }
-    const bound = bindSurfaceOwnershipIdentity(adopted.entries, prepared.cockpitId)
+    const bound = bindSurfaceOwnershipIdentity(adoptedEntries, prepared.cockpitId)
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
     const surfaceEntries = Object.freeze([...bound.entries, ...bundleEntries]
         .sort((left, right) => compareCodeUnits(left.path, right.path)))

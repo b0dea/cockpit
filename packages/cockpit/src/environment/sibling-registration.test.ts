@@ -161,6 +161,16 @@ describe('sibling add', () => {
         expect((await loaded(configPath)).sibling.map((row) => [row.slug, row.dir])).toEqual([['genesis', '.'], ['api', 'api']])
     })
 
+    it('records an explicitly approved instruction pointer for setup to fulfill', async () => {
+        const { configPath, siblings } = await estate()
+        await mkdir(join(siblings, 'worker'))
+
+        const outcome = await add({ configPath, slug: 'worker', purpose: 'Synthetic worker', instructionPointer: true })
+
+        expect(outcome).toMatchObject({ status: 0, result: { sibling: { instruction_pointer: true } } })
+        expect(await readFile(configPath, 'utf8')).toContain('instruction_pointer = true')
+    })
+
     it('--create refuses a path that already has content and changes nothing', async () => {
         const { configPath, siblings } = await estate()
         await mkdir(join(siblings, 'ledger'))
