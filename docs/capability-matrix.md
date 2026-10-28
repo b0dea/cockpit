@@ -4,7 +4,7 @@
 
 This generated matrix is for users checking what each harness can enforce, instruct or cannot provide. Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.
 
-Source manifest: `25b2aca28f26e275b7583c1d9e0c8079f635cef935d989d930486ee8989abb42`.
+Source manifest: `9a2d4385670cbec71f2f5d8dee3d66f57cdab204276efe7af7b9f4e46c65e2af`.
 
 | Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |
 | --- | --- | --- | --- | --- | --- | --- | --- |
