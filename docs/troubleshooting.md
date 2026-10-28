@@ -265,10 +265,6 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_REVISION_INVALID` | `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `COMPARISON_FIXTURE_INVALID` | `packages/cockpit/src/comparison/contract.ts` | no static remedy captured; inspect implementing owners |
-| `COMPARISON_NORMALIZATION_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
-| `COMPARISON_OUTPUT_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
-| `COMPARISON_UNAVAILABLE` | `packages/cockpit/src/comparison/command.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_HEALTHCHECK_MISSING` | `packages/cockpit/src/environment/compose-topology.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_IMAGE_UNPINNED` | `packages/cockpit/src/environment/compose-topology.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_PORT_NOT_LEASED` | `packages/cockpit/src/environment/compose-topology.ts` | no static remedy captured; inspect implementing owners |
