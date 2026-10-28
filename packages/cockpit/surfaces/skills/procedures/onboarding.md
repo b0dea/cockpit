@@ -40,7 +40,7 @@ Relay that question to the human and write their answer under the `cockpit.root`
 file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
 lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
-Explain the trade-off in a sentence or two from [Where the cockpit lives](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
+Explain the trade-off in a sentence or two from [root placement choices](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
 
 After accepted initialization, and only with explicit authorization to change product-owned fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
