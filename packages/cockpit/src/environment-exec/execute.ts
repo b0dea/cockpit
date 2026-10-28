@@ -1205,7 +1205,12 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
         return {
             kind: 'refusal', status: 2, result: null,
             diagnostics: [
-                { severity: 'error', code: observation.failure, message: `execution step ${observation.id} failed`, target: observation.id },
+                { severity: 'error', code: observation.failure,
+                    message: observation.failure === ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED
+                        && !observation.started && process.platform === 'win32'
+                        ? `execution step ${observation.id} cannot run on Windows: cockpit cannot confirm that all child-process descendants have stopped; fix: rerun the command on a supported macOS or Linux host`
+                        : `execution step ${observation.id} failed`,
+                    target: observation.id },
                 ...compensationDiagnostics,
             ],
             execution: {

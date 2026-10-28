@@ -428,7 +428,10 @@ describe('mechanical environment executor', () => {
 
         expect(outcome).toEqual(expect.objectContaining({
             kind: 'refusal', status: 2,
-            diagnostics: [expect.objectContaining({ code: 'EXECUTION_PRECONDITION_CHANGED' })],
+            diagnostics: [expect.objectContaining({
+                code: 'EXECUTION_PRECONDITION_CHANGED',
+                message: 'execution step unsupported-primary cannot run on Windows: cockpit cannot confirm that all child-process descendants have stopped; fix: rerun the command on a supported macOS or Linux host',
+            })],
             execution: {
                 completedStepIds: [], failedStep: { id: step.id, started: false },
                 compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
