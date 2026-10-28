@@ -51,6 +51,7 @@ export interface CommandDefinition {
 const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'accept-defaults': 'Accept the displayed defaults with their exact SHA-256 digest',
     'accept-preview': 'Accept the displayed init preview with its exact SHA-256 digest',
+    'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     adopt: 'Move one existing harness settings path under cockpit ownership',
     adoption: 'Path to the legacy adoption shell data',
     answers: 'Path to the init answers file',
@@ -78,6 +79,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     programme: 'Declared programme identifier',
     purpose: 'Short purpose of the sibling repository',
     registry: 'Path to the legacy registry input',
+    'reset-answer': 'Preview clearing one recorded init answer field',
     'release-evidence': 'Path to authenticated release evidence',
     'release-evidence-sha256': 'Expected SHA-256 of the release evidence',
     remote: 'Repository remote URL recorded for the sibling',
