@@ -1,5 +1,6 @@
 import { isValidatedWorkOrderPolicy } from '../work-orders/intake.js'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
@@ -391,7 +392,32 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         mkdirSync(join(directory, '.cockpit'))
         expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
             message: 'cockpit.toml is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it',
-            target: configPath, fix: `git -C ${directory} restore cockpit.toml (it is committed), then retry` }])
+            target: configPath, fix: `git -C ${directory} restore -- cockpit.toml (it is committed), then retry` }])
+    })
+
+    it('renders a missing-config recovery command as exact literal Git argv', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), "cockpit config '$(touch injected); ")))
+        scratch.push(directory)
+        const configName = "-cockpit'$(touch injected-file).toml"
+        const configPath = join(directory, configName)
+        const bin = join(directory, 'bin')
+        const capture = join(directory, 'argv.json')
+        mkdirSync(join(directory, '.cockpit'))
+        mkdirSync(bin)
+        const git = join(bin, 'git')
+        writeFileSync(git, `#!${process.execPath}\nrequire('node:fs').writeFileSync(process.env.CAPTURE, JSON.stringify(process.argv.slice(2)))\n`)
+        chmodSync(git, 0o755)
+
+        const outcome = await loadCockpitConfig(configPath)
+        expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CONFIG_NOT_FOUND', fix: expect.any(String) }] })
+        const command = outcome.diagnostics[0]!.fix!.replace(/ \(it is committed\), then retry$/, '')
+        const executed = spawnSync('/bin/sh', ['-c', command], { cwd: directory, encoding: 'utf8',
+            env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, CAPTURE: capture } })
+
+        expect(executed.status, executed.stderr).toBe(0)
+        expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual(['-C', directory, 'restore', '--', configName])
+        expect(() => readFileSync(join(directory, 'injected'))).toThrow()
+        expect(() => readFileSync(join(directory, 'injected-file'))).toThrow()
     })
 
     it('keeps the executor contract resolved and policy-free', () => {

@@ -18,7 +18,8 @@ import { readActiveStackInventory } from './claims.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection } from './generated-application.js'
-import { checkoutId } from './identity.js'
+import { checkoutId, holderId } from './identity.js'
+import { leasePortFamily } from './ports.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
     observeDockerRuntime,
@@ -342,6 +343,72 @@ describe('production lifecycle adapter composition', () => {
         if (inventory.kind !== 'complete') return
         expect(inventory.value.filter(({ stackId }) => stackId === loaded.result.stackId)
             .flatMap(({ record }) => record.holders)).toEqual([])
+    })
+
+    it('gives back only a freshly acquired port holder when downstream preparation throws', async () => {
+        const candidate = await fixture()
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        const failure = new Error('synthetic downstream failure')
+
+        await expect(adapters.withAcquiredPorts(loaded.result, async () => { throw failure })).rejects.toBe(failure)
+        let inventory = await readActiveStackInventory(loaded.result.namespace)
+        expect(inventory.kind).toBe('complete')
+        if (inventory.kind !== 'complete') return
+        expect(inventory.value.filter(({ stackId }) => stackId === loaded.result.stackId)
+            .flatMap(({ record }) => record.holders)).toEqual([])
+
+        expect(await adapters.withAcquiredPorts(loaded.result, async ({ projection }) => projection.ownership.change)).toBe('acquired')
+        await expect(adapters.withAcquiredPorts(loaded.result, async () => { throw failure })).rejects.toBe(failure)
+        inventory = await readActiveStackInventory(loaded.result.namespace)
+        expect(inventory.kind).toBe('complete')
+        if (inventory.kind !== 'complete') return
+        expect(inventory.value.filter(({ stackId }) => stackId === loaded.result.stackId)
+            .flatMap(({ record }) => record.holders)).toEqual([expect.objectContaining({ holderId: loaded.result.holderId })])
+    })
+
+    it('surfaces both the downstream exception and a refused fresh-holder compensation', async () => {
+        const candidate = await fixture()
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        const failure = new Error('synthetic downstream failure')
+
+        const rejected = adapters.withAcquiredPorts(loaded.result, async ({ projection }) => {
+            const observedAt = new Date().toISOString()
+            const coTenant = await leasePortFamily({
+                namespace: loaded.result.namespace,
+                stackId: loaded.result.stackId,
+                holderId: holderId({ stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId, sessionId: 'co-tenant' }),
+                checkoutId: loaded.result.checkoutId,
+                config: loaded.result.ports,
+                now: observedAt,
+                listenerTimeoutMs: 5_000,
+                listenerEvidence: [{ ports: Object.values(projection.lease.ports), observation: {
+                    state: 'available', value: [], observedAt, producer: 'controlled-test-probe',
+                } }],
+            })
+            expect(coTenant.kind, JSON.stringify(coTenant)).toBe('complete')
+            throw failure
+        })
+
+        await expect(rejected).rejects.toMatchObject({
+            message: 'downstream port preparation and acquired-holder compensation both failed',
+            errors: [failure, expect.objectContaining({ message: expect.stringContaining('CLAIM_CO_TENANT') })],
+        })
     })
 
     it.each(['single', 'fresh', 'replayed'] as const)('lets an authenticated controlled probe measure an unmeasured runtime without claiming global support with a %s supplier', async (mode) => {

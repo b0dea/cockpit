@@ -14,6 +14,7 @@ import {
 } from '../environment/contract.js'
 import { validateWorkOrderPolicy, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
 import { CockpitConfig } from '../schema.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'configuration-loading',
@@ -363,7 +364,7 @@ export async function loadCockpitConfig(
         if (observed.source.code === ENVIRONMENT_CODES.CONFIG_NOT_FOUND && await deletedFromCockpit(observed.source.path)) {
             return refusal(observed.source.code,
                 `${basename(observed.source.path)} is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it`,
-                observed.source.path, `git -C ${dirname(observed.source.path)} restore ${basename(observed.source.path)} (it is committed), then retry`)
+                observed.source.path, `${formatShellCommand(['git', '-C', dirname(observed.source.path), 'restore', '--', basename(observed.source.path)])} (it is committed), then retry`)
         }
         return refusal(
             observed.source.code,

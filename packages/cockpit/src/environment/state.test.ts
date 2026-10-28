@@ -717,15 +717,14 @@ describe('transactState', () => {
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: { revision: 0 } })
     })
 
-    it('does not reinterpret callback exceptions as typed aborts', async () => {
+    it('rethrows a callback exception unchanged after releasing the transaction lock', async () => {
         const { namespace, address } = await selectedNamespace()
+        const failure = new Error('unexpected callback failure')
 
-        const result = await transactState(namespace, address, { ownerId: holderA }, () => {
-            throw new Error('unexpected callback failure')
-        })
-
-        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
-        expect(result).not.toHaveProperty('aborted')
+        await expect(transactState(namespace, address, { ownerId: holderA }, () => { throw failure }))
+            .rejects.toBe(failure)
+        await expect(transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 },
+            () => claimRecord(0, 1))).resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('rejects a structural lookalike of the private transaction abort', async () => {

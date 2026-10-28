@@ -894,6 +894,10 @@ function executionBoundaryViolations(
                     && analysis.declarations.some(row => row.id === 'generated-publication-transaction'
                         && row.declaredBy === path && row.module === canonical))
                 && !applicationModules.has(canonical)
+                && !(canonical === 'packages/cockpit/src/environment/lifecycle-composition.ts'
+                    && analysis.declarations.some(row => row.id === 'lifecycle-adapter-composition'
+                        && row.declaredBy === path && row.module === canonical
+                        && row.exports.includes('createLifecycleCommandAdapters')))
                 && !(canonical === 'packages/cockpit/src/environment/destructive-composition.ts'
                     && analysis.declarations.some(row => row.id === 'destructive-adapter-composition'
                         && row.declaredBy === path && row.module === canonical
@@ -5659,6 +5663,26 @@ describe('product architecture contract', () => {
         ])
 
         expect(executionBoundaryViolations(sources)).not.toContain('ARCH024_COMPENSATION_EXECUTION_HOME')
+    })
+
+    it('allows the declared lifecycle adapter to compensate a fresh acquisition around its callback', () => {
+        const lifecycleComposition = 'packages/cockpit/src/environment/lifecycle-composition.ts'
+        const sources = new Map([
+            [
+                PORTS_MODULE,
+                `export const mechanism = { id: 'port-leasing', module: '${PORTS_MODULE}', exports: ['compensateAcquiredPortHolder'] } as const; export function compensateAcquiredPortHolder() {}`,
+            ],
+            [
+                lifecycleComposition,
+                `import { compensateAcquiredPortHolder } from './ports.js'; export const mechanism = { id: 'lifecycle-adapter-composition', module: '${lifecycleComposition}', exports: ['createLifecycleCommandAdapters'] } as const; export function createLifecycleCommandAdapters() { compensateAcquiredPortHolder() }`,
+            ],
+        ])
+
+        expect(executionBoundaryViolations(sources)).not.toContain('ARCH024_COMPENSATION_EXECUTION_HOME')
+        expect(executionBoundaryViolations(new Map([
+            [PORTS_MODULE, sources.get(PORTS_MODULE)!],
+            [lifecycleComposition, sources.get(lifecycleComposition)!.replace("exports: ['createLifecycleCommandAdapters']", "exports: ['other']")],
+        ]))).toContain('ARCH024_COMPENSATION_EXECUTION_HOME')
     })
 
     it('rejects executor policy and command modules that call the executor directly', () => {

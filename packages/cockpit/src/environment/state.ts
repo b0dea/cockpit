@@ -1875,19 +1875,30 @@ export async function transactState<T>(
     if (acquired.kind !== 'acquired') return acquired
 
     let result: StateResult<AnyStateRecord> | StateTransactionAbort<T>
+    let operationFailure: unknown
+    let operationFailed = false
     try {
         const currentResult = await readState(stableAddress)
         if (currentResult.kind === 'refusal') {
             result = currentResult
         } else {
             const current = currentResult.kind === 'complete' ? currentResult.value : null
+            let proposed: AnyStateRecord | StateTransactionAbort<T> | undefined
             try {
-                const proposed = await (update as (value: AnyStateRecord | null) => AnyStateRecord | StateTransactionAbort<T>
+                proposed = await (update as (value: AnyStateRecord | null) => AnyStateRecord | StateTransactionAbort<T>
                     | Promise<AnyStateRecord | StateTransactionAbort<T>>)(current)
+            } catch (error) {
+                operationFailure = error
+                operationFailed = true
+            }
+            if (operationFailed) {
+                // The owner failed before proposing state, so retain its error until the lock is released.
+                result = malformed(stableAddress)
+            } else try {
                 if (isStateTransactionAbort(proposed)) {
                     result = proposed as StateTransactionAbort<T>
                 } else {
-                    const record = validateRecordForAddress(stableAddress, proposed, current)
+                    const record = validateRecordForAddress(stableAddress, proposed!, current)
                     if (!record) {
                         result = malformed(stableAddress)
                     } else {
@@ -1936,6 +1947,13 @@ export async function transactState<T>(
         )
     } catch (error) {
         const release = error instanceof LockReleaseError ? error : undefined
+        if (operationFailed) {
+            const cause = operationFailure instanceof Error ? operationFailure.message : String(operationFailure)
+            return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
+                `state transaction operation failed (${cause}) and its lock could not be released safely`,
+                release?.target ?? stableNamespace.paths.stateLock,
+                release?.recovery ?? 'inspect the recorded lock owner before explicit reclamation')
+        }
         if ('kind' in result && (result.kind === 'complete' || result.kind === 'indeterminate')) {
             const publicationRecovery = result.kind === 'indeterminate'
                 ? result.recovery
@@ -1960,5 +1978,6 @@ export async function transactState<T>(
             release?.recovery ?? 'inspect the recorded lock owner before explicit reclamation',
         )
     }
+    if (operationFailed) throw operationFailure
     return issueStatePublication(result, stableAddress)
 }

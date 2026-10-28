@@ -59,6 +59,7 @@ import {
 } from './lifecycle-stage.js'
 import {
     acquirePortProjection,
+    compensateAcquiredPortHolder,
     type PortLeaseProjection,
     type PortListenerEvidenceInput,
 } from './ports.js'
@@ -1060,7 +1061,25 @@ export function createLifecycleCommandAdapters(
         })
         if (acquired.kind === 'refusal') return refuse?.(acquired.diagnostics)
         if (acquired.kind !== 'complete') return undefined
-        return use(Object.freeze({ leaseResult: acquired.leaseResult, projection: acquired.projection }))
+        try {
+            return await use(Object.freeze({ leaseResult: acquired.leaseResult, projection: acquired.projection }))
+        } catch (error) {
+            if (acquired.leaseResult.kind === 'complete' && acquired.leaseResult.change === 'acquired') {
+                let compensated: Awaited<ReturnType<typeof compensateAcquiredPortHolder>>
+                try {
+                    compensated = await compensateAcquiredPortHolder({ namespace: context.namespace,
+                        leaseResult: acquired.leaseResult, now: new Date().toISOString() })
+                } catch (cleanup) {
+                    throw new AggregateError([error, cleanup], 'downstream port preparation and acquired-holder compensation both failed')
+                }
+                if (compensated.kind !== 'complete') {
+                    const cleanup = new Error(compensated.diagnostics
+                        .map(({ code, message, target }) => `${code}: ${message}${target ? ` (${target})` : ''}`).join('; '))
+                    throw new AggregateError([error, cleanup], 'downstream port preparation and acquired-holder compensation both failed')
+                }
+            }
+            throw error
+        }
     }
 
     return Object.freeze({ load, execute, prepareGeneratedEnvironment, completeGeneratedEnvironment, completeGeneratedDependencies, completeGeneratedData, completeGeneratedVendors, withRuntimeReadiness, withGeneratedRuntime, withMachineFloorReadiness, withLifecycleStage, withAcquiredPorts })

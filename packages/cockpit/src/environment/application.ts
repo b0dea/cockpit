@@ -2443,8 +2443,9 @@ async function prepareGeneratedBringup(
     try {
         prepared = await adapters.withAcquiredPorts(context, async (ports) => {
             if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) return undefined
+            const generated = await adapters.prepareGeneratedEnvironment!(context, ports.projection)
             rememberAcquisition(ports.leaseResult)
-            return adapters.prepareGeneratedEnvironment!(context, ports.projection)
+            return generated
         }, (diagnostics) => { portRefusal = diagnostics; return undefined })
     }
     catch (error) { return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
@@ -3015,8 +3016,9 @@ async function executeUpRound(
                     context.stackId,
                 ) }
             }
+            const outcome = await adapters.withRuntimeReadiness(context, (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
             rememberAcquisition(ports.leaseResult)
-            return await adapters.withRuntimeReadiness(context, (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
+            return outcome
         }, refused) ?? unavailable(), refused) ?? unavailable()
     }
     return await adapters.withRuntimeReadiness(context, async (runtime) => await adapters.withLifecycleStage(context, async (stage) =>
@@ -3028,8 +3030,9 @@ async function executeUpRound(
                     context.stackId,
                 ) }
             }
+            const outcome = await operate(runtime, stage, ports)
             rememberAcquisition(ports.leaseResult)
-            return operate(runtime, stage, ports)
+            return outcome
         }, refused) ?? unavailable(), refused) ?? unavailable(), undefined, refused) ?? unavailable()
 }
 
