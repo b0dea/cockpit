@@ -242,6 +242,7 @@ describe('init application', () => {
         await writeFile(resolve(f.root, '..', 'compose.yml'), 'services:\n  unrelated:\n    image: marker.invalid/unrelated\n')
         const dedicated = resolve(f.root, '..', 'checkout-cockpit')
         mkdirSync(dedicated)
+        await writeFile(join(dedicated, 'compose.yml'), 'services:\n  api:\n    build: ../checkout\n')
         const classified = estate(resolve(f.root, '..'), 'one-sibling')
         if (classified.kind !== 'complete') throw new Error('expected a complete estate classification')
         const adapters: InitApplicationAdapters = {
@@ -260,16 +261,20 @@ describe('init application', () => {
             cockpitRoot: { kind: 'dedicated', firstSibling: f.root } }, adapters)
 
         expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'pending', result: { interview: {
-            inferenceSkipped: [expect.objectContaining({ source: '../checkout/.github/workflows/ci.yml',
-                reason: expect.stringContaining('not valid YAML') })],
+            inferenceSkipped: expect.arrayContaining([
+                expect.objectContaining({ source: '../checkout/compose.yml',
+                    reason: expect.stringContaining('outside the cockpit root') }),
+                expect.objectContaining({ source: '../checkout/.github/workflows/ci.yml',
+                    reason: expect.stringContaining('not valid YAML') }),
+            ]),
             outstanding: expect.arrayContaining([
                 expect.objectContaining({ field: 'ports.bases', inferred: [expect.objectContaining({
                     target: 'checkout.container_ports', value: [3000],
                     provenance: expect.objectContaining({ source: '../checkout/Dockerfile' }),
                 })] }),
                 expect.objectContaining({ field: 'environment.generated', inferred: expect.arrayContaining([
-                    expect.objectContaining({ target: 'environment.compose_files', value: ['../checkout/compose.yml'],
-                        provenance: expect.objectContaining({ source: '../checkout/compose.yml' }) }),
+                    expect.objectContaining({ target: 'environment.compose_files', value: ['compose.yml'],
+                        provenance: expect.objectContaining({ source: 'compose.yml' }) }),
                     expect.objectContaining({ target: 'checkout.command', value: ['node', 'server.mjs'],
                         provenance: expect.objectContaining({ source: '../checkout/Dockerfile' }) }),
                 ]) }),

@@ -280,7 +280,12 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             const source = relative(directory.path, name)
             const text = await read(directory.path, name)
             if (text === undefined) continue
-            if (parseYamlText(source, text) !== undefined) composeFiles.push(source)
+            if (parseYamlText(source, text) !== undefined) {
+                if (source === '..' || source.startsWith('../') || isAbsolute(source)) {
+                    skipped.push({ source,
+                        reason: 'is outside the cockpit root, so environment.compose_files cannot represent it; choose generated environment configuration, or place a reviewed Compose file inside the cockpit root and rerun the same cockpit init command' })
+                } else composeFiles.push(source)
+            }
             break
         }
         const workflowDirectory = authorityRelative(directory.path, '.github/workflows')
