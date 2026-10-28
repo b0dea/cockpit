@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import fsPromises from 'node:fs/promises'
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -12,14 +13,278 @@ import { resolveGitExecutable } from '../environment/executable.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
-import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, revalidateReferenceBootstrap, runPublicationPlan } from './transaction.js'
+import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile,
+    revalidateReferenceBootstrap, runPublicationPlan } from './transaction.js'
 
 const roots: string[] = []
-const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex')
+const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
 const ledgerPath = '.cockpit/generated-environment-ownership.json'
 const referenceLedgerPath = '.cockpit/generated-reference-ownership.json'
 
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
+
+describe('anchored file relocation', () => {
+    it.skipIf(process.platform === 'win32')('refuses a source replaced by a FIFO before relocation without blocking or creating the destination', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-race-')))
+        roots.push(root)
+        const source = 'source/settings.json'
+        const destination = 'cockpit/adopted/source/settings.json'
+        const sourcePath = join(root, source)
+        await mkdir(dirname(sourcePath), { recursive: true })
+        const bytes = '{"setting":true}\n'
+        await writeFile(sourcePath, bytes)
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+        let replaced = false
+        const started = Date.now()
+
+        const relocated = await relocateAnchoredFile(root, source, destination, 1024, digest(bytes), node, {
+            execute: async step => {
+                if (!replaced && step.labels.action === 'relocate-file') {
+                    replaced = true
+                    await rm(sourcePath)
+                    execFileSync('mkfifo', [sourcePath])
+                }
+                return executeProbe(step)
+            },
+        })
+
+        expect(relocated).toMatchObject({ kind: 'refusal', recovery: 'unchanged', failure: 'source-identity' })
+        expect(Date.now() - started).toBeLessThan(3000)
+        expect((await lstat(sourcePath)).isFIFO()).toBe(true)
+        await expect(lstat(join(root, destination))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it.skipIf(process.platform === 'win32')('preserves a source replacement made after the original is quarantined', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-source-replacement-')))
+        roots.push(root)
+        const source = 'source/settings.json'
+        const destination = 'cockpit/adopted/source/settings.json'
+        const sourcePath = join(root, source)
+        const destinationPath = join(root, destination)
+        await mkdir(dirname(sourcePath), { recursive: true })
+        const bytes = Buffer.alloc(64 * 1024, 0x61)
+        const replacement = 'replacement written at the mutation boundary\n'
+        await writeFile(sourcePath, bytes)
+        const writer = spawn(process.execPath, ['-e', `
+            const fs = require('node:fs')
+            const [directory, source, replacement] = process.argv.slice(1)
+            const deadline = Date.now() + 10000
+            const attempt = () => {
+                if (fs.readdirSync(directory).some(name => name.startsWith('.cockpit-adopt-source-'))) {
+                    try { fs.writeFileSync(source, replacement, { flag: 'wx' }); return }
+                    catch (error) { console.error(error); process.exitCode = 1; return }
+                }
+                if (Date.now() >= deadline) { console.error('source was not quarantined'); process.exitCode = 2; return }
+                setTimeout(attempt, 1)
+            }
+            attempt()
+        `, dirname(sourcePath), sourcePath, replacement], { stdio: ['ignore', 'ignore', 'inherit'] })
+        const writerExit = once(writer, 'exit')
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+
+        const relocated = await relocateAnchoredFile(root, source, destination, bytes.byteLength, digest(bytes), node, { execute: executeProbe })
+        const [writerCode] = await writerExit
+
+        expect(writerCode).toBe(0)
+        expect(relocated).toMatchObject({ kind: 'refusal', recovery: 'indeterminate', retainedPaths: [expect.stringContaining('.cockpit-adopt-source-')] })
+        expect(await readFile(sourcePath, 'utf8')).toBe(replacement)
+        const captures = (await readdir(dirname(sourcePath))).filter(name => name.startsWith('.cockpit-adopt-source-'))
+        expect(captures).toHaveLength(1)
+        expect(await readFile(join(dirname(sourcePath), captures[0]!))).toEqual(bytes)
+        await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it.skipIf(process.platform === 'win32')('keeps an unexpected destination replacement made after the destination link', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-destination-replacement-')))
+        roots.push(root)
+        const source = 'source/settings.json'
+        const destination = 'cockpit/adopted/source/settings.json'
+        const sourcePath = join(root, source)
+        const destinationPath = join(root, destination)
+        const displacedPath = join(root, 'displaced-open-destination')
+        await mkdir(dirname(sourcePath), { recursive: true })
+        const bytes = Buffer.alloc(8 * 1024 * 1024, 0x62)
+        const replacement = 'unexpected destination replacement\n'
+        await writeFile(sourcePath, bytes)
+        const writer = spawn(process.execPath, ['-e', `
+            const fs = require('node:fs')
+            const [destination, displaced, replacement] = process.argv.slice(1)
+            const deadline = Date.now() + 10000
+            const attempt = () => {
+                if (fs.existsSync(destination)) {
+                    try {
+                        fs.renameSync(destination, displaced)
+                        fs.writeFileSync(destination, replacement, { flag: 'wx' })
+                        return
+                    } catch (error) { console.error(error); process.exitCode = 1; return }
+                }
+                if (Date.now() >= deadline) { console.error('destination was not created'); process.exitCode = 2; return }
+                setTimeout(attempt, 1)
+            }
+            attempt()
+        `, destinationPath, displacedPath, replacement], { stdio: ['ignore', 'ignore', 'inherit'] })
+        const writerExit = once(writer, 'exit')
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+
+        const relocated = await relocateAnchoredFile(root, source, destination, bytes.byteLength, digest(bytes), node, { execute: executeProbe })
+        const [writerCode] = await writerExit
+
+        expect(writerCode).toBe(0)
+        expect(relocated).toMatchObject({ kind: 'refusal', recovery: 'indeterminate' })
+        expect(await readFile(sourcePath)).toEqual(bytes)
+        expect(await readFile(destinationPath, 'utf8')).toBe(replacement)
+        expect(await readFile(displacedPath)).toEqual(bytes)
+    })
+
+    it.skipIf(process.platform === 'win32')('preserves a destination replacement made between link and first identity observation', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-link-observation-race-')))
+        roots.push(root)
+        const source = 'source/settings.json'
+        const destination = 'cockpit/adopted/source/settings.json'
+        const sourcePath = join(root, source)
+        const destinationPath = join(root, destination)
+        const displacedPath = join(root, 'displaced-linked-destination')
+        const preloadPath = join(root, 'replace-before-observation.cjs')
+        await mkdir(dirname(sourcePath), { recursive: true })
+        const bytes = Buffer.from('{"setting":true}\n')
+        const replacement = 'replacement before identity observation\n'
+        await writeFile(sourcePath, bytes)
+        await writeFile(preloadPath, `
+            const fs = require('node:fs')
+            const path = require('node:path')
+            const request = JSON.parse(process.argv[1])
+            if (request.action === 'relocate-file') {
+                const original = fs.lstatSync
+                let destinationChecks = 0
+                fs.lstatSync = (target, ...rest) => {
+                    const inDestination = process.cwd().endsWith(path.join(...request.destination.segments))
+                    if (inDestination && target === request.destination.name && ++destinationChecks === 2) {
+                        fs.renameSync(target, ${JSON.stringify(displacedPath)})
+                        fs.writeFileSync(target, ${JSON.stringify(replacement)}, { flag: 'wx' })
+                    }
+                    return original(target, ...rest)
+                }
+            }
+        `)
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+        let injected = false
+
+        const relocated = await relocateAnchoredFile(root, source, destination, bytes.byteLength, digest(bytes), node, {
+            execute: step => {
+                if (step.labels.action !== 'relocate-file') return executeProbe(step)
+                injected = true
+                return executeProbe({ ...step, env: { ...step.env, NODE_OPTIONS: `--require=${preloadPath}` } })
+            },
+        })
+
+        expect(injected).toBe(true)
+        expect(relocated).toMatchObject({ kind: 'refusal', recovery: 'indeterminate' })
+        expect(await readFile(sourcePath)).toEqual(bytes)
+        expect(await readFile(destinationPath, 'utf8')).toBe(replacement)
+        expect((await readdir(dirname(destinationPath))).filter(name => name.startsWith('.cockpit-adopt-destination-'))).toEqual([])
+        expect(await readFile(displacedPath)).toEqual(bytes)
+    })
+
+    it.skipIf(process.platform === 'win32')('retains exact recovery links when destination cleanup fails after linking', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-post-link-fault-')))
+        roots.push(root)
+        const source = 'source/settings.json'
+        const destination = 'cockpit/adopted/source/settings.json'
+        const sourcePath = join(root, source)
+        const destinationPath = join(root, destination)
+        const preloadPath = join(root, 'post-link-fault.cjs')
+        await mkdir(dirname(sourcePath), { recursive: true })
+        const bytes = Buffer.alloc(256 * 1024, 0x63)
+        await writeFile(sourcePath, bytes)
+        await chmod(sourcePath, 0o640)
+        const sourceMode = (await lstat(sourcePath)).mode & 0o777
+        await writeFile(preloadPath, `
+            const fs = require('node:fs')
+            const path = require('node:path')
+            const request = JSON.parse(process.argv[1])
+            if (request.action === 'relocate-file') {
+                const originalLstat = fs.lstatSync
+                const originalUnlink = fs.unlinkSync
+                let destinationChecks = 0
+                fs.lstatSync = (target, ...rest) => {
+                    const inDestination = process.cwd().endsWith(path.join(...request.destination.segments))
+                    if (inDestination && target === request.destination.name && ++destinationChecks === 2) {
+                        throw Object.assign(new Error('synthetic post-link observation failure'), { code: 'EIO' })
+                    }
+                    return originalLstat(target, ...rest)
+                }
+                fs.unlinkSync = (target, ...rest) => {
+                    if (typeof target === 'string' && target.startsWith('.cockpit-adopt-destination-')) {
+                        throw Object.assign(new Error('synthetic destination capture cleanup failure'), { code: 'EIO' })
+                    }
+                    return originalUnlink(target, ...rest)
+                }
+            }
+        `)
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+        let injected = false
+
+        const relocated = await relocateAnchoredFile(root, source, destination, bytes.byteLength, digest(bytes), node, {
+            execute: step => {
+                if (step.labels.action !== 'relocate-file') return executeProbe(step)
+                injected = true
+                // The changed environment intentionally makes the receipt unauthenticated to the caller;
+                // filesystem assertions below verify the helper's recovery at the injected system boundary.
+                return executeProbe({ ...step, env: { ...step.env, NODE_OPTIONS: `--require=${preloadPath}` } })
+            },
+        })
+
+        expect(injected).toBe(true)
+        expect(relocated).toMatchObject({ kind: 'refusal', recovery: 'indeterminate', failure: 'filesystem-helper-receipt-unavailable' })
+        expect(await readFile(sourcePath)).toEqual(bytes)
+        expect((await lstat(sourcePath)).mode & 0o777).toBe(sourceMode)
+        const sourceCaptures = (await readdir(dirname(sourcePath))).filter(name => name.startsWith('.cockpit-adopt-source-'))
+        expect(sourceCaptures).toHaveLength(1)
+        expect(await readFile(join(dirname(sourcePath), sourceCaptures[0]!))).toEqual(bytes)
+        await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+        const destinationCaptures = (await readdir(dirname(destinationPath))).filter(name => name.startsWith('.cockpit-adopt-destination-'))
+        expect(destinationCaptures).toHaveLength(1)
+        expect(await readFile(join(dirname(destinationPath), destinationCaptures[0]!))).toEqual(bytes)
+        expect(relocated.kind === 'refusal' && relocated.retainedPaths).toEqual(expect.arrayContaining([
+            join('source', sourceCaptures[0]!), join('cockpit/adopted/source', destinationCaptures[0]!),
+        ]))
+    })
+
+    it.skipIf(process.platform === 'win32')('keeps writes through an already-open source descriptor at an authenticated name', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-open-writer-')))
+        roots.push(root)
+        const source = 'source/settings.json'
+        const destination = 'cockpit/adopted/source/settings.json'
+        const sourcePath = join(root, source)
+        const destinationPath = join(root, destination)
+        await mkdir(dirname(sourcePath), { recursive: true })
+        const bytes = Buffer.alloc(64 * 1024, 0x64)
+        await writeFile(sourcePath, bytes)
+        await chmod(sourcePath, 0o640)
+        const original = await lstat(sourcePath)
+        const writer = await open(sourcePath, 'r+')
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+        const updatedByte = Buffer.from([0x65])
+
+        const relocated = await relocateAnchoredFile(root, source, destination, bytes.byteLength, digest(bytes), node, { execute: executeProbe })
+        expect(relocated).toMatchObject({ kind: 'complete' })
+        await writer.write(updatedByte, 0, 1, bytes.byteLength - 1)
+        await writer.sync()
+        await writer.close()
+
+        await expect(lstat(sourcePath)).rejects.toMatchObject({ code: 'ENOENT' })
+        const destinationStatus = await lstat(destinationPath)
+        expect({ dev: destinationStatus.dev, ino: destinationStatus.ino }).toEqual({ dev: original.dev, ino: original.ino })
+        expect(destinationStatus.mode & 0o777).toBe(0o640)
+        expect((await readFile(destinationPath)).at(-1)).toBe(updatedByte[0])
+    })
+})
 
 async function bootstrapPublication() {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-publication-')))

@@ -5,23 +5,26 @@
  *
  * It decides whether a file may be adopted and records it; the merge rules live in
  * `surfaces/adoption.ts`, the cockpit.toml write in `config/verified-write.ts`, and publication in
- * the sync it hands off to. It spawns no process. A sync that refuses before writing the merged file
- * is rolled back, so a refused adoption never leaves the team's settings moved aside.
+ * the sync it hands off to. Filesystem access crosses the authenticated transaction helper rather
+ * than introducing another runner. A sync that refuses before writing the merged file is rolled
+ * back, so a refused adoption does not silently leave the team's settings moved aside.
  */
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, rename } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { parse } from 'smol-toml'
 
-import { loadCockpitConfig } from '../config/load.js'
+import { loadCockpitConfig, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
+import { executeProbe } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { publicationCockpitId } from '../environment/identity.js'
 import { CockpitConfig, SurfaceAdoption } from '../schema.js'
 import { adoptedCopyPath, inspectAdoptedSettings } from '../surfaces/adoption.js'
 import { ADOPTABLE_SURFACE_PATHS, SURFACE_FILE_MAX_BYTES, type AdoptableSurfacePath } from '../surfaces/contract.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
+import { nodeAuthority, readAnchoredEntry, readAnchoredFile, relocateAnchoredFile, restoreAnchoredFile,
+    type PublicationAdapters } from './transaction.js'
 
 export const mechanism = {
     id: 'surface-adoption-command',
@@ -57,14 +60,8 @@ function canonical(value: unknown): string {
 
 function digest(bytes: string | Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
 
-async function absent(path: string): Promise<boolean> {
-    try {
-        await lstat(path)
-        return false
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
-        throw error
-    }
+function errorSummary(error: unknown): string {
+    return error instanceof Error ? error.message.split('\n', 1)[0] : String(error)
 }
 
 function adoptionTable(row: SurfaceAdoption): string {
@@ -85,8 +82,17 @@ interface Candidate {
     readonly sha256: string
 }
 
+type AdoptionNode = NonNullable<Awaited<ReturnType<typeof nodeAuthority>>>
+
 /** Validate one requested path completely before anything moves. */
-async function candidate(root: string, requested: string, owned: ReadonlySet<string>, adopted: ReadonlySet<string>): Promise<Candidate | SyncAdoptionOutcome> {
+async function candidate(
+    root: string,
+    requested: string,
+    owned: ReadonlySet<string>,
+    adopted: ReadonlySet<string>,
+    node: AdoptionNode,
+    adapters: PublicationAdapters,
+): Promise<Candidate | SyncAdoptionOutcome> {
     if (!(ADOPTABLE_SURFACE_PATHS as readonly string[]).includes(requested)) {
         return refused('CLI_USAGE_INVALID', `--adopt ${JSON.stringify(requested)} is not an adoptable harness settings file; adoptable: ${ADOPTABLE_SURFACE_PATHS.join(', ')}`, '--adopt')
     }
@@ -96,33 +102,37 @@ async function candidate(root: string, requested: string, owned: ReadonlySet<str
         return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. Delete the duplicate ${path} and run cockpit sync; its settings are kept in ${destinationPath}`, path)
     }
     if (owned.has(path)) return refused('SURFACE_ADOPTION_REFUSED', `${path} is cockpit's own published output, not a team file; nothing to adopt`, path)
-    const target = join(root, path)
-    let status
-    try { status = await lstat(target) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return refused('SURFACE_ADOPTION_REFUSED', `${path} does not exist; there is nothing to adopt`, path)
-        throw error
+    const target = path
+    const source = await readAnchoredFile(root, target, SURFACE_FILE_MAX_BYTES, node, adapters)
+    if (source.kind === 'missing') return refused('SURFACE_ADOPTION_REFUSED', `${path} does not exist; there is nothing to adopt`, path)
+    if (source.kind !== 'complete') {
+        return refused('SURFACE_ADOPTION_REFUSED', `${path} could not be read as one stable regular file no larger than ${SURFACE_FILE_MAX_BYTES} bytes. Replace links, special files, or oversized content with the plain settings file inside the cockpit root, then re-run cockpit sync --adopt ${path}`, path)
     }
-    if (!status.isFile() || status.isSymbolicLink() || await realpath(target) !== target) {
-        return refused('SURFACE_ADOPTION_REFUSED', `${path} is not a regular file inside the cockpit root; adopt only the file itself, not a link to it`, path)
-    }
-    if (status.size > SURFACE_FILE_MAX_BYTES) return refused('SURFACE_ADOPTION_REFUSED', `${path} exceeds the ${SURFACE_FILE_MAX_BYTES}-byte surface limit`, path)
-    const bytes = await readFile(target)
     let text: string
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch {
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(source.bytes) } catch {
         return refused('SURFACE_ADOPTION_REFUSED', `${path} is not UTF-8 text`, path)
     }
     const inspected = inspectAdoptedSettings(path, text, path)
     if (inspected.kind !== 'complete') return refused(inspected.diagnostic.code, inspected.diagnostic.message, inspected.diagnostic.target)
-    const destination = join(root, destinationPath)
-    if (!await absent(destination)) return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} already exists; move it aside before adopting ${path}`, destinationPath)
-    return { path, target, destination, sha256: digest(bytes) }
+    const destination = await readAnchoredEntry(root, destinationPath, SURFACE_FILE_MAX_BYTES, node, adapters)
+    if (destination.kind === 'invalid') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} could not be confirmed missing through plain directories inside the cockpit root. Remove links, special files, oversized files, or unstable entries on that path, then re-run cockpit sync --adopt ${path}`, path)
+    if (destination.kind !== 'missing') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} already exists; move it aside before adopting ${path}`, destinationPath)
+    return { path, target, destination: destinationPath, sha256: source.sha256 }
 }
 
-async function ownedPaths(root: string, configPath: string, name: string): Promise<ReadonlySet<string> | SyncAdoptionOutcome> {
+async function ownedPaths(
+    root: string,
+    configPath: string,
+    name: string,
+    node: AdoptionNode,
+    adapters: PublicationAdapters,
+): Promise<ReadonlySet<string> | SyncAdoptionOutcome> {
+    const read = await readAnchoredFile(root, OWNERSHIP_PATH, STRUCTURED_INPUT_BYTE_LIMIT, node, adapters)
+    if (read.kind === 'missing') return new Set()
+    if (read.kind !== 'complete') return refused('GENERATED_OWNERSHIP_INVALID', `generated ownership metadata could not be read as one stable regular file no larger than ${STRUCTURED_INPUT_BYTE_LIMIT} bytes. Restore a plain ${OWNERSHIP_PATH} inside the cockpit root or remove the invalid entry, then re-run the command`, OWNERSHIP_PATH)
     let bytes: string
-    try { bytes = await readFile(join(root, OWNERSHIP_PATH), 'utf8') } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
-        throw error
+    try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch {
+        return refused('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is not UTF-8 text, so whether a file is cockpit\'s own cannot be decided', OWNERSHIP_PATH)
     }
     const manifest = parseOwnershipManifest(bytes, { root, cockpitId: publicationCockpitId({ name }), configPath })
     if (manifest.kind !== 'complete') return refused('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is unreadable, so whether a file is cockpit\'s own cannot be decided', OWNERSHIP_PATH)
@@ -130,17 +140,14 @@ async function ownedPaths(root: string, configPath: string, name: string): Promi
 }
 
 /** Undo the moves, newest first. Every failure is reported; none is swallowed. */
-async function restoreMoves(moved: readonly Candidate[]): Promise<string[]> {
+async function restoreMoves(root: string, moved: readonly Candidate[], node: AdoptionNode, adapters: PublicationAdapters): Promise<string[]> {
     const failures: string[] = []
     for (const item of [...moved].reverse()) {
         try {
-            if (!await absent(item.target)) {
-                failures.push(`${item.path} exists again, so ${adoptedCopyPath(item.path)} was left in place`)
-                continue
-            }
-            await rename(item.destination, item.target)
+            const restored = await restoreAnchoredFile(root, item.target, item.destination, SURFACE_FILE_MAX_BYTES, item.sha256, node, adapters)
+            if (restored.kind !== 'complete') failures.push(`${adoptedCopyPath(item.path)} could not be safely moved back to ${item.path}. Preserve both paths; restore the file whose SHA-256 is ${item.sha256} to ${item.path}, then re-run the command`)
         } catch (error) {
-            failures.push(`${adoptedCopyPath(item.path)} could not be moved back to ${item.path} (${error instanceof Error ? error.message : String(error)})`)
+            failures.push(`${adoptedCopyPath(item.path)} could not be safely moved back to ${item.path} (${errorSummary(error)}). Preserve both paths; restore the file whose SHA-256 is ${item.sha256} to ${item.path}, then re-run the command`)
         }
     }
     return failures
@@ -149,6 +156,7 @@ async function restoreMoves(moved: readonly Candidate[]): Promise<string[]> {
 export async function runSyncAdoption(
     input: SyncAdoptionInput,
     synchronize: (input: Readonly<{ configPath: string }>) => Promise<SyncAdoptionOutcome>,
+    adapterOverrides: Partial<PublicationAdapters> = {},
 ): Promise<SyncAdoptionOutcome> {
     if (input.adopt.length === 0 || new Set(input.adopt).size !== input.adopt.length) {
         return refused('CLI_USAGE_INVALID', 'name each harness settings file to adopt once with --adopt <path>', '--adopt')
@@ -158,21 +166,24 @@ export async function runSyncAdoption(
     const configPath = loaded.result.source.path
     const root = dirname(configPath)
     const config = loaded.result.config
-    const owned = await ownedPaths(root, configPath, config.cockpit.name)
+    const node = await nodeAuthority()
+    if (!node) return refused('GENERATED_EXECUTABLE_UNAVAILABLE', 'adoption requires an authenticated Node filesystem helper; reinstall cockpit and re-run the command', process.execPath)
+    const adapters: PublicationAdapters = Object.freeze({ execute: adapterOverrides.execute ?? executeProbe })
+    const owned = await ownedPaths(root, configPath, config.cockpit.name, node, adapters)
     if (!(owned instanceof Set)) return owned as SyncAdoptionOutcome
     const already = new Set(config.surfaces.adopted.map(row => row.path))
     const candidates: Candidate[] = []
     for (const requested of input.adopt) {
-        const checked = await candidate(root, requested, owned, already)
+        const checked = await candidate(root, requested, owned, already, node, adapters)
         if ('status' in checked) return checked
         candidates.push(checked)
     }
 
-    const original = await readFile(configPath)
-    if (digest(original) !== loaded.result.source.sha256) {
+    const original = await readAnchoredFile(root, basename(configPath), STRUCTURED_INPUT_BYTE_LIMIT, node, adapters)
+    if (original.kind !== 'complete' || original.sha256 !== loaded.result.source.sha256) {
         return refused(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'cockpit.toml changed while it was being read; nothing was moved. Re-run the command', configPath)
     }
-    const originalText = original.toString('utf8')
+    const originalText = new TextDecoder('utf-8', { fatal: true }).decode(original.bytes)
     const adoptedOn = new Date().toISOString().slice(0, 10)
     const rows = candidates.map(item => SurfaceAdoption.parse({
         path: item.path, source: adoptedCopyPath(item.path), sha256: item.sha256, adopted_on: adoptedOn,
@@ -189,23 +200,43 @@ export async function runSyncAdoption(
     }
 
     const moved: Candidate[] = []
-    const rollback = async (reason: SyncAdoptionOutcome, configWritten: boolean): Promise<SyncAdoptionOutcome> => {
-        const failures = await restoreMoves(moved)
-        if (configWritten) {
-            const restored = await writeVerifiedConfig({
-                path: configPath, expectedSha256: digest(nextText), temporaryTag: 'adopt',
-                edit: () => originalText,
-                isExactChange: (value) => canonical(value) === canonical(config),
-                messages: {
-                    changedBefore: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place',
-                    changedDuring: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place',
-                    invalid: (detail) => `undoing the adoption would leave cockpit.toml invalid (${detail})`,
-                    notExact: 'undoing the adoption would change more than the [[surfaces.adopted]] rows',
-                    writtenMismatch: 'cockpit.toml was restored, but re-reading it shows a further change',
-                },
-            })
-            if (restored.kind !== 'complete') failures.push(restored.message)
+    const rollback = async (
+        reason: SyncAdoptionOutcome,
+        configState: 'unchanged' | 'written' | 'unknown',
+        uncertainty: readonly Readonly<{ item: Candidate; retainedPaths: readonly string[] }>[] = [],
+    ): Promise<SyncAdoptionOutcome> => {
+        const failures = await restoreMoves(root, moved, node, adapters)
+        let restoreConfig = configState === 'written'
+        if (configState === 'unknown') {
+            try {
+                const current = await readAnchoredFile(root, basename(configPath), STRUCTURED_INPUT_BYTE_LIMIT, node, adapters)
+                if (current.kind === 'complete' && current.sha256 === digest(originalText)) restoreConfig = false
+                else if (current.kind === 'complete' && current.sha256 === digest(nextText)) restoreConfig = true
+                else failures.push(`cockpit.toml could not be matched to either the original or adopted configuration. Preserve it and restore the version whose SHA-256 is ${digest(originalText)} before retrying`)
+            } catch (error) {
+                failures.push(`cockpit.toml could not be checked after the failed write (${errorSummary(error)}). Preserve it and restore the version whose SHA-256 is ${digest(originalText)} before retrying`)
+            }
         }
+        if (restoreConfig) {
+            try {
+                const restored = await writeVerifiedConfig({
+                    path: configPath, expectedSha256: digest(nextText), temporaryTag: 'adopt',
+                    edit: () => originalText,
+                    isExactChange: (value) => canonical(value) === canonical(config),
+                    messages: {
+                        changedBefore: 'cockpit.toml changed after the adoption was recorded, so its [[surfaces.adopted]] rows were left in place',
+                        changedDuring: 'cockpit.toml changed while the adoption was being undone, so its [[surfaces.adopted]] rows were left in place',
+                        invalid: (detail) => `undoing the adoption would leave cockpit.toml invalid (${detail})`,
+                        notExact: 'undoing the adoption would change more than the [[surfaces.adopted]] rows',
+                        writtenMismatch: 'cockpit.toml was restored, but re-reading it shows a further change',
+                    },
+                })
+                if (restored.kind !== 'complete') failures.push(`${restored.message}. Restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`)
+            } catch (error) {
+                failures.push(`cockpit.toml restoration failed (${errorSummary(error)}). Restore cockpit.toml to SHA-256 ${digest(originalText)} before retrying`)
+            }
+        }
+        for (const retained of uncertainty) failures.push(`recovery remains indeterminate for ${retained.item.path}. Preserve ${[retained.item.path, ...retained.retainedPaths].join(', ')} until the original inode is confirmed at ${retained.item.path} with SHA-256 ${retained.item.sha256}`)
         const note = failures.length === 0
             ? `the adoption was rolled back: ${candidates.map(item => item.path).join(', ')} ${candidates.length === 1 ? 'is' : 'are'} back in place and cockpit.toml is unchanged`
             : `the adoption could not be fully rolled back: ${failures.join('; ')}`
@@ -213,33 +244,51 @@ export async function runSyncAdoption(
             Object.freeze({ severity: 'error' as const, code: 'SURFACE_ADOPTION_REFUSED', message: note, target: candidates[0]!.path })]) })
     }
     for (const item of candidates) {
-        await mkdir(dirname(item.destination), { recursive: true })
-        await rename(item.target, item.destination)
-        moved.push(item)
-        const copied = await readFile(item.destination)
-        if (digest(copied) !== item.sha256) {
-            return rollback(refused('SURFACE_ADOPTION_REFUSED', `${item.path} changed while it was being adopted`, item.path), false)
+        const relocated = await relocateAnchoredFile(root, item.target, item.destination, SURFACE_FILE_MAX_BYTES, item.sha256, node, adapters)
+        if (relocated.kind !== 'complete') {
+            if (relocated.recovery === 'indeterminate') moved.push(item)
+            const failure = relocated.failure ? ` Filesystem refusal: ${relocated.failure}.` : ''
+            const recoveryFailures = relocated.recoveryFailures?.length ? ` Recovery refusals: ${relocated.recoveryFailures.join(', ')}.` : ''
+            return rollback(refused('SURFACE_ADOPTION_REFUSED', relocated.recovery === 'unchanged'
+                ? `${item.path} or its adopted-copy destination changed while it was being adopted; nothing was moved.${failure}`
+                : `${item.path} could not be confirmed after the filesystem helper stopped; recovery was attempted.${failure}${recoveryFailures}`, item.path), 'unchanged',
+            relocated.recovery === 'indeterminate' ? [{ item, retainedPaths: relocated.retainedPaths ?? [] }] : [])
         }
+        moved.push(item)
     }
-    const written = await writeVerifiedConfig({
-        path: configPath, expectedSha256: loaded.result.source.sha256, temporaryTag: 'adopt',
-        edit: () => nextText,
-        isExactChange: (value) => canonical(value) === canonical(expected),
-        messages: {
-            changedBefore: 'cockpit.toml changed since it was read; re-run cockpit sync --adopt',
-            changedDuring: 'cockpit.toml changed while the adoption was being recorded; re-run cockpit sync --adopt',
-            invalid: (detail) => `recording the adoption would leave cockpit.toml invalid (${detail})`,
-            notExact: 'recording the adoption would change more than the [[surfaces.adopted]] rows; add the rows by hand',
-            writtenMismatch: 'the adoption was recorded, but re-reading cockpit.toml shows a further change; inspect it before running sync',
-        },
-    })
-    if (written.kind !== 'complete') return rollback(refused(written.code, written.message, configPath), false)
+    let written
+    try {
+        written = await writeVerifiedConfig({
+            path: configPath, expectedSha256: loaded.result.source.sha256, temporaryTag: 'adopt',
+            edit: () => nextText,
+            isExactChange: (value) => canonical(value) === canonical(expected),
+            messages: {
+                changedBefore: 'cockpit.toml changed since it was read; re-run cockpit sync --adopt',
+                changedDuring: 'cockpit.toml changed while the adoption was being recorded; re-run cockpit sync --adopt',
+                invalid: (detail) => `recording the adoption would leave cockpit.toml invalid (${detail})`,
+                notExact: 'recording the adoption would change more than the [[surfaces.adopted]] rows; add the rows by hand',
+                writtenMismatch: 'the adoption was recorded, but re-reading cockpit.toml shows a further change; inspect it before running sync',
+            },
+        })
+    } catch (error) {
+        return rollback(refused('SURFACE_ADOPTION_REFUSED', `writing cockpit.toml failed (${errorSummary(error)}); owned recovery was attempted. Verify cockpit.toml has SHA-256 ${digest(originalText)} before retrying`, configPath), 'unknown')
+    }
+    if (written.kind !== 'complete') return rollback(refused(written.code, written.message, configPath), 'unknown')
 
-    const synced = await synchronize({ configPath })
+    let synced: SyncAdoptionOutcome
+    try { synced = await synchronize({ configPath }) } catch (error) {
+        return rollback(refused('SURFACE_ADOPTION_REFUSED', `synchronization failed (${errorSummary(error)}); owned recovery was attempted. Inspect ${candidates.map(item => item.path).join(', ')} and cockpit.toml before retrying`, configPath), 'written')
+    }
     if (synced.status !== 0) {
-        const published = await Promise.all(candidates.map(item => absent(item.target).then(missing => !missing)))
+        let published: boolean[]
+        try {
+            published = await Promise.all(candidates.map(item => readAnchoredEntry(root, item.target, SURFACE_FILE_MAX_BYTES, node, adapters)
+                .then(entry => entry.kind !== 'missing')))
+        } catch (error) {
+            return rollback(refused('SURFACE_ADOPTION_REFUSED', `published settings could not be checked after synchronization refused (${errorSummary(error)}); owned recovery was attempted`, candidates[0]!.path), 'written')
+        }
         // A merged file already on disk is consistent with the recorded adoption; undo only a sync that wrote nothing.
-        if (published.every(present => !present)) return rollback(synced, true)
+        if (published.every(present => !present)) return rollback(synced, 'written')
         return synced
     }
     const result = synced.result !== null && typeof synced.result === 'object' && !Array.isArray(synced.result) ? synced.result : {}

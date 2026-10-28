@@ -20,7 +20,7 @@ import type { SurfaceChange } from '../surfaces/sync.js'
 export const mechanism = {
     id: 'generated-publication-transaction',
     module: 'packages/cockpit/src/generated-environment/transaction.ts',
-    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'readPersonaSource', 'expectedState', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'runPublicationPlan'],
+    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'runPublicationPlan'],
 } as const
 
 export interface PublicationAdapters {
@@ -276,6 +276,7 @@ function confined(root: string, path: string): string | undefined {
 const FILESYSTEM_HELPER = String.raw`
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const path = require("node:path");
 const c = fs.constants;
 const limit = 16777216;
 const request = JSON.parse(process.argv[1]);
@@ -296,12 +297,13 @@ const readLimit = value => {
   if (!Number.isSafeInteger(value) || value < 1 || value > limit) throw new Error("limit");
   return value;
 };
-const read = (path, maxBytes = limit) => {
+const read = (path, maxBytes = limit, expected) => {
   maxBytes = readLimit(maxBytes);
   if (c.O_NOFOLLOW === undefined) throw new Error("no-follow");
-  const fd = fs.openSync(path, c.O_RDONLY | c.O_NOFOLLOW);
+  const fd = fs.openSync(path, c.O_RDONLY | c.O_NOFOLLOW | c.O_NONBLOCK);
   try {
-    const status = fs.fstatSync(fd); if (!status.isFile() || status.size > maxBytes) throw new Error("file");
+    const status = fs.fstatSync(fd);
+    if (!status.isFile() || status.size > maxBytes || expected && (status.dev !== expected.dev || status.ino !== expected.ino)) throw new Error("file");
     const chunks = []; let total = 0; const chunk = Buffer.allocUnsafe(65536);
     while (true) {
       const length = fs.readSync(fd, chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null);
@@ -516,6 +518,97 @@ try {
     respond({ kind: "complete", receiptBytes: receipt.length, receiptSha256: digest(receipt) });
   } else if (request.action === "read-persona" || request.action === "read-file" || request.action === "read-entry") {
     respond(readSource(request));
+  } else if (request.action === "relocate-file") {
+    const base = process.cwd(); const destinationChain = []; const sourceCapture = name(".cockpit-adopt-source-" + request.nonce); const destinationCapture = name(".cockpit-adopt-destination-" + request.nonce);
+    let sourceCapturePath; let sourceMode; let sourceCaptured = false; let sourceRestored = false; let originalRetired = false; let destinationCreated = false; let destinationQuarantined = false; let destinationIdentity;
+    const restoreSource = () => {
+      process.chdir(base); const chain = walkExpected(request.source.chain); const sourceName = name(request.source.name);
+      if (state(sourceName).kind !== "missing") throw new Error("source-recovery-occupied");
+      fs.linkSync(sourceCapture, sourceName); const restored = fs.lstatSync(sourceName); const captured = fs.lstatSync(sourceCapture);
+      if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error("source-recovery-identity");
+      sourceRestored = true; syncDirectory(); verifySourceChain(chain);
+    };
+    const retireSourceCapture = (requireRestored, retired = () => {}) => {
+      process.chdir(base); const chain = walkExpected(request.source.chain); const sourceName = name(request.source.name); const captured = fs.lstatSync(sourceCapture);
+      if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== request.source.file.dev || captured.ino !== request.source.file.ino) throw new Error("source-retirement-identity");
+      if (requireRestored) {
+        const restored = fs.lstatSync(sourceName);
+        if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error("source-retirement-public-identity");
+      }
+      fs.unlinkSync(sourceCapture); sourceCaptured = false; retired(); syncDirectory(); verifySourceChain(chain);
+    };
+    const removeDestination = () => {
+      process.chdir(base); const chain = walkExpected(destinationChain); const destinationName = name(request.destination.name);
+      if (state(destinationCapture).kind !== "missing") throw new Error("destination-recovery-capture");
+      fs.renameSync(destinationName, destinationCapture); destinationQuarantined = true; const captured = fs.lstatSync(destinationCapture);
+      if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== destinationIdentity.dev || captured.ino !== destinationIdentity.ino) {
+        fs.linkSync(destinationCapture, destinationName); fs.unlinkSync(destinationCapture); destinationQuarantined = false; syncDirectory();
+        throw new Error("destination-recovery-identity");
+      }
+      fs.unlinkSync(destinationCapture); destinationQuarantined = false; destinationCreated = false; syncDirectory(); verifySourceChain(chain);
+    };
+    try {
+      const sourceChain = walkExpected(request.source.chain); const sourceName = name(request.source.name);
+      const sourceBefore = fs.lstatSync(sourceName);
+      if (!sourceBefore.isFile() || sourceBefore.isSymbolicLink() || sourceBefore.dev !== request.source.file.dev || sourceBefore.ino !== request.source.file.ino) throw new Error("source-identity");
+      if (state(sourceCapture).kind !== "missing") throw new Error("source-capture");
+      sourceCapturePath = path.join(process.cwd(), sourceCapture);
+      fs.renameSync(sourceName, sourceCapture); sourceCaptured = true; syncDirectory();
+      const captured = fs.lstatSync(sourceCapture);
+      if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== request.source.file.dev || captured.ino !== request.source.file.ino) throw new Error("source-captured-identity");
+      const source = read(sourceCapture, request.source.maxBytes, request.source.file);
+      if (source.status.dev !== captured.dev || source.status.ino !== captured.ino || digest(source.bytes) !== request.source.sha256) throw new Error("source-digest");
+      sourceMode = source.status.mode & 511; verifySourceChain(sourceChain);
+
+      process.chdir(base); walk(safeSegments(request.destination.segments), destinationChain);
+      const destinationName = name(request.destination.name);
+      if (state(destinationName).kind !== "missing") throw new Error("destination-state");
+      process.chdir(base); const linkSourceChain = walkExpected(request.source.chain); const currentCapture = read(sourceCapturePath, request.source.maxBytes, request.source.file);
+      if (currentCapture.status.dev !== request.source.file.dev || currentCapture.status.ino !== request.source.file.ino
+        || digest(currentCapture.bytes) !== request.source.sha256 || (currentCapture.status.mode & 511) !== sourceMode) throw new Error("source-capture-changed");
+      verifySourceChain(linkSourceChain);
+      process.chdir(base); walkExpected(destinationChain);
+      fs.linkSync(sourceCapturePath, destinationName); destinationCreated = true; destinationIdentity = { ...request.source.file };
+      const destination = fs.lstatSync(destinationName);
+      if (!destination.isFile() || destination.isSymbolicLink() || destination.dev !== destinationIdentity.dev || destination.ino !== destinationIdentity.ino) throw new Error("destination-linked-identity");
+      process.chdir(base); const linkedSourceChain = walkExpected(request.source.chain); const linkedCapture = fs.lstatSync(sourceCapture);
+      if (!linkedCapture.isFile() || linkedCapture.isSymbolicLink() || linkedCapture.dev !== destinationIdentity.dev || linkedCapture.ino !== destinationIdentity.ino) throw new Error("source-linked-identity");
+      verifySourceChain(linkedSourceChain);
+      process.chdir(base); walkExpected(destinationChain);
+      if (hash(destinationName) !== request.source.sha256 || (destination.mode & 511) !== sourceMode) throw new Error("destination-postimage");
+      syncDirectory(); verifySourceChain(destinationChain);
+
+      process.chdir(base); const currentSourceChain = walkExpected(request.source.chain);
+      if (state(sourceName).kind !== "missing") throw new Error("source-postimage");
+      const finalCapture = fs.lstatSync(sourceCapture);
+      if (!finalCapture.isFile() || finalCapture.isSymbolicLink() || finalCapture.dev !== destinationIdentity.dev || finalCapture.ino !== destinationIdentity.ino) throw new Error("source-capture-identity");
+      verifySourceChain(currentSourceChain);
+
+      process.chdir(base); const currentDestinationChain = walkExpected(destinationChain);
+      const currentDestination = fs.lstatSync(destinationName);
+      if (!currentDestination.isFile() || currentDestination.isSymbolicLink() || currentDestination.dev !== destinationIdentity.dev
+        || currentDestination.ino !== destinationIdentity.ino || hash(destinationName) !== request.source.sha256
+        || (currentDestination.mode & 511) !== sourceMode) throw new Error("destination-changed");
+      verifySourceChain(currentDestinationChain); process.chdir(base); identity();
+      retireSourceCapture(false, () => { originalRetired = true; });
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error); const recoveryFailures = [];
+      if (sourceCaptured) try { restoreSource(); } catch (recoveryError) { recoveryFailures.push("source:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
+      if (destinationCreated && !originalRetired) try { removeDestination(); } catch (recoveryError) { recoveryFailures.push("destination:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
+      if (sourceCaptured && sourceRestored && !destinationCreated) try { retireSourceCapture(true); } catch (recoveryError) { recoveryFailures.push("source-retirement:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
+      if (originalRetired) recoveryFailures.push("source:original-retired");
+      if (destinationChain.length > 0) try { process.chdir(base); walkExpected(destinationChain); removeCreatedChain(destinationChain, request.identity); } catch (recoveryError) { recoveryFailures.push("directories:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
+      try { process.chdir(base); identity(); } catch (recoveryError) { recoveryFailures.push("root:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
+      if (recoveryFailures.length > 0) {
+        const retained = [];
+        if (sourceCaptured) retained.push([...request.source.chain.map(entry => entry.name), sourceCapture].join("/"));
+        if (destinationQuarantined) retained.push([...request.destination.segments, destinationCapture].join("/"));
+        else if (destinationCreated) retained.push([...request.destination.segments, request.destination.name].join("/"));
+        respond({ kind: "refusal", reason: "relocate-recovery-failed", failure, recoveryFailures, retained }); process.exit(0);
+      }
+      respond({ kind: "refusal", reason: "relocate-failed", failure }); process.exit(0);
+    }
+    respond({ kind: "complete", sha256: request.source.sha256 });
   } else if (request.action === "prepare") {
     const base = process.cwd(); let chain = []; let final; let groupPath; const prepared = []; const attempted = []; const createdNested = new Map();
     try {
@@ -986,6 +1079,96 @@ export async function readAnchoredEntry(
         return Object.freeze({ kind: 'file', bytes, sha256: simple.sha256, mode: simple.mode as number,
             identity: Object.freeze({ root: readRoot, chain: Object.freeze(chain as DirectoryIdentity[]), file }) })
     } catch { return Object.freeze({ kind: 'invalid' }) } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
+}
+
+export type AnchoredRelocation = Readonly<{ kind: 'complete'; sha256: string }>
+    | Readonly<{ kind: 'refusal'; recovery: 'unchanged' | 'indeterminate'; failure?: string; recoveryFailures?: readonly string[]; retainedPaths?: readonly string[] }>
+
+/** Move one authenticated regular file between confined paths through the publication helper. */
+export async function relocateAnchoredFile(
+    root: string,
+    sourcePath: string,
+    destinationPath: string,
+    maxBytes: number,
+    expectedSha256: string,
+    node: NodeAuthority,
+    adapters: PublicationAdapters,
+): Promise<AnchoredRelocation> {
+    const sourceTarget = confined(root, sourcePath)
+    const destinationTarget = confined(root, destinationPath)
+    if (!sourceTarget || !destinationTarget || sourceTarget === destinationTarget || !SHA256.test(expectedSha256)
+        || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) {
+        return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
+    }
+    const sourceParts = relative(root, sourceTarget).split(sep)
+    const destinationParts = relative(root, destinationTarget).split(sep)
+    if (sourceParts.some(part => !safePublicationSegment(part)) || destinationParts.some(part => !safePublicationSegment(part))) {
+        return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
+    }
+    const source = await readAnchoredFile(root, sourcePath, maxBytes, node, adapters)
+    const destination = await readAnchoredEntry(root, destinationPath, maxBytes, node, adapters)
+    if (source.kind !== 'complete' || source.sha256 !== expectedSha256 || destination.kind !== 'missing') {
+        return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
+    }
+    const nonce = randomBytes(16).toString('hex')
+    const request = Object.freeze({
+        version: 1, nonce, action: 'relocate-file', identity: source.identity.root,
+        source: Object.freeze({
+            chain: Object.freeze(sourceParts.slice(0, -1).map((name, index) => Object.freeze({ name, ...source.identity.chain[index]! }))),
+            name: sourceParts.at(-1), file: source.identity.file, sha256: source.sha256, maxBytes,
+        }),
+        destination: Object.freeze({ segments: Object.freeze(destinationParts.slice(0, -1)), name: destinationParts.at(-1) }),
+    })
+    const receipt = await runHelper(adapters, helperStep(node, root, 'adoption', request, [], Date.now() + HELPER_TIMEOUT_MS))
+    const complete = helperRecord(receipt, ['version', 'nonce', 'action', 'kind', 'sha256'])
+    if (complete?.version === 1 && complete.nonce === nonce && complete.action === 'relocate-file'
+        && complete.kind === 'complete' && complete.sha256 === expectedSha256) {
+        return Object.freeze({ kind: 'complete', sha256: expectedSha256 })
+    }
+    const refusal = ownRecord(receipt)
+    const safeFailure = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512
+    const recovered = refusal && exactKeys(refusal, ['version', 'nonce', 'action', 'kind', 'reason', 'failure'])
+        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === 'relocate-file'
+        && refusal.kind === 'refusal' && refusal.reason === 'relocate-failed' && safeFailure(refusal.failure)
+    const recoveryFailed = refusal && exactKeys(refusal, ['version', 'nonce', 'action', 'kind', 'reason', 'failure', 'recoveryFailures', 'retained'])
+        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === 'relocate-file'
+        && refusal.kind === 'refusal' && refusal.reason === 'relocate-recovery-failed' && Array.isArray(refusal.retained)
+        && safeFailure(refusal.failure) && Array.isArray(refusal.recoveryFailures)
+        && refusal.recoveryFailures.length > 0 && refusal.recoveryFailures.every(safeFailure)
+        && refusal.retained.every(path => typeof path === 'string' && confined(root, path) !== undefined)
+    const retainedPaths = recoveryFailed
+        ? Object.freeze(refusal.retained as string[]) : undefined
+    const possibleCaptures = Object.freeze([
+        [...sourceParts.slice(0, -1), `.cockpit-adopt-source-${nonce}`].join('/'),
+        [...destinationParts.slice(0, -1), `.cockpit-adopt-destination-${nonce}`].join('/'),
+    ])
+    return Object.freeze({
+        kind: 'refusal', recovery: recovered ? 'unchanged' : 'indeterminate',
+        ...((recovered || recoveryFailed) ? { failure: refusal.failure as string } : { failure: 'filesystem-helper-receipt-unavailable' }),
+        ...(recoveryFailed ? { recoveryFailures: Object.freeze(refusal.recoveryFailures as string[]) } : {}),
+        ...(!recovered ? { retainedPaths: retainedPaths ?? possibleCaptures } : {}),
+    })
+}
+
+/** Confirm or restore the original side of an anchored relocation without following either path. */
+export async function restoreAnchoredFile(
+    root: string,
+    originalPath: string,
+    relocatedPath: string,
+    maxBytes: number,
+    expectedSha256: string,
+    node: NodeAuthority,
+    adapters: PublicationAdapters,
+): Promise<AnchoredRelocation> {
+    const original = await readAnchoredFile(root, originalPath, maxBytes, node, adapters)
+    const relocated = await readAnchoredFile(root, relocatedPath, maxBytes, node, adapters)
+    if (original.kind === 'complete' && original.sha256 === expectedSha256 && relocated.kind === 'missing') {
+        return Object.freeze({ kind: 'complete', sha256: expectedSha256 })
+    }
+    if (original.kind === 'missing' && relocated.kind === 'complete' && relocated.sha256 === expectedSha256) {
+        return relocateAnchoredFile(root, relocatedPath, originalPath, maxBytes, expectedSha256, node, adapters)
+    }
+    return Object.freeze({ kind: 'refusal', recovery: 'indeterminate' })
 }
 
 interface AnchoredBatchReadRequest {

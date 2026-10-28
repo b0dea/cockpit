@@ -126,9 +126,15 @@ switch off or route around the guard or carry an authority cockpit declares else
 `disableAllHooks`, `permissions.defaultMode = "bypassPermissions"`, any hook that names a
 `.cockpit/guards/` transport, `permissions.additionalDirectories` and `enabledMcpjsonServers`
 (declare a sibling or approve the MCP server instead), and in `.codex/config.toml`, `mcp_servers`
-and `features.codex_hooks = false`. A refused adoption is rolled back: the file stays where it was
-and cockpit.toml is unchanged. Adoption changes cockpit.toml, so it is never a dry run, never
-`--interactive`, and an agent's guard never treats it as an ordinary command.
+and `features.codex_hooks = false`. It also refuses redirected ancestors, non-regular inputs and
+files that change while they are read, because adoption reads and moves only bounded regular files
+inside the cockpit root. Replace links or special files with plain files and directories, then
+re-run the command. An ordinary refusal is rolled back: the file stays where it was and
+cockpit.toml is unchanged. If a concurrent replacement prevents safe rollback, the refusal names
+every private recovery path that may still hold the original bytes and gives their recorded
+SHA-256; preserve those paths until the named source is restored. Adoption changes cockpit.toml,
+so it is never a dry run, never `--interactive`, and an agent's guard never treats it as an
+ordinary command.
 
 `opencode.jsonc` is not adopted: cockpit already shares that file and owns only its `$schema`,
 `instructions`, `mcp` and `permission` keys, so the team's other keys are kept as they are.
