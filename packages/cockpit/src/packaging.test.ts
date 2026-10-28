@@ -175,6 +175,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     // Packaging, installation and four fresh CLI processes share this aggregate budget.
     it('uses the installed producer for sync, check and version outside checkout', () => {
         const installed = packedPackageRoot()
+        const actual = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'))
+        expect(actual.engines.node).toBe(JSON.parse(read('package.json')).engines.node)
         const root = join(packScratch, 'producer-consumer')
         mkdirSync(join(root, 'app'), { recursive: true })
         mkdirSync(join(root, 'fixtures'))
@@ -187,7 +189,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         const options = { cwd: packScratch, env: { ...npmEnvironment(), CI: '1' }, encoding: 'utf8' as const }
         execFileSync(process.execPath, [launcher, 'sync', '--config', configPath, '--json'], options)
         execFileSync(process.execPath, [launcher, 'check', '--config', configPath, '--json'], options)
-        const actual = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'))
         const version = execFileSync(process.execPath, [launcher, '--version'], options)
         expect(version).toBe(`${actual.name} ${actual.version} (Node ${actual.engines.node}; source ${actual.cockpitSourceRevision})\n`)
         const parsed = execFileSync(process.execPath, ['--input-type=module', '--eval',
@@ -379,8 +380,9 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(help).toContain('check                  Check canonical generated environment files for drift')
         expect(help).toContain('selftest')
         expect(help).toContain('upgrade')
+        const metadata = JSON.parse(readFileSync(join(packedPackageRoot(), 'package.json'), 'utf8'))
         expect(execFileSync(process.execPath, [launcher, '--version'], options)).toBe(
-            '@b0dea/cockpit 0.0.0 (Node >=22; source development)\n',
+            `${metadata.name} ${metadata.version} (Node ${metadata.engines.node}; source ${metadata.cockpitSourceRevision})\n`,
         )
         const resolver = spawnSync(
             process.execPath,
