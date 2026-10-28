@@ -28,24 +28,17 @@ Configuration: `none`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DATA_MODE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_NOT_FOUND` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_UNREADABLE` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_CONFIGURATION_ANSWER_STALE` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
@@ -66,39 +59,23 @@ Configuration: `none`. Owners: none.
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | `packages/cockpit/src/document/command.ts` | once a product runs, declare environment.compose_files or [environment.generated] and run cockpit sync |
 | `DOCUMENT_SOURCE_REQUIRED` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_STDOUT_TARGET` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
-| `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_ABORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDERR_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDOUT_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_COMPENSATION_FAILED` | `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -119,8 +96,7 @@ Configuration: `none`. Owners: none.
 | `GENERATED_STALE_APPROVAL_REQUIRED` | `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_STALE_ARTIFACT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_STALE_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GREENFIELD_ANSWER_INVALID` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GREENFIELD_ANSWER_UNEXPECTED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `GREENFIELD_DISCOVERY_UNAVAILABLE` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
@@ -129,8 +105,6 @@ Configuration: `none`. Owners: none.
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
-| `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_COCKPIT_ROOT_REQUIRED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
@@ -145,74 +119,24 @@ Configuration: `none`. Owners: none.
 | `INIT_STATE_STALE` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_STATE_UNAUTHENTICATED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_TARGET_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOAD_PROBE_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCKFILE_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_HELD` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_AMBIGUOUS` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STALE_PATH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTANCE_NOT_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_COLD_START_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_CPU_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_DISK_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_MEMORY_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
 | `MCP_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/mcp.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_POSTURE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_COLLISION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_OUT_OF_RANGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LEASE_EXHAUSTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LISTENER_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LOCAL_VALUE_CORRECTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_ACCOUNTING_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_LABEL_ESCAPE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `REGISTRY_AUTH_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `REGISTRY_EMPTY` | `packages/cockpit/src/document/command.ts`, `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `REGISTRY_ENCODING_INVALID` | `packages/cockpit/src/document/command.ts`, `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `REGISTRY_NOT_FOUND` | `packages/cockpit/src/document/command.ts`, `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `REGISTRY_ROW_SKIPPED` | `packages/cockpit/src/document/command.ts`, `packages/cockpit/src/registry-resolve/command.ts` | repair every skipped row before documenting repository scope |
 | `REGISTRY_TOO_LARGE` | `packages/cockpit/src/document/command.ts`, `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
 | `REGISTRY_UNREADABLE` | `packages/cockpit/src/document/command.ts`, `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_CONFIG_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_MANUAL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_ABSENT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_DIRECTORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_REPOSITORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_OPTION_DUPLICATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PARENT_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_SYMLINK` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/reclaim.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_RENDER_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_LOCKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_CUSTOM_REFUSED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -224,25 +148,6 @@ Configuration: `none`. Owners: none.
 | `SURFACE_SOURCE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_STATE_CONFLICT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/sync.ts` | no static remedy captured; inspect implementing owners |
 | `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_DECLINED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_REPLAY` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_STALE` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_AUDIT_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_CONTRACT_INVALID` | `packages/cockpit/src/work-orders/intake.ts`, `packages/cockpit/src/work-orders/state.ts`, `packages/cockpit/src/work-orders/status.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ID_EXISTS` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_OPERATOR_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_POLICY_INVALID` | `packages/cockpit/src/work-orders/intake.ts`, `packages/cockpit/src/work-orders/pressure.ts`, `packages/cockpit/src/work-orders/resume.ts`, `packages/cockpit/src/work-orders/state.ts` | no static remedy captured; inspect implementing owners |
-| `WO_RENEWAL_DECISION_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ROUTE_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_SKILLS_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_SOURCE_GAPS` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_WIP_CAP` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_WIP_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit document
 
@@ -352,9 +257,29 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -380,56 +305,19 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DATA_MODE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
-| `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_ABORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDERR_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDOUT_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -447,73 +335,9 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_STALE_APPROVAL_REQUIRED` | `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_STALE_ARTIFACT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_STALE_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOAD_PROBE_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCKFILE_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_HELD` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_AMBIGUOUS` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STALE_PATH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTANCE_NOT_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_COLD_START_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_CPU_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_DISK_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_MEMORY_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `MCP_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/mcp.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_POSTURE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_COLLISION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_OUT_OF_RANGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LEASE_EXHAUSTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LISTENER_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LOCAL_VALUE_CORRECTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_ACCOUNTING_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_LABEL_ESCAPE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `REGISTRY_AUTH_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_CONFIG_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_MANUAL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_ABSENT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_DIRECTORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_REPOSITORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_OPTION_DUPLICATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PARENT_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_SYMLINK` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/reclaim.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_RENDER_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_LOCKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_CUSTOM_REFUSED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -523,10 +347,6 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `SURFACE_SOURCE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_STATE_CONFLICT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/sync.ts` | no static remedy captured; inspect implementing owners |
 | `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit check
 
@@ -547,56 +367,22 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_INTERNAL_ERROR` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/operator-application.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DATA_MODE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
-| `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_ABORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDERR_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDOUT_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_NOT_FOUND` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_UNREADABLE` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -614,73 +400,9 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_STALE_APPROVAL_REQUIRED` | `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_STALE_ARTIFACT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_STALE_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOAD_PROBE_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCKFILE_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_HELD` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_AMBIGUOUS` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STALE_PATH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTANCE_NOT_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_COLD_START_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_CPU_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_DISK_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_MEMORY_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `MCP_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/mcp.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_POSTURE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_COLLISION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_OUT_OF_RANGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LEASE_EXHAUSTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LISTENER_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LOCAL_VALUE_CORRECTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_ACCOUNTING_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_LABEL_ESCAPE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `REGISTRY_AUTH_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_CONFIG_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_MANUAL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_ABSENT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_DIRECTORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_REPOSITORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_OPTION_DUPLICATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PARENT_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_SYMLINK` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/reclaim.ts` | no static remedy captured; inspect implementing owners |
 | `SKILL_RENDER_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_LOCKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_CUSTOM_REFUSED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
@@ -690,25 +412,6 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `SURFACE_SOURCE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_STATE_CONFLICT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/sync.ts` | no static remedy captured; inspect implementing owners |
 | `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_DECLINED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_REPLAY` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_STALE` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_AUDIT_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_CONTRACT_INVALID` | `packages/cockpit/src/work-orders/intake.ts`, `packages/cockpit/src/work-orders/state.ts`, `packages/cockpit/src/work-orders/status.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ID_EXISTS` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_OPERATOR_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_POLICY_INVALID` | `packages/cockpit/src/work-orders/intake.ts`, `packages/cockpit/src/work-orders/pressure.ts`, `packages/cockpit/src/work-orders/resume.ts`, `packages/cockpit/src/work-orders/state.ts` | no static remedy captured; inspect implementing owners |
-| `WO_RENEWAL_DECISION_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ROUTE_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_SKILLS_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_SOURCE_GAPS` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_WIP_CAP` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_WIP_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit selftest
 
@@ -731,6 +434,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
 | `SELFTEST_EXECUTION_INVALID` | `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
 | `SELFTEST_SOURCE_INVALID` | `packages/cockpit/src/environment/selftest-application.ts`, `packages/cockpit/src/surfaces/selftest.ts` | no static remedy captured; inspect implementing owners |
 
@@ -783,9 +487,29 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -808,9 +532,29 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -832,180 +576,36 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `COMPOSE_TOPOLOGY_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DATA_MODE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DEPENDENCY_RUNTIME_INCOMPATIBLE` | `packages/cockpit/src/environment/dependency-runtime.ts` | no static remedy captured; inspect implementing owners |
-| `DEPENDENCY_RUNTIME_STALE` | `packages/cockpit/src/environment/dependency-runtime.ts` | no static remedy captured; inspect implementing owners |
-| `DEPENDENCY_RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/dependency-runtime.ts` | no static remedy captured; inspect implementing owners |
-| `DEPENDENCY_RUNTIME_UNMOUNTED` | `packages/cockpit/src/environment/dependency-runtime.ts` | no static remedy captured; inspect implementing owners |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
-| `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_ABORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDERR_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDOUT_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCY_DECLARATION_INVALID` | `packages/cockpit/src/environment/external-dependencies.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCY_EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/external-dependencies.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCY_EXECUTION_UNAVAILABLE` | `packages/cockpit/src/environment/external-dependencies.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCY_EXPIRED` | `packages/cockpit/src/environment/external-dependencies.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCY_SHADOW_UNAVAILABLE` | `packages/cockpit/src/environment/external-dependencies.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCY_TEMPLATE_MISMATCH` | `packages/cockpit/src/environment/external-dependencies.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ARTIFACT_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_OWNERSHIP_MISSING` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_PATH_DUPLICATE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_PATH_UNSAFE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_PERSONA_INVALID` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_PUBLICATION_FAILED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_RENDER_UNAUTHENTICATED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_SIBLING_ROOT_INVALID` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_SOURCE_CHANGED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_STALE_ARTIFACT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_STALE_ARTIFACT_DRIFT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/transaction.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_TEMPLATE_INVALID` | `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
-| `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOAD_PROBE_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCKFILE_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_HELD` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_AMBIGUOUS` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STALE_PATH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTANCE_NOT_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_COLD_START_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_CPU_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_DISK_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_MEMORY_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MCP_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/mcp.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_POSTURE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_COLLISION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_OUT_OF_RANGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LEASE_EXHAUSTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LISTENER_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LOCAL_VALUE_CORRECTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_ACCOUNTING_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_LABEL_ESCAPE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `REGISTRY_AUTH_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_CONFIG_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_MANUAL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_ABSENT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_DIRECTORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_REPOSITORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_OPTION_DUPLICATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PARENT_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_SYMLINK` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_RENDER_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/skill-contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_LOCKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_ADOPTION_REFUSED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts`, `packages/cockpit/src/surfaces/adoption.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_BOUNDS` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_CUSTOM_REFUSED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_GENERATION_FAILED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/check.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts`, `packages/cockpit/src/surfaces/merge.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime-probe.ts`, `packages/cockpit/src/environment/runtime.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_PATH_CONFLICT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/merge.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/render.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_SOURCE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `SURFACE_STATE_CONFLICT` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/surfaces/ownership.ts`, `packages/cockpit/src/surfaces/sync.ts` | no static remedy captured; inspect implementing owners |
-| `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_DECLINED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_REPLAY` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ACCEPTANCE_STALE` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_AUDIT_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_CONTRACT_INVALID` | `packages/cockpit/src/work-orders/intake.ts`, `packages/cockpit/src/work-orders/state.ts`, `packages/cockpit/src/work-orders/status.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ID_EXISTS` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_OPERATOR_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_POLICY_INVALID` | `packages/cockpit/src/work-orders/intake.ts`, `packages/cockpit/src/work-orders/pressure.ts`, `packages/cockpit/src/work-orders/resume.ts`, `packages/cockpit/src/work-orders/state.ts` | no static remedy captured; inspect implementing owners |
-| `WO_RENEWAL_DECISION_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_ROUTE_REQUIRED` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_SKILLS_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_SOURCE_GAPS` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_WIP_CAP` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
-| `WO_WIP_INVALID` | `packages/cockpit/src/work-orders/intake.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit down
 
@@ -1026,9 +626,29 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -1052,9 +672,29 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -1079,119 +719,17 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
-| `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DATA_MODE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
-| `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_ABORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDERR_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDOUT_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOAD_PROBE_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCKFILE_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_HELD` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_AMBIGUOUS` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STALE_PATH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTANCE_NOT_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_COLD_START_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_CPU_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_DISK_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_MEMORY_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_POSTURE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_COLLISION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_OUT_OF_RANGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LEASE_EXHAUSTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LISTENER_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LOCAL_VALUE_CORRECTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_ACCOUNTING_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_LABEL_ESCAPE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `REGISTRY_AUTH_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_CONFIG_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_MANUAL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_ABSENT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_DIRECTORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_REPOSITORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_OPTION_DUPLICATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PARENT_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_SYMLINK` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_LOCKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime-probe.ts`, `packages/cockpit/src/environment/runtime.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit sibling
 
@@ -1219,128 +757,27 @@ Configuration: `unavailable`. Owners: none.
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
-| `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CLAIM_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
-| `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_ENCODING_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `CONFIG_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DATA_MODE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_TOO_LARGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_FILE_UNREADABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_KEYS_STALE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_NOT_DECLARED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/declaration.ts` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run cockpit sync |
-| `ENVIRONMENT_SEED_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_ABORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_CLEANUP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STAGING_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDERR_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STDOUT_LIMIT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXECUTION_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EXTERNAL_DEPENDENCIES_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GIT_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUIDE_CAP_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `HARNESS_SURFACE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOAD_PROBE_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCKFILE_CHANGED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_HELD` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_LOCK_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_AMBIGUOUS` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STALE_PATH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTALL_STATE_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `INSTANCE_NOT_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_COLD_START_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_CPU_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_DISK_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MACHINE_MEMORY_BELOW_FLOOR` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_MATERIALIZATION_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `MOUNT_POSTURE_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_EXTERNAL_REGISTRATION_GAP` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_COLLISION` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_FAMILY_OUT_OF_RANGE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LEASE_EXHAUSTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LISTENER_EVIDENCE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `PORT_LOCAL_VALUE_CORRECTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_ACCOUNTING_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RECLAIM_LABEL_ESCAPE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `REGISTRY_AUTH_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CONFIRMATION_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RESET_CO_TENANT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNNING_CHECKOUT_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_COMPOSE_REMOTE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_LAUNCHER_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_PROBE_TIMEOUT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_CONFIG_REQUIRED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_INSTRUCTION_POINTER_OFFERED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_MANUAL_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_ABSENT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_DIRECTORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_NONE_REPOSITORY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_OPTION_DUPLICATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PARENT_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_SYMLINK` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSITIONAL_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `SETUP_REMOTE_MISMATCH` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_PARSE_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_SCHEMA_INVALID` | `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_SPAWN_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime-probe.ts`, `packages/cockpit/src/environment/runtime.ts`, `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_DIRECTORY_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_DIR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_GIT_FAILED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
-| `SIBLING_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_NOT_FOUND` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_PATH_NOT_EMPTY` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_REFERENCED` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_REMOTE_MISSING` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_SLUG_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
 | `SIBLING_VAR_DUPLICATE` | `packages/cockpit/src/environment/sibling-registration.ts` | no static remedy captured; inspect implementing owners |
-| `SKILL_BUDGET_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_LOCKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_ROOT_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `STATE_UNSEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `TEMPLATE_PATH_OUTSIDE_ROOT` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 
 ## cockpit preflight
 
@@ -1361,9 +798,29 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -1386,9 +843,29 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
@@ -1415,9 +892,29 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 | Diagnostic | Implementing owners | Source remedy |
 | --- | --- | --- |
+| `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
+| `CONFIG_CHANGED_DURING_EXECUTION` | `packages/cockpit/src/config/verified-write.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_PRECONDITION_CHANGED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_STEP_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/installs.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
+| `GIT_COMPARISON_REMOTE_MISMATCH` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_AUTHORITY_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
 | `GUARD_HOSTS_UNDECLARED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | `packages/cockpit/src/environment/application.ts` | no static remedy captured; inspect implementing owners |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/install-policy-observation.ts`, `packages/cockpit/src/environment/install-policy.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_EVIDENCE_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/destructive-composition.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `LIFECYCLE_PROGRESS_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts` | no static remedy captured; inspect implementing owners |
+| `RUNTIME_UNMEASURED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/logs.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/runtime.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_INSTRUCTION_POINTER_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_PATH_TYPE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts`, `packages/cockpit/src/environment/setup.ts` | no static remedy captured; inspect implementing owners |
+| `SETUP_POSTCHECK_FAILED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_DURABILITY_INDETERMINATE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/data-plane.ts`, `packages/cockpit/src/environment/state.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `STATE_RECORD_MALFORMED` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-stage.ts`, `packages/cockpit/src/environment/ports.ts`, `packages/cockpit/src/environment/reclaim.ts`, `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
