@@ -130,7 +130,7 @@ jobs:
         # Full behavior runs at the supported range edges. Pull requests pay for one macOS
         # cell (macOS minutes cost ten times Linux minutes) and the whole matrix runs on main,
         # so a platform-specific regression is still caught within one merge.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.13.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.13.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.13.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.13.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"macos-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"},{"os":"macos-latest","node":"26","gate":"full"}]') }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"macos-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"},{"os":"macos-latest","node":"26","gate":"full"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

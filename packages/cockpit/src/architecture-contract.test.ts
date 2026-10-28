@@ -6980,8 +6980,8 @@ describe('clean-checkout controls', () => {
             .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string }[])
                 .map(({ os, node, gate }) => ({ os, node, gate })))
         expect(mainCells).toEqual([
-            { os: 'ubuntu-latest', node: '22.13.0', gate: 'full' },
-            { os: 'macos-latest', node: '22.13.0', gate: 'full' },
+            { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
+            { os: 'macos-latest', node: '22.22.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
             { os: 'macos-latest', node: '24', gate: 'compatibility' },
             { os: 'ubuntu-latest', node: '26', gate: 'full' },
@@ -6989,8 +6989,8 @@ describe('clean-checkout controls', () => {
         ])
         // Pull requests keep both Node range edges and the Node 24 cell but pay for one macOS cell.
         expect(pullRequestCells).toEqual([
-            { os: 'ubuntu-latest', node: '22.13.0', gate: 'full' },
-            { os: 'macos-latest', node: '22.13.0', gate: 'full' },
+            { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
+            { os: 'macos-latest', node: '22.22.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
             { os: 'ubuntu-latest', node: '26', gate: 'full' },
         ])

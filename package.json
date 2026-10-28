@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
+    "node": "^22.22.0 || ^24.0.0 || ^26.0.0"
   },
   "scripts": {
     "build": "npm run build --workspace @b0dea/cockpit",

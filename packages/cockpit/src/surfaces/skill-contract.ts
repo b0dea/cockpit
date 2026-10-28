@@ -208,7 +208,7 @@ function captureRenderedInput(input: unknown): CapturedRenderedInput | undefined
     if (!base || !object(generated) || !exact(generated, ['kind', 'status', 'diagnostics', 'mechanism', 'files', 'warnings'])
         || generated.kind !== 'complete' || generated.status !== 0 || !Array.isArray(generated.diagnostics) || generated.diagnostics.length !== 0
         || !object(generated.mechanism) || !exact(generated.mechanism, ['package', 'version', 'role'])
-        || generated.mechanism.package !== 'rulesync' || generated.mechanism.version !== '41.0.0' || generated.mechanism.role !== 'spelling'
+        || generated.mechanism.package !== 'rulesync' || generated.mechanism.version !== '43.0.0' || generated.mechanism.role !== 'spelling'
         || !Array.isArray(generated.files) || !Array.isArray(generated.warnings)
         || !generated.warnings.every((warning): warning is SurfaceGenerationWarning => object(warning)
             && exact(warning, ['severity', 'code', 'target', 'path', 'message']) && warning.severity === 'warning'

@@ -43,7 +43,7 @@
     "README.md"
   ],
   "engines": {
-    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
+    "node": "^22.22.0 || ^24.0.0 || ^26.0.0"
   },
   "dependencies": {
     "smol-toml": "1.9.1",
@@ -52,6 +52,6 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "rulesync": "41.0.0"
+    "rulesync": "43.0.0"
   }
 }
