@@ -1870,6 +1870,14 @@ async function admitReferencePlan(
     if (!reads || reads.kind !== 'complete' || reads.results.length !== REFERENCE_PATHS.length) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'reference destinations could not be classified safely', 'references')
     }
+    // Rebases replace committed pages without updating the ignored ledger. Only the entire
+    // authenticated Git estate can replace that baseline; a single hand edit keeps it closed.
+    if (prior && REFERENCE_PATHS.every((path, index) => {
+        const current = reads.results[index]!
+        const indexed = bootstrapFiles.get(path)
+        return indexed ? current.kind === 'file' && current.sha256 === indexed.sha256
+            && (indexed.mode === '100755') === ((current.mode & 0o111) !== 0) : current.kind === 'missing'
+    })) prior = undefined
     const checks: PublicationCheck[] = []
     for (const [index, path] of REFERENCE_PATHS.entries()) {
         const current = reads.results[index]!

@@ -85,7 +85,10 @@ A targeted pass proves only its target. The full suite takes several minutes.
 The generated references (the CLI, configuration, command list, capability matrix and the
 troubleshooting index) are checked against committed `HEAD`, so `npm run lint:docs` refuses while
 an implementation change is uncommitted. Commit the change, rebuild (`npm run build`), run `npm run references`, commit the regenerated
-pages, then lint again. `npm run references` calls `publishRepositoryReferences` in
+pages, then lint again. After a rebase, reference generation refreshes its ignored local ownership
+ledger when every reference page matches the current commit. Uncommitted page edits still refuse:
+review and commit intentional edits, or restore them before regenerating.
+`npm run references` calls `publishRepositoryReferences` in
 `scripts/diagnostic-inventory.mjs` and refuses while implementation changes are uncommitted.
 Never edit a generated reference by hand.
 

@@ -813,6 +813,52 @@ describe('generated publication transaction', () => {
         })
     })
 
+    it('refreshes a stale reference ledger only from an entirely committed reference estate', async () => {
+        const { root, input, postimage } = await referencePublication()
+        const first = await admitPublicationPlan(input, { execute: executeProbe })
+        expect(first.kind, JSON.stringify(first)).toBe('complete')
+        if (first.kind !== 'complete') return
+        expect(await runPublicationPlan(first.plan, { execute: executeProbe, revalidate: async () => true }))
+            .toMatchObject({ kind: 'complete' })
+        const cliPath = 'docs/cli-reference.md'
+        const troublePath = 'docs/troubleshooting.md'
+        const rebasedCli = 'committed cli after rebase\n'
+        const rebasedTrouble = postimage.replace('new diagnostic index', 'committed diagnostic index after rebase')
+        await writeFile(join(root, cliPath), rebasedCli)
+        await writeFile(join(root, troublePath), rebasedTrouble)
+        execFileSync('git', ['add', '--', ...input.references.map(({ path }) => path)], { cwd: root })
+        execFileSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'update generated references'], { cwd: root })
+        const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+        if (git.state !== 'available') throw new Error('Git unavailable for reference refresh')
+        const captured = await captureReferenceBootstrap(root, git.value, { execute: executeProbe })
+        if (captured.kind !== 'complete') throw new Error(JSON.stringify(captured))
+        const ledger = await readFile(join(root, referenceLedgerPath), 'utf8')
+        const ledgerStat = await lstat(join(root, referenceLedgerPath))
+        const cliStat = await lstat(join(root, cliPath))
+        const troubleStat = await lstat(join(root, troublePath))
+        const next = {
+            ...input, referenceBootstrap: captured.bootstrap,
+            ledgerExpected: { kind: 'file' as const, sha256: digest(ledger), identity: { dev: ledgerStat.dev, ino: ledgerStat.ino } },
+            references: input.references.map(row => row.kind === 'markdown-region' ? { ...row, preimageSha256: digest(rebasedTrouble) } : row),
+            mutations: [
+                { ...input.mutations[0]!, expected: { kind: 'file' as const, sha256: digest(rebasedCli), identity: { dev: cliStat.dev, ino: cliStat.ino } } },
+                { ...input.mutations.at(-1)!, expected: { kind: 'file' as const, sha256: digest(rebasedTrouble), identity: { dev: troubleStat.dev, ino: troubleStat.ino } } },
+            ],
+        }
+        const editedPath = join(root, 'docs/command-list.md')
+        const committedBytes = await readFile(editedPath)
+        await writeFile(editedPath, 'uncommitted human edit\n')
+        expect((await admitPublicationPlan(next, { execute: executeProbe })).kind).toBe('refusal')
+        await writeFile(editedPath, committedBytes)
+        const refreshed = await admitPublicationPlan(next, { execute: executeProbe })
+        expect(refreshed.kind, JSON.stringify(refreshed)).toBe('complete')
+        if (refreshed.kind !== 'complete') return
+        expect(await runPublicationPlan(refreshed.plan, { execute: executeProbe, revalidate: async () => true }))
+            .toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, cliPath), 'utf8')).toBe('cli\n')
+        expect(await readFile(join(root, troublePath), 'utf8')).toBe(postimage)
+    }, 120_000)
+
     it('binds bootstrap authority to the captured index rows while retaining immutable blob bytes', async () => {
         const { root, bootstrap } = await referencePublication()
         const captured = referenceBootstrapFiles(bootstrap)!
