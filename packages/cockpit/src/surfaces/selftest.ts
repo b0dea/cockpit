@@ -6,6 +6,7 @@ import type {
 } from '../environment/generated-application.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
 import type { SurfaceFeature } from './contract.js'
+import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 import { classifySurfaceOwnership, type SurfaceDesiredEntry } from './ownership.js'
 
 export const mechanism = {
@@ -107,7 +108,7 @@ export interface SelftestSkillReviewRecord {
 
 const SHA256 = /^[a-f0-9]{64}$/
 const CODE = /^[A-Z][A-Z0-9_]{2,127}$/
-const CUSTOM_ID = /^(?!(?:claudecode|codexcli|opencode)$)[a-z0-9][a-z0-9-]{0,127}$/
+const CUSTOM_ID = /^[a-z0-9][a-z0-9-]{0,127}$/
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/
 const SAMPLE_FEATURES = new Set(['name', 'trigger', 'body-load', 'tools', 'non-goals'])
 const CAPABILITIES = Object.freeze<SelftestCapability[]>(['instruction-loading', 'guard-firing', 'skill-parity'])
@@ -153,7 +154,8 @@ function customRef(
     input: GeneratedCustomSurfaceSelftestInput,
 ): CustomHarnessRef | undefined {
     const declarationSha256 = declarationDigest(declaration)
-    if (!declarationSha256 || !CUSTOM_ID.test(declaration.name) || capability.state === 'unavailable'
+    if (!declarationSha256 || !CUSTOM_ID.test(declaration.name) || SURFACE_TARGETS.includes(declaration.name as SurfaceTarget)
+        || capability.state === 'unavailable'
         || capability.mechanism.module !== input.module || capability.mechanism.export !== input.export
         || capability.measured_on !== input.measuredOn || capability.state !== input.state
         || !SHA256.test(input.sourceSha256) || !SHA256.test(input.resultSha256)) return undefined
@@ -189,8 +191,10 @@ export function surfaceSelftestExpectation(projection: GeneratedSurfaceSelftestP
     const ownership = classifySurfaceOwnership({ configuredHarnesses: captured.configuredHarnesses, entries: captured.entries })
     if (ownership.kind !== 'complete') return undefined
     const configured = new Set(captured.configuredHarnesses)
-    if (configured.size !== captured.configuredHarnesses.length || captured.configuredHarnesses.length > 67
-        || [...configured].some((name) => !BUILTINS[name] && !captured.declarations.some((row) => row.name === name))) return undefined
+    if (configured.size !== captured.configuredHarnesses.length
+        || captured.configuredHarnesses.length > SURFACE_TARGETS.length + 64
+        || [...configured].some((name) => !SURFACE_TARGETS.includes(name as SurfaceTarget)
+            && !captured.declarations.some((row) => row.name === name))) return undefined
     if (captured.declarations.length > 64 || new Set(captured.declarations.map((row) => row.name)).size !== captured.declarations.length
         || captured.declarations.some((row) => !configured.has(row.name))) return undefined
 

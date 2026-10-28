@@ -1,5 +1,6 @@
 import { compareEnvironmentSnapshot, type EnvironmentSnapshot, type RuntimeEvidence } from '../environment/evidence.js'
 import { planSiblingProjection, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
+import { GUARD_SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { classifyRun, type RunClassification, type RunInput, type StageObservation, type StageResult } from './verdict.js'
 
@@ -175,7 +176,7 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
     const lines = bytes.trimEnd().split('\n').length
     const guidePath = 'packages/cockpit/surfaces/references/testing-tiers.md'
     const checked = planSiblingProjection({ ...projection, standingSources: [...projection.standingSources.filter(source => source.path !== guidePath),
-        ...(['claudecode', 'codexcli', 'opencode'] as const).map(target => ({ target,
+        ...GUARD_SURFACE_TARGETS.map(target => ({ target,
             path: guidePath, content: bytes, scope: 'always' as const }))] })
     if (checked.kind === 'refusal') return Object.freeze({ kind: 'refusal', reason: checked.diagnostic.message })
     if (checked.costs.some(cost => cost.status !== 'within_cap')) return Object.freeze({ kind: 'refusal', reason: 'combined instruction cost is unavailable or exceeds the existing guide cap' })

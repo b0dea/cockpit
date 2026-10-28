@@ -570,6 +570,21 @@ describe('work and browser declarations', () => {
         }
     })
 
+    it('refuses browser harnesses whose native transport has no measured support', () => {
+        const environment = { ...generatedConfig.environment,
+            addressing: 'hostname', authentication: 'real', generated_host_paths: Object.values(browser.artifacts),
+            posture_requirements: [{ requirement: 'authenticated-route', addressing: 'hostname', authentication: 'real' }],
+        }
+        const resources = { memory_mb: 768, cpus: 0.5, provenance }
+        for (const target of ['cursor', 'grokcli']) {
+            const declaration = { ...browser, harnesses: [{ target, version: '1.2.3' }], resources }
+            const config = { ...generatedConfig, environment, browser: declaration }
+            expect(Browser.safeParse(declaration).success).toBe(false)
+            expect(CockpitConfig.safeParse(config).success).toBe(false)
+            expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(false)
+        }
+    })
+
     it('retains explicit runner architectures and measured health provenance', () => {
         const input = { ...browser, images: { ...browser.images, runner: { ...browser.images.runner, architectures: ['arm64'] } },
             runner_health_measurement: { duration_seconds: 15, provenance: { ...provenance, kind: 'measured' } } }

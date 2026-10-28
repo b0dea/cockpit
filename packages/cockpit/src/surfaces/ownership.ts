@@ -5,6 +5,7 @@ import { isProxy, isUint8Array } from "node:util/types"
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { SURFACE_TARGETS } from './harness-registry.js'
 
 export const mechanism = {
     id: 'surface-ownership',
@@ -210,7 +211,8 @@ function captureEntry(value: JsonSnapshot, configured: ReadonlySet<string>): Sur
 export function classifySurfaceOwnership(input: unknown): SurfaceOwnershipResult {
     const captured = snapshotGeneratedJson(input)
     if (!object(captured) || !exact(captured, ['configuredHarnesses', 'entries']) || !sortedUniqueStrings(captured.configuredHarnesses)
-        || captured.configuredHarnesses.length > 67 || !Array.isArray(captured.entries) || captured.entries.length > MAX_ENTRIES) {
+        || captured.configuredHarnesses.length > SURFACE_TARGETS.length + 64
+        || !Array.isArray(captured.entries) || captured.entries.length > MAX_ENTRIES) {
         return refusal('SURFACE_INPUT_INVALID', 'surface ownership input must be bounded canonical data')
     }
     const configured = new Set(captured.configuredHarnesses as readonly string[])

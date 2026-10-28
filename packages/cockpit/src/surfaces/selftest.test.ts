@@ -87,6 +87,19 @@ function specifications(source: GeneratedSurfaceSelftestProjection): readonly Se
 }
 
 describe('surface selftest planning', () => {
+    it('keeps unavailable shipped harnesses in the estate without inventing native probe cells', () => {
+        const source = projection()
+        const payload = { ...source, configuredHarnesses: [...source.configuredHarnesses, 'cursor', 'grokcli'].sort() }
+        const complete = { ...payload, manifestSha256: sha256(JSON.stringify({
+            schema: payload.schema, configuredHarnesses: payload.configuredHarnesses,
+            declarations: payload.declarations, entries: payload.entries, custom: payload.custom,
+        })) }
+        const expectation = surfaceSelftestExpectation(complete)
+        expect(expectation).toBeDefined()
+        expect(expectation?.cells.some(cell => cell.harness.kind === 'builtin'
+            && ['cursor', 'grokcli'].includes(cell.harness.target))).toBe(false)
+    })
+
     it('derives the closed built-in matrix and refuses altered source authority', () => {
         const source = projection()
         const expectation = surfaceSelftestExpectation(source)

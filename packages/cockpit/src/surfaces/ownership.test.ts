@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
+import { SURFACE_TARGETS } from './harness-registry.js'
 import { classifySurfaceOwnership, removeSharedOwnership, renderSharedPostimage, type SurfaceDesiredEntry } from './ownership.js'
 import { bindSurfaceOwnershipIdentity, classifyGeneratedPaths, encodeOwnershipManifest, parseOwnershipManifest, projectGeneratedPathFacts } from './ownership.js'
 
@@ -123,6 +124,14 @@ function opencode(members: Array<{ key: string; valueBytes: string }>): SurfaceD
 }
 
 describe('surface ownership', () => {
+    it('accepts the complete shipped estate plus the maximum custom harness set', () => {
+        const custom = Array.from({ length: 64 }, (_, index) => `custom-${String(index).padStart(2, '0')}`)
+        expect(classifySurfaceOwnership({
+            configuredHarnesses: [...SURFACE_TARGETS, ...custom].sort(),
+            entries: [],
+        })).toMatchObject({ kind: 'complete' })
+    })
+
     it('requires sorted configured harness sets and refuses whole-file ownership of forced shared paths', () => {
         const entry = markdown()
         expect(classifySurfaceOwnership({ configuredHarnesses: ['codexcli', 'opencode'], entries: [entry] })).toMatchObject({ kind: 'complete' })

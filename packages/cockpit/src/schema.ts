@@ -5,6 +5,7 @@ import { browserProxyAuthorityMatches } from './browser/proxy.js'
 import { ENTRYPOINT_KINDS } from './entrypoint-kinds.js'
 import { GUARD_HOST_LIMITS, GUARD_HOST_PATTERN, normalizeGuardHost } from './guards/host.js'
 import { ADOPTABLE_SURFACE_PATHS, ADOPTED_SURFACE_ROOT, SURFACE_BUNDLE_FORMATS, SURFACE_FEATURES, SURFACE_TARGETS, surfaceSourcesMatchFeature } from './surfaces/contract.js'
+import { GUARD_SURFACE_TARGETS } from './surfaces/harness-registry.js'
 
 export const mechanism = {
     id: 'configuration-schema',
@@ -875,9 +876,9 @@ export const Browser = z.object({
     }, 'browser network exposure requires bounded unique rules').default('<loopback>'),
     network_exposure_reason: z.string().min(1).max(512).refine((value) => value === value.trim() && !/[\x00-\x1f\x7f]/.test(value), 'browser exposure reason must be bounded plain text').optional(),
     harnesses: z.array(z.object({
-        target: z.enum(SURFACE_TARGETS),
+        target: z.enum(GUARD_SURFACE_TARGETS),
         version: z.string().regex(/^\d+\.\d+\.\d+$/),
-    }).strict()).min(1).max(SURFACE_TARGETS.length).refine(
+    }).strict()).min(1).max(GUARD_SURFACE_TARGETS.length).refine(
         (rows) => !hasDuplicate(rows.map((row) => row.target)),
         'browser harness targets must be unique',
     ),
