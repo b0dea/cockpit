@@ -8,6 +8,6 @@ Make committed cockpit identities and sibling grants portable across clone paths
 ownership machine-local, and add exact package pinning, scripts, managed ignore rules, and a team
 join guide.
 
-Upgrade: run cockpit sync, commit the updated generated files, root package.json and .gitignore,
-then have each teammate run npm ci, npm run cockpit:setup, npm run cockpit:sync and npm run
-cockpit:check.
+Upgrade: run cockpit init for the existing target, review and commit the exact root package.json,
+managed .gitignore block and updated generated files, then have each teammate run npm ci, npm run
+cockpit:setup, npm run cockpit:sync and npm run cockpit:check.

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { installedPackageMetadata } from './package-metadata.js'
-import { ensureTeamMetadata, validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
+import { initializeTeamMetadata, validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { parse as parseToml } from 'smol-toml'
@@ -551,7 +551,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             },
             validateConfig: loadCockpitConfig,
             synchronize: async input => {
-                const metadata = teamMetadataOutcome(await ensureTeamMetadata(input.configPath))
+                const metadata = teamMetadataOutcome(await initializeTeamMetadata(input.configPath))
                 return metadata ?? syncGeneratedEnvironment(input)
             },
             check: async input => {
@@ -563,8 +563,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand(input, defaultSetupAdapters),
         sync: async ({ authorizeStaleRemoval, adopt, ...input }) => {
-            const ensured = teamMetadataOutcome(await ensureTeamMetadata(input.configPath))
-            if (ensured) return ensured
+            const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
+            if (metadata) return metadata
             return adopt ? adoptAndSyncGeneratedEnvironment({ configPath: input.configPath, adopt })
                 : syncGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
         },

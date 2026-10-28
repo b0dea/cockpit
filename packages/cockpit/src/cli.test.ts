@@ -452,6 +452,26 @@ describe('generated environment process contract', () => {
         return { io, output: () => ({ stdout, stderr }) }
     }
 
+    it('keeps the team metadata byte tree unchanged during a public sync preview', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-sync-preview-metadata-')))
+        scratch.push(directory)
+        const configPath = join(directory, 'cockpit.toml')
+        writeFileSync(configPath, readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
+            .replace('name = "generated-environment"', 'name = "preview-metadata"'))
+        writeFileSync(join(directory, 'package.json'), '{"private":true}\n')
+        writeFileSync(join(directory, '.gitignore'), 'operator-owned\n')
+        const snapshot = () => Object.freeze({
+            package: readFileSync(join(directory, 'package.json'), 'utf8'),
+            ignore: readFileSync(join(directory, '.gitignore'), 'utf8'),
+        })
+        const before = snapshot()
+        const capture = captureIo()
+
+        await runCli(['sync', '--config', configPath, '--dry-run', '--json'], capture.io)
+
+        expect(snapshot()).toEqual(before)
+    })
+
     it('binds doctor freshness only after CI and NO_UPDATE_NOTIFIER transport admissions', async () => {
         const transport = vi.fn(async () => ({ status: 200, body: (async function* () {
             yield Buffer.from(JSON.stringify({ name: '@b0dea/cockpit', version: '1.2.3' }))

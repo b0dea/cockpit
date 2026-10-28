@@ -779,11 +779,13 @@ it('runs installed init for each isolated target and refuses missing roots or br
     execFileSync('git', ['-C', headless, 'add', '.'])
     execFileSync('git', ['-C', headless, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.test',
         'commit', '--quiet', '-m', 'Add synthetic cockpit'])
-    const teammate = join(packScratch, 'teammate-clone')
+    const teammatePath = join(packScratch, 'teammate-clone')
     const teammateHome = join(packScratch, 'teammate-home')
     mkdirSync(teammateHome)
-    execFileSync('git', ['clone', '--quiet', headless, teammate])
-    const teammateEnv = { ...env, HOME: teammateHome, XDG_STATE_HOME: join(teammateHome, 'state') }
+    execFileSync('git', ['clone', '--quiet', headless, teammatePath])
+    const teammate = realpathSync(teammatePath)
+    const teammateEnv = { ...env, HOME: teammateHome, XDG_STATE_HOME: join(teammateHome, 'state'),
+        GIT_CONFIG_GLOBAL: join(teammateHome, 'missing-gitconfig'), GIT_CONFIG_NOSYSTEM: '1' }
     execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
         cwd: teammate, env: teammateEnv, stdio: 'ignore', timeout: 30_000,
     })
@@ -794,7 +796,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
         })
         expect(result.status, `${command}: ${result.stdout}${result.stderr}`).toBe(0)
     }
-    expect(execFileSync('git', ['-C', teammate, 'status', '--porcelain'], { encoding: 'utf8' })).toBe('')
+    expect(execFileSync('git', ['-C', teammate, 'status', '--porcelain'], { encoding: 'utf8', env: teammateEnv })).toBe('')
 
     const untouched = join(packScratch, 'init-missing-root')
     mkdirSync(untouched)

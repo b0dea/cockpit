@@ -35,9 +35,10 @@ writes its machine identity under `.cockpit/local/`, and refreshes generated fil
 different directory does not rewrite them. Docker ownership values remain path-bound but enter
 Compose only at execution; they are not committed.
 
-The root `.gitignore` has a `cockpit:ignore` region for machine-local state, secret resolver
-material, and a sibling checkout directory that lives below the cockpit root. Cockpit changes only
-that marked region and preserves every line outside it.
+The root `.gitignore` has a `cockpit:ignore` region for installed dependencies, machine-local
+state, secret resolver material, and a sibling checkout directory that lives below the cockpit
+root. `init` creates that region while preserving every line outside it. Later `sync` and `check`
+authenticate the exact region and refuse an edited or stale one instead of overwriting it.
 
 ## Verify a clean join
 
@@ -48,5 +49,7 @@ git status --short
 ```
 
 The command should print nothing. If it reports generated drift, first confirm `npm ci` installed
-the exact pinned version. If the `.gitignore` block alone is stale, run `npm run cockpit:sync` and
-commit that deliberate team change from the checkout where the configuration was updated.
+the exact pinned version. If the `.gitignore` block alone is stale, restore the committed block.
+To deliberately regenerate it after changing the configuration, remove the whole marked region,
+run `cockpit init` for the team's existing target, review the replacement, and commit that team
+change.
