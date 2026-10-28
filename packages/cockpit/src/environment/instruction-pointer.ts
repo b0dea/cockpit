@@ -31,9 +31,27 @@ export async function synchronizeInstructionPointer(input: Readonly<{
     const path = join(input.siblingRoot, 'AGENTS.md')
     try {
         const [cockpitRoot, siblingRoot] = await Promise.all([realpath(input.cockpitRoot), realpath(input.siblingRoot)])
-        const [cockpitStatus, siblingStatus] = await Promise.all([lstat(cockpitRoot), lstat(siblingRoot)])
-        if (!cockpitStatus.isDirectory() || cockpitStatus.isSymbolicLink()
-            || !siblingStatus.isDirectory() || siblingStatus.isSymbolicLink() || cockpitRoot === siblingRoot) {
+        if (cockpitRoot !== input.cockpitRoot || siblingRoot !== input.siblingRoot) {
+            return { kind: 'refusal', path, reason: 'instruction pointer roots must be canonical directories without symlink redirects' }
+        }
+        const directories = new Map<string, Readonly<{ dev: number; ino: number }>>()
+        for (const root of [cockpitRoot, siblingRoot]) {
+            for (let parent = root;; parent = dirname(parent)) {
+                const status = await lstat(parent)
+                if (!status.isDirectory() || status.isSymbolicLink()) return { kind: 'refusal', path, reason: 'instruction pointer ancestry is not ordinary directories' }
+                directories.set(parent, { dev: status.dev, ino: status.ino })
+                if (dirname(parent) === parent) break
+                if (directories.size > 128) return { kind: 'refusal', path, reason: 'instruction pointer ancestry exceeds the verification bound' }
+            }
+        }
+        const directoriesCurrent = async (): Promise<boolean> => {
+            for (const [directory, expected] of directories) {
+                const current = await lstat(directory)
+                if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== expected.dev || current.ino !== expected.ino) return false
+            }
+            return true
+        }
+        if (cockpitRoot === siblingRoot) {
             return { kind: 'refusal', path, reason: 'instruction pointer roots are not distinct ordinary directories' }
         }
         const target = relative(siblingRoot, join(cockpitRoot, 'AGENTS.md')).split(sep).join('/')
@@ -46,7 +64,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
         if (before?.isSymbolicLink() || before && !before.isFile()) return { kind: 'refusal', path, reason: 'AGENTS.md is not an ordinary file' }
         const read = before ? await readBoundedInput(path) : undefined
         if (before && read?.kind !== 'complete') return { kind: 'refusal', path, reason: 'AGENTS.md could not be read as bounded UTF-8 input' }
-        const original = read?.kind === 'complete' ? read.bytes.toString('utf8') : ''
+        const original = read?.kind === 'complete' ? new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) : ''
         const starts = original.split(BEGIN).length - 1
         const ends = original.split(END).length - 1
         if (starts !== ends || starts > 1) return { kind: 'refusal', path, reason: 'instruction pointer markers are partial or duplicated' }
@@ -57,6 +75,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
             return { kind: 'unchanged', path, target }
         }
         if (!input.write) return { kind: 'offered', path, target }
+        if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before writing' }
         const next = `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}${desired}\n`
         const originalSha256 = read?.kind === 'complete' ? digest(read.bytes) : undefined
         const temporary = join(dirname(path), `.${basename(path)}.cockpit-pointer-${randomBytes(8).toString('hex')}`)
@@ -65,6 +84,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
             const temporaryHandle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, before ? Number(before.mode) & 0o777 : 0o644)
             temporaryCreated = true
             try { await temporaryHandle.writeFile(next); await temporaryHandle.sync() } finally { await temporaryHandle.close() }
+            if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before publication' }
             if (before) {
                 const current = await lstat(path)
                 const reread = await readBoundedInput(path)
@@ -82,6 +102,7 @@ export async function synchronizeInstructionPointer(input: Readonly<{
         } finally {
             if (temporaryCreated) await unlink(temporary)
         }
+        if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed during publication' }
         const written = await readBoundedInput(path)
         if (written.kind !== 'complete' || written.bytes.toString('utf8') !== next) {
             return { kind: 'refusal', path, reason: 'instruction pointer postcheck failed' }
