@@ -1031,7 +1031,7 @@ async function decodeRequest(
     if (handler === 'sibling') {
         const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
-        const shape = 'cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"], or cockpit sibling remove <slug> --config <file>'
+        const shape = 'cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--instruction-pointer], or cockpit sibling remove <slug> --config <file>'
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
         }
@@ -1349,6 +1349,9 @@ export async function runCli(
         : commandName ? `Run 'cockpit --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
+    const duplicateSetupOption = definition?.handler === 'setup'
+        ? ['config', 'write-instruction-pointers'].find(name => optionCount(optionArgs, name) > 1)
+        : undefined
 
     if (!commandName) {
         outcome = usageOutcome('CLI_COMMAND_REQUIRED', 'a command is required')
@@ -1371,8 +1374,9 @@ export async function runCli(
         ['registry', 'siblings-root', 'adoption'].some((name) => optionCount(optionArgs, name) > 1)
     ) {
         outcome = usageOutcome('REGISTRY_OPTION_DUPLICATE', 'each registry-resolve input may be supplied only once')
-    } else if (definition.handler === 'setup' && ['config', 'write-instruction-pointers'].some(name => optionCount(optionArgs, name) > 1)) {
-        outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE, 'each setup option may be supplied only once', '--config')
+    } else if (duplicateSetupOption !== undefined) {
+        outcome = usageOutcome(ENVIRONMENT_CODES.SETUP_OPTION_DUPLICATE,
+            'each setup option may be supplied only once', `--${duplicateSetupOption}`)
     } else if (
         definition.handler !== 'document' && definition.handler !== 'registry-resolve' && definition.handler !== 'setup'
         && Object.entries(definition.options).some(([name, option]) => name !== 'json' && !('multiple' in option && option.multiple === true) && optionCount(optionArgs, name) > 1)

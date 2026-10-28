@@ -78,14 +78,15 @@ export async function synchronizeInstructionPointer(input: Readonly<{
         if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before writing' }
         const next = `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}${desired}\n`
         const originalSha256 = read?.kind === 'complete' ? digest(read.bytes) : undefined
-        const temporary = join(dirname(path), `.${basename(path)}.cockpit-pointer-${randomBytes(8).toString('hex')}`)
-        let temporaryCreated = false
-        try {
-            const temporaryHandle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, before ? Number(before.mode) & 0o777 : 0o644)
-            temporaryCreated = true
-            try { await temporaryHandle.writeFile(next); await temporaryHandle.sync() } finally { await temporaryHandle.close() }
-            if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before publication' }
-            if (before) {
+        if (before) {
+            const temporary = join(dirname(path), `.${basename(path)}.cockpit-pointer-${randomBytes(8).toString('hex')}`)
+            let temporaryCreated = false
+            try {
+                const temporaryHandle = await open(temporary,
+                    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, Number(before.mode) & 0o777)
+                temporaryCreated = true
+                try { await temporaryHandle.writeFile(next); await temporaryHandle.sync() } finally { await temporaryHandle.close() }
+                if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before publication' }
                 const current = await lstat(path)
                 const reread = await readBoundedInput(path)
                 if (current.dev !== before.dev || current.ino !== before.ino || current.size !== before.size
@@ -94,14 +95,15 @@ export async function synchronizeInstructionPointer(input: Readonly<{
                 }
                 await rename(temporary, path)
                 temporaryCreated = false
-            } else {
-                const destination = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644)
-                try { await destination.writeFile(next); await destination.sync() } finally { await destination.close() }
+            } finally {
+                if (temporaryCreated) await unlink(temporary)
             }
-            await syncDirectory(dirname(path))
-        } finally {
-            if (temporaryCreated) await unlink(temporary)
+        } else {
+            if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed before publication' }
+            const destination = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644)
+            try { await destination.writeFile(next); await destination.sync() } finally { await destination.close() }
         }
+        await syncDirectory(dirname(path))
         if (!await directoriesCurrent()) return { kind: 'refusal', path, reason: 'instruction pointer roots changed during publication' }
         const written = await readBoundedInput(path)
         if (written.kind !== 'complete' || written.bytes.toString('utf8') !== next) {

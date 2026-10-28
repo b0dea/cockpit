@@ -303,6 +303,10 @@ describe('CLI help', () => {
         const stray = await runInProcess(['sibling', 'remove', 'api', '--config', 'cockpit.toml', '--create'], { sibling } as never)
         expect(stray.status).toBe(2)
         expect(stray.stderr).toContain('--create belongs to sibling add')
+
+        const invalid = await runInProcess(['sibling', 'unknown', 'api'])
+        expect(invalid.status).toBe(2)
+        expect(invalid.stderr).toContain('[--instruction-pointer]')
     })
 
     it('lists the commands for a bare invocation and points usage errors at --help', async () => {
@@ -1212,7 +1216,7 @@ describe('setup process contract', () => {
         expect(json.output().stderr).toBe('')
     })
 
-    it('refuses duplicate --config before invoking setup in human and JSON modes', async () => {
+    it('refuses duplicate setup options before invoking setup and names the duplicated option', async () => {
         const handler = async () => setupOutcome()
         const human = captureIo()
         expect(await runCli(['setup', '--config', 'one.toml', '--config=two.toml'], human.io, { setup: handler })).toBe(2)
@@ -1227,6 +1231,13 @@ describe('setup process contract', () => {
             diagnostics: [expect.objectContaining({ code: 'SETUP_OPTION_DUPLICATE' })],
         })
         expect(json.output().stderr).toBe('')
+
+        const pointer = captureIo()
+        expect(await runCli(['setup', '--config', 'cockpit.toml', '--write-instruction-pointers',
+            '--write-instruction-pointers', '--json'], pointer.io, { setup: handler })).toBe(2)
+        expect(JSON.parse(pointer.output().stdout).diagnostics).toEqual([
+            expect.objectContaining({ code: 'SETUP_OPTION_DUPLICATE', target: '--write-instruction-pointers' }),
+        ])
     })
 
     it('keeps completed mutation evidence in a JSON postcheck refusal', async () => {

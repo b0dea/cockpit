@@ -44,6 +44,12 @@ describe('sibling instruction pointer', () => {
             kind: 'offered', path: missingPath, target: '../cockpit/AGENTS.md',
         })
         await expect(readFile(missingPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await synchronizeInstructionPointer({ cockpitRoot, siblingRoot: missingSibling, write: true })).toMatchObject({
+            kind: 'written', path: missingPath, target: '../cockpit/AGENTS.md',
+        })
+        expect(await readFile(missingPath, 'utf8')).toBe(
+            '<!-- cockpit:instruction-pointer:start -->\nRead [the cockpit instructions](<../cockpit/AGENTS.md>) before editing this repository.\n<!-- cockpit:instruction-pointer:end -->\n',
+        )
     })
     it('refuses a sibling root replaced by a symlink without changing the destination guide', async () => {
         const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-pointer-redirect-')))
