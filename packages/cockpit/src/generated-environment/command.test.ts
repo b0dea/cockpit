@@ -393,7 +393,9 @@ it('consumes vendor and exact build/test authority through installed hook regist
         expect(result.stderr).not.toContain('"invocation":')
         return result
     }
-    expect(JSON.parse(invoke('curl https://api.vendor.example.test/messages', join(root, 'app'), await registered('.codex/hooks.json')).stdout))
+    const codexDenied = invoke('curl https://api.vendor.example.test/messages', root, await registered('.codex/hooks.json'))
+    expect(codexDenied).toMatchObject({ status: 0, stderr: '' })
+    expect(JSON.parse(codexDenied.stdout))
         .toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: 'Refusing executable use of a declared vendor host.' } })
     expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
     expect(invoke('npm test -- unit.test.ts')).toMatchObject({ status: 0, stdout: '', stderr: '' })
