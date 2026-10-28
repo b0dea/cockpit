@@ -42,8 +42,10 @@ run `npm run cockpit:sync` after changing sibling declarations to regenerate the
 
 The root `.gitignore` has a `cockpit:ignore` region for installed dependencies, machine-local
 state, secret resolver material, and a sibling checkout directory that lives below the cockpit
-root. `init` creates that region while preserving every line outside it. Later `sync` and `check`
-authenticate the exact region and refuse an edited or stale one instead of overwriting it.
+root. `init` creates that region while preserving every line outside it. The first `sync` does the
+same for a valid hand-written configuration whose compatible team metadata is missing. Later
+`sync` and `check` authenticate the exact region and refuse an edited or stale one instead of
+overwriting it; `sync --dry-run` reports missing metadata without writing it.
 The sibling directory is escaped as a literal Git ignore path, so wildcard-shaped names do not
 match nearby directories. A `siblings_root` containing a line break or NUL is refused before
 metadata changes because `.gitignore` cannot represent it; choose a single-line path and rerun

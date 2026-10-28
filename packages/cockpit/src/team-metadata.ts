@@ -23,7 +23,12 @@ const SCRIPTS = Object.freeze({
 const START = '# cockpit:ignore:start'
 const END = '# cockpit:ignore:end'
 
-export type TeamMetadataResult = Readonly<{ kind: 'complete'; changed: boolean }>
+export interface TeamMetadataChange {
+    readonly operation: 'write'
+    readonly path: string
+}
+
+export type TeamMetadataResult = Readonly<{ kind: 'complete'; changed: boolean; changes: readonly TeamMetadataChange[] }>
     | Readonly<{ kind: 'refusal'; code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH; message: string; target: string }>
 
 function refuse(code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH,
@@ -206,7 +211,7 @@ function ignoreCandidate(original: string, block: string): string | undefined {
     return original.slice(start, end + END.length) === block ? original : undefined
 }
 
-export async function initializeTeamMetadata(configPath: string): Promise<TeamMetadataResult> {
+export async function initializeTeamMetadata(configPath: string, options: Readonly<{ dryRun?: boolean }> = {}): Promise<TeamMetadataResult> {
     const root = dirname(resolve(configPath))
     try {
         const authority = await captureRoot(root)
@@ -230,19 +235,21 @@ export async function initializeTeamMetadata(configPath: string): Promise<TeamMe
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
-        let changed = false
+        const changes: TeamMetadataChange[] = []
+        if (sourceInstall && sourceInstall.before.bytes !== sourceInstall.bytes) changes.push({ operation: 'write', path: 'package-lock.json' })
+        if (packageBefore?.bytes !== candidate.bytes) changes.push({ operation: 'write', path: 'package.json' })
+        if (ignoreBefore?.bytes !== nextIgnore) changes.push({ operation: 'write', path: '.gitignore' })
+        if (options.dryRun) return { kind: 'complete', changed: changes.length > 0, changes: Object.freeze(changes) }
         if (sourceInstall && sourceInstall.before.bytes !== sourceInstall.bytes) {
             await authenticateSourceInstall(sourceInstall)
             await replaceAuthenticated(authority, join(root, 'package-lock.json'), sourceInstall.before, sourceInstall.bytes)
-            changed = true
         }
         if (packageBefore?.bytes !== candidate.bytes) {
             if (sourceInstall) await authenticateSourceInstall(sourceInstall)
             await replaceAuthenticated(authority, packagePath, packageBefore, candidate.bytes)
-            changed = true
         }
-        if (ignoreBefore?.bytes !== nextIgnore) { await replaceAuthenticated(authority, ignorePath, ignoreBefore, nextIgnore); changed = true }
-        return { kind: 'complete', changed }
+        if (ignoreBefore?.bytes !== nextIgnore) await replaceAuthenticated(authority, ignorePath, ignoreBefore, nextIgnore)
+        return { kind: 'complete', changed: changes.length > 0, changes: Object.freeze(changes) }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
     }
@@ -277,7 +284,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const expected = ignoreCandidate(ignore?.bytes ?? '', block)
         if (!ignore || expected === undefined || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block is missing, stale or edited; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
-        return { kind: 'complete', changed: false }
+        return { kind: 'complete', changed: false, changes: Object.freeze([]) }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be authenticated (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
     }

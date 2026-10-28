@@ -464,8 +464,11 @@ describe('generated environment process contract', () => {
         const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-sync-preview-metadata-')))
         scratch.push(directory)
         const configPath = join(directory, 'cockpit.toml')
+        mkdirSync(join(directory, 'app'))
+        mkdirSync(join(directory, 'fixtures'))
+        writeFileSync(join(directory, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
         writeFileSync(configPath, readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
-            .replace('name = "generated-environment"', 'name = "preview-metadata"'))
+            .replace('name = "generated-environment"', 'name = "preview-metadata"\nsiblings_root = "."'))
         writeFileSync(join(directory, 'package.json'), '{"private":true}\n')
         writeFileSync(join(directory, '.gitignore'), 'operator-owned\n')
         const snapshot = () => Object.freeze({
@@ -475,9 +478,37 @@ describe('generated environment process contract', () => {
         const before = snapshot()
         const capture = captureIo()
 
-        await runCli(['sync', '--config', configPath, '--dry-run', '--json'], capture.io)
+        const status = await runCli(['sync', '--config', configPath, '--dry-run', '--json'], capture.io)
+        expect(status, capture.output().stdout).toBe(0)
 
         expect(snapshot()).toEqual(before)
+        expect(JSON.parse(capture.output().stdout).result.changes).toEqual(expect.arrayContaining([
+            { operation: 'write', path: 'package.json' },
+            { operation: 'write', path: '.gitignore' },
+        ]))
+    })
+
+    it.each([
+        ['a conflicting package pin', JSON.stringify({ devDependencies: { '@b0dea/cockpit': '9.9.9' } }), 'operator-owned\n'],
+        ['a conflicting cockpit script', JSON.stringify({ scripts: { 'cockpit:sync': 'custom sync' } }), 'operator-owned\n'],
+        ['an edited owned ignore block', '{"private":true}\n', '# cockpit:ignore:start\n/human-edit/\n# cockpit:ignore:end\n'],
+    ])('refuses %s before public sync changes team metadata', async (_name, packageBytes, ignoreBytes) => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-sync-conflicting-metadata-')))
+        scratch.push(directory)
+        const configPath = join(directory, 'cockpit.toml')
+        writeFileSync(configPath, readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
+            .replace('name = "generated-environment"', 'name = "conflicting-metadata"'))
+        writeFileSync(join(directory, 'package.json'), packageBytes)
+        writeFileSync(join(directory, '.gitignore'), ignoreBytes)
+        const capture = captureIo()
+
+        expect(await runCli(['sync', '--config', configPath, '--json'], capture.io)).toBe(2)
+
+        expect(JSON.parse(capture.output().stdout).diagnostics).toEqual([
+            expect.objectContaining({ severity: 'error', code: 'TEAM_METADATA_UNAVAILABLE' }),
+        ])
+        expect(readFileSync(join(directory, 'package.json'), 'utf8')).toBe(packageBytes)
+        expect(readFileSync(join(directory, '.gitignore'), 'utf8')).toBe(ignoreBytes)
     })
 
     it('binds doctor freshness only after CI and NO_UPDATE_NOTIFIER transport admissions', async () => {

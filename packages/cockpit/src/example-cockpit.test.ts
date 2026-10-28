@@ -23,13 +23,14 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/agent-adoption.md', [operator, operator, operator, operator, operator, runtime, operator, operator, operator, operator, runtime, runtime, operator]],
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [runtime, runtime]],
-    ['docs/getting-started.md', [packageInstall, packageInstall, operator, operator, operator, operator, runtime, operator, operator, runtime]],
+    ['docs/getting-started.md', [packageInstall, packageInstall, operator, operator, operator, operator, runtime, operator, operator, operator, runtime]],
     ['docs/harness-surfaces.md', [operator]],
+    ['docs/joining-a-team.md', [packageInstall, operator, operator]],
     ['docs/contributing/releasing.md', [developer]],
     ['docs/release-policy.md', [operator]],
     ['docs/troubleshooting.md', [operator, operator, developer, developer]],
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
-    ['examples/synthetic/README.md', [packageInstall, executed, operator, executed, runtime]],
+    ['examples/synthetic/README.md', [packageInstall, operator, executed, operator, executed, runtime]],
     ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],
     ['examples/compose-first/README.md', [executed, runtime]],
@@ -146,6 +147,7 @@ describe('the public synthetic cockpit', () => {
             ['cockpit', 'sync'], ['cockpit', 'sync'], ['cockpit', 'setup'], ['cockpit', 'check'],
         ])
         expect(humanOnly.map(argv => argv.slice(0, 2))).toEqual([
+            ['npm', 'init'], ['npm', 'install'],
             ['mkdir', '-p'], ['printf', '\'[{"id":"synthetic"}]\\n\''],
             ['printf', '\'.env\\n\''],
             ['printf', '\'%s\\n\''], ['printf', '\'%s\\n\''], ['printf', '\'process.exitCode'],
@@ -210,7 +212,9 @@ describe('the public synthetic cockpit', () => {
         expect(results[0]!.response.result.changes).toContainEqual({ operation: 'write', path: 'compose.generated.yml' })
         const compose = readFileSync(join(root, 'compose.generated.yml'), 'utf8')
         expect(compose).toContain('    build:\n      context: api\n')
-        const native = spawnSync('docker', ['compose', '-f', join(root, 'compose.generated.yml'), 'config', '-q'], { cwd: root, encoding: 'utf8' })
+        const native = spawnSync('docker', ['compose', '-f', join(root, 'compose.generated.yml'), 'config', '-q'], {
+            cwd: root, encoding: 'utf8', env: { ...process.env, COCKPIT_OWNER_ID: 'synthetic-owner', COCKPIT_STACK_ID: 'synthetic-stack' },
+        })
         if (native.error) {
             expect({ kind: 'unavailable', reason: (native.error as NodeJS.ErrnoException).code ?? 'native Compose did not return' }).toMatchObject({ kind: 'unavailable' })
         } else expect(native.status, native.stderr).toBe(0)
@@ -229,7 +233,7 @@ describe('the public synthetic cockpit', () => {
         const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
         expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
         const guide = readFileSync(join(root, 'AGENTS.md'), 'utf8')
-        expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe(guide)
+        expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toContain('@AGENTS.md')
         const headings = [...guide.matchAll(/^# (.+)$/gm)].map(match => match[1])
         expect(headings).toEqual(['What this is', 'How to work here', 'Rules and why', 'Skills', 'Testing tiers'])
         // Facts come from cockpit.toml: the cockpit name and each sibling's directory, purpose and acquire mode.
@@ -269,8 +273,8 @@ describe('the public synthetic cockpit', () => {
             { path: 'examples/docs-only/README.md', block: 1, ...executed },
             { path: 'examples/extended/README.md', block: 1, ...executed },
             { path: 'examples/minimal/README.md', block: 1, ...executed },
-            { path: 'examples/synthetic/README.md', block: 2, ...executed },
-            { path: 'examples/synthetic/README.md', block: 4, ...executed },
+            { path: 'examples/synthetic/README.md', block: 3, ...executed },
+            { path: 'examples/synthetic/README.md', block: 5, ...executed },
         ])
         expect(classified.filter(row => row.kind === 'human-only').every(row => row.reason.length > 0)).toBe(true)
 

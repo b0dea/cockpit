@@ -502,12 +502,22 @@ function concreteEnvironment(env: Readonly<Record<string, string | undefined>>):
     return Object.freeze(Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)))
 }
 
+function teamMetadataOutcome(result: Extract<TeamMetadataResult, { kind: 'refusal' }>): GeneratedEnvironmentCommandOutcome
+function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCommandOutcome | undefined
 function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCommandOutcome | undefined {
     if (result.kind === 'complete') return undefined
     return {
         kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
         diagnostics: [{ severity: 'error', code: result.code, message: result.message, target: result.target }],
     }
+}
+
+function includeTeamMetadataChanges(
+    metadata: Extract<TeamMetadataResult, { kind: 'complete' }>,
+    outcome: GeneratedEnvironmentCommandOutcome,
+): GeneratedEnvironmentCommandOutcome {
+    if (outcome.kind !== 'complete') return outcome
+    return { ...outcome, result: { ...outcome.result, changes: Object.freeze([...metadata.changes, ...outcome.result.changes]) } }
 }
 
 function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
@@ -566,10 +576,11 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand(input, defaultSetupAdapters),
         sync: async ({ authorizeStaleRemoval, adopt, ...input }) => {
-            const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
-            if (metadata) return metadata
-            return adopt ? adoptAndSyncGeneratedEnvironment({ configPath: input.configPath, adopt })
-                : syncGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
+            const initialized = await initializeTeamMetadata(input.configPath, { dryRun: input.dryRun })
+            if (initialized.kind === 'refusal') return teamMetadataOutcome(initialized)
+            if (adopt) return adoptAndSyncGeneratedEnvironment({ configPath: input.configPath, adopt })
+            const outcome = await syncGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
+            return includeTeamMetadataChanges(initialized, outcome)
         },
         check: async input => {
             const loaded = await loadCockpitConfig(input.configPath)

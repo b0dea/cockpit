@@ -20,13 +20,15 @@ describe('team metadata', () => {
         const root = await fixture()
         await writeFile(join(root, 'package.json'), '{"private":true,"scripts":{"test":"vitest"}}\n')
         await writeFile(join(root, '.gitignore'), 'operator-owned\n')
-        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: true })
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: true, changes: [
+            { operation: 'write', path: 'package.json' }, { operation: 'write', path: '.gitignore' },
+        ] })
         const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
         expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', 'cockpit:setup': 'cockpit setup --config cockpit.toml',
             'cockpit:sync': 'cockpit sync --config cockpit.toml', 'cockpit:check': 'cockpit check --config cockpit.toml' },
         devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
         expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start\n/node_modules/\n/.cockpit/local/\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
-        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false })
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
     })
 
     it('ignores literal sibling directory names without matching nearby directories', async () => {
@@ -41,11 +43,25 @@ describe('team metadata', () => {
             await writeFile(join(root, siblingsRoot, 'probe.txt'), 'literal')
             await writeFile(join(root, nearby, 'probe.txt'), 'nearby')
 
-            expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: true })
+            expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
             const ignored = (path: string) => spawnSync('git', ['-C', root, 'check-ignore', '--no-index', '--quiet', '--', path]).status
             expect(ignored(`${siblingsRoot}/probe.txt`), siblingsRoot).toBe(0)
             expect(ignored(`${nearby}/probe.txt`), nearby).toBe(1)
         }
+    })
+
+    it('reports the exact initialization writes during a read-only preview', async () => {
+        const root = await fixture()
+        await writeFile(join(root, 'package.json'), '{"private":true}\n')
+        await writeFile(join(root, '.gitignore'), 'operator-owned\n')
+
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'), { dryRun: true })).toEqual({
+            kind: 'complete', changed: true, changes: [
+                { operation: 'write', path: 'package.json' }, { operation: 'write', path: '.gitignore' },
+            ],
+        })
+        expect(await readFile(join(root, 'package.json'), 'utf8')).toBe('{"private":true}\n')
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n')
     })
 
     it('refuses an unrepresentable sibling ignore path before changing metadata', async () => {

@@ -3,7 +3,14 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 This example uses two synthetic working repositories and one local bare remote. From this
-directory, create them once:
+directory, install the exact project-local cockpit package:
+
+```sh human-only:package-install
+npm init --yes
+npm install --save-dev --save-exact @b0dea/cockpit
+```
+
+Then create the synthetic repositories once:
 
 ```sh human-only:bootstrap
 mkdir -p repositories/app repositories/web fixtures

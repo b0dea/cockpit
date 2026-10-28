@@ -12,8 +12,8 @@ trimmed with `...`, and absolute paths are shortened to `…`.
 
 ## Install cockpit
 
-Follow [Install cockpit](getting-started.md#install-cockpit) so that the exact project-local
-executable works.
+You need the Node.js and Git prerequisites from [Install cockpit](getting-started.md#install-cockpit).
+The project-local package is installed below only after entering the copied demo root.
 
 ## Create the demo directory
 
@@ -23,10 +23,13 @@ land in this repository:
 ```sh
 cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo"
 cd "${TMPDIR:-/tmp}/cockpit-demo"
+npm init --yes
+npm install --save-dev --save-exact @b0dea/cockpit
 ```
 
-Now run the first command block of [examples/synthetic/README.md](../examples/synthetic/README.md)
-in this directory. It creates the product's two repositories under **repositories/**: **app**, a
+Now run the repository bootstrap block of
+[examples/synthetic/README.md](../examples/synthetic/README.md) in this directory. It creates the
+product's two repositories under **repositories/**: **app**, a
 tiny Node package with one commit, and **web**, an empty repository whose remote is a local bare
 repository. The configuration declares both as siblings.
 
@@ -53,7 +56,6 @@ write ".cockpit/guards/bash-guard.sh"
 write ".codex/agents/evaluator.toml"
 write ".codex/config.toml"
 write ".codex/hooks.json"
-write ".codex/rules/rulesync.rules"
 write ".opencode/agents/evaluator.md"
 ...
 write ".opencode/plugin/cockpit-guards.js"

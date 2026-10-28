@@ -78,6 +78,10 @@ The [CLI reference](cli-reference.md) lists every command and flag.
 The cockpit lives in a folder of its own beside the product's repositories, which holds
 <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`; [Where the cockpit lives](concepts.md#where-the-cockpit-lives)
 explains the default, the new-product case and why a product repository is not the default root.
+For a valid hand-written configuration, the first `sync` also adds the exact `cockpit:*` scripts,
+package pin and marked `.gitignore` region that `init` would create. Preview them with `sync
+--dry-run`; an existing conflicting pin, script or edited marked region is refused rather than
+overwritten.
 
 ## Bootstrap a new product
 
