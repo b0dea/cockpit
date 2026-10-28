@@ -8,5 +8,5 @@ Add bounded command allow and deny rules, make ripgrep prompts when ambient conf
 remove obsolete generated-ownership migrations, and clean up authenticated machine-local guard state
 during uninstall. Document supported extension seams and add a build-beside example.
 
-Upgrade: installations with ownership metadata older than the current format must run
-`cockpit uninstall --config cockpit.toml` before installing this version, then run `cockpit sync`.
+Upgrade: review declared command rules, then have a human run `cockpit sync --config cockpit.toml`
+in a terminal to regenerate and approve the guard.
