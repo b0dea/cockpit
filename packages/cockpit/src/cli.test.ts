@@ -2310,7 +2310,7 @@ describe('init command admission', () => {
         }] })
     })
 
-    it('routes a recorded-answer reset preview and only its exact explicit acceptance', async () => {
+    it.each(['ports.bases', 'environment.install_policies', 'environment.test_data'])('routes a recorded-answer reset preview and only its exact explicit acceptance for %s', async field => {
         const digest = 'd'.repeat(64)
         const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
             kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
@@ -2322,18 +2322,20 @@ describe('init command admission', () => {
         }))
         let stdout = ''
         const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true } }
-        const base = ['init', process.cwd(), '--target', 'codexcli', '--reset-answer', 'ports.bases', '--json']
+        const base = ['init', process.cwd(), '--target', 'codexcli', '--reset-answer', field, '--json']
 
         expect(await runCli(base, io, { init: application })).toBe(0)
         expect(application).toHaveBeenLastCalledWith(expect.objectContaining({ accepted: false,
-            resetAnswer: { field: 'ports.bases' } }))
+            resetAnswer: { field } }))
         expect(JSON.parse(stdout).result.resetAnswer).toMatchObject({ revision: 7, previewSha256: digest })
         stdout = ''; application.mockClear()
         expect(await runCli([...base, '--accept-reset', digest], io, { init: application })).toBe(0)
         expect(application).toHaveBeenLastCalledWith(expect.objectContaining({ accepted: false,
-            resetAnswer: { field: 'ports.bases', acceptedPreviewSha256: digest } }))
+            resetAnswer: { field, acceptedPreviewSha256: digest } }))
 
         for (const refused of [
+            ...['environment..test_data', 'environment/_test', '_environment', 'environment.'].map(invalid =>
+                ['init', process.cwd(), '--target', 'codexcli', '--reset-answer', invalid, '--json']),
             [...base, '--accept-reset', 'not-a-digest'],
             [...base, '--accept-reset', digest, '--accept-preview', 'a'.repeat(64)],
             [...base, '--accept-reset', digest, '--answers', 'answers.toml'],

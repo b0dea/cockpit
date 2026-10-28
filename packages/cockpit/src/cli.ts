@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commands, describePublicOption, internalCommands, isWorkHandler, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
@@ -877,8 +877,7 @@ async function decodeRequest(
         const resetField = parsed.values['reset-answer']
         const acceptedReset = parsed.values['accept-reset']
         if (resetField !== undefined || acceptedReset !== undefined) {
-            if (typeof resetField !== 'string' || !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(resetField)
-                || resetField.length > 256 || acceptedReset !== undefined
+            if (typeof resetField !== 'string' || !isRecordedAnswerField(resetField) || acceptedReset !== undefined
                     && (typeof acceptedReset !== 'string' || !/^[a-f0-9]{64}$/.test(acceptedReset))) {
                 return usageOutcome('CLI_USAGE_INVALID', '--reset-answer requires one recorded field; --accept-reset requires its printed sha256 digest')
             }
