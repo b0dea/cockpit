@@ -288,6 +288,36 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
 
 interface VisibleWrites { readonly paths: readonly string[]; readonly reads?: readonly string[]; readonly uncertain: boolean }
 
+function gitArchiveWrites(args: readonly string[]): VisibleWrites | undefined {
+    const paths: string[] = []
+    let output = false
+    let uncertain = false
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (arg === '--') break
+        let path: string | undefined
+        let matched = false
+        if (arg === '-o' || arg === '--output') {
+            output = true
+            matched = true
+            path = args[++index]
+        } else if (arg.startsWith('--output=')) {
+            output = true
+            matched = true
+            path = arg.slice('--output='.length)
+        } else if (arg.startsWith('-o') && arg.length > 2) {
+            output = true
+            matched = true
+            path = arg.slice(2)
+        }
+        if (matched) {
+            if (path) paths.push(path)
+            else uncertain = true
+        }
+    }
+    return output ? { paths, uncertain } : undefined
+}
+
 function tarExtractionWrites(args: readonly string[]): VisibleWrites {
     let extraction = false
     let destination = '.'
@@ -632,11 +662,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const writes = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
             return { paths: transfer.writes, reads: [], uncertain: transfer.uncertain }
-        })() : visibleWrites(invocation)
+        })() : git?.verb === 'archive' ? gitArchiveWrites(git.args) : visibleWrites(invocation)
         if (writes) {
-            const writeCwd = git?.verb === 'mv' ? git.cwd : invocation.cwd
+            const writeCwd = git && ['archive', 'mv'].includes(git.verb) ? git.cwd : invocation.cwd
             for (const path of writes.paths) {
                 pathCount++
+                if (git?.verb === 'archive') inspectRemoval(path, writeCwd)
                 inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
             }
             if (writes.reads?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: writes.reads, trees: [], listings: [] })) {
@@ -646,7 +677,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         } else if (!access) {
             for (const arg of git?.args ?? invocation.argv) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
-                    inspectPossibleControlOperand(arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, invocation.cwd)
+                    inspectPossibleControlOperand(arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd)
                 }
             }
             if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))

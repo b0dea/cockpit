@@ -78,9 +78,10 @@ harness registry. Otherwise an exact command allow could disable a hook or chang
 harness starts before the next guarded call. This boundary follows folded path spellings and
 authenticated filesystem identities, so alternate case and aliases do not bypass it.
 
-The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `git mv`, `tee`,
-`dd`, `touch`, `truncate` and `chmod` forms, and the destination of bounded `tar` extraction
-forms. Extraction without an explicit destination writes to the invocation's working directory.
+The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `git mv`,
+`git archive`, `tee`, `dd`, `touch`, `truncate` and `chmod` forms, and the destination of bounded
+`tar` extraction forms. Git paths use the directory selected by `git -C`. Extraction without an
+explicit destination writes to the invocation's working directory.
 Visible source files for bounded `cp`, `install`, `dd` and `tar` forms receive the same protected
 read check as built-in read-only commands. Every unsupported `tar` mode or option is unavailable,
 as is an unclassified non-read-only command whose visible operand names a control, a protected

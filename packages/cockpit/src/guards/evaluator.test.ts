@@ -648,6 +648,39 @@ describe('cockpit structure protection', () => {
         })
     })
 
+    it('resolves Git archive outputs and fallback operands from the Git execution directory', () => {
+        const configured = policy()
+        configured.declaredAllows.push({
+            argv: ['git', '-C', 'subdir', 'archive'],
+            reason: 'Repository archive creation is declared safe.',
+        })
+        for (const [destination, reason] of [
+            ['../cockpit.toml', removal],
+            ['../.codex/config.toml', controlRemoval],
+            ['../config/active.instance', instanceMutation],
+            ['../env/.secrets/token', secretMutation],
+        ] as const) {
+            for (const args of [`--output=${destination}`, `--output ${destination}`, `-o ${destination}`, `-o${destination}`]) {
+                const command = `git -C subdir archive ${args} HEAD`
+                expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                    decision: 'deny', reason,
+                })
+            }
+        }
+        for (const args of ['--output=../release.tar', '--output ../release.tar', '-o ../release.tar', '-o../release.tar']) {
+            const command = `git -C subdir archive ${args} HEAD`
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'allow', reason: 'Repository archive creation is declared safe.',
+            })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C subdir archive HEAD ../.codex/config.toml')), configured, inspect)).toEqual({
+            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C subdir archive HEAD ../release.tar')), configured, inspect)).toEqual({
+            decision: 'allow', reason: 'Repository archive creation is declared safe.',
+        })
+    })
+
     it('denies a visible writer destination that shares a guard control identity', () => {
         const control = `${root}/.codex/hooks.json`
         const alias = `${root}/notes/registration.json`
