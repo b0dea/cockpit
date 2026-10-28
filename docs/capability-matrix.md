@@ -4,7 +4,7 @@
 
 This generated matrix is for users checking what each harness can enforce, instruct or cannot provide. Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.
 
-Source manifest: `3652dd1f447a5360469a3463bdea21dc66e3ee2c7b13ff3f85effc46fa1d78e3`.
+Source manifest: `25b2aca28f26e275b7583c1d9e0c8079f635cef935d989d930486ee8989abb42`.
 
 | Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -26,10 +26,10 @@ Source manifest: `3652dd1f447a5360469a3463bdea21dc66e3ee2c7b13ff3f85effc46fa1d78
 | codexcli | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-fix/SKILL.md; SHA-256 4b39ef910545f1465fc1773609326cbb904dfb4ba11ed2c15cee4c73a2e94d3d; operator parity judgment pending | unmeasured | unmeasured |
 | codexcli | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-setup/SKILL.md; SHA-256 619b32a9ffea329d08d7d70fd0e4d99345d3515fd9baa9aec25f1d572b2883e4; operator parity judgment pending | unmeasured | unmeasured |
 | codexcli | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-work/SKILL.md; SHA-256 f12cae28ec7cf8be6946e8287c896047d3b3c7c2daf32f8609a03ef7db5ad20b; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-explain | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-explain/SKILL.md; SHA-256 d66670155dcd75f41521f7e345f8e3165c620d0d5b8679fcba67b6c5a25b194b; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-fix/SKILL.md; SHA-256 044b597aa4da4971d102545af9e33c039092a930b7a59be8a9848b687ed7e0fa; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-setup/SKILL.md; SHA-256 a29004b883f74069f677def837f457d9d8a17e00811d5ea53de7df4722b5aa8b; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-work/SKILL.md; SHA-256 4c43702f97d08634cd320dad8b81c6c3caba2fe0cfaf5203d1017d73d9c1f2f0; operator parity judgment pending | unmeasured | unmeasured |
+| opencode | skill-parity | cockpit-explain | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-explain/SKILL.md; SHA-256 518e396424bf14743122ca29803604b37180297d293da177e8e9152a4e87435b; operator parity judgment pending | unmeasured | unmeasured |
+| opencode | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-fix/SKILL.md; SHA-256 4b39ef910545f1465fc1773609326cbb904dfb4ba11ed2c15cee4c73a2e94d3d; operator parity judgment pending | unmeasured | unmeasured |
+| opencode | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-setup/SKILL.md; SHA-256 619b32a9ffea329d08d7d70fd0e4d99345d3515fd9baa9aec25f1d572b2883e4; operator parity judgment pending | unmeasured | unmeasured |
+| opencode | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-work/SKILL.md; SHA-256 f12cae28ec7cf8be6946e8287c896047d3b3c7c2daf32f8609a03ef7db5ad20b; operator parity judgment pending | unmeasured | unmeasured |
 | cursor | skill-parity | cockpit-explain | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
 | cursor | skill-parity | cockpit-fix | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
 | cursor | skill-parity | cockpit-setup | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
