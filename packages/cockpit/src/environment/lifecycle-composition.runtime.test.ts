@@ -405,10 +405,66 @@ describe('production lifecycle adapter composition', () => {
             throw failure
         })
 
-        await expect(rejected).rejects.toMatchObject({
-            message: 'downstream port preparation and acquired-holder compensation both failed',
+        const combined = await rejected.catch((error: unknown) => error)
+        expect(combined).toMatchObject({
             errors: [failure, expect.objectContaining({ message: expect.stringContaining('CLAIM_CO_TENANT') })],
         })
+        expect(combined).toBeInstanceOf(AggregateError)
+        expect((combined as AggregateError).message).toContain('downstream port preparation failed: synthetic downstream failure')
+        expect((combined as AggregateError).message).toContain('acquired-holder compensation failed: CLAIM_CO_TENANT')
+    })
+
+    it('retains a fresh holder when runtime dispatch succeeds before its adapter rejects', async () => {
+        const candidate = await generatedFixture()
+        const failure = new Error('synthetic post-dispatch failure')
+        let startDispatched = false
+        const execute = async (step: ExecutionStep) => {
+            const outcome = await executeProbe(step)
+            if (step.id === 'runtime:docker-compose:start:app') {
+                startDispatched = true
+                throw failure
+            }
+            return outcome
+        }
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'generated-production',
+            timeoutMs: 5_000,
+        }, execute)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        const started = await recordLifecycleStarted({
+            namespace: loaded.result.namespace,
+            stackId: loaded.result.stackId,
+            holderId: loaded.result.holderId,
+            observedAt: new Date().toISOString(),
+        })
+        expect(started.kind, JSON.stringify(started)).not.toBe('refusal')
+        const generation = createHash('sha256')
+            .update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        await configureGeneratedDocker(candidate, loaded.result, generation)
+        listenerProbeControl.enabled = true
+
+        await expect(runUp({ configPath: candidate.configPath }, adapters)).rejects.toBe(failure)
+        expect(startDispatched).toBe(true)
+        const retained = await readActiveStackInventory(loaded.result.namespace)
+        expect(retained).toMatchObject({ kind: 'complete', value: [{
+            stackId: loaded.result.stackId,
+            record: { holders: [expect.objectContaining({ holderId: loaded.result.holderId })] },
+        }] })
+
+        const recoveryAdapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'generated-production',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const recovered = await runUp({ configPath: candidate.configPath }, recoveryAdapters)
+        expect(recovered, JSON.stringify(recovered)).toMatchObject({ kind: 'complete', result: { change: 'resumed' } })
+        const stopped = await runSleep({ configPath: candidate.configPath }, recoveryAdapters)
+        expect(stopped, JSON.stringify(stopped)).toMatchObject({ kind: 'complete', result: { change: 'stopped' } })
     })
 
     it.each(['single', 'fresh', 'replayed'] as const)('lets an authenticated controlled probe measure an unmeasured runtime without claiming global support with a %s supplier', async (mode) => {

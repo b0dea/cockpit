@@ -1061,21 +1061,36 @@ export function createLifecycleCommandAdapters(
         })
         if (acquired.kind === 'refusal') return refuse?.(acquired.diagnostics)
         if (acquired.kind !== 'complete') return undefined
+        let retainOnFailure = false
+        const compensationFailure = (error: unknown, cleanup: unknown) => {
+            const detail = (value: unknown) => value instanceof Error
+                && value.message.length > 0 && value.message.length <= 512
+                ? value.message.split('\n', 1)[0]!
+                : 'unknown failure'
+            return new AggregateError(
+                [error, cleanup],
+                `downstream port preparation failed: ${detail(error)}; acquired-holder compensation failed: ${detail(cleanup)}`,
+            )
+        }
         try {
-            return await use(Object.freeze({ leaseResult: acquired.leaseResult, projection: acquired.projection }))
+            return await use(Object.freeze({
+                leaseResult: acquired.leaseResult,
+                projection: acquired.projection,
+                retainOnFailure: () => { retainOnFailure = true },
+            }))
         } catch (error) {
-            if (acquired.leaseResult.kind === 'complete' && acquired.leaseResult.change === 'acquired') {
+            if (!retainOnFailure && acquired.leaseResult.kind === 'complete' && acquired.leaseResult.change === 'acquired') {
                 let compensated: Awaited<ReturnType<typeof compensateAcquiredPortHolder>>
                 try {
                     compensated = await compensateAcquiredPortHolder({ namespace: context.namespace,
                         leaseResult: acquired.leaseResult, now: new Date().toISOString() })
                 } catch (cleanup) {
-                    throw new AggregateError([error, cleanup], 'downstream port preparation and acquired-holder compensation both failed')
+                    throw compensationFailure(error, cleanup)
                 }
                 if (compensated.kind !== 'complete') {
                     const cleanup = new Error(compensated.diagnostics
                         .map(({ code, message, target }) => `${code}: ${message}${target ? ` (${target})` : ''}`).join('; '))
-                    throw new AggregateError([error, cleanup], 'downstream port preparation and acquired-holder compensation both failed')
+                    throw compensationFailure(error, cleanup)
                 }
             }
             throw error

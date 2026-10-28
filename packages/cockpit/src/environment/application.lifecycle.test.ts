@@ -430,8 +430,8 @@ describe('lifecycle application contracts', () => {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             withAcquiredPorts: async (
                 _context: typeof context,
-                use: (ports: { leaseResult: typeof leaseResult; projection: typeof projection }) => Promise<unknown>,
-            ) => { events.push('ports'); return use({ leaseResult, projection }) },
+                use: (ports: { leaseResult: typeof leaseResult; projection: typeof projection; retainOnFailure: () => void }) => Promise<unknown>,
+            ) => { events.push('ports'); return use({ leaseResult, projection, retainOnFailure: vi.fn() }) },
             prepareGeneratedEnvironment: async (_context: typeof context, currentPorts: typeof projection) => {
                 events.push('publication')
                 expect(currentPorts).toBe(projection)
@@ -620,6 +620,7 @@ describe('lifecycle application contracts', () => {
                 return use(projection)
             },
             withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
                 leaseResult: { kind: 'complete', lease, change: 'unchanged', holderId: context.holderId, recordRevision: 2 },
                 projection: { lease, ownership, entrypoints: [] },
             } as never),
@@ -669,6 +670,7 @@ describe('lifecycle application contracts', () => {
             withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {} } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
                 leaseResult: {
                     kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2,
                     lease, observation: 'resolved-listener-evidence-accepted',
@@ -738,6 +740,7 @@ describe('lifecycle application contracts', () => {
             withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {} } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
                 leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2, lease },
                 projection: {
                     lease,
@@ -789,7 +792,7 @@ describe('lifecycle application contracts', () => {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
-            withAcquiredPorts: async (_context, use) => use({ leaseResult, projection } as never),
+            withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),
         })
 

@@ -647,6 +647,7 @@ export async function withBoundedComparisonLifecycle<T>(
             },
             retainInspection: () => { retainInspection = true },
         }) satisfies BoundedComparisonLifecycle
+        acquired.retainOnFailure()
         try {
             const value = await use(bound)
             if (retainInspection) {

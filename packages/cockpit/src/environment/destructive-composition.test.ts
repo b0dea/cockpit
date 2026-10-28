@@ -50,6 +50,7 @@ describe('destructive command composition', () => {
             withAcquiredPorts: vi.fn(async (_context, use) => use(Object.freeze({
                 leaseResult: Object.freeze({ kind: 'complete', change: 'acquired', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }) }),
                 projection: Object.freeze({ entrypoints: Object.freeze([]) }),
+                retainOnFailure: vi.fn(),
             }))),
         })
         const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters').mockReturnValue(lifecycle as never)
@@ -103,6 +104,7 @@ describe('destructive command composition', () => {
             withAcquiredPorts: vi.fn(async (_context, use) => use(Object.freeze({
                 leaseResult: Object.freeze({ kind: 'complete', change: 'acquired', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }) }),
                 projection: Object.freeze({ entrypoints: Object.freeze([]) }),
+                retainOnFailure: vi.fn(),
             }))),
         }) as never)
         vi.spyOn(ports, 'observeRetainedPortFamily').mockResolvedValue(Object.freeze({

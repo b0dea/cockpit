@@ -825,6 +825,7 @@ export interface RuntimeReadiness {
 interface AcquiredPorts {
     readonly leaseResult: LeasePortFamilyResult
     readonly projection: PortLeaseProjection
+    readonly retainOnFailure: () => void
 }
 
 interface GeneratedProgress {
@@ -2895,6 +2896,7 @@ async function executeUpRound(
         }
         for (let index = issuance.firstIncompleteServiceIndex; index < orderedServices.length; index += 1) {
             const service = orderedServices[index]!
+            ports.retainOnFailure()
             rememberRuntimeStart()
             const admitted = await startService(issuance.topology, service.id, adapters)
             if (admitted.kind === 'refused') return { kind: 'complete' as const, result: forwardedRefusal(admitted.diagnostics) }
