@@ -64,7 +64,7 @@ describe('surface selftest command', () => {
         expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', status: 0 }))
         if (outcome.kind !== 'complete') return
         expect(outcome.evidence.evidence).toEqual([])
-        expect(outcome.evidence.pending).toHaveLength(24)
+        expect(outcome.evidence.pending).toHaveLength(27)
         expect(outcome.bundle.records).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 kind: 'human_needed', reason: 'authentication_required',
@@ -116,7 +116,7 @@ describe('surface selftest command', () => {
                 }),
             ]),
         }))
-        expect(outcome.bundle.records).toHaveLength(24)
+        expect(outcome.bundle.records).toHaveLength(27)
         expect(outcome.evidence.errors).toEqual([])
     }, 180_000)
 

@@ -8,8 +8,8 @@ import { expect } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
 import { executeProbe } from '../src/environment-exec/execute.js'
-import type { ExecutionStep, HolderId, StackId } from '../src/environment/contract.js'
-import { checkoutId, cockpitId } from '../src/environment/identity.js'
+import type { ExecutionStep, HolderId } from '../src/environment/contract.js'
+import { checkoutId, cockpitId, stackId } from '../src/environment/identity.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../src/environment/ports.js'
 import { leasePortFamilyFixture } from './port-lease-fixture.js'
 import { createRuntimeAdapter, createRuntimeTopologyPlan, admitRuntimeTopology, projectRuntimeExecutionEnvironment } from '../src/environment/runtime.js'
@@ -90,7 +90,7 @@ export function createGeneratedCommandFixture() {
 
     async function skillSurfaces(names: readonly string[]): Promise<string> {
         const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
-        const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/onboarding.md'), 'utf8')
+        const procedure = '---\nloading: pull\nbudget: uncapped\n---\n\nInspect the synthetic product-owned verification target.\n'
         return names.map(name => `
     [[surfaces.overlays]]
     name = ${JSON.stringify(`synthetic-${name}`)}
@@ -249,12 +249,14 @@ export function createGeneratedCommandFixture() {
         const composePath = join(root, 'compose.generated.yml')
         const compose = await readFile(composePath, 'utf8')
         const document = parseYaml(compose) as { services: { app: { image: string; labels: Record<string, string> } } }
+        const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
+        const stack = stackId({ cockpitId: currentCockpit, checkoutId: checkoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
         const labels: Record<string, string> = {
             ...document.services.app.labels,
+            'dev.b0dea.cockpit.stack-id': stack,
+            'dev.b0dea.cockpit.owner-id': currentCockpit,
             'dev.b0.cockpit.generation': serviceGeneration,
         }
-        const stack = labels['dev.b0dea.cockpit.stack-id'] as StackId
-        const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
         const selected = await selectStateRoot({ platform: 'linux', home: root, cockpitId: currentCockpit })
         if (selected.kind !== 'complete') throw new Error('port state unavailable')
         const observedAt = new Date().toISOString()
@@ -282,6 +284,7 @@ export function createGeneratedCommandFixture() {
         await mkdir(bin, { recursive: true })
         await writeFile(docker, `#!${process.execPath}
     const args = process.argv.slice(2)
+    if (process.env.COCKPIT_STACK_ID !== ${JSON.stringify(stack)} || process.env.COCKPIT_OWNER_ID !== ${JSON.stringify(currentCockpit)}) process.exit(8)
     if (args.includes('config')) process.stdout.write(${JSON.stringify(JSON.stringify({
             services: { app: { image: document.services.app.image, labels, healthcheck: { test: ['CMD', 'true'] }, ports: [{ target: 3000, published: String(effectivePort) }] } },
         }))})

@@ -49,8 +49,8 @@ describe('surface selftest command', () => {
         expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', status: 0 }))
         if (outcome.kind !== 'complete') return
         expect(outcome.evidence.errors).toEqual([])
-        expect(outcome.bundle.records).toHaveLength(24)
-        expect(outcome.evidence.evidence).toHaveLength(24)
+        expect(outcome.bundle.records).toHaveLength(27)
+        expect(outcome.evidence.evidence).toHaveLength(27)
         expect(outcome.evidence.pending).toEqual([])
         expect(operator.requests).toHaveLength(3)
         expect(outcome.bundle.skillReviews).toEqual(expect.arrayContaining([

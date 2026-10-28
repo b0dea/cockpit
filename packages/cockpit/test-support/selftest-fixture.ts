@@ -12,7 +12,7 @@ const fixture = resolve('fixtures/registries/generated-environment.toml')
 
 async function syntheticSkillSources(names: readonly string[]): Promise<string> {
     const entry = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
-    const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/onboarding.md'), 'utf8')
+    const procedure = '---\nloading: pull\nbudget: uncapped\n---\n\nInspect the synthetic product-owned verification target.\n'
     return names.flatMap((name) => [
         { path: `skills/${name}/SKILL.md`, bytes: entry.replace('name: cockpit-setup', `name: ${name}`) },
         { path: `skills/${name}/procedures/onboarding.md`, bytes: procedure },

@@ -33,8 +33,8 @@ describe('public surface publication transaction', () => {
             await expect(lstat(join(fixture.root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
         })
 
-        it('publishes six contract-valid skills within the bounded sequential schedule', async () => {
-            const fixture = await surfaceConsumer('six-skill-publication', {
+        it('publishes shipped and extension skills within the bounded sequential schedule', async () => {
+            const fixture = await surfaceConsumer('extension-skill-publication', {
                 custom: await skillSurfaces(['alpha', 'beta', 'zeta']),
             })
 

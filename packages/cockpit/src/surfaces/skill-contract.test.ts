@@ -277,7 +277,7 @@ describe('shipped skill contract', () => {
         expect(body).toContain('cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json')
         expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
         expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
-        expect(body).toContain('a human runs `cockpit sync --config cockpit.toml` in a terminal')
+        expect(body).toContain('a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal')
         expect(body).not.toContain('--gate unit')
         expect(body).not.toContain('`work-accept --interactive`')
         const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-explain/SKILL.md')
@@ -398,7 +398,7 @@ describe('shipped skill descriptions', () => {
 describe('shipped onboarding commands', () => {
     it('routes every onboarding command with its required source arguments', async () => {
         const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
-        const invocations = [...procedure.matchAll(/`cockpit ([^`]+)`/g)].map(match => match[1]!.split(' '))
+        const invocations = [...procedure.matchAll(/`\.\/node_modules\/\.bin\/cockpit ([^`]+)`/g)].map(match => match[1]!.split(' '))
         expect(invocations.length).toBeGreaterThanOrEqual(9)
         for (const argv of invocations) {
             let invoked = false
