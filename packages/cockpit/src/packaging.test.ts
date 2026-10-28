@@ -761,6 +761,41 @@ it('runs installed init for each isolated target and refuses missing roots or br
     expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
     expect(existsSync(join(headless, 'cockpit.toml'))).toBe(true)
 
+    // A teammate's clone has a different checkout path and HOME. The local tarball stands in for
+    // the registry artifact while package.json retains the exact published version a real team
+    // commits; npm's lockfile records where this test can fetch those same bytes.
+    writeFileSync(join(headless, 'cockpit.toml'), readFileSync(join(headless, 'cockpit.toml'), 'utf8')
+        .replace('dir = "library"', 'dir = "."'))
+    execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact',
+        join(packScratch, 'artifact', packedArtifact().filename)], { cwd: headless, env, stdio: 'ignore', timeout: 30_000 })
+    const teamPackage = JSON.parse(readFileSync(join(headless, 'package.json'), 'utf8'))
+    teamPackage.devDependencies['@b0dea/cockpit'] = '0.0.0'
+    writeFileSync(join(headless, 'package.json'), `${JSON.stringify(teamPackage, null, 2)}\n`)
+    const teamLock = JSON.parse(readFileSync(join(headless, 'package-lock.json'), 'utf8'))
+    teamLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
+    writeFileSync(join(headless, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
+    execFileSync(process.execPath, [launcher, 'sync', '--config', join(headless, 'cockpit.toml'), '--json'], { cwd: headless, env, stdio: 'ignore' })
+    execFileSync('git', ['init', '--quiet', headless])
+    execFileSync('git', ['-C', headless, 'add', '.'])
+    execFileSync('git', ['-C', headless, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.test',
+        'commit', '--quiet', '-m', 'Add synthetic cockpit'])
+    const teammate = join(packScratch, 'teammate-clone')
+    const teammateHome = join(packScratch, 'teammate-home')
+    mkdirSync(teammateHome)
+    execFileSync('git', ['clone', '--quiet', headless, teammate])
+    const teammateEnv = { ...env, HOME: teammateHome, XDG_STATE_HOME: join(teammateHome, 'state') }
+    execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
+        cwd: teammate, env: teammateEnv, stdio: 'ignore', timeout: 30_000,
+    })
+    const teammateLauncher = join(teammate, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
+    for (const command of ['setup', 'sync', 'check']) {
+        const result = spawnSync(process.execPath, [teammateLauncher, command, '--config', join(teammate, 'cockpit.toml'), '--json'], {
+            cwd: teammate, env: teammateEnv, encoding: 'utf8', timeout: 30_000,
+        })
+        expect(result.status, `${command}: ${result.stdout}${result.stderr}`).toBe(0)
+    }
+    expect(execFileSync('git', ['-C', teammate, 'status', '--porcelain'], { encoding: 'utf8' })).toBe('')
+
     const untouched = join(packScratch, 'init-missing-root')
     mkdirSync(untouched)
     const missing = spawnSync(process.execPath, [launcher, 'init', '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })
