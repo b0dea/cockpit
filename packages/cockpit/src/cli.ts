@@ -569,6 +569,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 : syncGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
         },
         check: async input => {
+            const loaded = await loadCockpitConfig(input.configPath)
+            if (loaded.kind !== 'complete') return loaded
             const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
             if (metadata) return metadata
             const outcome = await checkGeneratedEnvironment(input)
