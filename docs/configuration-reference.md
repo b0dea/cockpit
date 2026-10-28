@@ -2,7 +2,7 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-The runtime schema and defaults are the configuration authorities.
+This generated reference is for users authoring or reviewing `cockpit.toml`. The runtime schema and defaults are the configuration authorities.
 
 ## Defaults
 
@@ -82,7 +82,7 @@ Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-25
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `b4bfa2ed66cd706517e947979a9c90a2c477d518bbcd02626bd23fc2a7f16daf`.
+Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `030317ac67711184156fd6abbfcd349dfc6e91d46f2239f55f716dd3bf352fa7`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` derives from the registry schema (default 200 lines); measured guide costs are instance-specific and come from the sibling projection owner.
 

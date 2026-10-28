@@ -46,10 +46,11 @@ fallback. Verify the installed dependency without permitting an implicit downloa
 ./node_modules/.bin/cockpit --help
 ```
 
-Your harness target is the tool you run in: `claudecode` (Claude Code), `codexcli` (Codex CLI),
-`opencode` (OpenCode), `cursor` (Cursor), or `grokcli` (Grok Build). If your tool isn't one of the
-built-ins, cockpit's AGENTS.md still gives it the instructions; guards and permissions are not enforced there
-(<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>).
+Choose your tool's target identifier from the
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>.
+It distinguishes generated surfaces from measured native enforcement. For example, Codex uses
+`codexcli`; substitute the appropriate target below. For an instructions-only tool, follow
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/harness-surfaces.md#capability-states>.
 
 Run commands from the cockpit root through `./node_modules/.bin/cockpit`; if that file is absent,
 stop and repair the project-local install. Read flags from
@@ -116,7 +117,9 @@ by its reference generator so this skill and the installed one cannot disagree.
 
 ### Bootstrap
 
-Choose the current harness target explicitly: `claudecode`, `codexcli`, or `opencode`.
+Choose the current harness target explicitly from the
+[capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
+which separates generation from measured native enforcement.
 For Codex CLI, preview with `cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
 The CLI owns registry interpretation, preview, durable state, artifact publication and environment checks.
