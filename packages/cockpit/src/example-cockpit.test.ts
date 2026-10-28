@@ -11,25 +11,25 @@ const launcher = join(repositoryRoot, 'packages/cockpit/bin/cockpit.mjs')
 const scratch = mkdtempSync(join(tmpdir(), 'cockpit-example-'))
 
 const developer = { kind: 'human-only', reason: 'developer prerequisite in the source checkout' } as const
-const sourceInstall = { kind: 'human-only', reason: 'source installation prerequisite' } as const
+const packageInstall = { kind: 'human-only', reason: 'package installation prerequisite' } as const
 const operator = { kind: 'human-only', reason: 'operator input, approval, or estate state required' } as const
 const runtime = { kind: 'human-only', reason: 'runtime or destructive environment operation' } as const
 const executed = { kind: 'executed', reason: 'run by the synthetic example acceptance test' } as const
-const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof sourceInstall | typeof operator | typeof runtime | typeof executed)[]>([
+const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typeof packageInstall | typeof operator | typeof runtime | typeof executed)[]>([
     ['CONTRIBUTING.md', [developer, developer, developer]],
-    ['README.md', [sourceInstall, operator]],
+    ['README.md', [packageInstall]],
     ['docs/adoption.md', [operator, operator, operator]],
     ['docs/agent-adoption.md', [operator, operator, operator, operator, operator, runtime, operator, operator, operator, operator, runtime, runtime, operator]],
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [runtime, runtime]],
-    ['docs/getting-started.md', [sourceInstall, operator, operator, operator, operator, runtime, operator, operator, runtime]],
+    ['docs/getting-started.md', [packageInstall, packageInstall, operator, operator, operator, operator, runtime, operator, operator, runtime]],
     ['docs/harness-surfaces.md', [operator]],
     ['docs/parallel-run.md', [operator, runtime, operator]],
     ['docs/contributing/releasing.md', [developer]],
     ['docs/release-policy.md', [operator]],
     ['docs/troubleshooting.md', [operator, operator, developer, developer]],
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
-    ['examples/synthetic/README.md', [sourceInstall, executed, operator, executed, runtime]],
+    ['examples/synthetic/README.md', [packageInstall, executed, operator, executed, runtime]],
     ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],
     ['examples/compose-first/README.md', [executed, runtime]],
