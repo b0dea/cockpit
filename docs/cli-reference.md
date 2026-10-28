@@ -189,6 +189,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | Flag | Type | Default |
 | --- | --- | --- |
 | `--config` | string | unset |
+| `--write-instruction-pointers` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -469,6 +470,7 @@ Configuration: `unavailable`. Owners: none.
 | `--dir` | string | unset |
 | `--var` | string | unset |
 | `--purpose` | string | unset |
+| `--instruction-pointer` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
