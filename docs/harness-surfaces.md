@@ -126,6 +126,13 @@ credential-like arguments, environment values that are not same-name references,
 directories outside the declared sibling. Generated wrappers start with an empty environment
 and pass only the declared environment names.
 
+Browser transport is published only for its eligible declared harnesses. A target with no applicable
+MCP server receives no MCP-only output; its instructions, skills and permissions still publish.
+This keeps browser access scoped without blocking the rest of the harness estate. Run
+`./node_modules/.bin/cockpit sync --config cockpit.toml`, then
+`./node_modules/.bin/cockpit check --config cockpit.toml --json` to verify
+the generated estate.
+
 Restriction policy comes from `[guards]`. Cockpit expands one shared guard through measured
 per-harness adapters. A harness event with no measured adapter stays unavailable. Codex has no
 prompt tier, so policy configured as ask for Codex is rendered as deny rather than allowed.

@@ -431,11 +431,15 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     }
 
     const mcpTargets = new Set<string>()
+    const mcpHarnesses = new Set<string>()
     for (const harness of captured.mcp.result.harnesses) {
         if (!object(harness) || typeof harness.target !== 'string' || !BUILT_INS.has(harness.target as SurfaceTarget)
-            || !configuredSet.has(harness.target) || mcpTargets.has(harness.target)) return refuse('SURFACE_INPUT_INVALID', 'MCP harness output is malformed')
-        mcpTargets.add(harness.target)
+            || !configuredSet.has(harness.target) || !Array.isArray(harness.servers)
+            || mcpHarnesses.has(harness.target)) return refuse('SURFACE_INPUT_INVALID', 'MCP harness output is malformed')
+        mcpHarnesses.add(harness.target)
+        if (harness.servers.length > 0) mcpTargets.add(harness.target)
     }
+    if (captured.mcp.result.servers.length > 0 && mcpTargets.size === 0) return refuse('SURFACE_INPUT_INVALID', 'MCP model has no matching native transport')
     const mcpModelDigest = surfaceModelSha256(captured.mcp.result)
     if (!mcpModelDigest) return refuse('SURFACE_BOUNDS', 'MCP model cannot be captured for native binding')
     const mcpNative = captured.mcp.result.servers.length === 0 && object(captured.nativeMcp)

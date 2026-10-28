@@ -42,7 +42,7 @@ import {
     coreSurfaceDeclarations,
     shippedSkillNames,
 } from '../surfaces/core-declarations.js'
-import { collectMcpDeclarations, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration } from '../surfaces/mcp.js'
+import { collectMcpDeclarations, hasTargetMcpServers, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration } from '../surfaces/mcp.js'
 import {
     renderSharedPostimage,
     bindSurfaceOwnershipIdentity,
@@ -1443,7 +1443,7 @@ function expectedSurfaceOutputs(
         else rows[target].push(root)
     }
     if (has('mcp')) for (const target of SURFACE_TARGETS) {
-        if (hasFor(target, 'mcp')) rows[target].push(harnessFact(target).outputs.mcp)
+        if (hasFor(target, 'mcp') && hasTargetMcpServers(sources, target)) rows[target].push(harnessFact(target).outputs.mcp)
     }
     if (has('hooks')) rows.claudecode.push('.claude/settings.json'), rows.codexcli.push('.codex/hooks.json'), rows.opencode.push('.opencode/plugins/rulesync-hooks.js')
     if (has('hooks')) rows.cursor.push('.cursor/hooks.json'), rows.grokcli.push('.grok/hooks/rulesync.json')
@@ -2304,7 +2304,7 @@ async function prepareSurfaces(
         customSelftest.push({ harness: name, feature, state, measuredOn, module, export: exportName, sourceSha256, resultSha256, sources,
             ...(result.evidence ? { evidence: result.evidence } : {}) })
     }
-    const mcpTargets = mcp.result.servers.length === 0 ? [] : mcp.result.harnesses.map(row => row.target)
+    const mcpTargets = mcp.result.harnesses.filter(row => row.servers.length > 0).map(row => row.target)
     const grantTargets = [...new Set(projection.grants.map(row => row.target))]
     const generatedNativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
     const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets))

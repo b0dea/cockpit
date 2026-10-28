@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
+import { parseDocument } from 'yaml'
 
 import { snapshotJson } from '../environment/contract.js'
-import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
+import { SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
+import { harnessFact } from './harness-registry.js'
 
 export const mechanism = {
     id: 'mcp-declaration-collection',
     module: 'packages/cockpit/src/surfaces/mcp.ts',
-    exports: ['parseMcpDeclarationFile', 'collectMcpDeclarations'],
+    exports: ['parseMcpDeclarationFile', 'collectMcpDeclarations', 'hasTargetMcpServers'],
 } as const
 
 const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
@@ -153,6 +155,31 @@ const NativeServer = z.object({
     args: z.array(Argument).max(256).default([]), cwd: RelativePath.or(z.literal('.')).optional(),
     env: z.record(EnvironmentName, z.string().max(128)).default({}),
 }).strict()
+// Absence is inferred only from cockpit's neutral shape; other source forms retain generator validation.
+const GeneratedServer = NativeServer.extend({ cwd: WorkingDirectory.optional(), disabled: z.boolean().optional() })
+const GeneratedServers = z.record(ServerName, GeneratedServer)
+const TargetServers = z.object({ mcpServers: z.record(ServerName, GeneratedServer.nullable()).optional() }).strict()
+
+export function hasTargetMcpServers(sources: readonly SurfaceSourceFile[], target: SurfaceTarget): boolean {
+    const source = sources.find(candidate => candidate.path === 'mcp.jsonc')
+    if (!source) return false
+    try {
+        const document = parseDocument(source.bytes, { uniqueKeys: true })
+        const root = z.record(z.string(), z.unknown()).safeParse(JSON.parse(source.bytes))
+        if (document.errors.length > 0 || document.warnings.length > 0 || !root.success) return true
+        const shared = GeneratedServers.safeParse(root.data.mcpServers)
+        const targetNames = SURFACE_TARGETS.map(candidate => harnessFact(candidate).rulesyncTarget)
+        if (!shared.success || Object.entries(root.data).some(([name, value]) => name !== 'mcpServers'
+            && (!targetNames.some(candidate => candidate === name) || !TargetServers.safeParse(value).success))) return true
+        const override = TargetServers.safeParse(root.data[harnessFact(target).rulesyncTarget] ?? {})
+        if (!override.success) return true
+        return Object.values({ ...shared.data, ...override.data.mcpServers }).some(server => server !== null)
+    } catch {
+        // Unknown syntax and malformed declarations still reach Rulesync's authenticated parser.
+        return true
+    }
+}
+
 const NativeFile = z.object({ mcpServers: z.record(ServerName, NativeServer).refine(servers => Object.keys(servers).length <= 256) }).strict()
 const ParseInput = z.object({ bytes: z.string(), source: Source, workingDirectory: WorkingDirectory }).strict()
 

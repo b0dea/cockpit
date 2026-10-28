@@ -168,6 +168,7 @@ describe('surface rendering', () => {
     })
 
     it('refuses divergent shared bases and a nonempty MCP model without exact bound native fragments', () => {
+        const transport = { name: 'synthetic', command: 'node', args: ['synthetic-server.mjs'], cwd: '/workspace', enabled: false }
         const divergent = input()
         divergent.generated.files[1] = file('opencode', 'AGENTS.md', 'different\n')
         expect(renderSurfaceSet(divergent)).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_PATH_CONFLICT' } })
@@ -183,13 +184,28 @@ describe('surface rendering', () => {
         const nativeFinal = '{"mcpServers":{"synthetic":{"enabled":false}}}\n'
         admitted.generated.files.push(file('claudecode', '.mcp.json', nativeBase))
         admitted.mcp.result.servers.push({ name: 'synthetic', enabled: false, sources: [] } as never)
-        admitted.mcp.result.harnesses.push({ target: 'claudecode', servers: [] } as never)
+        admitted.mcp.result.harnesses.push({ target: 'claudecode', servers: [transport] } as never)
         admitted.nativeMcp = { modelSha256: surfaceModelSha256(admitted.mcp.result)!, fragments: [
             { target: 'claudecode', path: '.mcp.json', baseSha256: digest(nativeBase), bytes: nativeFinal, sha256: digest(nativeFinal) } as never,
         ] }
         const admittedResult = renderSurfaceSet(admitted)
         expect(admittedResult).toMatchObject({ kind: 'complete' })
         if (admittedResult.kind === 'complete') expect(admittedResult.entries.find(entry => entry.path === '.mcp.json')).toMatchObject({ bytes: nativeFinal })
+
+        const scopedResult = { ...admitted.mcp.result, harnesses: [
+            { target: 'claudecode', servers: [transport] }, { target: 'grokcli', servers: [] },
+        ] }
+        const scoped = { ...admitted, mcp: { ...admitted.mcp, result: scopedResult },
+            nativeMcp: { ...admitted.nativeMcp, modelSha256: surfaceModelSha256(scopedResult)! } }
+        const scopedRendering = renderSurfaceSet(scoped)
+        expect(scopedRendering).toMatchObject({ kind: 'complete' })
+        if (scopedRendering.kind === 'complete') expect(scopedRendering.entries.some(entry => entry.path === '.grok/config.toml')).toBe(false)
+        for (const row of [{ target: 'grokcli', servers: [] }, { target: 'cursor' }]) {
+            const malformed = { ...scopedResult, harnesses: [...scopedResult.harnesses, row] }
+            expect(renderSurfaceSet({ ...scoped, mcp: { ...scoped.mcp, result: malformed },
+                nativeMcp: { ...scoped.nativeMcp, modelSha256: surfaceModelSha256(malformed)! },
+            })).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
+        }
     })
 
     it('attaches readonly frontmatter and combines only the known hook slot', () => {
@@ -271,7 +287,10 @@ describe('surface rendering', () => {
         value.generated.files.push(file('claudecode', '.mcp.json', nativeBase))
         value.mcp.result.servers.push({ name: 'existing', enabled: true, sources: [] } as never)
         value.mcp.result.servers.push({ name: 'playwright', enabled: true, sources: [] } as never)
-        value.mcp.result.harnesses.push({ target: 'claudecode', servers: [] } as never)
+        value.mcp.result.harnesses.push({ target: 'claudecode', servers: [
+            { name: 'existing', command: 'existing', args: [], cwd: '/workspace', enabled: true },
+            { name: 'playwright', command: 'docker', args: ['run'], cwd: '/workspace', enabled: true },
+        ] } as never)
         value.nativeMcp = { modelSha256: surfaceModelSha256(value.mcp.result)!, fragments: [
             { target: 'claudecode', path: '.mcp.json', baseSha256: digest(nativeBase), bytes: nativeFinal, sha256: digest(nativeFinal) } as never,
         ] }

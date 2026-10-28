@@ -21,6 +21,7 @@ import {
     type SurfaceTarget,
 } from './contract.js'
 import { harnessFact, type HarnessRegistryRow } from './harness-registry.js'
+import { hasTargetMcpServers } from './mcp.js'
 
 export const mechanism = {
     id: 'surface-generator-adapter',
@@ -1121,6 +1122,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             generatorTarget: harnessFact(target).rulesyncTarget,
             batch,
             features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
+                && (feature !== 'mcp' || hasTargetMcpServers(batch.sources, target))
                 && (feature !== 'permissions' || (target !== 'codexcli' && target !== 'grokcli')
                     || permissionRulesForTarget(batch.sources, target))),
             expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
