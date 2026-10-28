@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     decodeLifecycleRecord,
@@ -267,17 +268,22 @@ function producers(input: {
                         mode: data.default_mode,
                     })
                     if (!projection) return undefined
+                    const runtimeAuthority = projectGeneratedApplicationRuntimeAuthority(application, {
+                        topology: session.readiness.topology, runtime,
+                    })
+                    if (!runtimeAuthority) throw new TypeError(`generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', session.context.source.path])}`)
                     const planned = await withLifecycleConfiguration(session.context, async (configuration) => planDataMode({
                         environment: generated,
                         mode: data.default_mode,
                         checkoutRoot: runtime.root,
-                        includeFixtureVolume: true,
+                        includeFixtureVolume: data.default_mode === 'seeded' && data.fixtures !== undefined,
                         namespace: session.context.namespace,
                         stackId: session.context.stackId,
                         holderId: lifecycle.value.holderId,
                         configuration,
                         generation: application.generation,
                         observedAt: observedAt(),
+                        runtimeAuthority,
                         resolve: (operation, context) => {
                             const step = resolveGeneratedApplicationOperation(
                                 application,

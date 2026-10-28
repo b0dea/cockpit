@@ -6,12 +6,14 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { describe, expect, it } from 'vitest'
+import { stringify } from 'smol-toml'
 
 import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import type { CheckoutId, HolderId, StackId } from './contract.js'
+import { executeDataMode, planDataMode } from './data-plane.js'
 import { admitGeneratedObservation, createGeneratedObservationExecution, inspectGeneratedEnvironment, inspectGeneratedRuntimeAuthority, isGeneratedObservation, isGeneratedObservationAdmission, observeGeneratedEnvironment, projectGeneratedComposeArtifactAuthority, projectGeneratedRuntimeAuthority, renderGeneratedEnvironment, resolveGeneratedDataOperation, type GeneratedEnvironmentResult } from './generated-stack.js'
-import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
+import { consumePortLeaseProjection, deriveEntrypoints, inspectPortLeaseProjection, projectPortLeaseResult } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan } from './runtime.js'
 import { selectStateRoot } from './state.js'
@@ -40,7 +42,9 @@ async function rendered(): Promise<Extract<GeneratedEnvironmentResult, { kind: '
     return result
 }
 
-async function generatedAuthority(result: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>, root: string, reportedPort?: number) {
+async function generatedAuthority(result: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>, root: string, reportedPort?: number, executeData = false) {
+    const sourceSha256 = result.manifest[0]!.sourceSha256
+    const generation = result.manifest[0]!.generation
     const docker = join(root, 'docker')
     const compose = join(root, 'compose.generated.yml')
     const parsedCompose = parseYaml(result.compose) as {
@@ -58,12 +62,15 @@ async function generatedAuthority(result: Extract<GeneratedEnvironmentResult, { 
             namespace: selected.value, stackId,
             holderId: `holder:${'a'.repeat(64)}:session` as HolderId,
             checkoutId: `checkout:${'b'.repeat(64)}` as CheckoutId,
-            config: { step: 10, count: 1, bases: { APP_HOST_PORT: 4100 } },
+            config: { step: 10, count: executeData ? 2 : 1, bases: { APP_HOST_PORT: 4100 } },
             now: observedAt, listenerTimeoutMs: 1_000,
             listenerEvidence: [{
                 ports: [4100],
-                observation: { state: 'available', value: [], observedAt, producer: 'generated-port-control' },
-            }],
+                observation: { state: 'available', value: executeData ? [4100] : [], observedAt, producer: 'generated-port-control' },
+            }, ...(executeData ? [{
+                ports: [4110],
+                observation: { state: 'available' as const, value: [], observedAt, producer: 'generated-port-control' },
+            }] : [])],
         })
         if (lease.kind !== 'complete') throw new Error(`port lease unavailable: ${JSON.stringify(lease)}`)
         const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
@@ -92,7 +99,11 @@ async function generatedAuthority(result: Extract<GeneratedEnvironmentResult, { 
     }
     await writeFile(docker, `#!${process.execPath}
 const args = process.argv.slice(2)
+if (${executeData} && (process.env.COCKPIT_OWNER_ID !== ${JSON.stringify(cockpitId)} || process.env.COCKPIT_STACK_ID !== ${JSON.stringify(stackId)} || process.env.APP_HOST_PORT !== '4110')) process.exit(8)
 if (args.includes('config')) process.stdout.write(${JSON.stringify(JSON.stringify(topologyConfig))})
+else if (${executeData} && args.includes('exec')) {
+    if (args.at(-1) === 'fresh-volume') process.stdout.write(JSON.stringify({ volume: 'product-data', state: 'empty', generation: ${JSON.stringify(generation)} }))
+}
 else process.exit(7)
 `)
     await chmod(docker, 0o700)
@@ -132,10 +143,112 @@ else process.exit(7)
         runtime: observationRuntime,
     })
     if (!authority) throw new Error('generated runtime authority unavailable')
+    if (executeData && portLeaseProjection) {
+        expect(consumePortLeaseProjection(portLeaseProjection)).toBe(portLeaseProjection)
+        expect(inspectPortLeaseProjection(portLeaseProjection)).toBeUndefined()
+    }
     return { authority, topology: topology.topology, runtime: observationRuntime }
 }
 
 describe('generated environment rendering', () => {
+    it('executes generated data modes with the leased runtime environment while keeping host work neutral', async () => {
+        const root = realpathSync(await mkdtemp(join(tmpdir(), 'cockpit-generated-data-')))
+        try {
+            const base = await loadCockpitConfig(fixturePath)
+            if (base.kind !== 'complete') throw new Error('synthetic configuration unavailable')
+            const generated = structuredClone(base.result.config.environment.generated!)
+            generated.data!.modes.find(mode => mode.mode === 'seeded')!.operations[0]!.prerequisites.push({
+                location: 'host', cwd: '.',
+                argv: [process.execPath, '-e', "if (process.env.COCKPIT_OWNER_ID || process.env.COCKPIT_STACK_ID || process.env.APP_HOST_PORT) process.exit(9)"],
+                timeout_seconds: 30, provenance: generated.data!.modes[0]!.provenance,
+            })
+            const configPath = join(root, 'cockpit.toml')
+            await writeFile(configPath, stringify({ ...base.result.config, cockpit: { ...base.result.config.cockpit, siblings_root: '.' },
+                ports: { ...base.result.config.ports, step: 10, count: 2 },
+                environment: { ...base.result.config.environment, generated } }))
+            const loaded = await loadCockpitConfig(configPath)
+            if (loaded.kind !== 'complete') throw new Error('generated data configuration unavailable')
+            const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, sourceSha256: loaded.result.source.sha256 })
+            if (result.kind !== 'complete') throw new Error(result.reason)
+            const harness = await generatedAuthority(result, root, undefined, true)
+            const state = await selectStateRoot({ platform: 'linux', home: root, cockpitId: cockpitId as never })
+            if (state.kind !== 'complete') throw new Error('generated data state unavailable')
+            for (const mode of ['empty', 'seeded', 'restored'] as const) {
+                const configuration = await loadCockpitConfig(configPath)
+                if (configuration.kind !== 'complete') throw new Error('generated data configuration unavailable')
+                const planned = planDataMode({
+                    environment: generated, mode, checkoutRoot: root, includeFixtureVolume: mode === 'seeded',
+                    namespace: state.value, stackId, holderId: `holder:${'a'.repeat(64)}:session` as HolderId,
+                    configuration: configuration.result, generation, observedAt: new Date().toISOString(),
+                    runtimeAuthority: harness.authority,
+                    resolve: (operation, context) => {
+                        const step = resolveGeneratedDataOperation({ authority: harness.authority, operation, context })
+                        if (!step) throw new Error('generated data operation unavailable')
+                        return step
+                    },
+                })
+                expect(planned.kind, JSON.stringify(planned)).toBe('preview')
+                if (planned.kind !== 'preview') throw new Error('generated data plan unavailable')
+                const completed = await executeDataMode(planned.plan, executeProbe)
+                expect(completed, JSON.stringify(completed)).toMatchObject({
+                    kind: 'complete', mode, applied: planned.plan.steps.map(step => step.id),
+                })
+                for (const step of planned.plan.execution.steps) expect(step.env).toEqual(step.labels.overlayLocation === 'host' ? {} : {
+                    APP_HOST_PORT: '4110', COCKPIT_OWNER_ID: cockpitId, COCKPIT_STACK_ID: stackId,
+                })
+            }
+            const foreignRoot = join(root, 'foreign')
+            await mkdir(foreignRoot)
+            await writeFile(join(foreignRoot, 'cockpit.toml'), await readFile(configPath))
+            const foreignConfiguration = await loadCockpitConfig(join(foreignRoot, 'cockpit.toml'))
+            if (foreignConfiguration.kind !== 'complete') throw new Error('foreign configuration unavailable')
+            const changedConfigPath = join(root, 'changed.toml')
+            await writeFile(changedConfigPath, stringify({ ...loaded.result.config, cockpit: { ...loaded.result.config.cockpit, name: 'changed-cockpit' } }))
+            const changedConfiguration = await loadCockpitConfig(changedConfigPath)
+            if (changedConfiguration.kind !== 'complete') throw new Error('changed configuration unavailable')
+            const foreignNamespace = await selectStateRoot({ platform: 'linux', home: root, cockpitId: `cockpit:foreign:${'1'.repeat(64)}` as never })
+            if (foreignNamespace.kind !== 'complete') throw new Error('foreign namespace unavailable')
+            const otherStateRoot = await selectStateRoot({ platform: 'linux', home: foreignRoot, cockpitId: cockpitId as never })
+            if (otherStateRoot.kind !== 'complete') throw new Error('other state root unavailable')
+            const controls: ReadonlyArray<Partial<Parameters<typeof planDataMode>[0]>> = [
+                { runtimeAuthority: { kind: 'generated-runtime-authority' } },
+                { runtimeAuthority: { ...harness.authority } },
+                { runtimeAuthority: undefined },
+                { checkoutRoot: foreignRoot },
+                { stackId: `stack:${'1'.repeat(64)}` as StackId },
+                { generation: '1'.repeat(64) },
+                { configuration: foreignConfiguration.result },
+                { configuration: changedConfiguration.result },
+                { namespace: foreignNamespace.value },
+                { namespace: otherStateRoot.value },
+                { resolve: (operation, context) => ({
+                    ...resolveGeneratedDataOperation({ authority: harness.authority, operation, context })!,
+                    env: { NODE_OPTIONS: '--import=unowned.mjs' },
+                }) },
+                { resolve: (operation, context) => {
+                    const step = resolveGeneratedDataOperation({ authority: harness.authority, operation, context })!
+                    return { ...step, argv: [step.argv[0], ...step.argv.slice(1).map(value => value === harness.runtime.projectName ? 'foreign' : value)] }
+                } },
+            ]
+            for (const control of controls) {
+                const configuration = await loadCockpitConfig(configPath)
+                if (configuration.kind !== 'complete') throw new Error('generated data configuration unavailable')
+                const result = planDataMode({
+                    environment: generated, mode: 'empty', checkoutRoot: root, includeFixtureVolume: false,
+                    namespace: state.value, stackId, holderId: `holder:${'a'.repeat(64)}:session` as HolderId,
+                    configuration: configuration.result, generation, observedAt: new Date().toISOString(),
+                    runtimeAuthority: harness.authority,
+                    resolve: (operation, context) => resolveGeneratedDataOperation({ authority: harness.authority, operation, context })!,
+                    ...control,
+                })
+                expect(result, JSON.stringify(control)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED' }] })
+                expect(result).not.toHaveProperty('plan')
+            }
+        } finally {
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+
     it('keeps renderer-issued observation expectations immutable', async () => {
         const result = await rendered()
         const observation = result.observations.find(({ id }) => id === 'image:app:manifest')!

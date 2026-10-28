@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { isProxy } from 'node:util/types'
 import { GeneratedEnvironment, type DataMode, type GeneratedEnvironment as GeneratedEnvironmentDeclaration, type Provenance } from '../schema.js'
 import { consumeLoadedConfigProjection, type LoadedConfigProjection } from '../config/load.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
@@ -26,6 +27,8 @@ import {
     type RestoreExecutionLease,
 } from './claims.js'
 import { authenticateStateNamespace, readState, transactState, type StateNamespace, type StateRecord } from './state.js'
+import { inspectGeneratedRuntimeAuthority, resolveGeneratedDataOperation, type GeneratedRuntimeAuthority } from './generated-stack.js'
+import { projectRuntimeExecutionEnvironment } from './runtime.js'
 
 export const mechanism = {
     id: 'environment-data-plane',
@@ -251,6 +254,7 @@ interface DataModePlanInput {
     readonly configuration: LoadedConfigProjection
     readonly generation: string
     readonly observedAt: string
+    readonly runtimeAuthority?: GeneratedRuntimeAuthority
     readonly resolve: (operation: OverlayOperation, context: DataStepContext) => ExecutionStep
 }
 
@@ -262,6 +266,7 @@ function capturePlanInput(input: DataModePlanInput): DataModePlanInput | undefin
             'environment', 'mode', 'checkoutRoot', 'includeFixtureVolume',
             'namespace', 'stackId', 'holderId', 'configuration', 'generation', 'observedAt', 'resolve',
         ]
+        if (Object.hasOwn(descriptors, 'runtimeAuthority')) expected.push('runtimeAuthority')
         if (Reflect.ownKeys(descriptors).length !== expected.length
             || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
         return Object.freeze(Object.fromEntries(expected.map((key) => [key, descriptors[key]!.value]))) as unknown as DataModePlanInput
@@ -292,6 +297,18 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         || !isDeepStrictEqual(snapshotJson(parsed), snapshotJson(configuration.config.environment.generated))) {
         return refusal('generated environment data declaration does not match the authenticated configuration', 'generated environment')
     }
+    const runtime = input.runtimeAuthority === undefined ? undefined : inspectGeneratedRuntimeAuthority(input.runtimeAuthority)
+    const runtimeEnvironment = runtime && projectRuntimeExecutionEnvironment(runtime.topology, input.namespace)
+    if (input.runtimeAuthority !== undefined && (!runtime
+        || !runtimeEnvironment || !isDeepStrictEqual(runtimeEnvironment, runtime.runtime.publicEnv)
+        || runtime.runtime.root !== input.checkoutRoot || dirname(configuration.source.path) !== input.checkoutRoot
+        || runtime.stackId !== input.stackId || runtime.sourceSha256 !== configuration.source.sha256
+        || runtime.generation !== input.generation
+        || runtime.runtime.publicEnv.COCKPIT_OWNER_ID !== namespace.paths.coordination(input.stackId).cockpitId
+        || !isDeepStrictEqual(snapshotJson(runtime.declaration), snapshotJson(parsed)))) {
+        return refusal('generated data runtime authority does not match this checkout, coordination namespace, stack, configuration and generation; data work could target another runtime',
+            'generated data runtime', formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', configuration.source.path]))
+    }
     const data = parsed.data
     if (!data) return refusal('the generated environment declares no data modes', 'environment.generated.data')
     const selected = data.modes.find(({ mode }) => mode === input.mode)
@@ -308,6 +325,9 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         try { resolvedStep = input.resolve(operation, Object.freeze({ ...context })) } catch { return false }
         const execution = snapshotExecutionPlan({ steps: [resolvedStep] })?.steps[0]
         if (!execution) return false
+        // Runtime variables must never be attached to a resolver-selected executable or Compose project.
+        if (operation.location === 'in-stack' && (!runtime || !input.runtimeAuthority
+            || !isDeepStrictEqual(execution, resolveGeneratedDataOperation({ authority: input.runtimeAuthority, operation, context })))) return false
         const declaredArgv = operation.argv
         const declaredCwd = resolve(input.checkoutRoot, operation.cwd)
         const exactHostCommand = operation.location === 'host'
@@ -342,7 +362,9 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
             overlaySha256: operationDigest(operation),
             ...(operation.service === undefined ? {} : { overlayService: operation.service }),
         })
-        const bound = snapshotExecutionPlan({ steps: [{ ...execution, env: canonicalExecutionEnvironment, labels }] })?.steps[0]
+        const env = operation.location === 'in-stack' ? runtimeEnvironment : canonicalExecutionEnvironment
+        if (!env) return false
+        const bound = snapshotExecutionPlan({ steps: [{ ...execution, env, labels }] })?.steps[0]
         if (!bound || steps.some(({ id }) => id === bound.id)) return false
         steps.push(bound)
         metadata.push(Object.freeze({ ...context, freshVolumeOnly }))

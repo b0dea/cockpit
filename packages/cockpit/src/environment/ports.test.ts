@@ -269,6 +269,11 @@ describe('whole-family port leases', () => {
         expect(consumePortLeaseProjection(projection!)).toBe(projection)
         expect(inspectPortLeaseProjection(projection!)).toBeUndefined()
         expect(consumePortLeaseProjection(projection!)).toBeUndefined()
+        expect(inspectPortLeaseProjection(projection!, state)).toBe(projection)
+        expect(inspectPortLeaseProjection(projection!, await namespace())).toBeUndefined()
+        expect(inspectPortLeaseProjection({ ...projection } as never, state)).toBeUndefined()
+        expect(inspectPortLeaseProjection(projection!)).toBeUndefined()
+        expect(consumePortLeaseProjection(projection!)).toBeUndefined()
 
         const secondLease = await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now, listenerTimeoutMs: 100, observeListeners: noListeners })
         if (secondLease.kind !== 'complete') throw new Error('second lease fixture unavailable')
@@ -1081,6 +1086,11 @@ describe('retained port-family projection', () => {
                 { name: 'dashboard', kind: 'entrypoint', port: 'WEB', value: 'http://127.0.0.1:3000/dashboard' },
             ]),
         })
+        expect(consumePortLeaseProjection(projection!)).toBe(projection)
+        expect(inspectPortLeaseProjection(projection!, state)).toBe(projection)
+        expect(inspectPortLeaseProjection(projection!, await namespace())).toBeUndefined()
+        expect(inspectPortLeaseProjection(projection!)).toBeUndefined()
+        expect(consumePortLeaseProjection(projection!)).toBeUndefined()
         expect(await readFile(state.paths.coordination(stackA).path)).toEqual(before)
     })
 

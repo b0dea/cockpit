@@ -180,7 +180,7 @@ describe('production lifecycle adapter composition', () => {
         expect(sessionSteps.filter(({ id }) => id.includes(':stop:'))).toHaveLength(1)
     }, 120_000)
 
-    it.each(['empty', 'seeded', 'restored'] as const)('runs the declared %s data mode without selecting the fixture volume', async (dataMode) => {
+    it.each(['empty', 'seeded', 'restored'] as const)('runs and checks the declared %s data mode without selecting the fixture volume', async (dataMode) => {
         const scenario = await runGeneratedScenario({ dataMode })
         const dataSteps = scenario.steps.map(({ id }) => id).filter((id) => id.startsWith('data:'))
         expect(dataSteps).toContain(`data:${dataMode}:${dataMode}-schema`)
@@ -191,6 +191,14 @@ describe('production lifecycle adapter composition', () => {
         await expect(resolveLifecycleStage({ namespace: scenario.context.namespace,
             stackId: scenario.context.stackId, observedAt: new Date().toISOString() }))
             .resolves.toMatchObject({ kind: 'complete', authority: { stage: 'steady' } })
+        const doctor = await runDoctor({ configPath: scenario.candidate.configPath }, createHealthCommandAdapters({
+            configPath: scenario.candidate.configPath,
+            env: { PATH: `${scenario.candidate.root}:/usr/bin:/bin`, HOME: scenario.candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe))
+        expect(doctor.result.checks.find(check => check.owner === 'environment-data-plane'),
+            JSON.stringify(doctor.diagnostics.filter(diagnostic => diagnostic.code === 'DATA_MODE_UNAVAILABLE' || diagnostic.target === 'data')))
+            .toMatchObject({ owner: 'environment-data-plane', verdict: 'pass' })
     })
 
     it('refuses failed vendor leaves paired with an earlier healthy aggregate', async () => {

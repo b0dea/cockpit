@@ -56,6 +56,7 @@ const issuedLeaseResults = new WeakMap<object, {
     readonly result: Extract<LeasePortFamilyResult, { kind: 'complete' }>
     readonly observedAt: string
     readonly holderIds: readonly HolderId[]
+    readonly address: ReturnType<StateNamespace['paths']['coordination']>
     readonly compensation?: Readonly<{
         readonly address: ReturnType<StateNamespace['paths']['coordination']>
         readonly recordBody: string
@@ -64,7 +65,10 @@ const issuedLeaseResults = new WeakMap<object, {
 const availableCompensations = new WeakSet<object>()
 const reservedCompensations = new WeakSet<object>()
 const issuedEntrypointResults = new WeakMap<object, { readonly stackId: StackId; readonly ports: Readonly<Record<string, number>> }>()
-const issuedLeaseProjections = new WeakSet<object>()
+const issuedLeaseProjections = new WeakMap<object, Readonly<{
+    available: boolean
+    address: ReturnType<StateNamespace['paths']['coordination']>
+}>>()
 const issuedRetainedPortFamilies = new WeakMap<object, {
     readonly address: ReturnType<StateNamespace['paths']['coordination']>
     readonly recordFingerprint: string
@@ -193,9 +197,10 @@ function issueLeaseResult(
         ...result,
         lease: Object.freeze({ ...result.lease, ports: Object.freeze({ ...result.lease.ports }) }),
     })
+    const address = Object.freeze({ ...namespace.paths.coordination(result.lease.stackId) })
     const compensation = result.change === 'acquired'
         ? Object.freeze({
-              address: Object.freeze({ ...namespace.paths.coordination(result.lease.stackId) }),
+              address,
               recordBody: JSON.stringify(record),
           })
         : undefined
@@ -203,6 +208,7 @@ function issueLeaseResult(
         result: snapshot,
         observedAt,
         holderIds: Object.freeze([...holderIds].sort()),
+        address,
         ...(compensation ? { compensation } : {}),
     })
     if (compensation) availableCompensations.add(snapshot)
@@ -247,6 +253,7 @@ function issuePortLeaseProjection(input: {
     readonly recordRevision: number
     readonly holderIds: readonly HolderId[]
     readonly entrypoints: readonly DerivedEntrypoint[]
+    readonly address: ReturnType<StateNamespace['paths']['coordination']>
 }): PortLeaseProjection {
     const projection = Object.freeze({
         lease: Object.freeze({ ...input.lease, ports: Object.freeze({ ...input.lease.ports }) }),
@@ -259,7 +266,7 @@ function issuePortLeaseProjection(input: {
         }),
         entrypoints: Object.freeze(input.entrypoints.map((entrypoint) => Object.freeze({ ...entrypoint }))),
     })
-    issuedLeaseProjections.add(projection)
+    issuedLeaseProjections.set(projection, Object.freeze({ available: true, address: input.address }))
     return projection
 }
 
@@ -285,6 +292,7 @@ export function projectPortLeaseResult(input: {
             recordRevision: issued.recordRevision,
             holderIds: leaseEvidence.holderIds,
             entrypoints: entrypointResult.values,
+            address: leaseEvidence.address,
         })
     } catch { return undefined }
 }
@@ -395,6 +403,7 @@ export async function projectRetainedPortFamilyResult(input: {
             recordRevision: retainedResult.recordRevision,
             holderIds: retained.holderIds,
             entrypoints: entrypointResult.values,
+            address: retained.address,
         })
     } catch {
         return undefined
@@ -402,14 +411,19 @@ export async function projectRetainedPortFamilyResult(input: {
 }
 
 export function consumePortLeaseProjection(projection: PortLeaseProjection): PortLeaseProjection | undefined {
-    if (!projection || typeof projection !== 'object' || !issuedLeaseProjections.delete(projection)) return undefined
+    const issued = projection && typeof projection === 'object' ? issuedLeaseProjections.get(projection) : undefined
+    if (!issued?.available) return undefined
+    issuedLeaseProjections.set(projection, Object.freeze({ ...issued, available: false }))
     return projection
 }
 
-export function inspectPortLeaseProjection(projection: PortLeaseProjection): PortLeaseProjection | undefined {
-    return projection !== null && typeof projection === 'object' && issuedLeaseProjections.has(projection)
-        ? projection
-        : undefined
+export function inspectPortLeaseProjection(projection: PortLeaseProjection, namespace?: StateNamespace): PortLeaseProjection | undefined {
+    const issued = projection && typeof projection === 'object' ? issuedLeaseProjections.get(projection) : undefined
+    if (!issued) return undefined
+    if (namespace === undefined) return issued.available ? projection : undefined
+    // Lifecycle admission consumes the projection before data work checks its coordination origin.
+    const authenticated = authenticateStateNamespace(namespace)
+    return authenticated?.paths.coordination(projection.lease.stackId).path === issued.address.path ? projection : undefined
 }
 
 export type PortLeaseTransferInspection = Readonly<{ readonly kind: 'complete' }> | PortRefusal

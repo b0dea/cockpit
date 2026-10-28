@@ -5,6 +5,7 @@ import { createConnection } from 'node:net'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
@@ -750,6 +751,11 @@ export function createLifecycleCommandAdapters(
             generation: projection.generation,
             mode: data.default_mode,
         })
+        const runtimeAuthority = projectGeneratedApplicationRuntimeAuthority(projection, {
+            topology: runtime.topology, runtime: binding.generatedRuntime,
+        })
+        if (!runtimeAuthority) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
+            'generated-data', `generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', context.source.path])}`)
         const planned = await withLifecycleConfiguration(context, async (configuration) => planDataMode({
             environment: generated,
             mode: data.default_mode,
@@ -761,6 +767,7 @@ export function createLifecycleCommandAdapters(
             configuration,
             generation: projection.generation,
             observedAt: new Date().toISOString(),
+            runtimeAuthority,
             resolve: (operation, stepContext) => {
                 const resolved = resolveGeneratedApplicationOperation(
                     projection,

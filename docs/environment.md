@@ -275,6 +275,12 @@ attempted, and not-applied operation IDs. Intent, an earlier success, and an una
 failed current read-only probe do not count as completion. Persona outputs are rendered only from
 the declared authenticated persona source.
 
+In-stack data operations and their read-only probes use the runtime identities and leased ports
+from the current authenticated stack, so Compose cannot select a different stack or fall back to
+default ports. Host data operations keep an empty process environment. Run
+`./node_modules/.bin/cockpit up` to apply the declared mode, then
+`./node_modules/.bin/cockpit doctor` to check its current probes.
+
 The shipped `cockpit-setup` skill carries a pull-based authenticated-testing reference (`references/test-data-and-personas.md`), loaded by `cockpit-setup` and by `cockpit-browser` before signed-in testing. It keeps
 stable synthetic persona identifiers and product-owned rows separate from identity-provider
 ownership, confirms roles and permissions, directs serial browser-state minting into an ignored

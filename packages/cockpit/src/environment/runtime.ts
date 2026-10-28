@@ -50,6 +50,7 @@ import {
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
+import type { StateNamespace } from './state.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
 
 export const mechanism = {
@@ -82,6 +83,7 @@ interface RuntimeObservationContract {
     readonly activeProfiles: readonly string[]
     readonly configSha256: string
     readonly generatedPortNames: readonly string[]
+    readonly portLeaseProjection?: PortLeaseProjection
 }
 const issuedRuntimePlans = new WeakMap<object, RuntimeObservationContract>()
 
@@ -1223,6 +1225,7 @@ export function createRuntimeAdapter(
             activeProfiles: Object.freeze([...(input.activeProfiles ?? [])]),
             configSha256: input.labels.configSha256 ?? '',
             generatedPortNames,
+            ...(portProjection === undefined ? {} : { portLeaseProjection: portProjection }),
         }))
     }
     return {
@@ -1712,8 +1715,11 @@ export function resolveRuntimeServiceOrder(topology: RuntimeTopologyEvidence): r
 
 export function projectRuntimeExecutionEnvironment(
     topology: RuntimeTopologyEvidence,
+    namespace?: StateNamespace,
 ): Readonly<Record<string, string>> | undefined {
     const contract = topology !== null && typeof topology === 'object' ? issuedTopologyEvidence.get(topology) : undefined
+    if (namespace !== undefined && (!contract?.runtime.portLeaseProjection
+        || !inspectPortLeaseProjection(contract.runtime.portLeaseProjection, namespace))) return undefined
     const now = Date.now()
     return contract && Date.parse(contract.observationWindow.startedAt) <= now
         && now <= Date.parse(contract.observationWindow.expiresAt)
