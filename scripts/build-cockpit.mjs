@@ -3,8 +3,19 @@ import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+export const mechanism = {
+    id: 'cockpit-package-build',
+    module: 'scripts/build-cockpit.mjs',
+    exports: ['cleanOwnedPackageDist'],
+}
+
 export async function cleanOwnedPackageDist(packageRoot) {
-    const root = await realpath(packageRoot)
+    const requestedRoot = resolve(packageRoot)
+    const rootStat = await lstat(requestedRoot)
+    const root = await realpath(requestedRoot)
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || root !== requestedRoot) {
+        throw new Error('[PACKAGE_ROOT_INVALID] build root is not one canonical directory')
+    }
     const manifestPath = join(root, 'package.json')
     const manifestStat = await lstat(manifestPath)
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
@@ -30,9 +41,10 @@ export async function cleanOwnedPackageDist(packageRoot) {
 }
 
 async function build() {
-    const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+    const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
+    const packageRoot = join(repositoryRoot, 'packages/cockpit')
     await cleanOwnedPackageDist(packageRoot)
-    const compiler = resolve(packageRoot, '../../node_modules/typescript/bin/tsc')
+    const compiler = join(repositoryRoot, 'node_modules/typescript/bin/tsc')
     const result = spawnSync(process.execPath, [
         compiler,
         '--project', 'tsconfig.build.json',

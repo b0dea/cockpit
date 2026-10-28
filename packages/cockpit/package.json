@@ -26,7 +26,7 @@
     "cockpit": "bin/cockpit.mjs"
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node ../../scripts/build-cockpit.mjs",
     "bundle:rulesync": "node scripts/build-rulesync-generator.mjs",
     "bundle:rulesync:check": "node scripts/build-rulesync-generator.mjs --check",
     "schema": "node --input-type=module --eval \"import { writeFile } from 'node:fs/promises'; import { renderCockpitSchema } from './dist/schema-json.js'; await writeFile('./cockpit.schema.json', renderCockpitSchema())\"",
