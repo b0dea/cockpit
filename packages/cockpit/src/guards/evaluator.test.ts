@@ -654,20 +654,28 @@ describe('cockpit structure protection', () => {
             argv: ['git', '-C', 'subdir', 'archive'],
             reason: 'Repository archive creation is declared safe.',
         })
+        const outputArgs = (destination: string) => [
+            ...['o', 'ou', 'out', 'outp', 'outpu', 'output']
+                .flatMap(option => [`--${option}=${destination}`, `--${option} ${destination}`]),
+            `-o ${destination}`,
+            `-o${destination}`,
+            `-vo ${destination}`,
+            `-vo${destination}`,
+        ]
         for (const [destination, reason] of [
             ['../cockpit.toml', removal],
             ['../.codex/config.toml', controlRemoval],
             ['../config/active.instance', instanceMutation],
             ['../env/.secrets/token', secretMutation],
         ] as const) {
-            for (const args of [`--output=${destination}`, `--output ${destination}`, `-o ${destination}`, `-o${destination}`]) {
+            for (const args of outputArgs(destination)) {
                 const command = `git -C subdir archive ${args} HEAD`
                 expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
                     decision: 'deny', reason,
                 })
             }
         }
-        for (const args of ['--output=../release.tar', '--output ../release.tar', '-o ../release.tar', '-o../release.tar']) {
+        for (const args of outputArgs('../release.tar')) {
             const command = `git -C subdir archive ${args} HEAD`
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
                 decision: 'allow', reason: 'Repository archive creation is declared safe.',
@@ -678,6 +686,17 @@ describe('cockpit structure protection', () => {
         })
         expect(evaluateGuard(parseGuardInput(shellPayload('git -C subdir archive HEAD ../release.tar')), configured, inspect)).toEqual({
             decision: 'allow', reason: 'Repository archive creation is declared safe.',
+        })
+        for (const command of [
+            'git -C subdir archive --format=tar --prefix=source/ --worktree-attributes -v HEAD docs',
+            'git -C subdir archive --prefix -o../cockpit.toml HEAD',
+        ]) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'allow', reason: 'Repository archive creation is declared safe.',
+            })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C subdir archive --future-output=../release.tar HEAD')), configured, inspect)).toEqual({
+            decision: 'unavailable', reason: 'Unsupported visible writer option.',
         })
     })
 

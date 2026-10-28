@@ -288,34 +288,66 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
 
 interface VisibleWrites { readonly paths: readonly string[]; readonly reads?: readonly string[]; readonly uncertain: boolean }
 
+/** Git abbreviates long options and bundles short ones, so output recognition must consume every known option value. */
 function gitArchiveWrites(args: readonly string[]): VisibleWrites | undefined {
+    const longOptions = [
+        { name: 'format', valued: true },
+        { name: 'prefix', valued: true },
+        { name: 'add-file', valued: true },
+        { name: 'add-virtual-file', valued: true },
+        { name: 'output', valued: true },
+        { name: 'worktree-attributes', valued: false },
+        { name: 'verbose', valued: false },
+        { name: 'mtime', valued: true },
+        { name: 'list', valued: false },
+        { name: 'remote', valued: true },
+        { name: 'exec', valued: true },
+    ] as const
     const paths: string[] = []
     let output = false
     let uncertain = false
     for (let index = 0; index < args.length; index++) {
         const arg = args[index]!
         if (arg === '--') break
-        let path: string | undefined
-        let matched = false
-        if (arg === '-o' || arg === '--output') {
-            output = true
-            matched = true
-            path = args[++index]
-        } else if (arg.startsWith('--output=')) {
-            output = true
-            matched = true
-            path = arg.slice('--output='.length)
-        } else if (arg.startsWith('-o') && arg.length > 2) {
-            output = true
-            matched = true
-            path = arg.slice(2)
+        if (arg.startsWith('--')) {
+            const [spelling, attached] = arg.slice(2).split(/=(.*)/s)
+            if (spelling!.startsWith('no-')) {
+                const name = spelling!.slice(3)
+                const matches = longOptions.filter(option => option.name !== 'mtime' && option.name.startsWith(name))
+                if (matches.length !== 1 || attached !== undefined) uncertain = true
+                continue
+            }
+            const matches = longOptions.filter(option => option.name.startsWith(spelling!))
+            if (matches.length !== 1) { uncertain = true; continue }
+            const option = matches[0]!
+            if (!option.valued) {
+                if (attached !== undefined) uncertain = true
+                continue
+            }
+            const value = attached ?? args[++index]
+            if (!value) uncertain = true
+            else if (option.name === 'output') { output = true; paths.push(value) }
+            continue
         }
-        if (matched) {
-            if (path) paths.push(path)
-            else uncertain = true
+        if (/^-[0-9]+$/.test(arg)) continue
+        if (arg.startsWith('-') && arg !== '-') {
+            const options = arg.slice(1)
+            for (let offset = 0; offset < options.length; offset++) {
+                const option = options[offset]!
+                if (option === 'v' || option === 'l') continue
+                if (option === 'o') {
+                    output = true
+                    const value = options.slice(offset + 1) || args[++index]
+                    if (value) paths.push(value)
+                    else uncertain = true
+                    break
+                }
+                uncertain = true
+                break
+            }
         }
     }
-    return output ? { paths, uncertain } : undefined
+    return output || uncertain ? { paths, uncertain } : undefined
 }
 
 function tarExtractionWrites(args: readonly string[]): VisibleWrites {
