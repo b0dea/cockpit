@@ -4,7 +4,7 @@ import type { Diagnostic } from './environment/contract.js'
 export const mechanism = {
     id: 'executable-remedy-catalogue',
     module: 'packages/cockpit/src/fix-catalogue.ts',
-    exports: ['admitDiagnosticFix'],
+    exports: ['admitDiagnosticFix', 'formatShellCommand'],
 } as const
 
 export interface FixContext {
@@ -20,6 +20,13 @@ export interface ExecutableFix {
 }
 
 const unsafeControl = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/
+const plainShellArgument = /^[A-Za-z0-9_@%+=:,./-]+$/
+
+export function formatShellCommand(argv: readonly string[]): string {
+    return argv.map((argument) => plainShellArgument.test(argument)
+        ? argument
+        : `'${argument.replaceAll("'", "'\"'\"'")}'`).join(' ')
+}
 
 function safeTarget(target: string): boolean {
     return !unsafeControl.test(target) && !target.includes('\\') && !target.includes(':')
@@ -34,7 +41,6 @@ export function admitDiagnosticFix(diagnostic: Diagnostic, context?: FixContext)
         || unsafeControl.test(path) || !safeTarget(diagnostic.target)
         || !context.generatedTargets.includes(diagnostic.target)) return undefined
     const argv = Object.freeze(['cockpit', 'sync', '--config', path] as const)
-    // Single quoting keeps shell syntax in a config filename literal when the user pastes it.
-    const command = `cockpit sync --config '${path.replaceAll("'", "'\"'\"'")}'`
+    const command = formatShellCommand(argv)
     return Object.freeze({ argv, command })
 }

@@ -45,7 +45,7 @@ import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
-import type { FixContext } from '../fix-catalogue.js'
+import { formatShellCommand, type FixContext } from '../fix-catalogue.js'
 import { completeGuardTransport, planGuardTransport, type NativeGuardOutput } from '../guards/harness-adapter.js'
 import {
     abortStateTransaction,
@@ -2074,6 +2074,10 @@ function lifecycleRefusal(
     }
 }
 
+function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
+    return formatShellCommand(['cockpit', command, '--config', context.source.path])
+}
+
 function forwardedRefusal(
     diagnostics: readonly EnvironmentDiagnostic[],
 ): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
@@ -2165,7 +2169,7 @@ async function publishLifecycleRecord(
                     result: null,
                     diagnostics: ownership.diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.CLAIM_CO_TENANT
                         ? ownerDiagnostic(diagnostic.code,
-                            `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
+                            `lifecycle progress belongs to another active session; run \`${lifecycleSuggestion(context, 'up')}\` to resume it or \`${lifecycleSuggestion(context, 'down')}\` to release it`,
                             diagnostic.target ?? context.stackId)
                         : diagnostic),
                 })
@@ -2651,7 +2655,7 @@ async function executeUpRound(
         if (stored && generated && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                `generated environment identity changed since lifecycle progress was recorded; run \`cockpit down --config ${JSON.stringify(context.source.path)}\` to remove the old stack, then \`cockpit up --config ${JSON.stringify(context.source.path)}\``,
+                `generated environment identity changed since lifecycle progress was recorded; run \`${lifecycleSuggestion(context, 'down')}\` to remove the old stack, then \`${lifecycleSuggestion(context, 'up')}\``,
                 context.stackId) }
         }
         const completedServiceIds = stored ? new Set(stored.value.completedServices.map(({ service }) => service)) : undefined
@@ -2668,7 +2672,7 @@ async function executeUpRound(
             && (previousHolderActive || !currentHolderActive) && !completedCoTenant) {
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
+                `lifecycle progress belongs to another active session; run \`${lifecycleSuggestion(context, 'up')}\` to resume it or \`${lifecycleSuggestion(context, 'down')}\` to release it`,
                 context.stackId,
             ) }
         }
@@ -2909,7 +2913,7 @@ async function executeUpRound(
         kind: 'complete',
         result: forwardedRefusal(diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.CLAIM_CO_TENANT
             ? ownerDiagnostic(diagnostic.code,
-                `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
+                `lifecycle progress belongs to another active session; run \`${lifecycleSuggestion(context, 'up')}\` to resume it or \`${lifecycleSuggestion(context, 'down')}\` to release it`,
                 diagnostic.target ?? context.stackId)
             : diagnostic)),
     })

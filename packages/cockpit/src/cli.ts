@@ -1112,7 +1112,7 @@ async function invokeHandler(
         createCockpitRoot: path => createDedicatedCockpitRoot(path, options.env),
         chooseCockpitRoot: async question => {
             if (!io.stdin) return undefined
-            io.stderr.write(`${JSON.stringify(question)}\n`)
+            io.stderr.write(renderHumanValue(question))
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
             try { return (await prompt.question(`Where does the cockpit live? Type ${question.options.map(row => row.answer === question.recommended ? `${row.answer} (recommended)` : row.answer).join(' or ')}: `)).trim().replace(/ \(recommended\)$/, '') } finally { prompt.close() }
         },

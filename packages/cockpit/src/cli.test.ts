@@ -1580,12 +1580,12 @@ describe('terminal-safe diagnostics', () => {
                 const output = JSON.parse(stdout)
                 expect(output.diagnostics[0]).not.toHaveProperty('fix')
                 expect(output.guidance).toEqual([{ code: 'ARBITRARY', text: 'run something unsafe' }])
-                expect(output.diagnostics[1].fix).toBe("cockpit sync --config '/synthetic/cockpit.toml'")
+                expect(output.diagnostics[1].fix).toBe('cockpit sync --config /synthetic/cockpit.toml')
                 expect(stderr).toBe('')
             } else {
                 expect(stderr).toContain('Guidance: run something unsafe')
                 expect(stderr).not.toContain('Fix: run something unsafe')
-                expect(stderr).toContain("Fix: cockpit sync --config '/synthetic/cockpit.toml'")
+                expect(stderr).toContain('Fix: cockpit sync --config /synthetic/cockpit.toml')
                 expect(stdout).toBe('')
             }
         } finally { projector.mockRestore() }
@@ -2050,6 +2050,46 @@ it('does not expose comparison validation as a public CLI command', async () => 
 
 
 describe('init command admission', () => {
+    it('renders the cockpit-root question as human text in interactive mode', async () => {
+        const previewSha256 = 'a'.repeat(64)
+        const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
+            kind: input.accepted ? 'complete' as const : 'pending' as const,
+            status: 0 as const,
+            artifact: null,
+            destination: null,
+            diagnostics: [],
+            result: {
+                stage: input.accepted ? 'environment-verified' as const : 'surface-previewed' as const,
+                root: input.root,
+                target: input.target,
+                previewSha256,
+                files: [],
+                ...(input.cockpitRoot === undefined ? { cockpitRoot: {
+                    field: 'cockpit.root' as const,
+                    why: 'the product repository must stay separate from cockpit control files',
+                    recommended: 'in-repo' as const,
+                    options: [{ answer: 'in-repo' as const, root: input.root, creates: [], siblingsRoot: '..',
+                        firstSibling: input.root, tradeOff: 'keeps one repository' }],
+                } } : {}),
+            },
+        }))
+        const stdin = Readable.from(['in-repo\n']) as NodeJS.ReadStream
+        Object.defineProperty(stdin, 'isTTY', { value: true })
+        const stderr = new PassThrough()
+        let shown = ''
+        stderr.on('data', chunk => { shown += chunk.toString() })
+        expect(await runCli(['init', process.cwd(), '--target', 'codexcli', '--interactive'], {
+            stdin,
+            stdout: { write: () => true },
+            stderr,
+            confirmInit: async () => previewSha256,
+        }, { init: application })).toBe(0)
+
+        expect(shown).toContain('field: cockpit.root')
+        expect(shown).toContain('why: the product repository must stay separate from cockpit control files')
+        expect(shown).not.toContain('"field":"cockpit.root"')
+    })
+
     it('initialises a dedicated cockpit root as a Git repository before continuing init', async () => {
         const product = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-init-product-')))
         const dedicated = `${product}-cockpit`

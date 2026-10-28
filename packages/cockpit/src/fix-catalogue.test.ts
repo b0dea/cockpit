@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { admitDiagnosticFix } from './fix-catalogue.js'
+import { admitDiagnosticFix, formatShellCommand } from './fix-catalogue.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
 
 const roots: string[] = []
@@ -50,6 +51,25 @@ describe('executable remedy catalogue', () => {
         expect(Object.isFrozen(admitted?.argv)).toBe(true)
     })
 
+    it('formats suggested commands so a POSIX shell receives the exact argv', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-suggested-command-')))
+        roots.push(root)
+        const bin = join(root, 'bin')
+        const capture = join(root, 'argv')
+        const configPath = join(root, "config $HOME `touch escaped` ' review.toml")
+        await mkdir(bin)
+        await writeFile(join(bin, 'cockpit'), '#!/bin/sh\nprintf \'%s\\0\' "$@" > "$CAPTURE"\n', { mode: 0o700 })
+
+        const command = formatShellCommand(['cockpit', 'up', '--config', configPath])
+        const executed = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8',
+            env: { ...process.env, CAPTURE: capture, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` } })
+
+        expect(executed.status, executed.stderr).toBe(0)
+        expect((await readFile(capture)).toString('utf8').split('\0').filter(Boolean))
+            .toEqual(['up', '--config', configPath])
+        expect(existsSync(join(root, 'escaped'))).toBe(false)
+    })
+
     it('clears real generated drift by executing exactly the admitted argv without a shell', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-remedy-')))
         roots.push(root)
@@ -61,7 +81,7 @@ describe('executable remedy catalogue', () => {
         await writeFile(configPath, declaration)
         await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"first"}]\n')
         const synced = await syncGeneratedEnvironment({ configPath })
-        expect(synced).toMatchObject({ kind: 'complete', status: 0 })
+        expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
         if (synced.kind !== 'complete') throw new Error('Synthetic remedy setup failed')
         await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
         const before = await checkGeneratedEnvironment({ configPath })
