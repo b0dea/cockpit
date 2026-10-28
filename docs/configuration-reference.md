@@ -18,7 +18,8 @@ The runtime schema and defaults are the configuration authorities.
     "guides": [
       "CLAUDE.md",
       "AGENTS.md"
-    ]
+    ],
+    "instruction_pointer": false
   },
   "ports": {
     "step": 100,
@@ -81,7 +82,7 @@ Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-25
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `4948804cd41da3bbb873325402e5794f9d8fd6b0b1020033f7b584ae97f89cae`.
+Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `b4bfa2ed66cd706517e947979a9c90a2c477d518bbcd02626bd23fc2a7f16daf`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` derives from the registry schema (default 200 lines); measured guide costs are instance-specific and come from the sibling projection owner.
 
@@ -214,6 +215,10 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               "type": "string",
               "pattern": "^(?!\\/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\\\)(?:[^/\\x00-\\x1f\\x7f]+\\/)*[^/\\x00-\\x1f\\x7f]+$"
             }
+          },
+          "instruction_pointer": {
+            "default": false,
+            "type": "boolean"
           },
           "purpose": {
             "type": "string",
