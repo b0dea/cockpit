@@ -41,7 +41,11 @@ async function writeExclusivePair(path, bytes, sha256) {
         failure = error
     }
     const closed = await Promise.allSettled(files.map(owned => owned.file.close()))
-    const closeFailures = closed.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    const closeFailures = closed.flatMap((result, index) => {
+        if (result.status !== 'rejected') return []
+        const detail = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        return [new Error(`${files[index].path}: close failed: ${detail}`, { cause: result.reason })]
+    })
     failure ??= closeFailures[0]
     if (failure !== undefined) {
         const cleanupFailures = closeFailures.slice(failure === closeFailures[0] ? 1 : 0)

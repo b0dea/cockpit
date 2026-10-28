@@ -2179,9 +2179,9 @@ async function prepareSurfaces(
         return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
     }
     const coreAssets = new Map(assets.map(row => [row.path, row] as const))
-    const shippedSkills = shippedSkillNames(coreAssets)
     const coreDeclarations = coreSurfaceDeclarations(coreAssets)
-    if (!shippedSkills || !coreDeclarations) return refuse('SURFACE_INPUT_INVALID', 'the shipped core surface declarations could not be read', 'skills/collection.json')
+    if (!coreDeclarations) return refuse('SURFACE_INPUT_INVALID', 'the shipped core surface declarations could not be read', 'skills/collection.json')
+    const shippedSkills = coreDeclarations.filter(declaration => declaration.feature === 'skills').map(declaration => declaration.name)
     const merge = mergeSurfaceDeclarations(coreDeclarations, config.surfaces.overlays)
     if (merge.kind !== 'complete') return refuse(merge.code, merge.message, 'surfaces')
     const mergedSources = merge.surfaces.flatMap(surface => surface.sources).map(source => ({
