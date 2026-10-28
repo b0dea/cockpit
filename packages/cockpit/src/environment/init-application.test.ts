@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
+import { deriveInferredFacts } from '../init/derive.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { selectBootstrapStateRoot } from './state.js'
@@ -229,6 +230,42 @@ describe('init application', () => {
         expect(inRepo.result).not.toHaveProperty('nextCommand')
         // In-repo keeps the product: the root is observed as a repository itself, not as an empty cockpit.
         expect(observed.at(-1)).toEqual({ root: f.root, rootIsRepository: true })
+    })
+
+    it('infers dedicated-cockpit answers from the observed product estate', async () => {
+        const f = fixture()
+        await writeFile(join(f.root, 'Dockerfile'), 'FROM node:22\nEXPOSE 3000\nCMD ["node", "server.mjs"]\n')
+        const dedicated = resolve(f.root, '..', 'checkout-cockpit')
+        mkdirSync(dedicated)
+        const classified = estate(resolve(f.root, '..'), 'one-sibling')
+        if (classified.kind !== 'complete') throw new Error('expected a complete estate classification')
+        const adapters: InitApplicationAdapters = {
+            ...f.adapters,
+            classifyEstate: async () => ({ ...classified, result: { ...classified.result,
+                runnable: [{ slug: 'checkout', path: 'checkout', disposition: 'confirmed' }] } }),
+            infer: deriveInferredFacts,
+            prepareBootstrap: async input => {
+                const outcome = await f.adapters.prepareBootstrap(input)
+                if (outcome.kind !== 'complete') throw new Error('expected a complete bootstrap preview')
+                return { ...outcome, result: { ...outcome.result, root: dedicated } }
+            },
+        }
+
+        const outcome = await runInitApplication({ ...f.input, root: dedicated, registry: undefined,
+            cockpitRoot: { kind: 'dedicated', firstSibling: f.root } }, adapters)
+
+        expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'pending', result: { interview: {
+            outstanding: expect.arrayContaining([
+                expect.objectContaining({ field: 'ports.bases', inferred: [expect.objectContaining({
+                    target: 'checkout.container_ports', value: [3000],
+                    provenance: expect.objectContaining({ source: 'checkout/Dockerfile' }),
+                })] }),
+                expect.objectContaining({ field: 'environment.generated', inferred: expect.arrayContaining([
+                    expect.objectContaining({ target: 'checkout.command', value: ['node', 'server.mjs'],
+                        provenance: expect.objectContaining({ source: 'checkout/Dockerfile' }) }),
+                ]) }),
+            ]),
+        } } })
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {

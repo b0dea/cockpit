@@ -296,8 +296,8 @@ async function interviewPlan(
 ): Promise<InterviewPlan> {
     const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
     const observedRoot = estateInput(input).root
-    const inference = await adapters.infer?.({ root: input.root,
-        repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(input.root, resolve(observedRoot, row.path)) || '.' })) })
+    const inference = await adapters.infer?.({ root: observedRoot,
+        repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(observedRoot, resolve(observedRoot, row.path)) || '.' })) })
     return Object.freeze({
         answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),
         outstanding: Object.freeze(planned.slice(answered).map(({ field, why }) => Object.freeze({ field, why,
