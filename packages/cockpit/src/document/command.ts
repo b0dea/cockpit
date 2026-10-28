@@ -956,7 +956,7 @@ function completeConfigurationDocument(
             policyQuestion.field)
         answerIndex += 1
 
-        if (greenfieldEstate) {
+        if (registrySha256 === null) {
             const testDataQuestion = configurationQuestion(context, 'environment.test_data', QUESTION_WHY.testData)
             const testDataRead = readConfigurationAnswer(configuration.answers, answerIndex, testDataQuestion)
             if (testDataRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
