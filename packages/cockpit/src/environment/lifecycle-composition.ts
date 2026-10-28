@@ -908,7 +908,7 @@ export function createLifecycleCommandAdapters(
             projectName: currentBinding.config.cockpit.name,
             env,
             ports: ports ? Object.freeze(Object.values(ports.lease.ports)) : Object.freeze([]),
-            labels: { stackId: context.stackId, configSha256: context.source.sha256, batchId },
+            labels: { stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256, batchId },
             timeoutMs: input.timeoutMs,
             stackId: context.stackId,
             coldStartLimitMillis: machine.cold_start_seconds * 1_000,
@@ -922,7 +922,8 @@ export function createLifecycleCommandAdapters(
         // variables instead of the `${VAR:-default}` fallback. A generated file writes each sibling
         // path literally and its runtime authority admits only leased ports, so it gets neither
         // the sibling variables nor a use for them.
-        } : !generated ? { ownComposeFiles: true as const, ...(ports ? { portLeaseProjection: ports } : {}), siblingDirectories } : undefined)
+        } : !generated ? { ownComposeFiles: true as const, cockpitId: context.cockpitId, stackId: context.stackId,
+            ...(ports ? { portLeaseProjection: ports } : {}), siblingDirectories } : undefined)
         if (runtime.kind !== 'preview') return runtime.kind === 'refusal' ? refuse?.(runtime.diagnostics) : undefined
         const startedAt = new Date().toISOString()
         const topologyPlan = createRuntimeTopologyPlan({

@@ -5,7 +5,7 @@ import type { CheckoutId, CockpitId, HolderId, StackId } from './contract.js'
 export const mechanism = {
     id: 'environment-identity',
     module: 'packages/cockpit/src/environment/identity.ts',
-    exports: ['cockpitId', 'checkoutId', 'stackId', 'holderId', 'bootstrapHolderId'],
+    exports: ['cockpitId', 'publicationCockpitId', 'checkoutId', 'stackId', 'holderId', 'bootstrapHolderId'],
 } as const
 
 declare const bootstrapLockOwnerBrand: unique symbol
@@ -59,6 +59,13 @@ export function cockpitId(input: { readonly name: string } & CanonicalMainChecko
     }
     const mainCheckoutPath = canonicalPath(input.mainCheckoutPath, 'mainCheckoutPath')
     return `cockpit:${input.name}:${digest([mainCheckoutPath])}` as CockpitId
+}
+
+export function publicationCockpitId(input: { readonly name: string }): CockpitId {
+    if (typeof input?.name !== 'string' || !COCKPIT_NAME.test(input.name)) {
+        throw new TypeError('identity: cockpit name must use lowercase letters, digits, and hyphens')
+    }
+    return `cockpit:${input.name}:${digest(['publication', input.name])}` as CockpitId
 }
 
 export function checkoutId(input: CanonicalCheckoutEvidence): CheckoutId {

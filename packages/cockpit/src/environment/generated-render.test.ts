@@ -10,9 +10,31 @@ import { describe, expect, it } from 'vitest'
 
 import { loadCockpitConfig } from '../config/load.js'
 import { browserClientLimit } from '../browser/runtime.js'
-import { renderGeneratedEnvironment } from './generated-render.js'
+import { projectGeneratedComposeArtifactAuthority, projectGeneratedComposeRuntimeIdentity, renderGeneratedEnvironment } from './generated-render.js'
 
 describe('generated browser runner rendering', () => {
+    it('keeps committed bytes portable while retaining authenticated local runtime identity', async () => {
+        const loaded = await loadCockpitConfig(resolve('fixtures/registries/generated-environment.toml'))
+        if (loaded.kind !== 'complete' || !loaded.result.config.environment.generated) throw new Error('fixture unavailable')
+        const shared = { declaration: loaded.result.config.environment.generated, sourceSha256: 'a'.repeat(64),
+            generation: 'b'.repeat(64), portDefaults: loaded.result.config.ports.bases, siblingDirectories: { app: 'app' } }
+        const first = renderGeneratedEnvironment({ ...shared, stackId: `stack:${'c'.repeat(64)}`,
+            cockpitId: `cockpit:portable:${'d'.repeat(64)}` })
+        const second = renderGeneratedEnvironment({ ...shared, stackId: `stack:${'e'.repeat(64)}`,
+            cockpitId: `cockpit:portable:${'f'.repeat(64)}` })
+        if (first.kind !== 'complete' || second.kind !== 'complete') throw new Error('render unavailable')
+        expect(first.compose).toBe(second.compose)
+        expect(first.manifest).toEqual(second.manifest)
+        expect(first.compose).toContain('${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}')
+        const firstAuthority = projectGeneratedComposeArtifactAuthority(first)
+        const secondAuthority = projectGeneratedComposeArtifactAuthority(second)
+        expect(firstAuthority && projectGeneratedComposeRuntimeIdentity(firstAuthority)).toEqual({
+            stackId: `stack:${'c'.repeat(64)}`, cockpitId: `cockpit:portable:${'d'.repeat(64)}`,
+        })
+        expect(secondAuthority && projectGeneratedComposeRuntimeIdentity(secondAuthority)).toEqual({
+            stackId: `stack:${'e'.repeat(64)}`, cockpitId: `cockpit:portable:${'f'.repeat(64)}`,
+        })
+    })
     it('refuses cyclic generated input within the shared capture bounds', () => {
         const cyclic: Record<string, unknown> = {}
         cyclic.self = cyclic

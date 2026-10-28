@@ -1708,6 +1708,8 @@ fi
             expect(projectRuntimeExecutionEnvironment(observed.admitted.topology)).toEqual({
                 PATH: process.env.PATH ?? '/usr/bin',
                 APP_HOST_PORT: String(expectedPort),
+                COCKPIT_OWNER_ID: runtimeCockpit,
+                COCKPIT_STACK_ID: stack,
             })
             expect(projectRuntimeExecutionEnvironment({ ...observed.admitted.topology })).toBeUndefined()
 
@@ -1729,11 +1731,13 @@ fi
                 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256,
             } } } }, [], {
                 composeFiles: [ownFile], env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
-                authority: { ownComposeFiles: true, portLeaseProjection: ownProjection, siblingDirectories: { APP_DIR: '/synthetic/siblings/app' } },
+                authority: { ownComposeFiles: true, cockpitId: runtimeCockpit, stackId: stack,
+                    portLeaseProjection: ownProjection, siblingDirectories: { APP_DIR: '/synthetic/siblings/app' } },
             })
             if (owned.admitted.kind !== 'complete') throw new Error(owned.admitted.reason)
             expect(projectRuntimeExecutionEnvironment(owned.admitted.topology)).toEqual({
                 PATH: process.env.PATH ?? '/usr/bin', APP_HOST_PORT: String(expectedPort), APP_DIR: '/synthetic/siblings/app',
+                COCKPIT_OWNER_ID: runtimeCockpit, COCKPIT_STACK_ID: stack,
             })
             // A reference with neither a default nor a leased variable would resolve to empty.
             const unset = `${ownCompose}    environment: ["TOKEN=\${UNDECLARED}"]\n`
@@ -1744,7 +1748,8 @@ fi
                 env: { PATH: process.env.PATH ?? '/usr/bin' }, ports: [expectedPort],
                 labels: { stackId: stack, configSha256, batchId }, stackId: stack,
                 coldStartLimitMillis: 60_000, expectedMountSources: [],
-            }, { ownComposeFiles: true, portLeaseProjection: projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })! })).toMatchObject({
+            }, { ownComposeFiles: true, cockpitId: runtimeCockpit, stackId: stack,
+                portLeaseProjection: projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })! })).toMatchObject({
                 kind: 'refusal', diagnostics: [{ message: 'compose artifact contains unresolved or unsafe data' }],
             })
             rmSync(ownPath, { force: true })

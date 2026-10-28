@@ -9,11 +9,18 @@ const identity = {
 }
 const labels = {
     'dev.b0dea.cockpit.config-sha256': identity.configSha256,
-    'dev.b0dea.cockpit.owner-id': identity.cockpitId,
-    'dev.b0dea.cockpit.stack-id': identity.stackId,
+    'dev.b0dea.cockpit.owner-id': '${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}',
+    'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
 }
 
 describe('compose-first ownership override', () => {
+    it('keeps the committed override independent of machine-local runtime identity', () => {
+        const sources = [{ reference: 'compose.yml', source: 'services:\n  app:\n    image: busybox\n' }]
+        const first = renderComposeOwnership({ ...identity, sources })
+        const second = renderComposeOwnership({ ...identity, cockpitId: `cockpit:duo:${'d'.repeat(64)}`,
+            stackId: `stack:${'e'.repeat(64)}`, sources })
+        expect(first).toEqual(second)
+    })
     it('labels every service of every declared file, the default network and owned volumes, and refuses what it cannot name', () => {
         const rendered = renderComposeOwnership({ ...identity, sources: [
             { reference: 'compose.yml', source: 'services:\n  web:\n    build: ./web\n  api:\n    image: busybox\n' },
@@ -43,7 +50,7 @@ describe('compose-first ownership override', () => {
         const declared = renderComposeOwnership({ ...identity, sources: [{ reference: 'compose.yml', source: [
             'services:', '  db:', '    image: busybox', 'volumes:',
             '  data:', '    labels:', ...Object.entries({ ...labels, 'dev.b0dea.cockpit.generation-id': generation }).map(([key, value]) => `      ${key}: ${value}`),
-            '  logs:', `    labels: ["dev.b0dea.cockpit.stack-id=${identity.stackId}"]`, '',
+            '  logs:', `    labels: ["dev.b0dea.cockpit.stack-id=${labels['dev.b0dea.cockpit.stack-id']}"]`, '',
         ].join('\n') }] })
         if (declared.kind !== 'complete') throw new Error(declared.reason)
         const { 'dev.b0dea.cockpit.stack-id': _stack, ...logsLabels } = { ...labels, 'dev.b0dea.cockpit.generation-id': generation }

@@ -9,7 +9,7 @@ import { externalDependencyTemplateFragments } from './templates.js'
 export const mechanism = {
     id: 'generated-compose-authority',
     module: 'packages/cockpit/src/environment/generated-render.ts',
-    exports: ['renderGeneratedEnvironment', 'authenticateGeneratedRender', 'projectGeneratedComposeArtifactAuthority', 'authenticateGeneratedComposeArtifact'],
+    exports: ['renderGeneratedEnvironment', 'authenticateGeneratedRender', 'projectGeneratedComposeArtifactAuthority', 'authenticateGeneratedComposeArtifact', 'projectGeneratedComposeRuntimeIdentity'],
 } as const
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -80,6 +80,7 @@ export interface GeneratedComposeArtifactAuthority { readonly kind: 'generated-c
 export type GeneratedRenderEnvelope = Readonly<{
     declaration: GeneratedEnvironmentDeclaration
     stackId: StackId
+    cockpitId: string
     sourceSha256: string
     generation: string
 }>
@@ -89,6 +90,8 @@ interface GeneratedComposeArtifactContract {
     readonly source: string
     readonly sha256: string
     readonly sourceSha256: string
+    readonly stackId?: StackId
+    readonly cockpitId?: string
 }
 
 const issuedRenders = new WeakMap<object, GeneratedRenderEnvelope>()
@@ -248,9 +251,9 @@ function buildContext(build: NonNullable<GeneratedEnvironmentDeclaration['servic
 
 function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: GeneratedEnvironmentInput): string | undefined {
     const ownershipLabels = {
-        'dev.b0dea.cockpit.stack-id': input.stackId,
+        'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
         'dev.b0dea.cockpit.config-sha256': input.sourceSha256,
-        'dev.b0dea.cockpit.owner-id': input.cockpitId,
+        'dev.b0dea.cockpit.owner-id': '${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}',
         'dev.b0dea.cockpit.generation-id': input.generation,
     }
     const services: Record<string, unknown> = {}
@@ -464,7 +467,7 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
         replay: Object.freeze({ profiles, mounts, route: 'generated-compose' as const }),
     })
     issuedRenders.set(result, Object.freeze({
-        declaration, stackId: safeInput.stackId as StackId,
+        declaration, stackId: safeInput.stackId as StackId, cockpitId: safeInput.cockpitId,
         sourceSha256: safeInput.sourceSha256, generation: safeInput.generation,
     }))
     return result
@@ -507,7 +510,8 @@ export function projectGeneratedComposeArtifactAuthority(
     })
     if (!contract) return undefined
     const authority = Object.freeze({ kind: 'generated-compose-artifact-authority' as const })
-    issuedComposeAuthorities.set(authority, contract)
+    issuedComposeAuthorities.set(authority, Object.freeze({ ...contract,
+        stackId: renderAuthority.stackId, cockpitId: renderAuthority.cockpitId }))
     return authority
 }
 
@@ -521,4 +525,13 @@ export function authenticateGeneratedComposeArtifact(
     return expected !== undefined && captured !== undefined
         && captured.reference === expected.reference && captured.source === expected.source
         && captured.sha256 === expected.sha256 && captured.sourceSha256 === expected.sourceSha256
+}
+
+export function projectGeneratedComposeRuntimeIdentity(
+    authority: GeneratedComposeArtifactAuthority,
+): Readonly<{ stackId: StackId; cockpitId: string }> | undefined {
+    if (authority === null || typeof authority !== 'object' || isProxy(authority)) return undefined
+    const expected = issuedComposeAuthorities.get(authority)
+    return expected?.stackId && expected.cockpitId
+        ? Object.freeze({ stackId: expected.stackId, cockpitId: expected.cockpitId }) : undefined
 }

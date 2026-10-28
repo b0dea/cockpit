@@ -822,11 +822,12 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
                     target: `${sibling.slug}:${harness}`, expected: resolvedDirectory, actual: declared.path,
                 }))
             }
+            const portablePath = relative(captured.canonicalMainCheckout, resolvedDirectory) || '.'
             grants.push({
                 slug: sibling.slug,
                 target: harness,
-                path: resolvedDirectory,
-                spelling: grantSpelling(harness, resolvedDirectory),
+                path: portablePath,
+                spelling: grantSpelling(harness, portablePath),
                 capability: 'instructed',
                 evidence: 'pending_evidence',
             })

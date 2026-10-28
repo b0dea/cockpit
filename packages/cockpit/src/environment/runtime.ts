@@ -5,6 +5,7 @@ import { isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
 import {
     authenticateGeneratedComposeArtifact,
+    projectGeneratedComposeRuntimeIdentity,
     type GeneratedComposeArtifactAuthority,
 } from './generated-render.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -30,6 +31,7 @@ import {
     type JsonSnapshot,
     type Observation,
     type RefusalCode,
+    type CockpitId,
     type StackId,
 } from './contract.js'
 import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
@@ -306,7 +308,7 @@ export type SiblingDirectoryVariables = Readonly<Record<string, string>>
 export type RuntimeAdapterAuthority =
     | Readonly<{ generatedComposeAuthority: GeneratedComposeArtifactAuthority; portLeaseProjection?: PortLeaseProjection }>
     /** A compose-first stack's own files, which interpolate the lease, the sibling directories and their own defaults. */
-    | Readonly<{ ownComposeFiles: true; portLeaseProjection?: PortLeaseProjection; siblingDirectories?: SiblingDirectoryVariables }>
+    | Readonly<{ ownComposeFiles: true; cockpitId: CockpitId; stackId: StackId; portLeaseProjection?: PortLeaseProjection; siblingDirectories?: SiblingDirectoryVariables }>
 
 const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]*\}\}/
 
@@ -1059,10 +1061,10 @@ export function createRuntimeAdapter(
     const capturedAuthority = authority === undefined ? undefined
         : captureOwnValues(authority, ['generatedComposeAuthority'])
             ?? captureOwnValues(authority, ['generatedComposeAuthority', 'portLeaseProjection'])
-            ?? captureOwnValues(authority, ['ownComposeFiles'])
-            ?? captureOwnValues(authority, ['ownComposeFiles', 'portLeaseProjection'])
-            ?? captureOwnValues(authority, ['ownComposeFiles', 'siblingDirectories'])
-            ?? captureOwnValues(authority, ['ownComposeFiles', 'portLeaseProjection', 'siblingDirectories'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'portLeaseProjection'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'siblingDirectories'])
+            ?? captureOwnValues(authority, ['ownComposeFiles', 'cockpitId', 'stackId', 'portLeaseProjection', 'siblingDirectories'])
     const ownComposeFiles = capturedAuthority?.ownComposeFiles === true
     const generatedComposeAuthority = capturedAuthority?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined
     const suppliedPortProjection = capturedAuthority?.portLeaseProjection as PortLeaseProjection | undefined
@@ -1104,6 +1106,19 @@ export function createRuntimeAdapter(
         }
         generatedPortNames = Object.freeze([...generatedPortNames, ...entries.map(([name]) => name)])
         input = Object.freeze({ ...input, env: Object.freeze({ ...originalEnv, ...Object.fromEntries(entries) as Record<string, string> }) })
+    }
+    if (generatedComposeAuthority !== undefined || ownComposeFiles) {
+        const generatedIdentity = generatedComposeAuthority
+            ? projectGeneratedComposeRuntimeIdentity(generatedComposeAuthority) : undefined
+        const runtimeStackId = generatedIdentity?.stackId ?? capturedAuthority?.stackId
+        const runtimeCockpitId = generatedIdentity?.cockpitId ?? capturedAuthority?.cockpitId
+        if (typeof runtimeStackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(runtimeStackId)
+            || typeof runtimeCockpitId !== 'string' || !/^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/.test(runtimeCockpitId)) {
+            return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime identity labels are unavailable', input.projectName)
+        }
+        generatedPortNames = Object.freeze([...generatedPortNames, 'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
+        input = Object.freeze({ ...input, env: Object.freeze({ ...input.env,
+            COCKPIT_OWNER_ID: runtimeCockpitId, COCKPIT_STACK_ID: runtimeStackId }) })
     }
     if (hasUnresolvedInput(input)) {
         return refusal(

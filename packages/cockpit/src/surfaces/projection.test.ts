@@ -204,11 +204,11 @@ describe('live sibling projection planner', () => {
             expect.objectContaining({ target: 'opencode', path: 'opencode.jsonc', spelling: '.sibling-api-CLAUDE.md', ownership: 'shared-region', capability: 'instructed', evidence: 'pending_evidence' }),
         ])
         expect(result.grants.map(grant => [grant.target, grant.spelling])).toEqual([
-            ['claudecode', `permissions.additionalDirectories:${input.mountedPaths[0]!.path}`],
-            ['codexcli', `sandbox_workspace_write.writable_roots:${input.mountedPaths[0]!.path}`],
-            ['opencode', `permission.external_directory:${input.mountedPaths[0]!.path}/**=allow`],
-            ['cursor', `permission.read+write:${input.mountedPaths[0]!.path}/**=allow`],
-            ['grokcli', `permission.read+edit:${input.mountedPaths[0]!.path}/**=allow`],
+            ['claudecode', 'permissions.additionalDirectories:../api'],
+            ['codexcli', 'sandbox_workspace_write.writable_roots:../api'],
+            ['opencode', 'permission.external_directory:../api/**=allow'],
+            ['cursor', 'permission.read+write:../api/**=allow'],
+            ['grokcli', 'permission.read+edit:../api/**=allow'],
         ])
         expect(result.links.every(link => !link.sourceGuidePath.includes('mobile') && !link.sourceGuidePath.includes('docs') && !link.sourceGuidePath.includes('data'))).toBe(true)
         expect(Object.isFrozen(result)).toBe(true)

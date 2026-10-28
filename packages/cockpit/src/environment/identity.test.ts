@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CheckoutId, HolderId, StackId } from './contract.js'
 import type { BootstrapLockOwnerId, CanonicalCheckoutEvidence, CanonicalMainCheckoutEvidence } from './identity.js'
-import { bootstrapHolderId, cockpitId, checkoutId, holderId, stackId } from './identity.js'
+import { bootstrapHolderId, cockpitId, checkoutId, holderId, publicationCockpitId, stackId } from './identity.js'
 import { resolveInstance } from './instance.js'
 
 const temporaryDirectories: string[] = []
@@ -100,6 +100,15 @@ describe('canonical environment identities', () => {
         expect(first).not.toBe(second)
         expect(first).toMatch(/^cockpit:first-cockpit:[a-f0-9]{64}$/)
         expect(first).not.toContain('/srv/cockpit')
+    })
+
+    it('separates portable publication identity from machine-local cockpit identity', () => {
+        expect(publicationCockpitId({ name: 'sample-cockpit' }))
+            .toBe(publicationCockpitId({ name: 'sample-cockpit' }))
+        expect(cockpitId({ name: 'sample-cockpit', mainCheckoutPath: '/srv/first-clone' }))
+            .not.toBe(cockpitId({ name: 'sample-cockpit', mainCheckoutPath: '/workspace/second-clone' }))
+        expect(publicationCockpitId({ name: 'sample-cockpit' }))
+            .not.toBe(publicationCockpitId({ name: 'other-cockpit' }))
     })
 
     it('keeps session holders distinct and spells the no-session compatibility holder explicitly', () => {

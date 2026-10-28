@@ -70,8 +70,8 @@ export function renderComposeOwnership(input: Readonly<{
     }
     const labels = {
         'dev.b0dea.cockpit.config-sha256': input.configSha256,
-        'dev.b0dea.cockpit.owner-id': input.cockpitId,
-        'dev.b0dea.cockpit.stack-id': input.stackId,
+        'dev.b0dea.cockpit.owner-id': '${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}',
+        'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
     }
     const generation = createHash('sha256').update(`compose-volume-generation\0${input.configSha256}`).digest('hex')
     // Compose 5.5 refuses to merge a volume label the earlier file already sets to the same value

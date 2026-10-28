@@ -75,7 +75,7 @@ import {
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
-import { checkoutId, cockpitId, stackId } from './identity.js'
+import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
 import { assessComposeTopology, observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime } from './declaration.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
@@ -191,6 +191,7 @@ interface OwnedBytes {
 interface PreparedEnvironment {
     readonly root: string
     readonly cockpitId: CockpitId
+    readonly runtimeCockpitId: CockpitId
     readonly configPath: string
     readonly sourceSha256: string
     readonly personaSource: Readonly<{ path: string; sha256: string }>
@@ -1239,6 +1240,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     )
     const siblingRoots = authenticatedSiblings.roots
     const currentCockpit = cockpitId({ name: config.cockpit.name, mainCheckoutPath: root })
+    const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
     const currentCheckout = checkoutId({ checkoutPath: root })
     const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
     const suppliedPorts = portLease === undefined ? undefined : inspectPortLeaseProjection(portLease)
@@ -1361,7 +1363,8 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     if (canonical && canonical.kind !== 'passed') return refuse(canonical.code, canonical.reason, canonical.target)
     return Object.freeze({
         root,
-        cockpitId: currentCockpit,
+        cockpitId: publishedCockpit,
+        runtimeCockpitId: currentCockpit,
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
         personaSource: Object.freeze({ path: sourcePath, sha256: persona.source.sha256 }),
@@ -1952,7 +1955,7 @@ async function prepareSurfaces(
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)
         }
         const observedAt = new Date().toISOString()
-        const currentStack = stackId({ cockpitId: prepared.cockpitId, checkoutId: checkoutId({ checkoutPath: prepared.root }), variant: { kind: 'shared' } })
+        const currentStack = stackId({ cockpitId: prepared.runtimeCockpitId, checkoutId: checkoutId({ checkoutPath: prepared.root }), variant: { kind: 'shared' } })
         const configuration = (await observeConfiguration({ path: prepared.configPath, stackId: currentStack, observedAt }))
             .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)
         const namespace = await selectStateRoot({
@@ -1960,7 +1963,7 @@ async function prepareSurfaces(
             home: process.env.HOME,
             xdgStateHome: process.env.XDG_STATE_HOME,
             checkoutRoots: [prepared.root],
-            cockpitId: prepared.cockpitId,
+            cockpitId: prepared.runtimeCockpitId,
         })
         if (!configuration) {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture authority could not be observed', prepared.configPath)
@@ -1971,7 +1974,7 @@ async function prepareSurfaces(
         try {
             const authority = await resolveObservationPostures({
                 configuration,
-                cockpitId: prepared.cockpitId,
+                cockpitId: prepared.runtimeCockpitId,
                 checkoutPath: prepared.root,
                 variant: { kind: 'shared' },
             })
