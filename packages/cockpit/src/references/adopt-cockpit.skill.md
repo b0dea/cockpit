@@ -44,10 +44,11 @@ fallback. Verify the installed dependency without permitting an implicit downloa
 ./node_modules/.bin/cockpit --help
 ```
 
-Your harness target is the tool you run in: `claudecode` (Claude Code), `codexcli` (Codex CLI),
-`opencode` (OpenCode), `cursor` (Cursor), or `grokcli` (Grok Build). If your tool isn't one of the
-built-ins, cockpit's AGENTS.md still gives it the instructions; guards and permissions are not enforced there
-(<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>).
+Choose your tool's target identifier from the
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>.
+It distinguishes generated surfaces from measured native enforcement. For example, Codex uses
+`codexcli`; substitute the appropriate target below. For an instructions-only tool, follow
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/harness-surfaces.md#capability-states>.
 
 Run commands from the cockpit root through `./node_modules/.bin/cockpit`; if that file is absent,
 stop and repair the project-local install. Read flags from

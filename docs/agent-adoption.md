@@ -46,22 +46,29 @@ refusal exits nonzero and names its diagnostic; look the code up in
 [CLI reference](cli-reference.md) rather than from memory.
 
 `init` is the exception to "exit 0 means done": a run that stops at a question also exits 0.
-Read `result.stage` and `result.question` to know where it stopped.
+Read `result.stage`, `result.question`, `result.cockpitRoot` and `result.interview.outstanding`
+to identify the pending decision.
 
 ## Install cockpit
 
 Done when `cockpit --help` lists the commands.
 
-cockpit is installed from source today. Follow [Install cockpit](getting-started.md#install-cockpit)
-for the current commands and supported Node versions. Installing writes nothing into the product,
-but it does clone a repository and put a command on the PATH, so tell the human what you are about
-to run.
+Follow [Install cockpit](getting-started.md#install-cockpit) for the project-local dependency,
+source-package fallback and supported Node releases. Show the human which directory will receive
+the dependency and lockfile before installing. Installing a local dependency does not put its
+binary on a normal terminal's PATH.
 
-Your harness target is the tool you are running in: `claudecode` for Claude Code, `codexcli` for
-Codex CLI, `opencode` for OpenCode, `cursor` for Cursor, or `grokcli` for Grok Build. Every `init`
-command below needs it. If your tool isn't one of the built-ins, cockpit's AGENTS.md still gives it
-the instructions. Guards remain available only where the
-[capability matrix](capability-matrix.md) records a measured adapter.
+Run commands from the cockpit root through `./node_modules/.bin/cockpit`. Throughout this guide,
+`cockpit <command>` in prose means that exact installed executable; if it is absent, repair the
+local install before continuing. A command runner that downloads a missing package would bypass
+the project's reviewed version.
+
+Every `init` command needs your harness's target identifier. The
+[capability matrix](capability-matrix.md) names built-in targets and separates generated surfaces
+from measured native enforcement. For example, Codex uses `codexcli`; substitute your tool's
+target in the examples. For an instructions-only tool, follow
+[Capability states](harness-surfaces.md#capability-states); generation alone does not establish
+guard or permission enforcement.
 
 ## Choose your situation
 
@@ -103,7 +110,7 @@ is where the product's notes and decisions live until its repositories exist.
 1. **Preview** from the directory that will hold the cockpit:
 
    ```sh
-   cockpit init "$(pwd)" --target claudecode --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --json
    ```
 
    `result.interview.outstanding` lists `sibling`, `ports.bases`, `guards` and
@@ -143,7 +150,7 @@ is where the product's notes and decisions live until its repositories exist.
    human:
 
    ```sh
-   cockpit sibling add api --config cockpit.toml --create --purpose "HTTP API for orders" --json
+   ./node_modules/.bin/cockpit sibling add api --config cockpit.toml --create --purpose "HTTP API for orders" --json
    ```
 
    `--create` runs `git init` on an empty or missing directory and never creates a hosted
@@ -152,9 +159,9 @@ is where the product's notes and decisions live until its repositories exist.
    result. Then preview, publish and check:
 
    ```sh
-   cockpit sync --config cockpit.toml --dry-run --json
-   cockpit sync --config cockpit.toml --json
-   cockpit check --config cockpit.toml --json
+   ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run --json
+   ./node_modules/.bin/cockpit sync --config cockpit.toml --json
+   ./node_modules/.bin/cockpit check --config cockpit.toml --json
    ```
 
 ### Inside a product repository
@@ -208,7 +215,7 @@ Run from the directory that holds the repositories. Each step stops for the huma
 1. **Preview.** It writes nothing:
 
    ```sh
-   cockpit init "$(pwd)" --target claudecode --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --json
    ```
 
    Read `result.previewSha256` and `result.interview.outstanding`: every field `init` will ask,
@@ -235,7 +242,7 @@ Run from the directory that holds the repositories. Each step stops for the huma
 3. **Accept the preview and the answers** once the human agrees:
 
    ```sh
-   cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --json
    ```
 
    The run stops at the first field still unanswered, or at `configuration.defaults`. There,
@@ -244,7 +251,7 @@ Run from the directory that holds the repositories. Each step stops for the huma
 4. **Accept the defaults** after the human has read that list:
 
    ```sh
-   cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
    ```
 
    This writes `cockpit.toml`, syncs, checks and runs `preflight`. Where a runtime is declared,
@@ -265,8 +272,8 @@ directory and you follow [One or several repositories](#one-or-several-repositor
 start a cockpit and point it at each checkout where it is:
 
 ```sh
-cockpit sibling add billing --config cockpit.toml --from ~/code/billing --purpose "Billing worker" --json
-cockpit setup --config cockpit.toml --json
+./node_modules/.bin/cockpit sibling add billing --config cockpit.toml --from ~/code/billing --purpose "Billing worker" --json
+./node_modules/.bin/cockpit setup --config cockpit.toml --json
 ```
 
 `--from` reads the checkout's `origin` remote and records it with `acquire = "auto"`, so `setup`
@@ -321,8 +328,8 @@ A plain `sync` refuses to overwrite a committed `.claude/settings.json`, `.codex
 human the file and ask, then adopt it:
 
 ```sh
-cockpit sync --config cockpit.toml --adopt .claude/settings.json --json
-cockpit check --config cockpit.toml --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --adopt .claude/settings.json --json
+./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
 Repeat `--adopt` once per file. OpenCode needs no adoption. What is merged, and which settings are
@@ -339,9 +346,9 @@ The forms are in [Add or remove a repository](getting-started.md#add-or-remove-a
 Then:
 
 ```sh
-cockpit sync --config cockpit.toml --dry-run --json
-cockpit sync --config cockpit.toml --json
-cockpit check --config cockpit.toml --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --json
+./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
 ### Remove a repository
@@ -349,7 +356,7 @@ cockpit check --config cockpit.toml --json
 Done when the sibling is gone from `cockpit.toml` and `check` exits 0.
 
 ```sh
-cockpit sibling remove api --config cockpit.toml --json
+./node_modules/.bin/cockpit sibling remove api --config cockpit.toml --json
 ```
 
 `remove` refuses and lists every reference while anything still uses the sibling. It never deletes
@@ -375,7 +382,7 @@ Done when `cockpit.toml` holds an `[[environment.runtime_measurements]]` row for
 Before the first `up`, measure the local container runtime and record it:
 
 ```sh
-cockpit runtime measure --config cockpit.toml --image <local-image> --write --json
+./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json
 ```
 
 Name an image already on the machine; the probe never pulls. The probe runs only from an installed
@@ -388,7 +395,7 @@ measurement evidence and admission rules are in
 Done when the agent command has exited and `session` has released the stack.
 
 ```sh
-cockpit session --config cockpit.toml -- claude
+./node_modules/.bin/cockpit session --config cockpit.toml -- claude
 ```
 
 `session` starts or resumes the stack, keeps it while the agent command after `--` runs, and
@@ -405,9 +412,9 @@ Done when `cockpit check --config cockpit.toml --json` exits 0 on the new versio
 Install the new cockpit version the same way it was installed, then:
 
 ```sh
-cockpit check --config cockpit.toml --json
-cockpit sync --config cockpit.toml --dry-run --json
-cockpit sync --config cockpit.toml --json
+./node_modules/.bin/cockpit check --config cockpit.toml --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --json
 ```
 
 `check` shows what the new version renders differently; the dry run lists the writes for the

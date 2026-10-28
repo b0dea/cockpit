@@ -11,7 +11,8 @@ working inside it. For the order to run them in, follow
 ## Output and exit codes
 
 Add `--json` to get the result and diagnostics as one JSON document on stdout. Without it,
-diagnostics and a one-line JSON summary go to stderr. Every refusal exits nonzero with a named
+diagnostics go to stderr and command results are rendered as human-readable text. No JSON
+invocation record is printed in human mode. Every refusal exits nonzero with a named
 diagnostic code; unknown flags are refused. `logs` defaults to `--tail 100 --since 15m`.
 
 ## Input limits

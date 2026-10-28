@@ -13,7 +13,9 @@ do not use a command runner that can download a missing package implicitly.
 
 ## Bootstrap
 
-Choose the current harness target explicitly: `claudecode`, `codexcli`, or `opencode`.
+Choose the current harness target explicitly from the
+[capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
+which separates generation from measured native enforcement.
 For Codex CLI, preview with `cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
 The CLI owns registry interpretation, preview, durable state, artifact publication and environment checks.

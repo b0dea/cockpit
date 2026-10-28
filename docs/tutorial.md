@@ -63,13 +63,13 @@ write "fixtures/personas.generated.ts"
 write "repositories/app/.env.example"
 write ".cockpit/generated-environment-ownership.json"
 WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: writing 2 trust-affecting settings to .claude/settings.json; review them as you would a hook, ...
-{"result":null,"diagnostics":[],"invocation":{"verb":"sync","durationMs":2517,"exitCode":0,"resolvedConfigPath":"…/cockpit-demo/cockpit.toml"}}
 ```
 
 Nothing is written yet. The warning is deliberate: the generated Claude Code settings grant
 access to the sibling directory and name the approved MCP servers, and settings like those
-deserve the same review as a hook. In human mode, diagnostics and the one-line JSON summary go to
-stderr; add `--json` to get one JSON document on stdout instead.
+deserve the same review as a hook. Human mode prints readable results and diagnostics, with no
+JSON invocation record. Add `--json` to get the result, diagnostics and invocation metadata as
+one JSON document on stdout instead.
 
 ## Apply the sync and set up
 
@@ -91,7 +91,6 @@ file and compares it with disk:
 ```console
 $ cockpit check --config cockpit.toml
 WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Claude Code permissions: ...
-{"result":null,"diagnostics":[],"invocation":{"verb":"check","durationMs":4289,"exitCode":0,"resolvedConfigPath":"…/cockpit-demo/cockpit.toml"}}
 ```
 
 Exit code 0: nothing has drifted.

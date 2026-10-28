@@ -3,7 +3,7 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 This guide takes you from an npm install to your own product running under cockpit. It is
-for developers setting up cockpit for a product made of several repositories. To see cockpit
+for developers setting up cockpit for a product with one or several repositories. To see cockpit
 work first on a throwaway example, follow the [tutorial](tutorial.md).
 
 ## Install cockpit
@@ -44,8 +44,10 @@ npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
 ./node_modules/.bin/cockpit --help
 ```
 
-Keep `COCKPIT_PACKAGE_DIR` until the install finishes, then remove it with
-`rm -r "$COCKPIT_PACKAGE_DIR"`. If `npm pack` or `npm install` fails, stop there: a source command
+Keep the tarball while the project lockfile resolves cockpit from that local file. Deleting it
+breaks a later `npm ci`; an external local archive is not a portable dependency for teammates.
+After a published version replaces that resolution in both manifest and lockfile, remove the
+archive with `rm -r "$COCKPIT_PACKAGE_DIR"`. If `npm pack` or `npm install` fails, stop there: a source command
 is not evidence that the package users receive works. A new dedicated cockpit directory needs a
 `package.json`; run `npm init --yes` there before installing.
 
@@ -79,8 +81,9 @@ explains the default, the new-product case and why a product repository is not t
 
 ## Bootstrap a new product
 
-Pick the agent harness you will use first: `claudecode`, `codexcli`, `opencode`, `cursor`, or
-`grokcli`. From the directory that will hold the configuration, preview the bootstrap:
+Pick your agent harness's target identifier from the [capability matrix](capability-matrix.md).
+For example, Codex uses `codexcli`. From the directory that will hold the configuration, preview
+the bootstrap:
 
 ```sh
 ./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --json
