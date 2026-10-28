@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -85,6 +85,26 @@ describe('local repository initialization', () => {
         expect(outcome).toMatchObject({ kind: 'refusal', reason: expect.stringContaining(target) })
         expect(await treeDigest(external)).toBe(before)
         if (kind === 'unrelated') await expect(stat(join(target, '.git'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('refuses a replaced dedicated directory before Git can write elsewhere', async () => {
+        const { root } = await estate()
+        const target = join(root, 'dedicated')
+        const external = join(root, 'external')
+        await mkdir(target)
+        await mkdir(external)
+        await writeFile(join(external, 'notes.txt'), 'unrelated work\n')
+        const before = await treeDigest(external)
+        const outcome = await initializeLocalGitRepository({ path: target, env }, { execute: async step => {
+            if (step.argv.includes('init')) {
+                await rename(target, `${target}-original`)
+                await symlink(external, target, 'dir')
+            }
+            return executeProbe(step)
+        } })
+
+        expect(outcome).toMatchObject({ kind: 'refusal' })
+        expect(await treeDigest(external)).toBe(before)
     })
 
     it('resumes a genuine dedicated repository without reinitializing it', async () => {

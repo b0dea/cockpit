@@ -18,7 +18,7 @@ import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type Sibli
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { CockpitConfig, Sibling } from '../schema.js'
-import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 
 export const mechanism = {
@@ -133,8 +133,23 @@ export async function initializeLocalGitRepository(
                 return refuse('the existing Git metadata must be a plain local .git directory')
             }
         } else {
-            const initialised = await runGit(dependencies, gitStep(git.value, dirname(input.path),
-                { PATH: input.env.PATH ?? '' }, 'repository:init', ['init', input.path]))
+            const ancestors: FilesystemAncestorIdentity[] = []
+            for (let path = dirname(input.path);;) {
+                const status = await lstat(path)
+                if (!status.isDirectory() || status.isSymbolicLink()) return refuse('a parent directory changed before initialization')
+                ancestors.unshift({ path, dev: status.dev, ino: status.ino })
+                if (dirname(path) === path) break
+                if (ancestors.length >= 64) return refuse('the directory ancestry exceeds the verification bound')
+                path = dirname(path)
+            }
+            const initialised = await runGit(dependencies, {
+                ...gitStep(git.value, dirname(input.path), { PATH: input.env.PATH ?? '' }, 'repository:init', ['init', input.path]),
+                paths: [input.path],
+                filesystemChecks: [
+                    { path: input.path, expected: 'directory', identity: { dev: directory.dev, ino: directory.ino, ancestors } },
+                    { path: resolve(input.path, '.git'), expected: 'absent' },
+                ],
+            })
             if (initialised.kind !== 'complete') return refuse(`git init failed (${initialised.detail})`)
             const metadata = await lstat(resolve(input.path, '.git'))
             if (!metadata.isDirectory() || metadata.isSymbolicLink()
