@@ -274,6 +274,24 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual(['packages/cockpit/src/task.test.ts'])
     })
 
+    it.each(['packages/cockpit/scripts/build.mjs', 'packages/cockpit/scripts/build-helper.mjs'])(
+        'runs the exact test owner importing changed package script %s', path => {
+            const fixture = withOwners({
+                'packages/cockpit/scripts/build.mjs': "export { build } from './build-helper.mjs'\n",
+                'packages/cockpit/scripts/build-helper.mjs': 'export const build = 1\n',
+                'packages/cockpit/src/package-build.test.ts': "import { build } from '../scripts/build.mjs'\n",
+                'packages/cockpit/src/unrelated/build-helper.mjs': 'export const build = 2\n',
+                'packages/cockpit/src/unrelated.test.ts': "import { build } from './unrelated/build-helper.mjs'\n",
+            })
+            edit(fixture.root, path)
+
+            const result = fixture.run()
+
+            expect(result.status, result.stderr).toBe(0)
+            expect(fixture.dispatched()).toEqual(['packages/cockpit/src/package-build.test.ts'])
+        },
+    )
+
     it('runs the surfaces tests when a shipped surface changes', () => {
         const fixture = withOwners({
             'packages/cockpit/surfaces/template.txt': 'before\n',

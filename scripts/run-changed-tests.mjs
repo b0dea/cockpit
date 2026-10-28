@@ -21,6 +21,7 @@ const EXAMPLE_PATH = /^examples\/([^/]+)\/.+/
 const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
 const EXAMPLE_TEST = 'example-cockpit.test.ts'
 const MODULE_PATH = /^packages\/[^/]+\/(?:src|test-support)\/.+\.[cm]?tsx?$/
+const PACKAGE_SCRIPT_MODULE_PATH = /^packages\/[^/]+\/scripts\/.+\.[cm]?js$/
 const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g
 const TEST_DIRECTORY = 'packages/cockpit/src'
@@ -123,7 +124,8 @@ function testsReadingFixtures(root, directory, imports) {
 // resolved against the importing file, so a same-named file in another directory never matches.
 function importedModules(root) {
     const imports = new Map()
-    for (const path of walkFiles(root, 'packages').filter(candidate => MODULE_PATH.test(candidate) && !candidate.endsWith('.d.ts'))) {
+    for (const path of walkFiles(root, 'packages').filter(candidate =>
+        (MODULE_PATH.test(candidate) || PACKAGE_SCRIPT_MODULE_PATH.test(candidate)) && !candidate.endsWith('.d.ts'))) {
         const targets = new Set()
         for (const match of readFileSync(resolve(root, path), 'utf8').matchAll(IMPORT_SPECIFIER)) {
             targets.add(posix.join(dirname(path), match[1]).replace(MODULE_EXTENSION, ''))
@@ -201,7 +203,7 @@ function ownerTests(root, paths, extras) {
         const fixture = FIXTURE_PATH.exec(path)
         const example = EXAMPLE_PATH.exec(path)
         const mapped = []
-        if (MODULE_PATH.test(path)) {
+        if (MODULE_PATH.test(path) || PACKAGE_SCRIPT_MODULE_PATH.test(path)) {
             imports ??= importedModules(root)
             mapped.push(...testsImporting(imports, path))
         }
