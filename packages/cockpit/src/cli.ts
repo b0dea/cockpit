@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commands, internalCommands, isWorkHandler, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commands, describePublicOption, internalCommands, isWorkHandler, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
@@ -651,7 +651,7 @@ function renderCommandHelp(definition: CommandDefinition): string {
     const optionLines = Object.entries(definition.options).map(([name, option]) => {
         const usage = option.type === 'string' ? `--${name} <value>` : `--${name}`
         const fallback = option.default === undefined || option.default === false ? '' : ` (default: ${String(option.default)})`
-        return [usage, `${definition.optionDescriptions[name]}${fallback}`] as const
+        return [usage, `${describePublicOption(name)}${fallback}`] as const
     })
     const width = Math.max(...optionLines.map(([usage]) => usage.length), '-h, --help'.length)
     return [`Usage: cockpit ${definition.name} [options]`, '', definition.summary,
@@ -1121,7 +1121,7 @@ async function invokeHandler(
             if (!io.stdin) return undefined
             io.stderr.write(renderHumanValue(question))
             const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-            try { return await prompt.question(`Enter an answer for ${question.field}: `) } finally { prompt.close() }
+            try { return await prompt.question(`Enter a JSON value for ${question.field} (strings need quotes): `) } finally { prompt.close() }
         },
     }, handlers.init ?? (async () => ({ kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))

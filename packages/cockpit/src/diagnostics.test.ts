@@ -20,6 +20,11 @@ describe('diagnostic envelope', () => {
         }
     })
 
+    it.each(['constructor', 'toString'])('treats inherited object keys such as %s as unregistered diagnostics', (code) => {
+        expect(renderHumanDiagnostics([{ severity: 'error', code, message: 'synthetic failure' }]))
+            .toBe(`ERROR ${code}: synthetic failure\n`)
+    })
+
     it('renders nested human review data as terminal-safe text rather than JSON', () => {
         const rendered = renderHumanValue({ verdict: 'pass', checks: [{ code: 'READY', detail: 'safe\u202e' }] })
 

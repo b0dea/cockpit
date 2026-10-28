@@ -9,7 +9,7 @@ import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 export const mechanism = {
     id: 'command-metadata',
     module: 'packages/cockpit/src/command-table.ts',
-    exports: ['commands', 'internalCommands', 'resolveOrdinaryInvocation', 'isWorkHandler'],
+    exports: ['commands', 'internalCommands', 'describePublicOption', 'resolveOrdinaryInvocation', 'isWorkHandler'],
 } as const
 
 export type WorkHandlerIdentifier =
@@ -43,7 +43,6 @@ export interface CommandDefinition {
     summary: string
     handler: HandlerIdentifier
     options: NonNullable<ParseArgsConfig['options']>
-    optionDescriptions: Readonly<Record<string, string>>
     visibility: 'public'
     experimental?: true
     ordinary: OrdinaryCommandMetadata
@@ -93,12 +92,10 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     write: 'Write the measured runtime support row to cockpit.toml',
 })
 
-function describeOptions(options: NonNullable<ParseArgsConfig['options']>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.keys(options).map(name => {
-        const description = FLAG_DESCRIPTIONS[name]
-        if (!description) throw new Error(`Public option --${name} has no help description.`)
-        return [name, description]
-    })))
+export function describePublicOption(name: string): string {
+    const description = FLAG_DESCRIPTIONS[name]
+    if (!description) throw new Error(`Public option --${name} has no help description.`)
+    return description
 }
 
 type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'tail' | 'since' | 'sha256' | 'surface-target'
@@ -142,7 +139,7 @@ export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIde
     return value.startsWith('work-') || value.startsWith('browser-') || value === 'test-run'
 }
 
-const commandDefinitions = [
+export const commands: readonly CommandDefinition[] = [
     {
         name: 'init',
         summary: 'Preview or accept one explicit bootstrap target in an existing checkout',
@@ -443,12 +440,7 @@ const commandDefinitions = [
     { name: 'test-run', handler: 'test-run', summary: 'Run a declared product gate with honest selection', visibility: 'public',
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ gate: { type: 'string' }, mode: { type: 'string', default: 'canonical' }, select: { type: 'string' } } } },
-] as const satisfies readonly Omit<CommandDefinition, 'optionDescriptions'>[]
-
-export const commands: readonly CommandDefinition[] = Object.freeze(commandDefinitions.map(command => Object.freeze({
-    ...command,
-    optionDescriptions: describeOptions(command.options),
-})))
+] as const satisfies readonly CommandDefinition[]
 
 export interface InternalCommandDefinition {
     readonly name: 'guard-evaluate'

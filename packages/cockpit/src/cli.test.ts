@@ -14,7 +14,7 @@ import { renderHumanDiagnostics } from './diagnostics.js'
 import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './registry-resolve/command.js'
 import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
-import { commands, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
+import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
 
 // Human-mode runs publish no invocation record; it exists only in the --json envelope on stdout.
@@ -274,9 +274,7 @@ describe('CLI help', () => {
 
     it('keeps a command-table description for every public flag', () => {
         for (const command of commands) {
-            expect(command).toHaveProperty('optionDescriptions')
-            expect(Object.keys((command as { optionDescriptions?: object }).optionDescriptions ?? {}).sort())
-                .toEqual(Object.keys(command.options).sort())
+            for (const name of Object.keys(command.options)) expect(describePublicOption(name)).not.toBe('')
         }
     })
 

@@ -53,7 +53,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',
-        fix: 'run cockpit up to resume your holder or cockpit down to release the stack when it is safe',
+        fix: 'for a failed up attempt, run cockpit up to resume or cockpit down to release; otherwise have every owning session run cockpit sleep, then retry',
     }),
     PORT_FAMILY_COLLISION: Object.freeze({
         why: 'one or more ports selected for this stack are already in use',
@@ -156,8 +156,8 @@ function projectDiagnostics(input: readonly Diagnostic[], context?: FixContext):
         if (fix !== undefined && !admitted) {
             const row = { ...identity, text: fix }
             guidance.set(JSON.stringify(row), row)
-        } else if (fix === undefined && COMMON_REFUSAL_GUIDANCE[code]) {
-            const row = { ...identity, text: COMMON_REFUSAL_GUIDANCE[code].fix }
+        } else if (fix === undefined && Object.prototype.hasOwnProperty.call(COMMON_REFUSAL_GUIDANCE, code)) {
+            const row = { ...identity, text: COMMON_REFUSAL_GUIDANCE[code]!.fix }
             guidance.set(JSON.stringify(row), row)
         }
     }
@@ -198,7 +198,9 @@ export function renderHumanDiagnostics(
         .map((diagnostic) => {
             const target = diagnostic.target ? ` [${escapeForTerminal(diagnostic.target)}]` : ''
             const guidance = projected.guidance.filter(row => row.code === diagnostic.code && row.target === diagnostic.target)
-            const common = COMMON_REFUSAL_GUIDANCE[diagnostic.code]
+            const common = Object.prototype.hasOwnProperty.call(COMMON_REFUSAL_GUIDANCE, diagnostic.code)
+                ? COMMON_REFUSAL_GUIDANCE[diagnostic.code]
+                : undefined
             if (common) {
                 const fix = diagnostic.fix ?? guidance[0]?.text ?? common.fix
                 return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}\n`

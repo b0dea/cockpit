@@ -25,7 +25,7 @@ machine-readable envelope. Every public flag is described by its command help, f
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `cockpit sync`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached. | Start it, verify `docker info`, then retry. |
 | `RUNTIME_UNMEASURED` | The current runtime has no measured support row. | Run `cockpit runtime measure --image <ref> --write`, review the change, then retry. |
-| `CLAIM_CO_TENANT` | Another holder owns or uses the stack. | Run `cockpit up` to resume, or `cockpit down` to release it when safe. |
+| `CLAIM_CO_TENANT` | Another holder owns or uses the stack. | After a failed `up`, run `cockpit up` to resume or `cockpit down` to release. Otherwise, have every owning session run `cockpit sleep`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `cockpit setup`. |
