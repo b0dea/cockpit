@@ -433,8 +433,9 @@ export function diagnosticInventoryFromSources(paths, sources) {
     const commandOwners = new Map([...directCommandOwners].map(([name, direct]) => {
         const captured = new Set(direct)
         let frontier = [...direct]
-        while (frontier.length > 0 && !frontier.some(path => diagnosticOwnerPaths.has(path))) {
-            const next = [...new Set(frontier.flatMap(path => [...(runtimeImports.get(path) ?? [])]))]
+        while (frontier.length > 0) {
+            const wrappers = frontier.filter(path => !diagnosticOwnerPaths.has(path))
+            const next = [...new Set(wrappers.flatMap(path => [...(runtimeImports.get(path) ?? [])]))]
                 .filter(path => !captured.has(path))
             for (const path of next) captured.add(path)
             frontier = next

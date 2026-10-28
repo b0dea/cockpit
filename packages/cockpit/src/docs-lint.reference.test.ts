@@ -107,6 +107,13 @@ describe('maintainer reference boundary', () => {
                 ['REGISTRY_ARTIFACT_UNSAFE', ['packages/cockpit/src/registry-resolve/command.ts']],
             ])
 
+            for (const name of ['sync', 'check']) {
+                expect([...inventory.commandOwners.get(name) ?? []]).toEqual(expect.arrayContaining([
+                    'packages/cockpit/src/team-metadata.ts',
+                    'packages/cockpit/src/environment/generated-application.ts',
+                ]))
+            }
+
             for (const [code, owners] of expectedOwners) {
                 expect(inventory.items).toContain(`diagnostic:${code}`)
                 expect([...inventory.owners.get(code) ?? []].sort()).toEqual([...owners].sort())
