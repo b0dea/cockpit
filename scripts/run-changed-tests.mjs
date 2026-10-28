@@ -169,6 +169,8 @@ function ownerTests(root, paths, extras) {
                 const candidate = posix.join(directory, name)
                 if (existingFile(root, candidate)) selected.add(candidate)
             }
+            imports ??= importedModules(root)
+            for (const test of testsImporting(imports, path)) selected.add(test)
             continue
         }
         if (TEST_PATH.test(path)) {

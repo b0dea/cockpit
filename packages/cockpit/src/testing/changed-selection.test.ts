@@ -140,6 +140,7 @@ describe('changed adjacent-owner test runner', () => {
             'packages/cockpit/test-support/generated-fixtures.ts': 'export const fixture = 1\n',
             'packages/cockpit/src/generated-environment/command.test.ts': 'core\n',
             'packages/cockpit/src/generated-environment/command.publication.test.ts': 'publication\n',
+            'packages/cockpit/src/generated-environment/adopt.test.ts': "import { fixture } from '../../test-support/generated-fixtures.js'\n",
         })
         writeFileSync(join(fixture.root, 'packages/cockpit/test-support/generated-fixtures.ts'), 'export const fixture = 2\n')
 
@@ -149,6 +150,7 @@ describe('changed adjacent-owner test runner', () => {
         expect(JSON.parse(readFileSync(fixture.capture, 'utf8'))).toEqual(expect.arrayContaining([
             'packages/cockpit/src/generated-environment/command.test.ts',
             'packages/cockpit/src/generated-environment/command.publication.test.ts',
+            'packages/cockpit/src/generated-environment/adopt.test.ts',
         ]))
     })
 
