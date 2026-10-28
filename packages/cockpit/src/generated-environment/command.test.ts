@@ -295,7 +295,6 @@ describe('selected bootstrap target', () => {
                 sources: prepared.result.sources.map(row => ({ ...row })),
                 commandSha256: digest('cockpit init'), previewSha256: prepared.result.previewSha256,
                 published: prepared.result.files.map(row => ({ ...row })), destination: null, artifactBytes: null, artifactSha256: null,
-                nextCommand: 'cockpit init',
             },
         }
         const publication = await transactState(selected.value, address, {

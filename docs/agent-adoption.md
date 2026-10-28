@@ -46,7 +46,7 @@ refusal exits nonzero and names its diagnostic; look the code up in
 [CLI reference](cli-reference.md) rather than from memory.
 
 `init` is the exception to "exit 0 means done": a run that stops at a question also exits 0.
-Read `result.stage`, `result.question` and `result.nextCommand` to know where it stopped.
+Read `result.stage` and `result.question` to know where it stopped.
 
 ## Install cockpit
 
@@ -217,7 +217,7 @@ Run from the directory that holds the repositories. Each step stops for the huma
    <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
    ```console
    $ cockpit init "$(pwd)" --target claudecode --json
-   {"result":{"stage":"surface-previewed","previewSha256":"5f16c475...","nextCommand":"confirm selected bootstrap preview",
+   {"result":{"stage":"surface-previewed","previewSha256":"5f16c475...",
     "interview":{"outstanding":[
      {"field":"sibling","why":"the source does not establish schema-shaped sibling declarations","inferred":[]},
      {"field":"estate.runnable","why":"resolve the exact current runnable gaps: worker.runnable from worker/go.mod", ...},

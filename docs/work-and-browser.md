@@ -2,6 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
+All `work-*` and `browser-*` commands are experimental. Their interfaces may change before a
+stable release; use the command-specific help as the current contract.
+
 ## Declare work and preserve its authority
 
 The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill drives the browser commands in [Browser evidence](#browser-evidence) and reports findings with evidence without editing code.

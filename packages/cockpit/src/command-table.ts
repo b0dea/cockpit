@@ -20,7 +20,6 @@ export type WorkHandlerIdentifier =
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'baseline-record'
     | 'check'
-    | 'compare'
     | 'doctor'
     | 'document'
     | 'down'
@@ -45,6 +44,7 @@ export interface CommandDefinition {
     handler: HandlerIdentifier
     options: NonNullable<ParseArgsConfig['options']>
     visibility: 'public'
+    experimental?: true
     ordinary: OrdinaryCommandMetadata
 }
 
@@ -59,15 +59,11 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     availability: 'available'
     executableRole: 'installed-cockpit'
     command: HandlerIdentifier
-    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['compare-operation'] | readonly [] }>
+    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly [] }>
     options: Readonly<Record<string, OrdinaryOption>>
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[]; values: readonly { option: string; predicate: 'not-lowercase-sha256' }[] }>
-    operationVariants?: Readonly<Record<'validate' | 'run' | 'status', Readonly<{
-        options: Readonly<Record<string, OrdinaryOption>>
-        configuration: 'resolved' | 'none'
-    }>>>
     selection?: 'root-xor-registry' | 'release-evidence-pair'
 }>
 
@@ -107,25 +103,6 @@ export const commands = [
         options: { target: { type: 'string' }, registry: { type: 'string' },
             interactive: { type: 'boolean', default: false }, json: { type: 'boolean', default: false },
             answers: { type: 'string' }, 'accept-preview': { type: 'string' }, 'accept-defaults': { type: 'string' } },
-    },
-    {
-        name: 'compare',
-        summary: 'Validate an isolated comparison, run it, or inspect its operator ledger',
-        handler: 'compare',
-        visibility: 'public',
-        ordinary: ordinary('compare', { fixture: value('confined-path', true), json: flag }, {
-            configuration: 'none',
-            positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['compare-operation'] as const) }),
-            operationVariants: Object.freeze({
-                validate: Object.freeze({ configuration: 'none', options: Object.freeze({ fixture: value('confined-path', true), json: flag }) }),
-                run: Object.freeze({ configuration: 'resolved', options: Object.freeze({ fixture: value('confined-path', true), ...configured }) }),
-                status: Object.freeze({ configuration: 'none', options: Object.freeze({ fixture: value('confined-path', true), ledger: value('confined-path', true), json: flag }) }),
-            }),
-        }),
-        options: {
-            fixture: { type: 'string' }, config: { type: 'string' }, ledger: { type: 'string' },
-            json: { type: 'boolean', default: false },
-        },
     },
     {
         name: 'document',
@@ -210,6 +187,7 @@ export const commands = [
         summary: 'Inspect a reviewable upgrade sequence without applying changes',
         handler: 'upgrade',
         visibility: 'public',
+        experimental: true,
         ordinary: ordinary('upgrade', { ...configured, 'release-evidence': value('confined-path'), 'release-evidence-sha256': value('sha256') }, {
             selection: 'release-evidence-pair', forbidden: Object.freeze({ presence: Object.freeze([]), values: Object.freeze([{ option: 'release-evidence-sha256', predicate: 'not-lowercase-sha256' as const }]) }),
         }),
@@ -347,6 +325,7 @@ export const commands = [
         summary: 'Record an explicitly confirmed environment baseline',
         handler: 'baseline-record',
         visibility: 'public',
+        experimental: true,
         ordinary: unavailable('baseline recording requires separate approval'),
         options: {
             config: { type: 'string' },
@@ -354,58 +333,58 @@ export const commands = [
             json: { type: 'boolean', default: false },
         },
     },
-    { name: 'work-intake', handler: 'work-intake', summary: 'Prepare a source-bound work order', visibility: 'public',
+    { name: 'work-intake', handler: 'work-intake', summary: 'Prepare a source-bound work order', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...workOrderOption, intent: { type: 'string' }, candidate: { type: 'string' } } },
-    { name: 'work-status', handler: 'work-status', summary: 'Report current work-order state', visibility: 'public',
+    { name: 'work-status', handler: 'work-status', summary: 'Report current work-order state', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...workOrderOption } },
-    { name: 'work-accept', handler: 'work-accept', summary: 'Interactively accept the exact current work order', visibility: 'public',
+    { name: 'work-accept', handler: 'work-accept', summary: 'Interactively accept the exact current work order', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
-    { name: 'work-renew', handler: 'work-renew', summary: 'Interactively renew a changed work-order contract', visibility: 'public',
+    { name: 'work-renew', handler: 'work-renew', summary: 'Interactively renew a changed work-order contract', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ ...workOrderOption, interactive: { type: 'boolean', default: false } } } },
-    { name: 'work-resume', handler: 'work-resume', summary: 'Resume the next executable step of the single active work order', visibility: 'public',
+    { name: 'work-resume', handler: 'work-resume', summary: 'Resume the next executable step of the single active work order', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: workOptions },
-    { name: 'work-recover', handler: 'work-recover', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public',
+    { name: 'work-recover', handler: 'work-recover', summary: 'Inspect or explicitly recover one interrupted work lock', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, lock: { type: 'string' }, apply: { type: 'boolean', default: false } } },
-    { name: 'work-execute', handler: 'work-execute', summary: 'Execute one admitted work-order step', visibility: 'public',
+    { name: 'work-execute', handler: 'work-execute', summary: 'Execute one admitted work-order step', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ ...workOrderOption, approach: { type: 'string' } } } },
-    { name: 'work-record', handler: 'work-record', summary: 'Persist current work-order progress', visibility: 'public',
+    { name: 'work-record', handler: 'work-record', summary: 'Persist current work-order progress', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...workOrderOption, 'event-file': { type: 'string' } } },
-    { name: 'work-review', handler: 'work-review', summary: 'Review the current accepted work order', visibility: 'public',
+    { name: 'work-review', handler: 'work-review', summary: 'Review the current accepted work order', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...workOrderOption } },
-    { name: 'work-sweep', handler: 'work-sweep', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public',
+    { name: 'work-sweep', handler: 'work-sweep', summary: 'Inspect or apply a reversible work-order sweep', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ apply: { type: 'boolean', default: false } } } },
-    { name: 'work-reverse', handler: 'work-reverse', summary: 'Reverse an authenticated work-order sweep', visibility: 'public',
+    { name: 'work-reverse', handler: 'work-reverse', summary: 'Reverse an authenticated work-order sweep', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...workOrderOption } },
-    { name: 'work-programme-mint', handler: 'work-programme-mint', summary: 'Mint the next declared programme work order', visibility: 'public',
+    { name: 'work-programme-mint', handler: 'work-programme-mint', summary: 'Mint the next declared programme work order', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ programme: { type: 'string' }, item: { type: 'string' }, candidate: { type: 'string' } } } },
-    { name: 'work-metrics', handler: 'work-metrics', summary: 'Report attributed work-order metrics', visibility: 'public',
+    { name: 'work-metrics', handler: 'work-metrics', summary: 'Report attributed work-order metrics', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: workOptions },
-    { name: 'work-grade', handler: 'work-grade', summary: 'Independently grade the current accepted work order', visibility: 'public',
+    { name: 'work-grade', handler: 'work-grade', summary: 'Independently grade the current accepted work order', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...workOrderOption } },
-    { name: 'browser-drive', handler: 'browser-drive', summary: 'Drive the declared application browser surfaces', visibility: 'public',
+    { name: 'browser-drive', handler: 'browser-drive', summary: 'Drive the declared application browser surfaces', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser-accessibility', handler: 'browser-accessibility', summary: 'Collect bounded application accessibility observations', visibility: 'public',
+    { name: 'browser-accessibility', handler: 'browser-accessibility', summary: 'Collect bounded application accessibility observations', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser-screenshot', handler: 'browser-screenshot', summary: 'Capture the declared application surfaces', visibility: 'public',
+    { name: 'browser-screenshot', handler: 'browser-screenshot', summary: 'Capture the declared application surfaces', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
-    { name: 'browser-debugger', handler: 'browser-debugger', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public',
+    { name: 'browser-debugger', handler: 'browser-debugger', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public', experimental: true,
         ordinary: unavailable('work, browser and product-gate operations require their dedicated admission'),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'test-run', handler: 'test-run', summary: 'Run a declared product gate with honest selection', visibility: 'public',
@@ -467,11 +446,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     const definition = commands.find(row => row.name === args[0])
     const available: OrdinaryCommandMetadata | undefined = definition?.ordinary
     if (!definition || definition.visibility !== 'public' || available?.availability !== 'available') return undefined
-    const operation = args[1]
-    const variant = available.operationVariants && (operation === 'validate' || operation === 'run' || operation === 'status')
-        ? available.operationVariants[operation] : undefined
-    if (available.operationVariants && !variant) return undefined
-    const grammar = variant ? { ...available, ...variant } : available
+    const grammar = available
     const paths = new Set<string>()
     const confined = (path: string) => {
         if (!path || path.includes('\\') || path.split('/').includes('..') || /[*?\[\]]/.test(path)) return false
@@ -510,8 +485,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         options.set(name, text)
     }
     if (positionals.length < grammar.positional.min || positionals.length > grammar.positional.max
-        || positionals.some((path, index) => grammar.positional.roles[index] === 'compare-operation'
-            ? path !== operation : grammar.positional.roles[index] !== 'confined-root' || !confined(path))
+        || positionals.some((path, index) => grammar.positional.roles[index] !== 'confined-root' || !confined(path))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         || grammar.selection === 'root-xor-registry' && (positionals.length === 1) === options.has('registry')
         || grammar.selection === 'release-evidence-pair' && options.has('release-evidence') !== options.has('release-evidence-sha256')

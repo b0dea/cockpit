@@ -401,7 +401,7 @@ describe('shipped onboarding commands', () => {
             const sink = { write: (text: string) => { output += text; return true } }
             const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256,
                 confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined }, {
-                init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [], nextCommand: 'accept exact preview' } } },
+                init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
                 beginOperatorWorkApplication: async () => ({ digest: 'a'.repeat(64), prompt: 'Confirm the documented work-order command.',
                     decide: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } } }),
                 ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),

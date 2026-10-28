@@ -115,8 +115,6 @@ describe('estate observation classification', () => {
         expect(await classifyEstateObservation({ root: estateRoot }, { observe: observe(estateRoot, repositories) })).toEqual({
             kind: 'complete', status: 0, diagnostics: [], result: {
                 classification: 'one-sibling',
-                applicability: { stack: true, seed: true, postures: true,
-                    registry: false, projection: false, drift: false, compose: 'applicable' },
                 notice: 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with cockpit sibling add',
                 gaps: [],
                 runnable: [{ slug: 'web', path: 'web', disposition: 'confirmed' }],
@@ -167,7 +165,6 @@ describe('estate observation classification', () => {
         expect(await classifyEstateObservation({ root: estateRoot }, { observe: observe(estateRoot, repositories) }))
             .toMatchObject({ kind: 'complete', result: {
                 classification: 'incomplete-multi-repository',
-                applicability: { registry: true, projection: true, drift: true, compose: 'unknown' },
                 gaps: [{ field: 'api.runnable', source: 'api/run-observation.json',
                     why: 'the observed repository does not declare a runnable product command' }],
             } })
@@ -180,7 +177,6 @@ describe('estate observation classification', () => {
         expect(await classifyEstateObservation({ root: estateRoot }, { observe: observe(estateRoot, unknown) }))
             .toMatchObject({ kind: 'complete', result: {
                 classification: 'one-sibling',
-                applicability: { registry: false, projection: false, drift: false, compose: 'unknown' },
                 gaps: [{ field: 'web.runnable', source: 'web/run-observation.json',
                     why: 'the runnable product command remains unobserved' }],
             } })
@@ -190,7 +186,7 @@ describe('estate observation classification', () => {
         const { estateRoot, repositories } = materializeEstate('no-runnable-product.json')
         expect(await classifyEstateObservation({ root: estateRoot }, { observe: observe(estateRoot, repositories) }))
             .toMatchObject({ kind: 'complete', result: {
-                classification: 'no-runnable-product', applicability: { compose: 'inapplicable' },
+                classification: 'no-runnable-product',
                 gaps: [{ field: 'runnable-product', source: 'library/run-observation.json',
                     why: 'the observed repository exposes no runnable product' }],
             } })
@@ -286,7 +282,7 @@ describe('public estate observation', () => {
         const canonical = realpathSync(estateRoot)
         const classified = await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate })
         expect(classified).toMatchObject({ kind: 'complete', result: {
-            classification: 'no-runnable-product', runnable: [], applicability: { compose: 'inapplicable' },
+            classification: 'no-runnable-product', runnable: [],
             gaps: [{ field: 'runnable-product', source: '.' }],
         } })
         if (classified.kind !== 'complete') throw new Error('manifest-free estate classification failed')
@@ -368,7 +364,7 @@ describe('public estate observation', () => {
         const canonical = realpathSync(estateRoot)
         const classified = await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate })
         expect(classified).toMatchObject({ kind: 'complete', result: {
-            classification: 'one-sibling', applicability: { compose: 'unknown' }, gaps: [{ field: 'app.runnable' }],
+            classification: 'one-sibling', gaps: [{ field: 'app.runnable' }],
         } })
         if (classified.kind !== 'complete') throw new Error('public estate classification failed')
         const configuration = { sourceObservationSha256: classified.result.sourceObservationSha256,

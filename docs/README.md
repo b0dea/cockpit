@@ -23,7 +23,6 @@ are trying to do. Contributor documentation lives separately under docs/contribu
 - [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
 - [Work and browser workflows](work-and-browser.md): work orders, grading, browser evidence and
   test tiers.
-- [Environment comparison](parallel-run.md): compare an existing bring-up path with cockpit.
 
 ## Reference
 

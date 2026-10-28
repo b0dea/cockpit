@@ -37,11 +37,6 @@ export type EstateClassification = 'one-sibling' | 'incomplete-multi-repository'
 export interface EstateClassificationResult {
     readonly classification: EstateClassification
     readonly sourceObservationSha256: string
-    readonly applicability: Readonly<{
-        stack: true; seed: true; postures: true
-        registry: boolean; projection: boolean; drift: boolean
-        compose: 'applicable' | 'inapplicable' | 'unknown'
-    }>
     readonly notice: string
     readonly gaps: readonly Readonly<{ field: string; source: string; why: string }>[]
     readonly runnable: readonly Readonly<{
@@ -477,9 +472,6 @@ export async function classifyEstateObservation(
     const result: EstateClassificationResult = Object.freeze({
         classification,
         sourceObservationSha256: sourceObservationSha256(root, rows),
-        applicability: Object.freeze({ stack: true, seed: true, postures: true,
-            registry: multi, projection: multi, drift: multi,
-            compose: unknown.length > 0 ? 'unknown' : confirmed.length > 0 ? 'applicable' : 'inapplicable' }),
         notice: classification === 'one-sibling'
             ? 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with cockpit sibling add'
             : classification === 'no-runnable-product'

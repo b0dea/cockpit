@@ -253,14 +253,11 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
                 : []
             const configuration = command.ordinary.availability === 'available' ? command.ordinary.configuration : 'unavailable'
             const configurationOwners = configuration === 'resolved' ? `${code(configMechanism.module)}, ${code(schemaMechanism.module)}` : 'none'
-            return `## cockpit ${command.name}\n\n${command.summary}.\n\nConfiguration: ${code(configuration)}. Owners: ${configurationOwners}.\n\n`
+            return `## cockpit ${command.name}\n\n${command.summary}.\n\n`
+                + (command.experimental ? 'Status: experimental. This interface may change before a stable release.\n\n' : '')
+                + `Configuration: ${code(configuration)}. Owners: ${configurationOwners}.\n\n`
                 + '| Flag | Type | Default |\n| --- | --- | --- |\n' + Object.entries(command.options).map(([flag, option]) =>
                     `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
-                + (command.ordinary.availability === 'available' && command.ordinary.operationVariants
-                    ? '\n| Operation | Configuration | Required flags | Admitted flags |\n| --- | --- | --- | --- |\n'
-                        + Object.entries(command.ordinary.operationVariants).map(([operation, variant]) =>
-                            `| ${code(operation)} | ${code(variant.configuration)} | ${Object.entries(variant.options).filter(([, option]) => option.required).map(([flag]) => code(`--${flag}`)).join(', ')} | ${Object.keys(variant.options).map(flag => code(`--${flag}`)).join(', ')} |\n`).join('')
-                    : '')
                 + '\n| Exit | Meaning |\n| --- | --- |\n' + exits
                 + '\n| Diagnostic | Implementing owners | Source remedy |\n| --- | --- | --- |\n'
                 + (ownedDiagnostics.length > 0 ? ownedDiagnostics.map(diagnosticRow).join('')
@@ -286,7 +283,8 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             + `Terminal ${code(sourcePath(collection.terminal.path))}: loading=pull; budget=uncapped; SHA-256 ${code(collection.terminal.sha256)}.\n\n`
             + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} derives from the registry schema (default ${defaults.cockpit.guide_cap} lines); measured guide costs are instance-specific and come from the sibling projection owner.\n\n` + guideCosts
             + '\n## JSON Schema\n\n```json\n' + renderCockpitSchema().trim() + '\n```\n'
-        const list = documentHeading('Command list') + 'The command table supplies this list.\n\n' + commands.map(command => `- ${code(`cockpit ${command.name}`)}: ${command.summary}.\n`).join('')
+        const list = documentHeading('Command list') + 'The command table supplies this list.\n\n' + commands.map(command =>
+            `- ${code(`cockpit ${command.name}`)}${command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
             + '\n## Consumer documentation pipeline\n\n```yaml\ndocumentation-pipeline:\n  generate: <declared producer command>\n  check: <declared byte comparison command>\n  named-references: <declared reference validation command>\n```\n'
         const matrix = committed ? documentHeading('Capability matrix') + 'Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.\n\n'
             + `Source manifest: ${code(committed.sha256)}.\n\n| Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n`

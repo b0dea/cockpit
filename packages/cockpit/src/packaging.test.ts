@@ -269,13 +269,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'dist/upgrade/command.js',
                 'dist/setup/command.js',
                 'dist/up/command.js',
-                'dist/sleep/command.js',
-                'dist/down/command.js',
-                'dist/reset/command.js',
-                'dist/preflight/command.js',
-                'dist/doctor/command.js',
-                'dist/logs/command.js',
-                'dist/baseline/command.js',
                 'cockpit.schema.json',
                 'libexec/install-filesystem.cjs',
                 'libexec/rulesync-generator.cjs',
@@ -633,28 +626,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 })
 
-it('runs installed comparison validation and ledger status outside the source checkout', () => {
-    const installed = packedPackageRoot()
-    const root = join(packScratch, 'comparison-consumer')
-    mkdirSync(root)
-    writeFileSync(join(root, 'comparison.json'), readFileSync(join(repoRoot, 'fixtures/comparison/command-set.json')))
-    writeFileSync(join(root, 'ledger.json'), '{}')
-    const launcher = join(installed, 'bin/cockpit.mjs')
-    const options = { cwd: root, env: npmEnvironment(), encoding: 'utf8' as const }
-    const valid = spawnSync(process.execPath, [launcher, 'compare', 'validate', '--fixture', 'comparison.json', '--json'], options)
-    expect(valid.status, valid.stderr).toBe(0)
-    expect(JSON.parse(valid.stdout).result).toEqual({ fixtureId: 'synthetic-parity', operatorGates: 'held' })
-    expect(valid.stdout.trim().split('\n')).toHaveLength(1)
-    const status = spawnSync(process.execPath, [launcher, 'compare', 'status', '--fixture', 'comparison.json', '--ledger', 'ledger.json', '--json'], options)
-    expect(status.status, status.stderr).toBe(2)
-    expect(JSON.parse(status.stdout).result).toMatchObject({ verdict: 'DEGRADED', satisfiesGate: false })
-    expect(readFileSync(join(root, 'ledger.json'), 'utf8')).toBe('{}')
-    const forbidden = spawnSync(process.execPath, [launcher, 'compare', 'validate', '--fixture', 'comparison.json', '--config', 'cockpit.toml', '--json'], options)
-    expect(forbidden.status).toBe(2)
-    expect(JSON.parse(forbidden.stdout).diagnostics[0].code).toBe('CLI_USAGE_INVALID')
-}, 120_000)
-
-
 it('runs installed init for each isolated target and refuses missing roots or broken adjacent assets', async () => {
     const installed = packedPackageRoot(), launcher = join(installed, 'bin/cockpit.mjs')
     const home = join(packScratch, 'init-home')
@@ -742,7 +713,8 @@ it('runs installed init for each isolated target and refuses missing roots or br
             expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
             const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
             expect(done.status, done.stdout + done.stderr).toBe(0)
-            expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified', nextCommand: 'bootstrap complete' })
+            expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'environment-verified' })
+            expect(JSON.parse(done.stdout).result).not.toHaveProperty('nextCommand')
             expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
         } else {
             expect(status, stderr).toBe(2)

@@ -87,7 +87,7 @@ export function renderHumanDiagnostics(
             return records.length === 0 ? 'No log records.\n'
                 : `${records.map(record => escapeForTerminal(`${String(record.timestamp)} ${String(record.stream)} ${String(record.message)}`)).join('\n')}\n`
         }
-        if (command === 'selftest' || command === 'upgrade' || command === 'doctor' || command === 'init' || command === 'compare') {
+        if (command === 'selftest' || command === 'upgrade' || command === 'doctor' || command === 'init') {
             return `${terminalSafeJson(outcome.result, 2)}\n`
         }
         return ''

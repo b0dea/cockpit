@@ -192,7 +192,6 @@ export interface InitResult {
     readonly target: SurfaceTarget
     readonly previewSha256: string
     readonly files: readonly DigestRow[]
-    readonly nextCommand: string
     readonly ownerOutcome?: OwnerOutcome
     readonly question?: GreenfieldQuestion
     readonly estate?: GreenfieldResult
@@ -229,20 +228,19 @@ function ownerRefusal(outcome: OwnerOutcome, stage: BootstrapStateRecord['value'
     return {
         kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: outcome.diagnostics,
-        result: result(stage, projection, 'repair the named owner refusal before retrying', outcome),
+        result: result(stage, projection, outcome),
     }
 }
 
 function result(
     stage: BootstrapStateRecord['value']['stage'],
     projection: BootstrapProjection,
-    nextCommand: string,
     ownerOutcome?: OwnerOutcome,
     greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan;
         cockpitRoot?: CockpitRootQuestion }>,
 ): InitResult {
     return Object.freeze({ stage, root: projection.root, target: projection.target,
-        previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]), nextCommand,
+        previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]),
         ...(ownerOutcome === undefined ? {} : { ownerOutcome }),
         ...(greenfield?.question === undefined ? {} : { question: greenfield.question }),
         ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }),
@@ -328,14 +326,6 @@ function recordedProjection(record: BootstrapStateRecord): BootstrapProjection {
     })
 }
 
-function nextCommand(stage: BootstrapStateRecord['value']['stage']): string {
-    if (stage === 'surface-previewed') return 'publish the accepted selected-target bootstrap preview'
-    if (stage === 'surface-published') return 'prepare cockpit.toml from the existing registry'
-    if (stage === 'draft-prepared') return 'write the exact cockpit.toml artifact'
-    if (stage === 'draft-observed') return 'verify the generated environment and preflight'
-    return 'bootstrap complete'
-}
-
 async function persist(
     namespace: BootstrapStateNamespace,
     address: BootstrapStateAddress,
@@ -360,7 +350,6 @@ async function persist(
             destination: fields?.destination ?? current?.value.destination ?? null,
             artifactBytes: fields?.artifactBytes ?? current?.value.artifactBytes ?? null,
             artifactSha256: fields?.artifactSha256 ?? current?.value.artifactSha256 ?? null,
-            nextCommand: nextCommand(stage),
             ...(fields?.greenfield === undefined && current?.value.greenfield === undefined
                 ? {} : { greenfield: fields?.greenfield ?? current!.value.greenfield! }),
         },
@@ -472,7 +461,7 @@ export async function runInitApplication(
                 target: input.root })
         }
         return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics,
-            result: result(stage, projection, 'confirm selected bootstrap preview', undefined,
+            result: result(stage, projection, undefined,
                 interview === undefined ? undefined : { interview }) }
     }
     if (input.accepted && (!SHA256.test(input.acceptedPreviewSha256 ?? '') || input.acceptedPreviewSha256 !== projection.previewSha256)) {
@@ -510,7 +499,7 @@ export async function runInitApplication(
         if (input.registry === undefined) {
             if (!adapters.classifyEstate) return { kind: 'pending-dependency', status: 2, artifact: null, destination: null,
                 diagnostics: [diagnostic('GREENFIELD_DISCOVERY_UNAVAILABLE', 'greenfield init requires the public estate observation owner')],
-                result: result('surface-published', projection, 'restore public estate discovery and retry') }
+                result: result('surface-published', projection) }
             const classified = await adapters.classifyEstate(estateInput(input))
             if (classified.kind !== 'complete') return ownerRefusal(classified, current.value.stage, projection)
             classification = classified.result
@@ -557,20 +546,19 @@ export async function runInitApplication(
             if (!input.accepted) {
                 const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
                 return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
-                    result: result('surface-published', projection, 'answer the named unresolved configuration fact', undefined,
+                    result: result('surface-published', projection, undefined,
                         { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
             }
             const questions = [...(state?.questions ?? []),
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]
             const nextState = { ...(mode === 'registry' ? { mode } : {}), stage: 'question-pending' as const, sourceObservationSha256,
-                ...(classification ? { classification: classification.classification, notice: classification.notice,
-                    applicability: classification.applicability } : {}), questions, answers }
+                ...(classification ? { classification: classification.classification, notice: classification.notice } : {}), questions, answers }
             const recorded = await persist(namespace, address, input, projection, adapters, 'surface-published', current,
                 { published: current.value.published, greenfield: nextState })
             if (recorded.kind !== 'complete') return stateFailure(recorded)
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
             return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
-                result: result('surface-published', projection, 'answer the named unresolved configuration fact', undefined,
+                result: result('surface-published', projection, undefined,
                     { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
         }
         if (documented.kind !== 'complete') return ownerRefusal(documented, current.value.stage, projection)
@@ -579,7 +567,7 @@ export async function runInitApplication(
         }
         const resolvedState = { ...(mode === 'registry' ? { mode } : {}), stage: answers.length === 0 ? 'resolved' as const : 'answers-recorded' as const,
             sourceObservationSha256, ...(classification ? { classification: classification.classification,
-                notice: classification.notice, applicability: classification.applicability } : {}),
+                notice: classification.notice } : {}),
             questions: [...(state?.questions ?? [])], answers }
         const artifactSha256 = sha256(documented.artifact)
         const persisted = await persist(namespace, address, input, projection, adapters, 'draft-prepared', current, {
@@ -589,7 +577,7 @@ export async function runInitApplication(
         if (persisted.kind !== 'complete') return stateFailure(persisted)
         current = persisted.value
         return { kind: 'artifact', status: 0, artifact: documented.artifact, destination,
-            diagnostics: documented.diagnostics, result: result('draft-prepared', projection, nextCommand('draft-prepared')) }
+            diagnostics: documented.diagnostics, result: result('draft-prepared', projection) }
     }
 
     const persistedConfiguration = current.value.greenfield
@@ -610,10 +598,10 @@ export async function runInitApplication(
     if (current.value.stage === 'draft-prepared') {
         const observed = await adapters.observeDestination({ path: destination, byteLimit: DRAFT_BYTE_LIMIT })
         if (observed.kind === 'refusal') return { kind: 'refusal', status: 2, artifact: null, destination: null,
-            diagnostics: observed.diagnostics, result: result(current.value.stage, projection, nextCommand(current.value.stage)) }
+            diagnostics: observed.diagnostics, result: result(current.value.stage, projection) }
         if (observed.kind === 'absent') {
             return { kind: 'artifact', status: 0, artifact: current.value.artifactBytes!, destination,
-                diagnostics: [], result: result('draft-prepared', projection, nextCommand('draft-prepared')) }
+                diagnostics: [], result: result('draft-prepared', projection) }
         }
         if (observed.sha256 !== current.value.artifactSha256) {
             return refused('INIT_DRAFT_CHANGED', 'existing cockpit.toml bytes differ from the persisted draft', destination)
@@ -666,5 +654,5 @@ export async function runInitApplication(
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
         diagnostics: runtimeAbsent ? preflight.diagnostics.map(row => ({ ...row, severity: 'info' as const })) : preflight.diagnostics,
-        result: result('environment-verified', projection, nextCommand('environment-verified')) }
+        result: result('environment-verified', projection) }
 }

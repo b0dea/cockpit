@@ -19,7 +19,6 @@ import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { deriveInferredFacts } from './init/derive.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
 import { nodeAuthority, readAnchoredBatches } from './generated-environment/transaction.js'
-import { comparisonCommand, type ComparisonCommandInput, type ComparisonCommandAdapters } from './comparison/command.js'
 import {
     registryResolveCommand,
     type RegistryResolveCommandInput,
@@ -152,7 +151,6 @@ interface WorkCommandInput { readonly configPath: string; readonly request: Work
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
     'baseline-record': Readonly<{ configPath: string; confirmation: string; recordedAt: string }>
     check: GeneratedEnvironmentCommandInput
-    compare: ComparisonCommandInput & Readonly<{ decideReset?: ComparisonCommandAdapters['decideReset'] }>
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
     document: DocumentCommandInput
@@ -545,7 +543,6 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             check: checkGeneratedEnvironment,
             preflight: ({ configPath }) => runPreflightApplication({ configPath }, healthAdapters(configPath)),
         }),
-        compare: ({ decideReset, ...input }) => comparisonCommand(input, { env, ...(decideReset ? { decideReset } : {}) }),
         'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand(input, defaultSetupAdapters),
         sync: ({ authorizeStaleRemoval, adopt, ...input }) => adopt
@@ -644,7 +641,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
 function renderHelp(): string {
     const commandWidth = Math.max(...commands.map((command) => command.name.length))
     const commandLines = commands.map(
-        (command) => `  ${command.name.padEnd(commandWidth)}  ${command.summary}`,
+        (command) => `  ${command.name.padEnd(commandWidth)}  ${command.summary}${command.experimental ? ' (experimental)' : ''}`,
     )
     return ['Usage: cockpit <command> [options]', '', 'Commands:', ...commandLines, ''].join('\n')
 }
@@ -656,7 +653,8 @@ function renderCommandHelp(definition: CommandDefinition): string {
         return [usage, fallback.trim()] as const
     })
     const width = Math.max(...optionLines.map(([usage]) => usage.length), '-h, --help'.length)
-    return [`Usage: cockpit ${definition.name} [options]`, '', definition.summary, '', 'Options:',
+    return [`Usage: cockpit ${definition.name} [options]`, '', definition.summary,
+        ...(definition.experimental ? ['', 'Status: experimental. This interface may change before a stable release.'] : []), '', 'Options:',
         ...optionLines.map(([usage, note]) => `  ${usage.padEnd(width)}  ${note}`.trimEnd()),
         `  ${'-h, --help'.padEnd(width)}  Show this help`, ''].join('\n')
 }
@@ -853,19 +851,6 @@ async function decodeRequest(
             accepted: false, sessionId: randomUUID(), platform: process.platform, home: runtimeEnv.HOME,
             ...(runtimeEnv.XDG_STATE_HOME ? { xdgStateHome: runtimeEnv.XDG_STATE_HOME } : {}),
             ...(unattended.value ? { unattended: unattended.value } : {}) } }
-    }
-    if (handler === 'compare') {
-        const [operation, ...extra] = parsed.positionals
-        const fixturePath = parsed.values.fixture, configPath = parsed.values.config, ledgerPath = parsed.values.ledger
-        if (extra.length || operation !== 'validate' && operation !== 'run' && operation !== 'status'
-            || typeof fixturePath !== 'string' || !fixturePath
-            || operation === 'run' && (typeof configPath !== 'string' || !configPath)
-            || operation === 'status' && (typeof ledgerPath !== 'string' || !ledgerPath)) {
-            return usageOutcome('CLI_USAGE_INVALID', 'compare requires validate, run or status and its named inputs')
-        }
-        return { handler, input: { root: process.cwd(), operation, fixturePath,
-            ...(typeof configPath === 'string' ? { configPath } : {}),
-            ...(typeof ledgerPath === 'string' ? { ledgerPath } : {}) } }
     }
     if (handler === 'document') {
         const values = parsed.values as { registry?: string; output?: string; json?: boolean }
@@ -1139,9 +1124,6 @@ async function invokeHandler(
         },
     }, handlers.init ?? (async () => ({ kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: [{ severity: 'error', code: 'INIT_UNAVAILABLE', message: 'init application is unavailable' }], result: null })))
-    if (request.handler === 'compare') return handlers.compare?.({ ...request.input,
-        ...(!options.json && (io.confirmReset !== undefined || io.stdin?.isTTY === true)
-            ? { decideReset: async (preview: unknown) => await confirmOperatorReset(io, preview as CommandOutcome) ? 'approve' as const : 'decline' as const } : {}) }) ?? unavailable()
     if (request.handler === 'document') return handlers.document?.(request.input) ?? unavailable()
     if (request.handler === 'registry-resolve') return handlers['registry-resolve']?.(request.input) ?? unavailable()
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
@@ -1236,15 +1218,6 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
             )
         },
     }
-}
-
-function admitComparisonArguments(args: readonly string[]): boolean {
-    const root = process.cwd()
-    const configIndex = args.indexOf('--config')
-    const suppliedConfig = configIndex < 0 ? args.find(arg => arg.startsWith('--config='))?.slice('--config='.length) : args[configIndex + 1]
-    const authority = { executable: process.execPath, canonicalRoot: root, allowedRoots: [root],
-        configPath: resolve(root, suppliedConfig ?? 'cockpit.toml'), services: [] }
-    return resolveOrdinaryInvocation({ executable: authority.executable, cwd: root, argv: args }, authority, () => true) !== undefined
 }
 
 export async function runCli(
@@ -1357,8 +1330,6 @@ export async function runCli(
         outcome = usageOutcome('CLI_UNKNOWN_COMMAND', `unknown command "${commandName}"`)
     } else if (definition.handler === 'init' && Object.keys(definition.options).some(name => optionCount(optionArgs, name) > 1)) {
         outcome = usageOutcome('CLI_USAGE_INVALID', 'each init option may be supplied only once')
-    } else if (definition.handler === 'compare' && !admitComparisonArguments(args)) {
-        outcome = usageOutcome('CLI_USAGE_INVALID', 'comparison arguments do not match the admitted operation')
     } else if (
         definition.handler === 'document' &&
         ['registry', 'output'].some((name) => optionCount(optionArgs, name) > 1)

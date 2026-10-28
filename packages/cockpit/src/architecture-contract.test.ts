@@ -2469,11 +2469,6 @@ const RUNTIME_MODULE = 'packages/cockpit/src/environment/runtime.ts'
 const PORTS_MODULE = 'packages/cockpit/src/environment/ports.ts'
 const CLAIMS_MODULE = 'packages/cockpit/src/environment/claims.ts'
 const UP_COMMAND_MODULE = 'packages/cockpit/src/up/command.ts'
-const SLEEP_COMMAND_MODULE = 'packages/cockpit/src/sleep/command.ts'
-const PREFLIGHT_COMMAND_MODULE = 'packages/cockpit/src/preflight/command.ts'
-const DOCTOR_COMMAND_MODULE = 'packages/cockpit/src/doctor/command.ts'
-const LOGS_COMMAND_MODULE = 'packages/cockpit/src/logs/command.ts'
-const BASELINE_COMMAND_MODULE = 'packages/cockpit/src/baseline/command.ts'
 
 function exportedTypeDeclarations(source: string): Map<string, ts.InterfaceDeclaration | ts.TypeAliasDeclaration> {
     const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
@@ -2567,27 +2562,6 @@ function applicationBoundaryViolations(
 
     const commandContracts = new Map([
         [UP_COMMAND_MODULE, { functionName: 'upCommand', imported: 'runUp', types: lifecycleContracts.slice(0, 3) }],
-        [SLEEP_COMMAND_MODULE, { functionName: 'sleepCommand', imported: 'runSleep', types: lifecycleContracts.slice(3) }],
-        [PREFLIGHT_COMMAND_MODULE, {
-            functionName: 'preflightCommand',
-            imported: 'runPreflight',
-            types: environmentContracts.slice(0, 3),
-        }],
-        [DOCTOR_COMMAND_MODULE, {
-            functionName: 'doctorCommand',
-            imported: 'runDoctor',
-            types: environmentContracts.slice(3, 6),
-        }],
-        [LOGS_COMMAND_MODULE, {
-            functionName: 'logsCommand',
-            imported: 'runLogs',
-            types: environmentContracts.slice(6, 9),
-        }],
-        [BASELINE_COMMAND_MODULE, {
-            functionName: 'baselineCommand',
-            imported: 'runBaselineRecord',
-            types: environmentContracts.slice(9),
-        }],
     ])
     if (environmentContracts.some((name) => !applicationTypes.has(name))) {
         violations.add('ARCH048_APPLICATION_OBSERVATION_HOME')
@@ -4815,36 +4789,10 @@ describe('product architecture contract', () => {
         ])
     })
 
-    it('keeps destructive command adapters thin and reset continuation authority private to the application', () => {
+    it('keeps environment command ownership in the application instead of pass-through modules', () => {
         const sources = productionSources()
-        const down = sources.get('packages/cockpit/src/down/command.ts')
-        const reset = sources.get('packages/cockpit/src/reset/command.ts')
-        if (!down || !reset) throw new Error('destructive command adapters are missing')
-
-        expect(down).toContain("from '../environment/application.js'")
-        expect(down).toMatch(/return runDown\(input, adapters\)/)
-        expect(reset).toContain("from '../environment/application.js'")
-        expect(reset).toMatch(/return runReset\(input, adapters\)/)
-        expect(`${down}\n${reset}`).not.toMatch(/\b(?:beginOperatorReset|reserveDrain|redeemReclaimAction|executeProbe|child_process)\b/)
-        expect(reset).not.toMatch(/\b(?:consent|continuation|authority)\b/)
-    })
-
-    it('keeps observation, logs, and baseline command adapters confined to the application', () => {
-        const sources = productionSources()
-        const contracts = [
-            [PREFLIGHT_COMMAND_MODULE, 'runPreflight', 'preflightCommand'],
-            [DOCTOR_COMMAND_MODULE, 'runDoctor', 'doctorCommand'],
-            [LOGS_COMMAND_MODULE, 'runLogs', 'logsCommand'],
-            [BASELINE_COMMAND_MODULE, 'runBaselineRecord', 'baselineCommand'],
-        ] as const
-
-        for (const [path, runner, command] of contracts) {
-            const source = sources.get(path)
-            if (!source) throw new Error(`${path} is missing`)
-            expect(source).toContain("from '../environment/application.js'")
-            expect(source).toMatch(new RegExp(`return ${runner}\\(input, adapters\\)`))
-            expect(exportedImplementations(source)).toContain(command)
-            expect(source).not.toMatch(/\b(?:executePlan|child_process|spawn|execFile|setTimeout|writeFile|appendFile)\b/)
+        for (const path of ['down', 'sleep', 'doctor', 'logs', 'preflight', 'reset', 'baseline']) {
+            expect(sources.has(`packages/cockpit/src/${path}/command.ts`)).toBe(false)
         }
     })
 
@@ -5259,9 +5207,8 @@ describe('product architecture contract', () => {
     it('keeps runtime and failure-log planning leaf-ward with one local mechanism home', () => {
         const reversed = new Map([
             ['packages/cockpit/src/environment/runtime.ts', "import '../up/command.js'"],
-            ['packages/cockpit/src/environment/logs.ts', "import '../logs/command.js'"],
+            ['packages/cockpit/src/environment/logs.ts', "import '../up/command.js'"],
             ['packages/cockpit/src/up/command.ts', 'export const up = true'],
-            ['packages/cockpit/src/logs/command.ts', 'export const logs = true'],
         ])
         const duplicate = new Map([
             ['packages/cockpit/src/environment/runtime.ts', "export const mechanism = { id: 'runtime-planning', module: 'packages/cockpit/src/environment/runtime.ts', exports: [] } as const"],
@@ -5356,11 +5303,10 @@ describe('product architecture contract', () => {
         },
     )
 
-    it('keeps up and sleep commands confined to the application adapter', () => {
+    it('keeps the remaining up command confined to the application adapter', () => {
         const up = readFileSync(resolve(ROOT, UP_COMMAND_MODULE), 'utf8')
         const sources = new Map([
             [UP_COMMAND_MODULE, `${up}\nimport { executePlan } from '../environment-exec/execute.js'`],
-            [SLEEP_COMMAND_MODULE, readFileSync(resolve(ROOT, SLEEP_COMMAND_MODULE), 'utf8')],
             [APPLICATION_MODULE, 'export interface UpCommandInput {}; export interface UpCommandAdapters {}; export interface UpCommandResult {}; export interface SleepCommandInput {}; export interface SleepCommandAdapters {}; export interface SleepCommandResult {}'],
         ])
 
@@ -6585,8 +6531,8 @@ describe('product architecture contract', () => {
             ['packages/cockpit/src/b.ts', 'export const implementation = true'],
             ['packages/cockpit/src/cli.ts', 'export async function runCli() {}'],
             [
-                'scripts/validate-harness-evidence.mjs',
-                "export const HARNESS_EVIDENCE_MECHANISM = 'scripts/validate-harness-evidence.mjs'",
+                'packages/cockpit/libexec/validate-harness-evidence.mjs',
+                "export const HARNESS_EVIDENCE_MECHANISM = 'packages/cockpit/libexec/validate-harness-evidence.mjs'",
             ],
         ])
 
@@ -6772,9 +6718,9 @@ describe('product architecture contract', () => {
         const sources = new Map([
             [
                 'packages/cockpit/src/browser/commands.ts',
-                "import { resetCommand as invoke } from '../reset/command.js'; export function executeBrowserCommand() { return invoke() }",
+                "import { setupCommand as invoke } from '../setup/command.js'; export function executeBrowserCommand() { return invoke() }",
             ],
-            ['packages/cockpit/src/reset/command.ts', 'export function resetCommand() {}'],
+            ['packages/cockpit/src/setup/command.ts', 'export function setupCommand() {}'],
         ])
 
         expect(importDirectionViolations(sources)).toContain('ARCH005_PEER_COMMAND_IMPORT')

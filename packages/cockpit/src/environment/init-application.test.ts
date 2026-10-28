@@ -89,8 +89,6 @@ function estate(root: string, classification: 'one-sibling' | 'incomplete-multi-
     return { kind: 'complete', status: 0, diagnostics: [], result: {
         sourceObservationSha256: createHash('sha256').update(`estate:${classification}:${root}`).digest('hex'),
         classification,
-        applicability: { stack: true, seed: true, postures: true, registry: multi, projection: multi, drift: multi,
-            compose: noRunnable ? 'inapplicable' : multi ? 'unknown' : 'applicable' },
         notice: `${classification} at ${root}`,
         gaps: multi ? [{ field: 'api.runnable', source: 'api/package.json', why: 'runnable command is unknown' }]
             : noRunnable ? [{ field: 'runnable-product', source: 'assets/package.json', why: 'no runnable product exists' }] : [],
@@ -305,7 +303,6 @@ describe('init application', () => {
         const classified: EstateClassificationOutcome = { kind: 'complete', status: 0, diagnostics: [], result: {
             sourceObservationSha256: digest('9'),
             classification: 'incomplete-multi-repository',
-            applicability: { stack: true, seed: true, postures: true, registry: true, projection: true, drift: true, compose: 'unknown' },
             notice: 'four unresolved facts', gaps,
             runnable: gaps.map((_, index) => ({ slug: `repository-${index}`, path: `repository-${index}`,
                 disposition: 'unknown' as const })),

@@ -277,11 +277,13 @@ describe('reference generation', () => {
         expect(cli).toContain('Configuration: `none`')
         expect(cli).toContain('| `SYNTHETIC_FAILURE` | `packages/cockpit/src/document/command.ts` | repair the synthetic input |')
         expect(rendered.troubleshooting.bytes).toContain('| `SYNTHETIC_FAILURE` | `packages/cockpit/src/document/command.ts` | repair the synthetic input |')
+        expect(cli.slice(cli.indexOf('## cockpit upgrade'), cli.indexOf('\n## cockpit up\n')))
+            .toContain('Status: experimental. This interface may change before a stable release.')
     })
 
     it('binds command diagnostics to the source modules reached by the actual CLI handlers', () => {
         const inventory = diagnosticInventory(process.cwd(), 'HEAD')
-        expect(inventory.commandOwners.get('compare')).toContain('packages/cockpit/src/comparison/command.ts')
+        expect(inventory.commandOwners.has('compare')).toBe(false)
         expect(inventory.commandOwners.get('sync')).toContain('packages/cockpit/src/generated-environment/command.ts')
         expect(inventory.commandOwners.get('up')).toContain('packages/cockpit/src/environment/application.ts')
         const rendered = renderReferences({ ...input(), diagnostics: inventory })
@@ -289,7 +291,6 @@ describe('reference generation', () => {
         if (rendered.kind !== 'complete') return
         const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
         const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}`), cli.indexOf(`## cockpit ${next}`))
-        expect(section('compare', 'registry-resolve')).toContain('`COMPARISON_UNAVAILABLE`')
         expect(section('sync', 'check')).toContain('`SURFACE_STATE_CONFLICT`')
         expect(section('up', 'sleep')).toContain('`GUARD_REFUSED`')
     })

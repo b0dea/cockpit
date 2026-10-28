@@ -25,7 +25,7 @@ import type {
 } from '../libexec/validate-harness-evidence.mjs'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
-const VALIDATOR = join(ROOT, 'scripts/validate-harness-evidence.mjs')
+const VALIDATOR = join(ROOT, 'packages/cockpit/libexec/validate-harness-evidence.mjs')
 const CANDIDATE = 'fixtures/harness-probes/candidate-control.json'
 const BROKEN = 'fixtures/harness-probes/broken-control.json'
 const TRANSCRIPT = 'fixtures/harness-probes/synthetic-transcript.txt'
@@ -1257,13 +1257,6 @@ describe('exact hook launch evidence', () => {
                 writeFileSync(path, original)
             }
         } finally { rmSync(fixture.root, { recursive: true, force: true }) }
-    })
-
-    it('keeps the repository hook validator a thin shipped-owner wrapper', () => {
-        const result = spawnSync(process.execPath, [join(ROOT, 'scripts/validate-hook-evidence.mjs')], { encoding: 'utf8' })
-        expect(result.status).toBe(1)
-        expect(result.stderr).toContain('validate-hook-evidence: expected bundle and current expectation paths')
-        expect(readFileSync(join(ROOT, 'scripts/validate-hook-evidence.mjs'), 'utf8')).toContain("from '../packages/cockpit/libexec/validate-harness-evidence.mjs'")
     })
 
     it('refuses symlinked current wiring and accessor evidence without reading foreign data', () => {

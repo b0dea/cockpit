@@ -190,7 +190,7 @@ describe('closed ordinary invocation metadata', () => {
         }
         for (const row of commands) {
             if (row.ordinary.availability !== 'available') continue
-            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'compare' ? ['validate', '--fixture', 'comparison.json'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(row.name === 'selftest' ? ['--probe-specifications', 'p'] : row.name === 'logs' ? ['--service', 'app'] : [])]
+            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(row.name === 'selftest' ? ['--probe-specifications', 'p'] : row.name === 'logs' ? ['--service', 'app'] : [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m' : name.endsWith('sha256') ? 'a'.repeat(64) : 'path']
                 let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
@@ -267,6 +267,14 @@ describe('CLI help', () => {
         expect(result.stdout).toContain('Usage: cockpit check [options]')
         expect(result.stdout).toContain('--config <value>')
         expect(result.stdout).toContain('--json')
+    })
+
+    it('labels experimental command-specific help without labeling stable commands', async () => {
+        const experimental = await runInProcess(['upgrade', '--help'])
+        const stable = await runInProcess(['check', '--help'])
+
+        expect(experimental.stdout).toContain('Status: experimental. This interface may change before a stable release.')
+        expect(stable.stdout).not.toContain('Status: experimental.')
     })
 
     it('lists every sibling flag in `sibling --help` and routes add and remove to their handlers', async () => {
@@ -367,14 +375,13 @@ describe('CLI help', () => {
             'Usage: cockpit <command> [options]\n\n' +
             'Commands:\n' +
             '  init                   Preview or accept one explicit bootstrap target in an existing checkout\n' +
-            '  compare                Validate an isolated comparison, run it, or inspect its operator ledger\n' +
             '  document               Describe an existing cockpit as attributed cockpit.toml content\n' +
             '  registry-resolve       Resolve a validated legacy registry into sourceable shell data\n' +
             '  setup                  Acquire and wire declared sibling repositories\n' +
             '  sync                   Synchronize canonical generated environment files\n' +
             '  check                  Check canonical generated environment files for drift\n' +
             '  selftest               Probe generated harness controls with explicit measured specifications\n' +
-            '  upgrade                Inspect a reviewable upgrade sequence without applying changes\n' +
+            '  upgrade                Inspect a reviewable upgrade sequence without applying changes (experimental)\n' +
             '  up                     Start or resume the declared environment\n' +
             '  sleep                  Release this holder and stop an unshared environment\n' +
             '  session                Keep the environment available for one command, then release it\n' +
@@ -385,25 +392,25 @@ describe('CLI help', () => {
             '  preflight              Evaluate the authenticated environment gate\n' +
             '  doctor                 Report read-only environment diagnostics\n' +
             '  logs                   Collect bounded logs for one declared service\n' +
-            '  baseline-record        Record an explicitly confirmed environment baseline\n' +
-            '  work-intake            Prepare a source-bound work order\n' +
-            '  work-status            Report current work-order state\n' +
-            '  work-accept            Interactively accept the exact current work order\n' +
-            '  work-renew             Interactively renew a changed work-order contract\n' +
-            '  work-resume            Resume the next executable step of the single active work order\n' +
-            '  work-recover           Inspect or explicitly recover one interrupted work lock\n' +
-            '  work-execute           Execute one admitted work-order step\n' +
-            '  work-record            Persist current work-order progress\n' +
-            '  work-review            Review the current accepted work order\n' +
-            '  work-sweep             Inspect or apply a reversible work-order sweep\n' +
-            '  work-reverse           Reverse an authenticated work-order sweep\n' +
-            '  work-programme-mint    Mint the next declared programme work order\n' +
-            '  work-metrics           Report attributed work-order metrics\n' +
-            '  work-grade             Independently grade the current accepted work order\n' +
-            '  browser-drive          Drive the declared application browser surfaces\n' +
-            '  browser-accessibility  Collect bounded application accessibility observations\n' +
-            '  browser-screenshot     Capture the declared application surfaces\n' +
-            '  browser-debugger       Prepare an explicitly requested browser debugger\n' +
+            '  baseline-record        Record an explicitly confirmed environment baseline (experimental)\n' +
+            '  work-intake            Prepare a source-bound work order (experimental)\n' +
+            '  work-status            Report current work-order state (experimental)\n' +
+            '  work-accept            Interactively accept the exact current work order (experimental)\n' +
+            '  work-renew             Interactively renew a changed work-order contract (experimental)\n' +
+            '  work-resume            Resume the next executable step of the single active work order (experimental)\n' +
+            '  work-recover           Inspect or explicitly recover one interrupted work lock (experimental)\n' +
+            '  work-execute           Execute one admitted work-order step (experimental)\n' +
+            '  work-record            Persist current work-order progress (experimental)\n' +
+            '  work-review            Review the current accepted work order (experimental)\n' +
+            '  work-sweep             Inspect or apply a reversible work-order sweep (experimental)\n' +
+            '  work-reverse           Reverse an authenticated work-order sweep (experimental)\n' +
+            '  work-programme-mint    Mint the next declared programme work order (experimental)\n' +
+            '  work-metrics           Report attributed work-order metrics (experimental)\n' +
+            '  work-grade             Independently grade the current accepted work order (experimental)\n' +
+            '  browser-drive          Drive the declared application browser surfaces (experimental)\n' +
+            '  browser-accessibility  Collect bounded application accessibility observations (experimental)\n' +
+            '  browser-screenshot     Capture the declared application surfaces (experimental)\n' +
+            '  browser-debugger       Prepare an explicitly requested browser debugger (experimental)\n' +
             '  test-run               Run a declared product gate with honest selection\n',
         )
         expect(humanStderr(result.stderr)).toBe('')
@@ -1992,71 +1999,12 @@ describe('work command routing', () => {
 })
 
 
-describe('comparison operation admission', () => {
-    it('admits only each operation with its required confined inputs before CLI decoding', () => {
-        const authority = { executable: '/opt/cockpit/bin/cockpit', canonicalRoot: '/workspace',
-            allowedRoots: ['/workspace'], configPath: '/workspace/cockpit.toml', services: [] }
-        const admitted = (argv: string[]) => resolveOrdinaryInvocation({ executable: authority.executable,
-            cwd: authority.canonicalRoot, argv }, authority, () => true)
-        const valid = [
-            ['compare', 'validate', '--fixture', 'comparison.json'],
-            ['compare', 'run', '--fixture', 'comparison.json', '--config', authority.configPath],
-            ['compare', 'status', '--fixture', 'comparison.json', '--ledger', 'ledger.json'],
-        ]
-        for (const argv of valid) {
-            expect(admitted(argv), argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
-            expect(admitted([...argv, '--json']), argv.join(' ')).toBeDefined()
-        }
-        const invalid = [
-            ['compare'], ['compare', 'publish', '--fixture', 'comparison.json'],
-            ['compare', 'validate', 'run', '--fixture', 'comparison.json'],
-            ['compare', 'validate'], ['compare', 'run', '--fixture', 'comparison.json'],
-            ['compare', 'status', '--fixture', 'comparison.json'],
-            [...valid[0]!, '--config', authority.configPath], [...valid[0]!, '--ledger', 'ledger.json'],
-            [...valid[1]!, '--ledger', 'ledger.json'], [...valid[2]!, '--config', authority.configPath],
-            [...valid[0]!, '--fixture', 'other.json'], [...valid[0]!, '--json', '--json'],
-            [...valid[1]!, '--config', authority.configPath], [...valid[2]!, '--ledger', 'other.json'],
-            ['compare', 'validate', '--fixture', '../outside.json'],
-            ['compare', 'status', '--fixture', 'comparison.json', '--ledger', '/outside/ledger.json'],
-            ['compare', 'run', '--fixture', 'comparison.json', '--config', 'other.toml'],
-        ]
-        for (const argv of invalid) expect(admitted(argv), argv.join(' ')).toBeUndefined()
-        expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: valid[0]! },
-            authority, () => false)).toBeUndefined()
-    })
-})
-
-it('dispatches comparison operations only after common metadata admission and emits one JSON document', async () => {
-    const successful = [
-        ['compare', 'validate', '--fixture', 'comparison.json'],
-        ['compare', 'run', '--fixture', 'comparison.json', '--config', 'cockpit.toml'],
-        ['compare', 'status', '--fixture', 'comparison.json', '--ledger', 'ledger.json'],
-    ]
-    for (const argv of successful) {
-        let stdout = '', stderr = ''
-        const handler = vi.fn(async (input: { root: string; operation: string; fixturePath: string }) => ({ status: 0, diagnostics: [], result: { accepted: input.fixturePath.length > 0 } }))
-        const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) } }
-        expect(await runCli([...argv, '--json'], io, { compare: handler })).toBe(0)
-        expect(handler).toHaveBeenCalledOnce()
-        expect(handler.mock.calls[0]![0]).toMatchObject({ root: process.cwd(), operation: argv[1], fixturePath: 'comparison.json' })
-        expect(handler.mock.calls[0]![0]).not.toHaveProperty('decideReset')
-        expect(JSON.parse(stdout).result).toEqual({ accepted: true })
-        expect(stdout.trim().split('\n')).toHaveLength(1)
-        expect(stderr).toBe('')
-    }
-    for (const argv of [
-        ['compare', 'validate', '--fixture', 'comparison.json', '--config', 'cockpit.toml'],
-        ['compare', 'status', '--fixture', 'comparison.json', '--ledger', '../outside.json'],
-        ['compare', 'run', '--fixture', 'comparison.json'],
-        ['compare', 'validate', '--fixture', 'comparison.json', '--json'],
-    ]) {
-        let stdout = ''
-        const handler = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
-        const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true } }
-        expect(await runCli([...argv, '--json'], io, { compare: handler })).toBe(2)
-        expect(handler).not.toHaveBeenCalled()
-        expect(JSON.parse(stdout).diagnostics[0].code).toBe('CLI_USAGE_INVALID')
-    }
+it('does not expose comparison validation as a public CLI command', async () => {
+    let stdout = ''
+    expect(await runCli(['compare', 'validate', '--fixture', 'comparison.json', '--json'], {
+        stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true },
+    })).toBe(2)
+    expect(JSON.parse(stdout).diagnostics[0].code).toBe('CLI_UNKNOWN_COMMAND')
 })
 
 
@@ -2110,7 +2058,7 @@ describe('init command admission', () => {
             const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
                 kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
                 result: { stage: 'surface-previewed' as const, root: input.root, target: input.target,
-                    previewSha256: 'a'.repeat(64), files: [], nextCommand: 'accept exact preview' },
+                    previewSha256: 'a'.repeat(64), files: [] },
             }))
             const confirmInit = vi.fn(async () => 'a'.repeat(64))
             const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true }, confirmInit }
@@ -2129,11 +2077,11 @@ describe('init command admission', () => {
             input.greenfieldAnswer ? {
                 kind: 'complete' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
                 result: { stage: 'environment-verified' as const, root: input.root, target: input.target,
-                    previewSha256: 'a'.repeat(64), files: [], nextCommand: 'bootstrap complete' },
+                    previewSha256: 'a'.repeat(64), files: [] },
             } : {
                 kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
                 result: { stage: 'surface-published' as const, root: input.root, target: input.target,
-                    previewSha256: 'a'.repeat(64), files: [], nextCommand: 'answer configuration',
+                    previewSha256: 'a'.repeat(64), files: [],
                     question: { id, field: 'ports.bases', source: `configuration:${'b'.repeat(64)}`,
                         why: 'no source establishes product ports' } },
             })
@@ -2155,7 +2103,7 @@ describe('init command admission', () => {
             writeFileSync(answers, '[ports]\nbases = { API_PORT = 4100 }\n')
             const question = { id: `question:${'c'.repeat(64)}` as const, field: 'ports.bases', source: `configuration:${'b'.repeat(64)}`, why: 'no source' }
             const result = (extra: object = {}) => ({ stage: 'surface-published' as const, root: process.cwd(), target: 'codexcli' as const,
-                previewSha256: 'a'.repeat(64), files: [], nextCommand: 'next', ...extra })
+                previewSha256: 'a'.repeat(64), files: [], ...extra })
             const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => input.greenfieldAnswer
                 ? { kind: 'complete' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [], result: result() }
                 : { kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [], result: result({ question }) })
@@ -2208,7 +2156,7 @@ it('shows a human init preview without accepting or writing it', async () => {
     const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
         kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
         result: { stage: 'surface-previewed' as const, root: input.root, target: input.target,
-            previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }], nextCommand: 'accept exact preview' },
+            previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }] },
     }))
     const status = await runCli(['init', process.cwd(), '--target', 'codexcli'], {
         stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true },

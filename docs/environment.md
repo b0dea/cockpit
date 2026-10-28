@@ -430,7 +430,8 @@ supply an abort signal. Collection remains bounded by the adapter's time and out
 CLI allows ten seconds for collection and reports a timeout as a failure. Output is returned
 after collection, including structured records in JSON mode, rather than streamed continuously.
 
-`baseline-record` is the only command that writes an environment baseline. It requires
+`baseline-record` is experimental and its interface may change before a stable release. It is
+the only command that writes an environment baseline and requires
 confirmation of one exact snapshot and runtime-evidence pair; `preflight`, `doctor`, and `logs`
 cannot write or advance that baseline. `--interactive` shows the selected stack, evidence
 hashes, version, and observation time before asking for approval in a human terminal. It is

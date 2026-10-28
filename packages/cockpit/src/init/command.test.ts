@@ -5,7 +5,7 @@ import type { InitApplicationOutcome } from '../environment/init-application.js'
 const pending = (): InitApplicationOutcome => ({
     kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [],
     result: { stage: 'surface-previewed', root: '/synthetic', target: 'codexcli', previewSha256: 'a'.repeat(64),
-        files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }], nextCommand: 'confirm selected bootstrap preview' },
+        files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }] },
 })
 
 describe('init operator command', () => {
@@ -43,12 +43,12 @@ describe('init operator command', () => {
         const artifact: InitApplicationOutcome = {
             kind: 'artifact', status: 0, diagnostics: [], artifact: 'name = "synthetic"\n', destination: '/synthetic/cockpit.toml',
             result: { stage: 'draft-prepared', root: '/synthetic', target: 'codexcli', previewSha256: 'a'.repeat(64),
-                files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }], nextCommand: 'write the exact cockpit.toml artifact' },
+                files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }] },
         }
         const complete: InitApplicationOutcome = {
             kind: 'complete', status: 0, diagnostics: [], artifact: null, destination: null,
             result: { stage: 'environment-verified', root: '/synthetic', target: 'codexcli', previewSha256: 'a'.repeat(64),
-                files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }], nextCommand: 'bootstrap complete' },
+                files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }] },
         }
         let invocation = 0
         const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },

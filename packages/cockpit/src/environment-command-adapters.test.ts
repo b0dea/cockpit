@@ -14,54 +14,17 @@ import {
     cockpitId as deriveCockpitId,
     stackId as deriveStackId,
 } from './environment/identity.js'
-import { baselineCommand } from './baseline/command.js'
-import type {
-    BaselineCommandAdapters,
-    BaselineCommandInput,
-    BaselineCommandResult,
-} from './baseline/command.js'
-import { doctorCommand } from './doctor/command.js'
-import type {
-    DoctorCommandAdapters,
-    DoctorCommandInput,
-    DoctorCommandResult,
-} from './doctor/command.js'
-import { downCommand } from './down/command.js'
-import type {
-    DownCommandAdapters,
-    DownCommandInput,
-    DownCommandResult,
-} from './down/command.js'
-import { resetCommand } from './reset/command.js'
-import type {
-    ResetCommandAdapters,
-    ResetCommandInput,
-    ResetCommandResult,
-} from './reset/command.js'
 import { setupCommand } from './setup/command.js'
 import type {
     SetupCommandAdapters,
     SetupCommandInput,
 } from './setup/command.js'
-import { sleepCommand } from './sleep/command.js'
-import type {
-    SleepCommandAdapters,
-    SleepCommandInput,
-    SleepCommandResult,
-} from './sleep/command.js'
 import { upCommand } from './up/command.js'
 import type {
     UpCommandAdapters,
     UpCommandInput,
     UpCommandResult,
 } from './up/command.js'
-import { logsCommand } from './logs/command.js'
-import type {
-    LogsCommandAdapters,
-    LogsCommandInput,
-    LogsCommandResult,
-} from './logs/command.js'
-import { preflightCommand } from './preflight/command.js'
 import { loadCockpitConfig } from './config/load.js'
 import { CockpitConfig } from './schema.js'
 import { executeProbe } from './environment-exec/execute.js'
@@ -79,11 +42,6 @@ import { deriveEntrypoints, observePortFamily, projectPortLeaseResult } from './
 import { leasePortFamilyFixture } from '../test-support/port-lease-fixture.js'
 import { holderId as deriveHolderId } from './environment/identity.js'
 import type { HealthObservationProducers, HealthObservationSource, HealthObservationSourceInput } from './environment/application.js'
-import type {
-    PreflightCommandAdapters,
-    PreflightCommandInput,
-    PreflightCommandResult,
-} from './preflight/command.js'
 
 const application = vi.hoisted(() => ({
     runBaselineRecord: vi.fn(),
@@ -186,68 +144,6 @@ describe('up command adapter', () => {
         expect(application.runUp).toHaveBeenCalledOnce()
         expect(application.runUp).toHaveBeenCalledWith(input, adapters)
         expect(returned).toBe(result)
-    })
-})
-
-describe('sleep command adapter', () => {
-    it('returns the exact application envelope after forwarding the input and adapters', async () => {
-        const input = Object.freeze({ configPath: '/synthetic/cockpit.toml' }) as SleepCommandInput
-        const adapters = Object.freeze({}) as SleepCommandAdapters
-        const result = Object.freeze({
-            kind: 'refusal',
-            status: 2,
-            result: null,
-            diagnostics: Object.freeze([{ code: 'SYNTHETIC_REFUSAL' }]),
-        }) as unknown as SleepCommandResult
-        application.runSleep.mockResolvedValueOnce(result)
-
-        const returned = await sleepCommand(input, adapters)
-
-        expect(application.runSleep).toHaveBeenCalledOnce()
-        expect(application.runSleep).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
-})
-
-describe('down command adapter', () => {
-    it('returns the exact application envelope after forwarding the input and adapters', async () => {
-        const input = Object.freeze({ configPath: '/synthetic/cockpit.toml' }) as DownCommandInput
-        const adapters = Object.freeze({}) as DownCommandAdapters
-        const result = Object.freeze({
-            kind: 'refusal',
-            status: 2,
-            result: null,
-            diagnostics: Object.freeze([{ code: 'SYNTHETIC_REFUSAL' }]),
-        }) as unknown as DownCommandResult
-        application.runDown.mockResolvedValueOnce(result)
-
-        const returned = await downCommand(input, adapters)
-
-        expect(application.runDown).toHaveBeenCalledOnce()
-        expect(application.runDown).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
-})
-
-describe('reset command adapter', () => {
-    it('returns the exact preview or refusal envelope without an operator continuation', async () => {
-        const input = Object.freeze({ configPath: '/synthetic/cockpit.toml' }) as ResetCommandInput
-        const adapters = Object.freeze({}) as ResetCommandAdapters
-        const result = Object.freeze({
-            kind: 'preview',
-            status: 0,
-            result: Object.freeze({ stackId: 'synthetic-stack', planDigest: '1'.repeat(64), targets: Object.freeze([]) }),
-            diagnostics: Object.freeze([]),
-        }) as unknown as ResetCommandResult
-        application.runReset.mockResolvedValueOnce(result)
-
-        const returned = await resetCommand(input, adapters)
-
-        expect(application.runReset).toHaveBeenCalledOnce()
-        expect(application.runReset).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-        expect(JSON.stringify(returned)).not.toContain('continuation')
-        expect(JSON.stringify(returned)).not.toContain('authority')
     })
 })
 
@@ -420,11 +316,9 @@ else if (args.includes('exec')) {
                 return source
             }
             const actual = await vi.importActual<typeof import('./environment/application.js')>('./environment/application.js')
-            application.runPreflight.mockImplementationOnce(actual.runPreflight)
-            application.runDoctor.mockImplementationOnce(actual.runDoctor)
             const adapters = { load, execute: executeProbe }
-            const preflight = await preflightCommand({ configPath }, adapters)
-            const doctor = await doctorCommand({ configPath }, adapters)
+            const preflight = await actual.runPreflight({ configPath }, adapters)
+            const doctor = await actual.runDoctor({ configPath }, adapters)
             expect(aggregates).toHaveLength(2)
             expect(aggregates[0]).not.toBe(aggregates[1])
             const checks = [preflight.result, doctor.result].map(result => result.checks.find(({ owner, code }) =>
@@ -534,11 +428,9 @@ else if (args.includes('exec')) {
                     if (!source) throw new Error(`health source was not issued for ${row.name}`)
                     return source
                 }
-                application.runPreflight.mockImplementationOnce(actual.runPreflight)
-                application.runDoctor.mockImplementationOnce(actual.runDoctor)
                 const adapters = { load, execute: executeProbe }
-                const first = await preflightCommand({ configPath }, adapters)
-                const second = await doctorCommand({ configPath }, adapters)
+                const first = await actual.runPreflight({ configPath }, adapters)
+                const second = await actual.runDoctor({ configPath }, adapters)
                 const checks = [first.result, second.result].map(result => result.checks.find(({ owner, code }) => owner === row.value.owner && code === row.value.code))
                 for (const check of checks) {
                     expect(check, row.name).toMatchObject({ owner: row.value.owner, code: row.value.code, verdict: row.verdict })
@@ -554,107 +446,4 @@ else if (args.includes('exec')) {
         }
     })
 
-    it('returns the exact preflight application envelope', async () => {
-        const input = Object.freeze({ configPath: '/synthetic/cockpit.toml' }) satisfies PreflightCommandInput
-        const adapters = Object.freeze({}) as PreflightCommandAdapters
-        const result = Object.freeze({
-            kind: 'complete',
-            status: 0,
-            result: Object.freeze({
-                verdict: 'pass',
-                revision: 'synthetic-revision',
-                checks: Object.freeze([]),
-                comparisons: Object.freeze([]),
-            }),
-            diagnostics: Object.freeze([]),
-        }) satisfies PreflightCommandResult
-        application.runPreflight.mockResolvedValueOnce(result)
-
-        const returned = await preflightCommand(input, adapters)
-
-        expect(application.runPreflight).toHaveBeenCalledOnce()
-        expect(application.runPreflight).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
-
-    it('returns the exact doctor application envelope', async () => {
-        const input = Object.freeze({ configPath: '/synthetic/cockpit.toml' }) satisfies DoctorCommandInput
-        const adapters = Object.freeze({}) as DoctorCommandAdapters
-        const result = Object.freeze({
-            kind: 'complete',
-            status: 0,
-            result: Object.freeze({
-                verdict: 'pass',
-                checks: Object.freeze([]),
-                comparisons: Object.freeze([]),
-                surfaceOverrides: Object.freeze({
-                    kind: 'complete',
-                    activeOverrides: Object.freeze([]),
-                    changedOverrideOriginals: Object.freeze([]),
-                }),
-                freshness: Object.freeze({
-                    local: Object.freeze({ kind: 'refusal', artifact: null, destination: null, diagnostics: Object.freeze([]), result: null, status: 2 }),
-                    changes: Object.freeze([]), storedProducer: null,
-                    installedProducer: Object.freeze({ package: '@b0dea/cockpit', version: '0.0.0', sourceRevision: 'development' }),
-                    release: Object.freeze({ kind: 'unknown', reason: 'synthetic offline fixture' }),
-                }),
-                declarations: Object.freeze([]),
-            }),
-            diagnostics: Object.freeze([]),
-        }) satisfies DoctorCommandResult
-        application.runDoctor.mockResolvedValueOnce(result)
-
-        const returned = await doctorCommand(input, adapters)
-
-        expect(application.runDoctor).toHaveBeenCalledOnce()
-        expect(application.runDoctor).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
-
-    it('returns the exact logs application envelope', async () => {
-        const input = Object.freeze({
-            configPath: '/synthetic/cockpit.toml',
-            service: 'web',
-            since: '5m',
-            tail: 10,
-            follow: false,
-            json: true,
-        }) satisfies LogsCommandInput
-        const adapters = Object.freeze({}) as LogsCommandAdapters
-        const result = Object.freeze({
-            kind: 'refusal',
-            status: 2,
-            result: null,
-            diagnostics: Object.freeze([]),
-        }) satisfies LogsCommandResult
-        application.runLogs.mockResolvedValueOnce(result)
-
-        const returned = await logsCommand(input, adapters)
-
-        expect(application.runLogs).toHaveBeenCalledOnce()
-        expect(application.runLogs).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
-
-    it('returns the exact baseline-record application envelope', async () => {
-        const input = Object.freeze({
-            configPath: '/synthetic/cockpit.toml',
-            confirmation: 'synthetic-confirmation',
-            recordedAt: '2026-09-25T00:00:02.000Z',
-        }) satisfies BaselineCommandInput
-        const adapters = Object.freeze({}) as BaselineCommandAdapters
-        const result = Object.freeze({
-            kind: 'refusal',
-            status: 2,
-            result: null,
-            diagnostics: Object.freeze([]),
-        }) satisfies BaselineCommandResult
-        application.runBaselineRecord.mockResolvedValueOnce(result)
-
-        const returned = await baselineCommand(input, adapters)
-
-        expect(application.runBaselineRecord).toHaveBeenCalledOnce()
-        expect(application.runBaselineRecord).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
 })

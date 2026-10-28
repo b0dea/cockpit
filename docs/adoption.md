@@ -139,6 +139,5 @@ and cockpit.toml is unchanged. Adoption changes cockpit.toml, so it is never a d
 Retire the old path only when every responsibility it had passes under cockpit (`check`, `up`
 and `preflight` for the same configuration and runtime) and you know how to roll back.
 Destructive environment commands, stale-output removal, changes to external services and
-publication stay explicit human decisions. To compare the two paths side by side first, see
-[Environment comparison](parallel-run.md). For recovery, see [Environment](environment.md) and
+publication stay explicit human decisions. For recovery, see [Environment](environment.md) and
 [Troubleshooting](troubleshooting.md).

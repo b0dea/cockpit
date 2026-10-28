@@ -148,11 +148,6 @@ const GreenfieldStateSchema = z.object({
     classification: z.enum(['one-sibling', 'incomplete-multi-repository', 'no-runnable-product', 'ready-multi-repository']).optional(),
     sourceObservationSha256: z.string().regex(digest),
     notice: z.string().min(1).max(1_024).optional(),
-    applicability: z.object({
-        stack: z.literal(true), seed: z.literal(true), postures: z.literal(true),
-        registry: z.boolean(), projection: z.boolean(), drift: z.boolean(),
-        compose: z.enum(['applicable', 'inapplicable', 'unknown']),
-    }).strict().optional(),
     questions: z.array(GreenfieldQuestionSchema).max(64),
     answers: z.array(GreenfieldAnswerSchema).max(64),
 }).strict().superRefine((value, context) => {
@@ -168,10 +163,10 @@ const GreenfieldStateSchema = z.object({
         || (value.stage === 'resolved' && (value.questions.length !== 0 || value.answers.length !== 0))) {
         context.addIssue({ code: 'custom', message: 'greenfield answers do not match the interview stage' })
     }
-    if ((value.mode ?? 'estate') === 'estate' && (!value.classification || !value.notice || !value.applicability)) {
+    if ((value.mode ?? 'estate') === 'estate' && (!value.classification || !value.notice)) {
         context.addIssue({ code: 'custom', message: 'estate interview provenance is incomplete' })
     }
-    if (value.mode === 'registry' && (value.classification || value.notice || value.applicability)) {
+    if (value.mode === 'registry' && (value.classification || value.notice)) {
         context.addIssue({ code: 'custom', message: 'registry interview cannot claim estate classification provenance' })
     }
     if (value.stage === 'resolved' && value.classification === 'incomplete-multi-repository') {
@@ -198,7 +193,6 @@ const BootstrapStateRecordSchema = z.object({
         destination: BootstrapPathSchema.nullable(),
         artifactBytes: z.string().max(262_144).nullable(),
         artifactSha256: z.string().regex(digest).nullable(),
-        nextCommand: z.string().min(1).max(1_024),
         greenfield: GreenfieldStateSchema.optional(),
     }).strict(),
 }).strict().superRefine((record, context) => {
@@ -1105,7 +1099,6 @@ function validateRecordForAddress(
                 && nextGreenfield.classification === currentGreenfield.classification
                 && nextGreenfield.sourceObservationSha256 === currentGreenfield.sourceObservationSha256
                 && nextGreenfield.notice === currentGreenfield.notice
-                && JSON.stringify(nextGreenfield.applicability) === JSON.stringify(currentGreenfield.applicability)
                 && JSON.stringify(nextGreenfield.questions.slice(0, currentGreenfield.questions.length)) === JSON.stringify(currentGreenfield.questions)
                 && nextGreenfield.questions.length - currentGreenfield.questions.length >= 0
                 && nextGreenfield.questions.length - currentGreenfield.questions.length <= 1

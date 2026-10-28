@@ -52,7 +52,8 @@ cockpit sync --config ./cockpit.toml
 cockpit preflight --config ./cockpit.toml
 ```
 
-`upgrade` is a read-only plan and fails closed without exact release evidence. Review changed
+`upgrade` is experimental and its interface may change before a stable release. It is a
+read-only plan and fails closed without exact release evidence. Review changed
 overlays, ownership, capability evidence and any manual steps it lists before `sync`.
 
 Release evidence is read from a stable regular file of at most 1 MiB; pipes and other special
