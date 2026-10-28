@@ -274,12 +274,13 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual(['packages/cockpit/src/task.test.ts'])
     })
 
-    it.each(['packages/cockpit/scripts/build.mjs', 'packages/cockpit/scripts/build-helper.mjs'])(
+    it.each(['scripts/build-cockpit.mjs', 'packages/cockpit/scripts/build.mjs', 'packages/cockpit/scripts/build-helper.mjs'])(
         'runs the exact test owner importing changed package script %s', path => {
             const fixture = withOwners({
+                'scripts/build-cockpit.mjs': 'export const cleanOwnedPackageDist = () => undefined\n',
                 'packages/cockpit/scripts/build.mjs': "export { build } from './build-helper.mjs'\n",
                 'packages/cockpit/scripts/build-helper.mjs': 'export const build = 1\n',
-                'packages/cockpit/src/package-build.test.ts': "import { build } from '../scripts/build.mjs'\n",
+                'packages/cockpit/src/package-build.test.ts': "import { cleanOwnedPackageDist } from '../../../scripts/build-cockpit.mjs'\nimport { build } from '../scripts/build.mjs'\n",
                 'packages/cockpit/src/unrelated/build-helper.mjs': 'export const build = 2\n',
                 'packages/cockpit/src/unrelated.test.ts': "import { build } from './unrelated/build-helper.mjs'\n",
             })
