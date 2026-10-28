@@ -112,6 +112,10 @@ answer is recorded as a decision in `cockpit.toml`.
 Review the port map, the generated environment declaration, the guard hosts and the defaults
 before accepting the configuration.
 
+`init` also adds exact `cockpit:*` package scripts, pins this cockpit version as a development
+dependency, and maintains a marked block in the root `.gitignore`. Commit those team-owned files
+with the generated cockpit. Teammates then follow [Joining a team's cockpit](joining-a-team.md).
+
 ### Bootstrap without a terminal
 
 An agent or CI job has no terminal, so `--interactive` refuses with `INIT_TERMINAL_REQUIRED`.

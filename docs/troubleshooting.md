@@ -260,6 +260,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `CLI_UNKNOWN_COMMAND` | `packages/cockpit/src/cli.ts` | no static remedy captured; inspect implementing owners |
 | `CLI_USAGE_INVALID` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/runtime-measurement.ts`, `packages/cockpit/src/environment/sibling-registration.ts`, `packages/cockpit/src/generated-environment/adopt.ts` | no static remedy captured; inspect implementing owners |
 | `COCKPIT_REVISION_INVALID` | `packages/cockpit/src/registry-resolve/command.ts` | no static remedy captured; inspect implementing owners |
+| `COCKPIT_VERSION_MISMATCH` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_FIXTURE_INVALID` | `packages/cockpit/src/comparison/contract.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_NORMALIZATION_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
 | `COMPARISON_OUTPUT_INVALID` | `packages/cockpit/src/comparison/normalize.ts` | no static remedy captured; inspect implementing owners |
@@ -579,6 +580,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `SURFACE_WORKER_SIGNAL` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_WORKER_STDERR` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_WORKER_TIMEOUT` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
+| `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
 | `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |

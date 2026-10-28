@@ -17,6 +17,7 @@ are trying to do. Contributor documentation lives separately under docs/contribu
 ## Guides
 
 - [Incremental adoption](adoption.md): move an existing setup over one layer at a time.
+- [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
 - [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
 - [Extending cockpit](extending.md): supported seams, upgrade ownership and the build-beside pattern.
