@@ -77,7 +77,7 @@ Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-25
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `d65b4ce58e3b6a7713ee783fc2914b0261455305f005b83af721d62a26f1b6c9`.
+Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `6b7ad10c6991a2acd0e8755075c9ded8c187637318317b9302af2567ce2f18cf`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` derives from the registry schema (default 200 lines); measured guide costs are instance-specific and come from the sibling projection owner.
 
