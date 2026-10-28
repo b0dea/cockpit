@@ -277,7 +277,7 @@ describe('runtime plan construction', () => {
             ],
             argv0: '/usr/local/bin/docker',
             cwd: '/tmp/synthetic-cockpit',
-            env: { PATH: '/usr/bin', DOCKER_CONTEXT: 'desktop-linux' },
+            env: { PATH: '/usr/bin', DOCKER_CONTEXT: 'desktop-linux', COMPOSE_DISABLE_ENV_FILE: '1' },
             timeoutMs: 45_000,
             stdoutLimitBytes: 65_536,
             stderrLimitBytes: 65_536,
@@ -304,11 +304,22 @@ describe('runtime plan construction', () => {
                     '--project-name', 'synthetic-stack',
                     'down', '--remove-orphans',
                 ],
+                env: { PATH: '/usr/bin', DOCKER_CONTEXT: 'desktop-linux', COMPOSE_DISABLE_ENV_FILE: '1' },
                 compensation: [],
             })],
         })
         expect(outcome.result).toEqual({
             runtime: 'docker', operation: 'up', projectName: 'synthetic-stack',
+        })
+    })
+
+    it.each(['validate', 'up', 'down'] as const)('disables the unauthenticated default .env for %s', (operation) => {
+        const outcome = createRuntimeAdapter({ ...runtimeInput, operation })
+
+        expect(outcome.kind).toBe('preview')
+        if (outcome.kind !== 'preview') return
+        expect(outcome.plan.steps[0]?.env).toEqual({
+            PATH: '/usr/bin', DOCKER_CONTEXT: 'desktop-linux', COMPOSE_DISABLE_ENV_FILE: '1',
         })
     })
 
@@ -617,7 +628,8 @@ describe('runtime plan construction', () => {
         ports[0] = 9999
         labels.owner = 'after'
         expect(outcome.plan.steps[0]).toEqual(expect.objectContaining({
-            env: { TOKEN: 'before' }, ports: [4100], labels: expect.objectContaining({ owner: 'before' }),
+            env: { TOKEN: 'before', COMPOSE_DISABLE_ENV_FILE: '1' },
+            ports: [4100], labels: expect.objectContaining({ owner: 'before' }),
         }))
         expect(Object.isFrozen(outcome.plan.steps[0])).toBe(true)
         expect(Object.isFrozen(outcome.plan.steps[0].argv)).toBe(true)
@@ -1532,7 +1544,9 @@ fi
         }
         const { planned, admitted } = await topologyEvidence(topology)
 
-        expect(planned.step.argv.slice(-5)).toEqual(['config', '--format', 'json', '--no-interpolate', '--no-env-resolution'])
+        expect(planned.step.argv.slice(-4)).toEqual(['config', '--format', 'json', '--no-env-resolution'])
+        expect(planned.step.argv).not.toContain('--no-interpolate')
+        expect(planned.step.env.COMPOSE_DISABLE_ENV_FILE).toBe('1')
         expect(planned.step.env).not.toHaveProperty('SECRET_CANARY')
         expect(admitted.kind).toBe('complete')
         if (admitted.kind !== 'complete') return
@@ -1736,6 +1750,16 @@ fi
                     portLeaseProjection: ownProjection, siblingDirectories: { APP_DIR: '/synthetic/siblings/app' } },
             })
             if (owned.admitted.kind !== 'complete') throw new Error(owned.admitted.reason)
+            expect(ownCompose).toContain('${COCKPIT_OWNER_ID:?owner required}')
+            expect(ownCompose).toContain('${COCKPIT_STACK_ID:?stack required}')
+            expect(owned.planned.step.argv).not.toContain('--no-interpolate')
+            expect(owned.planned.step.env).toMatchObject({
+                APP_HOST_PORT: String(expectedPort),
+                APP_DIR: '/synthetic/siblings/app',
+                COCKPIT_OWNER_ID: runtimeCockpit,
+                COCKPIT_STACK_ID: stack,
+                COMPOSE_DISABLE_ENV_FILE: '1',
+            })
             expect(projectRuntimeExecutionEnvironment(owned.admitted.topology)).toEqual({
                 PATH: process.env.PATH ?? '/usr/bin', APP_HOST_PORT: String(expectedPort), APP_DIR: '/synthetic/siblings/app',
                 COCKPIT_OWNER_ID: runtimeCockpit, COCKPIT_STACK_ID: stack,
@@ -2815,6 +2839,7 @@ fi
                 '--project-name', 'synthetic',
             ])
             expect(context?.paths).toEqual([composePath, secondPath])
+            expect(context?.env.COMPOSE_DISABLE_ENV_FILE).toBe('1')
             expect(context?.consumedFiles.map(({ path, argvIndexes }) => ({ path, argvIndexes }))).toEqual([
                 { path: topology.runtimeExecutable.canonicalPath, argvIndexes: [0] },
                 { path: composePath, argvIndexes: [5] },

@@ -28,6 +28,7 @@ import {
 } from './claims.js'
 import { authenticateStateNamespace, readState, transactState, type StateNamespace, type StateRecord } from './state.js'
 import { inspectGeneratedRuntimeAuthority, resolveGeneratedDataOperation, type GeneratedRuntimeAuthority } from './generated-stack.js'
+import { composeProcessEnvironment } from './compose-environment.js'
 import { projectRuntimeExecutionEnvironment } from './runtime.js'
 
 export const mechanism = {
@@ -362,7 +363,9 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
             overlaySha256: operationDigest(operation),
             ...(operation.service === undefined ? {} : { overlayService: operation.service }),
         })
-        const env = operation.location === 'in-stack' ? runtimeEnvironment : canonicalExecutionEnvironment
+        const env = operation.location === 'in-stack' && runtimeEnvironment
+            ? composeProcessEnvironment(runtimeEnvironment)
+            : canonicalExecutionEnvironment
         if (!env) return false
         const bound = snapshotExecutionPlan({ steps: [{ ...execution, env, labels }] })?.steps[0]
         if (!bound || steps.some(({ id }) => id === bound.id)) return false

@@ -20,6 +20,7 @@ import {
 } from './runtime.js'
 import type { ExternalDependencyTemplateFragments } from './templates.js'
 import { inspectGeneratedRuntimeAuthority, type GeneratedRuntimeAuthority } from './generated-stack.js'
+import { composeProcessEnvironment } from './compose-environment.js'
 
 export const mechanism = {
     id: 'external-dependency-boundary',
@@ -254,9 +255,12 @@ function composeStep(
             ...runtime.composeFiles.map(({ path, sha256 }, index) => ({ path, sha256, maxBytes: 1_048_576, argvIndexes: Object.freeze([5 + index * 2]), executable: false as const })),
         ])
     }
+    const env = operation.location === 'in-stack'
+        ? composeProcessEnvironment(runtime.publicEnv)
+        : Object.freeze({ ...runtime.publicEnv })
     return snapshotExecutionStep({
         id: `external:${dependencyId}:${role}`, argv, argv0, cwd,
-        env: Object.freeze({ ...runtime.publicEnv }), timeoutMs: operation.timeout_seconds * 1000,
+        env, timeoutMs: operation.timeout_seconds * 1000,
         ...(spawnNotAfter === undefined ? {} : { spawnNotAfter }),
         stdoutLimitBytes: runtime.stdoutLimitBytes, stderrLimitBytes: runtime.stderrLimitBytes,
         paths: Object.freeze([...runtime.composeFiles.map(({ path }) => path), ...(fixturePath === undefined ? [] : [fixturePath])]), ports: Object.freeze([]),

@@ -660,6 +660,7 @@ describe('authenticated failure logs', () => {
         ])
         expect(plan.step.argv.slice(-2)).toEqual(['--', 'api'])
         expect(plan.step.argv).not.toContain('container')
+        expect(plan.step.env.COMPOSE_DISABLE_ENV_FILE).toBe('1')
         expect(plan.step.paths).toEqual([composePath, composeOverridePath])
         expect(plan.step.consumedFiles.map(({ path, argvIndexes }) => [path, argvIndexes])).toEqual([
             [plan.step.argv[0], [0]],

@@ -382,9 +382,12 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const outputMarkerPath = join(siblingPath, 'output')
     const candidatePath = join(input.cwd, `candidate-${batchId}.yml`)
     const controlPath = join(input.cwd, `broken-${batchId}.yml`)
+    const defaultEnvironmentPath = join(input.cwd, '.env')
+    const serviceEnvironmentPath = join(siblingPath, 'service.env')
     const ownershipPath = join(input.cwd, COMPOSE_OWNERSHIP_FILE)
     const volumeName = `${projectName}-data`
-    if (![siblingsRoot, siblingPath, generatedPath, configPath, inputMarkerPath, outputMarkerPath, candidatePath, controlPath, ownershipPath]
+    if (![siblingsRoot, siblingPath, generatedPath, configPath, inputMarkerPath, outputMarkerPath, candidatePath, controlPath,
+        defaultEnvironmentPath, serviceEnvironmentPath, ownershipPath]
         .every((path) => confined(input.cwd, path))) return unavailable(input, 'the disposable probe paths escaped their authenticated root')
 
     const marker = `cockpit-runtime-${randomBytes(16).toString('hex')}`
@@ -527,7 +530,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             'dev.b0dea.cockpit.stack-id': context.stackId,
             'dev.b0dea.cockpit.config-sha256': context.source.sha256,
             'dev.b0dea.cockpit.owner-id': context.cockpitId,
-            'dev.b0dea.cockpit.generation-id': hash(`runtime-probe-generation:${batchId}`),
+            'dev.b0dea.cockpit.generation-id': hash(`compose-volume-generation\0${context.source.sha256}`),
             [ownerLabelName]: batchId,
         }
         ownerCleanup = async () => {
@@ -558,12 +561,19 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 ))
             }
         }
-        const labelLines = Object.entries(labels).map(([name, value]) => `      ${JSON.stringify(name)}: ${JSON.stringify(value)}`)
+        const candidateLabels = {
+            ...labels,
+            'dev.b0dea.cockpit.owner-id': '${COCKPIT_OWNER_ID:?cockpit runtime owner identity is unavailable}',
+            'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
+        }
+        const labelLines = Object.entries(candidateLabels).map(([name, value]) => `      ${JSON.stringify(name)}: ${JSON.stringify(value)}`)
         candidateSource = [
             'services:', '  probe:', `    image: ${JSON.stringify(input.image.reference)}`,
             `    command: ["sh", "-c", ${JSON.stringify(`printf '%s\\n' '${marker}'; printf '%s\\n' '${marker}' > /generated/owned; while :; do sleep 3600; done`)}]`,
+            '    environment: ["DEFAULT_ENV_CANARY=${DEFAULT_ENV_CANARY:-declared}"]',
+            `    env_file: [${JSON.stringify(serviceEnvironmentPath)}]`,
             '    labels:', ...labelLines,
-            '    healthcheck:', '      test: ["CMD", "sh", "-c", "test -f /probe/input"]', '      interval: 1s', '      timeout: 1s', '      retries: 10',
+            '    healthcheck:', '      test: ["CMD", "sh", "-c", "test \\"$$DEFAULT_ENV_CANARY\\" = declared && test \\"$$SERVICE_ENV_CANARY\\" = service-file && test -f /probe/input"]', '      interval: 1s', '      timeout: 1s', '      retries: 10',
             '    volumes:',
             `      - type: bind`, `        source: ${JSON.stringify(siblingPath)}`, '        target: /probe',
             `      - type: bind`, `        source: ${JSON.stringify(generatedPath)}`, '        target: /generated',
@@ -576,6 +586,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             'networks:', '  probe_net:', `    name: ${JSON.stringify(`${projectName}-network`)}`, '    labels:', ...labelLines, '',
         ].join('\n')
         candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
+        await writeFile(defaultEnvironmentPath, 'DEFAULT_ENV_CANARY=unauthenticated\n', { mode: 0o600 })
+        await writeFile(serviceEnvironmentPath, 'SERVICE_ENV_CANARY=service-file\n', { mode: 0o600 })
         await writeFile(candidatePath, candidateSource, { mode: 0o600 })
         // A compose_files stack runs with the ownership override `sync` publishes; the probe writes
         // the same production render instead of running sync in its disposable checkout.
@@ -643,11 +655,11 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         } catch { fail('the container inspection was malformed') }
         if (!checks.profile || !checks.health || !checks.ownership) fail('profile activation, health, mounts, or canonical ownership labels were not closed')
 
-        const readMarker = decode(await execute.run('mount-read', [...composeArgs(input, projectName, candidatePath), 'exec', '-T', 'probe', 'cat', '/probe/input'], candidateArtifact))
+        const readMarker = decode(await execute.run('mount-read', ['container', 'exec', containerId, 'cat', '/probe/input']))
         checks.mountHostToContainer = readMarker === marker
         const writeMarker = await execute.run('mount-write', [
-            ...composeArgs(input, projectName, candidatePath), 'exec', '-T', 'probe', 'sh', '-c', `printf '%s\\n' '${marker}' > /probe/output`,
-        ], candidateArtifact)
+            'container', 'exec', containerId, 'sh', '-c', `printf '%s\\n' '${marker}' > /probe/output`,
+        ])
         checks.mountContainerToHost = writeMarker.kind === 'complete' && (await readFile(outputMarkerPath, 'utf8').catch(() => '')) === `${marker}\n`
         if (!checks.mountHostToContainer || !checks.mountContainerToHost) fail('live bind-mount byte movement was not proven in both directions')
 
@@ -704,7 +716,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 ownedSurvivors = Object.freeze(['cleanup-unavailable'])
             }
         }
-        for (const path of [configPath, candidatePath, controlPath, ownershipPath, generatedPath, siblingsRoot, homePath, join(input.cwd, '.git')]) {
+        for (const path of [configPath, candidatePath, controlPath, defaultEnvironmentPath, ownershipPath,
+            generatedPath, siblingsRoot, homePath, join(input.cwd, '.git')]) {
             try { await rm(path, { recursive: true, force: true }) } catch { checks.teardown = false }
         }
     }

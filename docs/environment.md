@@ -61,9 +61,13 @@ ownership labels to every service, the default network and every named volume th
 `resettable_volumes` entry); `check` drift-checks it, and runtime commands pass it after the
 declared files only while it equals a fresh render. Your Compose files are never edited, and an
 `include` they use is refused because its services cannot be labelled.
-Runtime commands hand Compose the leased `[ports.bases]` variables and each `[[sibling]] var` set
-to that sibling's absolute directory, and nothing else: a `${VAR}` reference needs a `:-default`
-unless it names a leased port or a sibling variable. Each `mount = "always"` sibling must be
+Runtime commands hand Compose only the leased `[ports.bases]` variables, each `[[sibling]] var`
+set to that sibling's absolute directory, and cockpit's authenticated stack and owner identities.
+Every Compose command that interpolates an admitted runtime configuration disables the project
+default `.env`, because those unauthenticated bytes must not change the topology that cockpit
+admitted. Topology admission also does not resolve service `env_file` contents, so service secrets
+cannot enter its evidence; Compose still provides those files to containers when the stack runs.
+Any other `${VAR}` reference needs a `:-default`. Each `mount = "always"` sibling must be
 bind-mounted, since that is what the declaration promises.
 
 ## Sibling and template paths

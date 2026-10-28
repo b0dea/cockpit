@@ -278,6 +278,9 @@ describe('external dependency boundary', () => {
         expect(planned.kind).toBe('complete')
         expect(planned).toMatchObject({ dependency: { id: 'mailer', posture: 'stubbed', measurement: 'pending' } })
         if (planned.kind !== 'complete') return
+        const composeSteps = planned.steps.filter(({ step }) => step.argv[1] === 'compose')
+        expect(composeSteps.length).toBeGreaterThan(0)
+        for (const { step } of composeSteps) expect(step.env.COMPOSE_DISABLE_ENV_FILE).toBe('1')
 
         const result = await verifyExternalDependency(planned, { execute: executeProbe })
         expect(result.kind, JSON.stringify(result)).toBe('complete')

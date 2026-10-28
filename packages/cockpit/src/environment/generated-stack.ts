@@ -21,6 +21,7 @@ import {
 } from './generated-render.js'
 import { redactSensitiveText } from './sensitive.js'
 import { isRuntimeServiceEvidence, isRuntimeTopologyEvidence, projectRuntimeExecutionEnvironment, type RuntimeServiceEvidence, type RuntimeTopologyEvidence } from './runtime.js'
+import { composeProcessEnvironment } from './compose-environment.js'
 
 export { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-render.js'
 export type {
@@ -307,6 +308,7 @@ function generatedObservationStep(
     let cwd = runtime.root
     let timeoutMs: number
     let consumedFiles: ExecutionStep['consumedFiles']
+    let usesCompose = false
     if (observation.kind === 'mount-lstat' || observation.kind === 'toolchain-pin') {
         const currentNode = realpathSync(process.execPath)
         const node = Object.values(runtime.hostExecutables ?? {})
@@ -342,6 +344,7 @@ function generatedObservationStep(
             argvIndexes: Object.freeze([0]), executable: true, executionMode: docker.executionMode,
         }])
     } else if (observation.kind === 'compose-variable') {
+        usesCompose = true
         const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
         argv = Object.freeze([
             docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
@@ -371,6 +374,7 @@ function generatedObservationStep(
                 argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode,
             }])
         } else {
+            usesCompose = true
             const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
             argv = Object.freeze([
                 docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
@@ -385,9 +389,12 @@ function generatedObservationStep(
     }
     const measuredPaths = observation.kind === 'mount-lstat' || observation.kind === 'toolchain-pin'
         ? [resolve(runtime.root, observation.target)] : []
+    const env = usesCompose
+        ? composeProcessEnvironment(runtime.publicEnv)
+        : Object.freeze({ ...runtime.publicEnv })
     return snapshotExecutionStep({
         id: `generated-observation:${observation.id}`,
-        argv, argv0, cwd, env: Object.freeze({ ...runtime.publicEnv }), timeoutMs,
+        argv, argv0, cwd, env, timeoutMs,
         stdoutLimitBytes: runtime.stdoutLimitBytes, stderrLimitBytes: runtime.stderrLimitBytes,
         paths: Object.freeze([...runtime.composeFiles.map(({ path }) => path), ...measuredPaths]), ports: Object.freeze([]),
         labels: Object.freeze({ generatedObservationId: observation.id, generatedObservationKind: observation.kind }),

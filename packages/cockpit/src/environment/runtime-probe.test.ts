@@ -78,7 +78,8 @@ beforeAll(() => {
         dockerInvocationPath = execFileSync('which', ['docker'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
         dockerPath = realpathSync(dockerInvocationPath)
         dockerSha = sha256(readFileSync(dockerPath))
-        imageId = execFileSync(dockerInvocationPath, ['image', 'inspect', 'alpine:latest', '--format', '{{.Id}}'], {
+        const imageReference = process.env.COCKPIT_RUNTIME_TEST_IMAGE ?? 'alpine:latest'
+        imageId = execFileSync(dockerInvocationPath, ['image', 'inspect', imageReference, '--format', '{{.Id}}'], {
             encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
         }).trim()
     } catch {
@@ -354,6 +355,10 @@ describe('installed container-runtime capability promotion', () => {
         if (checks.recovery) {
             expect(checks.resetPreview, JSON.stringify(verdict)).toBe(true)
             expect(checks.teardown, JSON.stringify(verdict)).toBe(true)
+        }
+        if (checks.applicationUp) {
+            expect(checks.mountHostToContainer, JSON.stringify(verdict)).toBe(true)
+            expect(checks.mountContainerToHost, JSON.stringify(verdict)).toBe(true)
         }
         if (verdict.status === 'supported') {
             expect(verdict.operatorAction).toBeNull()

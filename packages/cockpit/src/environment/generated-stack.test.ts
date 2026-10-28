@@ -195,6 +195,7 @@ describe('generated environment rendering', () => {
                 })
                 for (const step of planned.plan.execution.steps) expect(step.env).toEqual(step.labels.overlayLocation === 'host' ? {} : {
                     APP_HOST_PORT: '4110', COCKPIT_OWNER_ID: cockpitId, COCKPIT_STACK_ID: stackId,
+                    COMPOSE_DISABLE_ENV_FILE: '1',
                 })
             }
             const foreignRoot = join(root, 'foreign')
@@ -272,6 +273,7 @@ describe('generated environment rendering', () => {
             })).toBeUndefined()
             const goodExecution = createGeneratedObservationExecution({ authority: good.authority, observation })
             if (goodExecution.kind !== 'planned') throw new Error(goodExecution.reason)
+            expect(goodExecution.step.env.COMPOSE_DISABLE_ENV_FILE).toBe('1')
             expect(admitGeneratedObservation({ execution: goodExecution, outcome: await executeProbe(goodExecution.step) }))
                 .toMatchObject({ kind: 'complete', id: 'compose-variables' })
 

@@ -52,6 +52,7 @@ import { stackId as deriveStackId } from './identity.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
 import type { StateNamespace } from './state.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
+import { composeProcessEnvironment } from './compose-environment.js'
 
 export const mechanism = {
     id: 'runtime-planning',
@@ -1139,6 +1140,7 @@ export function createRuntimeAdapter(
             'runtime-input',
         )
     }
+    input = Object.freeze({ ...input, env: composeProcessEnvironment(input.env) })
     if (!isAbsolute(input.cwd)) {
         return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime working directory must be absolute', input.cwd)
     }
@@ -1345,13 +1347,20 @@ function runtimeCommandEnvironment(
     return Object.freeze(Object.fromEntries(Object.entries(env).filter(([name]) => allowed.has(name))))
 }
 
+function runtimeComposeEnvironment(
+    env: Readonly<Record<string, string>>,
+    generatedPortNames: readonly string[],
+): Readonly<Record<string, string>> {
+    return composeProcessEnvironment(runtimeCommandEnvironment(env, generatedPortNames))
+}
+
 function derivedComposeStep(base: ExecutionStep, id: string, operation: string, operationArgs: readonly string[], stdoutLimitBytes: number, issuanceId: string, timeoutLimitMs = MAX_OBSERVATION_WINDOW_MS, spawnNotAfter?: string, generatedPortNames: readonly string[] = []): ExecutionStep | undefined {
     const configIndex = base.argv.lastIndexOf('config')
     const suffix = base.argv.slice(configIndex)
     if (configIndex < 1 || !(suffix.length === 2 && suffix[1] === '--quiet')
-        && !(suffix.length === 5 && suffix[1] === '--format' && suffix[2] === 'json'
-            && suffix[3] === '--no-interpolate' && suffix[4] === '--no-env-resolution')) return undefined
-    const env = runtimeCommandEnvironment(base.env, generatedPortNames)
+        && !(suffix.length === 4 && suffix[1] === '--format' && suffix[2] === 'json'
+            && suffix[3] === '--no-env-resolution')) return undefined
+    const env = runtimeComposeEnvironment(base.env, generatedPortNames)
     const step: ExecutionStep = Object.freeze({
         ...base,
         id,
@@ -1396,7 +1405,7 @@ export function createRuntimeTopologyPlan(input: {
             base,
             `runtime:docker-compose:topology:${runtime.projectName}`,
             'config',
-            ['config', '--format', 'json', '--no-interpolate', '--no-env-resolution'],
+            ['config', '--format', 'json', '--no-env-resolution'],
             MAX_TOPOLOGY_BYTES,
             issuanceId,
             MAX_OBSERVATION_WINDOW_MS,
@@ -2800,8 +2809,8 @@ function runtimeServiceFailureContext(
     const configIndex = step?.argv.lastIndexOf('config') ?? -1
     const suffix = step?.argv.slice(configIndex)
     if (!step || configIndex < 2 || step.argv[1] !== 'compose'
-        || !(suffix?.length === 5 && suffix[1] === '--format' && suffix[2] === 'json'
-            && suffix[3] === '--no-interpolate' && suffix[4] === '--no-env-resolution')) return undefined
+        || !(suffix?.length === 4 && suffix[1] === '--format' && suffix[2] === 'json'
+            && suffix[3] === '--no-env-resolution')) return undefined
     return Object.freeze({
         stage,
         stackId: topology.stackId,
@@ -2817,7 +2826,7 @@ function runtimeServiceFailureContext(
         observationWindow: topology.observationWindow,
         executable: Object.freeze({ ...topology.runtime.runtimeExecutable }),
         cwd: topology.runtime.cwd,
-        env: runtimeCommandEnvironment(topology.runtime.env, topology.runtime.generatedPortNames),
+        env: runtimeComposeEnvironment(topology.runtime.env, topology.runtime.generatedPortNames),
         composeArgvPrefix: Object.freeze(step.argv.slice(1, configIndex)),
         paths: step.paths,
         consumedFiles: step.consumedFiles,

@@ -52,7 +52,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         'if [ "$1" = "info" ]; then printf "2147483648|2\\n"; exit 0; fi',
         'if [ "$1" = "compose" ]; then',
         '  case " $*" in',
-        '    *" config --format json --no-interpolate --no-env-resolution") /bin/cat "$PWD/topology.json"; exit 0;;',
+        '    *" config --format json --no-env-resolution") /bin/cat "$PWD/topology.json"; exit 0;;',
         '    *" stop"|*" ps --format json --status running") exit 0;;',
         '    *) exit 64;;',
         '  esac',
