@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import { posix, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as ts from 'typescript'
+import * as ts from '@typescript/typescript6'
 import { describe, expect, it } from 'vitest'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -2920,7 +2920,7 @@ function referenceArchitectureViolations(sources: Sources): string[] {
         for (const dependency of importSpecifiers(runtime)) {
             const target = resolveImport(path, dependency, sources)
             if (path === 'scripts/diagnostic-inventory.mjs' && target === 'scripts/docs-lint.mjs'
-                || path.startsWith('packages/cockpit/src/') && (dependency === 'typescript'
+                || path.startsWith('packages/cockpit/src/') && (['typescript', '@typescript/typescript6'].includes(dependency)
                     || target === 'scripts/diagnostic-inventory.mjs' || target === 'scripts/docs-lint.mjs')) {
                 violations.add('ARCH058_REFERENCE_GRAPH')
             }
@@ -6763,6 +6763,7 @@ describe('maintainer reference dependency controls', () => {
         ['scripts/diagnostic-inventory.mjs', "import './docs-lint.mjs'", 'scripts/docs-lint.mjs'],
         ['packages/cockpit/src/references/generate.ts', "import '../../../../scripts/diagnostic-inventory.mjs'", 'scripts/diagnostic-inventory.mjs'],
         ['packages/cockpit/src/references/generate.ts', "import ts from 'typescript'", 'typescript'],
+        ['packages/cockpit/src/references/generate.ts', "import ts from '@typescript/typescript6'", '@typescript/typescript6'],
     ])('refuses reversed maintainer reference dependency in %s', (path, body, dependency) => {
         const sources = new Map([[path, body], [dependency, '']])
         expect(referenceArchitectureViolations(sources)).toContain('ARCH058_REFERENCE_GRAPH')

@@ -14,7 +14,7 @@ function input() {
     return {
         configuredHarnesses: ['claudecode', 'codexcli', 'cursor', 'grokcli', 'opencode'],
         merge: { kind: 'complete', surfaces: [], overrides: [], findings: [] },
-        generated: { kind: 'complete', status: 0, diagnostics: [], mechanism: { package: 'rulesync', version: '40.2.0', role: 'spelling' }, files: [
+        generated: { kind: 'complete', status: 0, diagnostics: [], mechanism: { package: 'rulesync', version: '41.0.0', role: 'spelling' }, files: [
             file('codexcli', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'opencode.jsonc', '{"$schema":"schema.json","instructions":[]}\n'),

@@ -26,7 +26,7 @@
     "cockpit": "bin/cockpit.mjs"
   },
   "scripts": {
-    "build": "tsc --project tsconfig.build.json --declaration",
+    "build": "node ../../node_modules/typescript/bin/tsc --project tsconfig.build.json --declaration --singleThreaded",
     "bundle:rulesync": "node scripts/build-rulesync-generator.mjs",
     "bundle:rulesync:check": "node scripts/build-rulesync-generator.mjs --check",
     "schema": "node --input-type=module --eval \"import { writeFile } from 'node:fs/promises'; import { renderCockpitSchema } from './dist/schema-json.js'; await writeFile('./cockpit.schema.json', renderCockpitSchema())\"",
@@ -52,6 +52,6 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "rulesync": "40.2.0"
+    "rulesync": "41.0.0"
   }
 }

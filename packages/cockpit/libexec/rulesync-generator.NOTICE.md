@@ -865,7 +865,7 @@ SOFTWARE.
 
 ---
 
-## rulesync 40.2.0
+## rulesync 41.0.0
 
 SPDX license: MIT
 

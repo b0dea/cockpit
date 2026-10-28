@@ -27,7 +27,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/surfaces/generator-adapter.ts',
     exports: ['generateSurfaceBatch', 'generateSurfaceBundle', 'generateSurfaceEstate'],
     package: 'rulesync',
-    version: '40.2.0',
+    version: '41.0.0',
     role: 'spelling',
 } as const
 
@@ -53,7 +53,7 @@ export type SurfaceGenerationOutcome =
         kind: 'complete'
         status: 0
         diagnostics: readonly []
-        mechanism: Readonly<{ package: 'rulesync'; version: '40.2.0'; role: 'spelling' }>
+        mechanism: Readonly<{ package: 'rulesync'; version: '41.0.0'; role: 'spelling' }>
         files: readonly RenderedSurfaceFile[]
         warnings?: readonly SurfaceGenerationWarning[]
     }>
@@ -82,7 +82,7 @@ export type SurfaceBundleGenerationOutcome =
         status: 0
         diagnostics: readonly []
         format: SurfaceBundleFormat
-        mechanism: Readonly<{ package: 'rulesync'; version: '40.2.0'; role: 'packaging' }>
+        mechanism: Readonly<{ package: 'rulesync'; version: '41.0.0'; role: 'packaging' }>
         files: readonly RenderedSurfaceBundleFile[]
     }>
     | Exclude<SurfaceGenerationOutcome, { kind: 'complete' }>
@@ -180,7 +180,7 @@ interface EstatePassResult {
     readonly jobs: ReadonlyMap<string, TargetGeneration | SurfaceGenerationDiagnostic>
 }
 
-const PINNED_VERSION = '40.2.0'
+const PINNED_VERSION = '41.0.0'
 const OPERATION_TIMEOUT_MS = 30_000
 const CLEANUP_TIMEOUT_MS = 2_000
 const MAX_NODE_BYTES = 536_870_912
@@ -197,7 +197,7 @@ const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly []
 const EMPTY_WARNINGS = Object.freeze([]) as readonly SurfaceGenerationWarning[]
 // This digest binds the checked-in, self-contained generator asset. The build-time package
 // tree is deliberately absent from the runtime authority boundary.
-const PINNED_GENERATOR_BUNDLE_SHA256 = '97fd6f3fcbd99edbff8064a912f432ae0fae9b695dcba3004d487865b0982449'
+const PINNED_GENERATOR_BUNDLE_SHA256 = '2bddc020c66d6f1871ea3409b2419179b94b5f80f3d31d0d3f01178017bb18b5'
 
 const ESTATE_GENERATOR_WORKER = String.raw`
 const fs = require('node:fs');

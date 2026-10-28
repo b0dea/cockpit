@@ -15,15 +15,16 @@
     "references": "npm run build && node --input-type=module -e \"import { publishRepositoryReferences } from './scripts/diagnostic-inventory.mjs'; const r = await publishRepositoryReferences(process.cwd()); console.log(JSON.stringify(r, null, 2)); process.exitCode = r.ok ? 0 : 1\"",
     "test": "node scripts/run-tests.mjs",
     "test:changed": "node scripts/run-changed-tests.mjs",
-    "typecheck": "tsc --build"
+    "typecheck": "node node_modules/typescript/bin/tsc --build --singleThreaded"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
-    "@types/node": "22.20.5",
+    "@types/node": "26.6.5",
+    "@typescript/typescript6": "6.0.2",
     "ajv": "8.20.0",
     "ajv-draft-04": "1.0.0",
     "tsx": "4.23.15",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vitest": "5.0.5"
   },
   "allowScripts": {

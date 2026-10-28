@@ -3,7 +3,7 @@ import { createHash, createPublicKey, verify as verifySignature } from 'node:cry
 import { readFileSync, writeFileSync } from 'node:fs'
 import { posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import ts from 'typescript'
+import ts from '@typescript/typescript6'
 import {
     checkRepositoryReferences,
     diagnosticInventory,

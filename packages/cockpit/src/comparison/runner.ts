@@ -1,6 +1,6 @@
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, type Stats } from 'node:fs'
 import { open, realpath, stat } from 'node:fs/promises'
 import type { ExecutionStep } from '../environment/contract.js'
 import type { ResolvedExecutable } from '../environment/executable.js'
@@ -156,7 +156,7 @@ export async function observeComparisonSubject(input: ComparisonSubjectObservati
     return projection
 }
 
-function sameFileObservation(left: Awaited<ReturnType<typeof stat>>, right: Awaited<ReturnType<typeof stat>>): boolean {
+function sameFileObservation(left: Stats, right: Stats): boolean {
     return left.dev === right.dev && left.ino === right.ino && left.size === right.size
         && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs
 }

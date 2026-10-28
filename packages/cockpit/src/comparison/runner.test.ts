@@ -25,7 +25,7 @@ async function compilePackagedComparisonRuntime(sourceRevision: string) {
         join(root, 'libexec/validate-harness-evidence.mjs'))
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: '@example/cockpit', version: '1.0.0', type: 'module',
         engines: { node: '>=22' }, cockpitSourceRevision: sourceRevision }))
-    await run(process.execPath, [require.resolve('typescript/bin/tsc'), '--project', join(process.cwd(), 'packages/cockpit/tsconfig.build.json'),
+    await run(process.execPath, [join(dirname(require.resolve('typescript/package.json')), 'bin/tsc'), '--singleThreaded', '--project', join(process.cwd(), 'packages/cockpit/tsconfig.build.json'),
         '--rootDir', join(process.cwd(), 'packages/cockpit/src'), '--outDir', join(root, 'dist')], { cwd: process.cwd() })
     return {
         runner: await import(pathToFileURL(join(root, 'dist/comparison/runner.js')).href),

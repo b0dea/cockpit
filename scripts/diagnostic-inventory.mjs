@@ -4,7 +4,7 @@ import { constants } from 'node:fs'
 import { lstat, open, readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import ts from 'typescript'
+import ts from '@typescript/typescript6'
 
 const MAX_GIT_OUTPUT = 64 * 1024 * 1024
 const MAX_EXECUTION_OUTPUT = 16 * 1024 * 1024
@@ -747,7 +747,7 @@ async function revalidateCommittedInputs(snapshot, owners, deadline) {
 
 async function authenticateBuiltReferenceOwner(record) {
     const lock = JSON.parse(textBlob(record, 'package-lock.json'))
-    if (lock?.packages?.['node_modules/typescript']?.version !== ts.version) {
+    if (lock?.packages?.['node_modules/@typescript/old']?.version !== ts.version) {
         throw new Error('[REFERENCE_BUILD_UNAUTHENTICATED] installed TypeScript does not match captured package-lock.json')
     }
     for (const row of record.rows) {

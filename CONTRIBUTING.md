@@ -44,6 +44,12 @@ test "$(git config --local --get core.hooksPath)" = .githooks
 The last two lines turn on the repository's hooks: a pre-commit anonymisation scan and a
 commit-message check. Git does not activate a tracked hooks directory by itself.
 
+The build and typecheck scripts invoke the native TypeScript compiler directly. Documentation
+and architecture checks use the separate compiler API compatibility package listed in
+[package.json](package.json), because the native compiler does not expose that API. Use the
+repository scripts rather than a bare `tsc`: the compatibility package also installs a compiler
+executable. Compiler work runs on one thread to leave capacity for other sessions.
+
 ## Development loop
 
 While iterating, run the smallest test that covers the behaviour you are changing:

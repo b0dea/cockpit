@@ -19,6 +19,8 @@ const EXPECTED_PACKAGE_LINKS = Object.freeze({
 })
 const REVIEWED_EXECUTABLE_LOCK_NODES = Object.freeze([
     {"path": "node_modules/@changesets/cli", "version": "3.0.3", "hasInstallScript": false, "bin": {"changeset": "bin.js"}},
+    {"path": "node_modules/@typescript/old", "version": "6.0.3", "hasInstallScript": false, "bin": {"tsc": "bin/tsc", "tsserver": "bin/tsserver"}},
+    {"path": "node_modules/@typescript/typescript6", "version": "6.0.2", "hasInstallScript": false, "bin": {"tsc6": "bin/tsc6"}},
     {"path": "node_modules/esbuild", "version": "0.28.2", "hasInstallScript": true, "bin": {"esbuild": "bin/esbuild"}, "allowScript": true},
     {"path": "node_modules/esprima", "version": "4.0.1", "hasInstallScript": false, "bin": {"esparse": "bin/esparse.js", "esvalidate": "bin/esvalidate.js"}},
     {"path": "node_modules/fsevents", "version": "2.3.3", "hasInstallScript": true, "bin": null, "allowScript": true},
@@ -27,10 +29,10 @@ const REVIEWED_EXECUTABLE_LOCK_NODES = Object.freeze([
     {"path": "node_modules/js-yaml", "version": "5.5.0", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.mjs"}},
     {"path": "node_modules/nanoid", "version": "3.3.20", "hasInstallScript": false, "bin": {"nanoid": "bin/nanoid.cjs"}},
     {"path": "node_modules/rolldown", "version": "1.2.15", "hasInstallScript": false, "bin": {"rolldown": "bin/cli.mjs"}},
-    {"path": "node_modules/rulesync", "version": "40.2.0", "hasInstallScript": false, "bin": {"rulesync": "dist/cli/index.js"}},
+    {"path": "node_modules/rulesync", "version": "41.0.0", "hasInstallScript": false, "bin": {"rulesync": "dist/cli/index.js"}},
     {"path": "node_modules/semver", "version": "7.8.5", "hasInstallScript": false, "bin": {"semver": "bin/semver.js"}},
     {"path": "node_modules/tsx", "version": "4.23.15", "hasInstallScript": false, "bin": {"tsx": "dist/cli.mjs"}},
-    {"path": "node_modules/typescript", "version": "6.0.3", "hasInstallScript": false, "bin": {"tsc": "bin/tsc", "tsserver": "bin/tsserver"}},
+    {"path": "node_modules/typescript", "version": "7.0.2", "hasInstallScript": false, "bin": {"tsc": "bin/tsc"}},
     {"path": "node_modules/vite", "version": "8.3.5", "hasInstallScript": false, "bin": {"vite": "bin/vite.js"}},
     {"path": "node_modules/vitest", "version": "5.0.5", "hasInstallScript": false, "bin": {"vitest": "vitest.mjs"}},
     {"path": "node_modules/which", "version": "2.0.2", "hasInstallScript": false, "bin": {"node-which": "bin/node-which"}},
