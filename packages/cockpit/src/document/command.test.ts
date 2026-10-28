@@ -816,6 +816,8 @@ describe('operator-confirmed document completion', () => {
         const defaults = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, guardAnswer] } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        expect(defaults.artifact).not.toContain('# [default] environment.compose_files')
+        expect(defaults.artifact).toContain('# [default] environment.resettable_volumes = []')
         const complete = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)] } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
@@ -908,6 +910,7 @@ describe('operator-confirmed document completion', () => {
                 guardAnswer],
         } })
         expect(unresolvedDefaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        expect(unresolvedDefaults.artifact).not.toContain('# [default] environment.compose_files')
         const unresolved = await documentCommand({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer,

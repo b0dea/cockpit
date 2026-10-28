@@ -986,6 +986,8 @@ function completeConfigurationDocument(
                     ? issueSummary(parsedCompose.error) : 'compose_files must list at least one path'}`,
                 generatedQuestion.field)
             environment = parsedCompose.data
+            const defaultIndex = attributions.findIndex(row => row.target === 'environment.compose_files')
+            if (defaultIndex >= 0) attributions.splice(defaultIndex, 1)
         } else {
             const parsedGenerated = GeneratedEnvironment.safeParse(generatedRead.value)
             if (!parsedGenerated.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
