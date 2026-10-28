@@ -1076,7 +1076,7 @@ export function createRuntimeAdapter(
         const entries = Object.entries(portProjection.lease.ports).sort(([left], [right]) => left.localeCompare(right))
         const projectedPorts = entries.map(([, port]) => port).sort((left, right) => left - right)
         const requestedPorts = [...input.ports].sort((left, right) => left - right)
-        if (input.stackId !== portProjection.lease.stackId
+        if (input.stackId !== undefined && input.stackId !== portProjection.lease.stackId
             || entries.length === 0 || entries.some(([name]) => !/^[A-Z][A-Z0-9_]*$/.test(name)
                 || HOST_PROCESS_CONTROL_ENV.test(name) || Object.hasOwn(originalEnv, name))
             || JSON.stringify(projectedPorts) !== JSON.stringify(requestedPorts)) {

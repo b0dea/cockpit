@@ -1719,6 +1719,12 @@ fi
             const ownFile = { reference: 'compose.own.yml', canonicalPath: ownPath, source: ownCompose, sha256: sha(ownCompose) }
             const ownProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
             if (!ownProjection) throw new Error('compose-first port authority unavailable')
+            expect(createRuntimeAdapter({
+                ...runtimeInput, operation: 'validate', cwd: directory, projectName: 'synthetic',
+                composeFiles: [ownFile], env: { PATH: process.env.PATH ?? '/usr/bin' },
+                ports: [expectedPort], labels: {},
+            }, { ownComposeFiles: true, portLeaseProjection: ownProjection,
+                siblingDirectories: { APP_DIR: '/synthetic/siblings/app' } })).toMatchObject({ kind: 'preview' })
             const owned = await topologyEvidence({ services: { app: { image: 'busybox', labels: {
                 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256,
             } } } }, [], {

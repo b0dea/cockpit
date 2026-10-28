@@ -154,7 +154,6 @@ export function planLogs(
         composeVersion: input.composeVersion, executable: input.executable, operation: 'validate', cwd: input.cwd,
         composeFiles: input.composeFiles, projectName: input.projectName, env: input.env, ports: projectedPorts,
         labels: generatedComposeAuthority ? { configSha256: input.configSha256 } : {}, timeoutMs: input.timeoutMs,
-        ...(ownComposeAuthority ? { stackId: input.stackId } : {}),
     }, generatedComposeAuthority ? { generatedComposeAuthority } : ownComposeAuthority)
     if (composeBoundary.kind === 'refusal') return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: composeBoundary.diagnostics[0].message }
     const argv = [input.executable.canonicalPath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', String(input.tail), ...(input.follow ? ['--follow'] : []), input.containerId] as [string, ...string[]]
