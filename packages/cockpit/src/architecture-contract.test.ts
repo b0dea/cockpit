@@ -3950,7 +3950,7 @@ function nestedPublicationAuthorityViolations(application: string, transaction: 
             && grouping.includes('newSet(')
             && grouping.includes('parents.size>1')
             && grouping.includes('groupFrameBounded(anchor!,entries)')
-            && grouping.includes('logicalWeight:1')
+            && grouping.includes('mutations:Object.freeze(entries),logicalWeight:1')
             && grouping.includes('phaseOrder'),
         helperEntry.includes('readonlychain:readonlyHelperChainEntry[]')
             && parser.includes("helperRecord(item,['chain','name','operation','sha256','target','stage','backup','priorKind','priorSha256','priorTarget','priorMode','priorIdentity'])")
@@ -4001,7 +4001,7 @@ function nestedPublicationAuthorityViolations(application: string, transaction: 
             && synchronize.indexOf('applied.push(current)') < synchronize.indexOf('awaitrecordRecovery(staged.directory,applied)'),
         publicationGroup.includes('readonlylogicalWeight:number')
             && appliedGroup.includes('readonlylogicalWeight:number')
-            && grouping.includes('logicalWeight:1')
+            && grouping.includes('mutations:Object.freeze(entries),logicalWeight:1')
             && compact(body('admitPublicationPlan')).includes('returnawaitadmitPlan(input,adapters)')
             && preparation.includes('constcount=groups?.reduce((total,group)=>total+group.logicalWeight,0)??0')
             && preparation.includes('count*PUBLICATION_HELPER_CALLS_PER_GROUP*PUBLICATION_HELPER_SLOT_MS>TRANSACTION_TIMEOUT_MS')
@@ -4150,7 +4150,7 @@ describe('product architecture contract', () => {
             ['filter(path => !customSurfacePaths.has(path))', 'filter(() => true)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_1'],
             ['compactSurfacePaths.has(action.path) ? compactAnchorFor(action.path) : undefined', 'compactAnchorFor(action.path)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_2'],
             ['parents.size > 1 && groupFrameBounded(anchor!, entries)', 'parents.size >= 1 && groupFrameBounded(anchor!, entries)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_3'],
-            ['logicalWeight: 1', 'logicalWeight: cluster.length', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_3'],
+            ['mutations: Object.freeze(entries), logicalWeight: 1', 'mutations: Object.freeze(entries), logicalWeight: cluster.length', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_3'],
             ['preparedEntryChainsValid(entries, requests)', 'true', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_4'],
             ['const status = await lstat(current)', 'const status = await lstat(groupPath)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_5'],
             ['if (!directory.created) return false', 'if (directory.created) return false', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_6'],
