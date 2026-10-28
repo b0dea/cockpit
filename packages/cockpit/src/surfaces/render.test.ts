@@ -47,7 +47,8 @@ describe('surface rendering', () => {
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind !== 'complete') return
         expect(result.entries.find(entry => entry.path === 'AGENTS.md')).toMatchObject({
-            kind: 'shared-region', region: { bytes: expect.stringContaining('# Working here\nUse the cockpit.\n') },
+            kind: 'shared-region', harnesses: [...input().configuredHarnesses].sort(),
+            region: { bytes: expect.stringContaining('# Working here\nUse the cockpit.\n') },
         })
         expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
             kind: 'shared-region', region: { bytes: '@AGENTS.md\n' },

@@ -491,7 +491,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
             browserMcp.set(path, contribution)
         } else return refuse('SURFACE_INPUT_INVALID', 'browser emitted an unsupported physical path', path)
     }
-    const instructionPaths = [['claudecode', 'AGENTS.md'], ['codexcli', 'AGENTS.md'], ['opencode', 'AGENTS.md']] as const
+    const instructionPaths = SURFACE_TARGETS.filter(target => configuredSet.has(target)).map(target => [target, 'AGENTS.md'] as const)
     add(markdown, 'CLAUDE.md', { harnesses: ['claudecode'], scope: 'always', capability: 'instructed', bytes: '@AGENTS.md' })
     if (typeof captured.instructions === 'string') for (const [target, path] of instructionPaths) {
         add(markdown, path, { harnesses: [target], scope: 'always', capability: 'instructed', bytes: captured.instructions })
