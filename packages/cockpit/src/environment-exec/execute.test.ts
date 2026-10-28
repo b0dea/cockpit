@@ -382,6 +382,62 @@ describe('mechanical environment executor', () => {
         }
     })
 
+    it('refuses a Windows probe before spawning without owned process-tree support', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-process-admission-'))
+        scratch.push(directory)
+        const marker = join(directory, 'spawned')
+        const step = nodeStep('unsupported-probe', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`)
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+        let outcome: Awaited<ReturnType<typeof executeProbe>>
+        try {
+            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+            outcome = await executeProbe(step)
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+
+        expect(outcome).toEqual(expect.objectContaining({
+            kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED',
+            execution: expect.objectContaining({ started: false, exitCode: 1 }),
+        }))
+        expect(outcome).not.toHaveProperty('receipt')
+        expect(executionOutcomeMatches(outcome, step)).toBe(true)
+        expect(existsSync(marker)).toBe(false)
+    })
+
+    it('refuses a Windows plan without starting its primary or compensation commands', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-plan-admission-'))
+        scratch.push(directory)
+        const primary = join(directory, 'primary')
+        const compensation = join(directory, 'compensated')
+        const step = nodeStep('unsupported-primary',
+            `require('node:fs').writeFileSync(${JSON.stringify(primary)}, 'spawned'); process.exitCode = 1`, {
+                compensation: [nodeStep('must-not-compensate',
+                    `require('node:fs').writeFileSync(${JSON.stringify(compensation)}, 'compensated')`)],
+            })
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+        let outcome: Awaited<ReturnType<typeof executePlan>>
+        try {
+            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+            outcome = await executePlan({ steps: [step] })
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+
+        expect(outcome).toEqual(expect.objectContaining({
+            kind: 'refusal', status: 2,
+            diagnostics: [expect.objectContaining({ code: 'EXECUTION_PRECONDITION_CHANGED' })],
+            execution: {
+                completedStepIds: [], failedStep: { id: step.id, started: false },
+                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
+            },
+        }))
+        expect(existsSync(primary)).toBe(false)
+        expect(existsSync(compensation)).toBe(false)
+    })
+
     it('refuses an already-expired step before spawning it', async () => {
         const marker = join(mkdtempSync(join(tmpdir(), 'cockpit-expired-step-')), 'spawned')
         scratch.push(dirname(marker))

@@ -610,6 +610,8 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
     const spawnExpired = (): boolean => step.spawnNotAfter !== undefined && Date.now() > Date.parse(step.spawnNotAfter)
     if (spawnExpired()) return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
     if (signal?.aborted) return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_ABORTED)
+    // A Windows child exiting does not prove its descendants stopped; no owned-tree adapter exists.
+    if (process.platform === 'win32') return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
     if (!await filesystemChecksPass(step.filesystemChecks)) {
         return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
     }
@@ -637,7 +639,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 cwd: step.cwd,
                 env: step.env,
                 stdio: ['ignore', 'pipe', 'pipe'],
-                detached: process.platform !== 'win32',
+                detached: true,
             })
     } catch {
         return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED)
@@ -693,7 +695,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
             resolveStep(result())
         }
         const terminate = (terminationSignal: NodeJS.Signals): void => {
-            if (runningProcess.pid !== undefined && process.platform !== 'win32') {
+            if (runningProcess.pid !== undefined) {
                 try {
                     process.kill(-runningProcess.pid, terminationSignal)
                     return
@@ -705,7 +707,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         }
         const processGroupGone = (): boolean => {
             if (closed === undefined) return false
-            if (runningProcess.pid === undefined || process.platform === 'win32') return true
+            if (runningProcess.pid === undefined) return true
             try {
                 process.kill(-runningProcess.pid, 0)
                 return false

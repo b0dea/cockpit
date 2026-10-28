@@ -495,7 +495,10 @@ a state publication is active or its ownership could not be verified; inspect th
 do not assume it committed.
 
 `EXECUTION_PRECONDITION_CHANGED` means an inspected input changed before execution; inspect the
-new input and retry. `EXECUTION_SPAWN_FAILED`, `EXECUTION_STAGING_FAILED`,
+new input and retry. It also refuses process execution on Windows, where cockpit cannot prove
+that a child process and all its descendants have stopped. Run the command on a
+[supported host](getting-started.md#install-cockpit); no child command or compensation starts.
+`EXECUTION_SPAWN_FAILED`, `EXECUTION_STAGING_FAILED`,
 `EXECUTION_STAGING_CLEANUP_FAILED`, `EXECUTION_TIMEOUT`, `EXECUTION_STDOUT_LIMIT`,
 `EXECUTION_STDERR_LIMIT`, `EXECUTION_STEP_FAILED`, and `EXECUTION_ABORTED` identify the failed
 execution boundary. Use its target and bounded stderr to repair the named executable, staging
