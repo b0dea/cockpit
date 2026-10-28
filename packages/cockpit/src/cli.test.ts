@@ -157,6 +157,10 @@ describe('closed ordinary invocation metadata', () => {
             const argv = ['document', 'registry-resolve'].includes(args[0]!) ? args : [...args, '--config', authority.configPath]
             expect(ordinary(argv), argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
         }
+        for (const field of ['environment.install_policies', 'environment.test_data']) {
+            const argv = ['init', '.', '--target', 'codexcli', '--reset-answer', field, '--json']
+            expect(ordinary(argv), field).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
+        }
     })
 
     it('requires the exact resolved config for every available config-bearing row', () => {

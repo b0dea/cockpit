@@ -534,7 +534,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         const valid = option.role === 'confined-path' ? confined(text)
             : option.role === 'resolved-config' ? confined(text) && resolve(source.canonicalRoot, text) === source.configPath
             : option.role === 'declared-service' ? source.services.includes(text)
-            : option.role === 'field' ? /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(text) && text.length <= 256
+            : option.role === 'field' ? /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(text) && text.length <= 256
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
