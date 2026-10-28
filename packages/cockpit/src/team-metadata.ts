@@ -169,7 +169,8 @@ async function sourceInstallCandidate(authority: RootAuthority, packageBytes: st
     const rootDependencies = rootEntry && object(rootEntry.devDependencies) ? rootEntry.devDependencies : undefined
     const installedValue = packages?.[`node_modules/${PACKAGE}`]
     const installedEntry = object(installedValue) ? installedValue : undefined
-    if (!packages || !rootEntry || !rootDependencies || !installedEntry || rootDependencies[PACKAGE] !== spec
+    if (!packages || !rootEntry || !rootDependencies || !installedEntry
+        || (rootDependencies[PACKAGE] !== spec && rootDependencies[PACKAGE] !== VERSION)
         || installedEntry.version !== VERSION || installedEntry.resolved !== spec) return undefined
     const bytes = `${JSON.stringify({ ...lockRecord, packages: { ...packages, '': {
         ...rootEntry, devDependencies: { ...rootDependencies, [PACKAGE]: VERSION },

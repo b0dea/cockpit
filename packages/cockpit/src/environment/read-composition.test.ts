@@ -447,6 +447,8 @@ describe('production read command composition', () => {
         const observation = await adapters.logs.observe({ configPath: source.path, service: 'api' })
         expect(observation.ownComposeAuthority).toMatchObject({
             ownComposeFiles: true,
+            cockpitId: lifecycleRecord.cockpitId,
+            stackId,
             portLeaseProjection: { lease: { ports: { APP_HOST_PORT: 4100 } } },
             siblingDirectories: { APP_DIR: '/synthetic/app' },
         })

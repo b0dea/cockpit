@@ -396,6 +396,8 @@ export function createReadCommandAdapters(
         }
         const ownComposeAuthority = generated ? undefined : Object.freeze({
             ownComposeFiles: true as const,
+            cockpitId: context.cockpitId,
+            stackId: context.stackId,
             portLeaseProjection: ports,
             siblingDirectories: Object.freeze(Object.fromEntries(configuration.config.sibling.map((sibling) => [
                 sibling.var,

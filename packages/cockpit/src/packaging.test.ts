@@ -626,7 +626,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 })
 
-it('normalizes an authenticated source install during installed init without changing product metadata', () => {
+it('resumes and normalizes an authenticated source install during installed init without changing product metadata', () => {
     const requestedRoot = join(packScratch, 'source-install-init')
     mkdirSync(join(requestedRoot, 'library'), { recursive: true })
     const root = realpathSync(requestedRoot)
@@ -648,6 +648,10 @@ it('normalizes an authenticated source install during installed init without cha
     execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact', sourceArchive], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })
+    const interruptedLock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+    expect(interruptedLock.packages[''].devDependencies['@b0dea/cockpit']).toMatch(/^file:/)
+    interruptedLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
+    writeFileSync(join(root, 'package-lock.json'), `${JSON.stringify(interruptedLock, null, 2)}\n`)
     const launcher = join(root, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
     const run = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
         cwd: root, env, encoding: 'utf8', timeout: 30_000,
