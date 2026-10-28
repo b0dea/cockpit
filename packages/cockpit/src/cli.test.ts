@@ -15,6 +15,7 @@ import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './regi
 import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
 import { commands, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
+import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
 
 // Human-mode runs publish no invocation record; it exists only in the --json envelope on stdout.
 function humanStderr(stderr: string): string {
@@ -2052,7 +2053,7 @@ describe('init command admission', () => {
     })
 
     it('binds one explicit root and target and keeps JSON preview read-only', async () => {
-        for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {
+        for (const target of SURFACE_TARGETS) {
             let stdout = ''
             const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
                 kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
