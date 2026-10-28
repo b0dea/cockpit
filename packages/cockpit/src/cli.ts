@@ -641,7 +641,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
 function renderHelp(): string {
     const commandWidth = Math.max(...commands.map((command) => command.name.length))
     const commandLines = commands.map(
-        (command) => `  ${command.name.padEnd(commandWidth)}  ${command.summary}${command.experimental ? ' (experimental)' : ''}`,
+        (command) => `  ${command.name.padEnd(commandWidth)}  ${command.summary}${'experimental' in command && command.experimental ? ' (experimental)' : ''}`,
     )
     return ['Usage: cockpit <command> [options]', '', 'Commands:', ...commandLines, ''].join('\n')
 }
