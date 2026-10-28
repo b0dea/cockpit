@@ -44,7 +44,7 @@ describe('invocation publication', () => {
         expect(result.status).toBe(exitCode)
         const diagnostics = humanStderr(result.stderr)
         if (verb === 'help') expect(result.stdout).toContain('Usage: cockpit')
-        else if (verb === 'version') expect(result.stdout).toBe('@b0dea/cockpit 0.0.0 (Node >=22; source development)\n')
+        else if (verb === 'version') expect(result.stdout).toBe('@b0dea/cockpit 0.0.0 (Node ^22.13.0 || ^24.0.0 || ^26.0.0; source development)\n')
         else if (verb === 'guard-evaluate') {
             if (native) {
                 expect(result.stdout).toBe('')
@@ -433,7 +433,7 @@ describe('CLI help', () => {
         const result = run(['--version'])
 
         expect(result.status).toBe(0)
-        expect(result.stdout).toBe('@b0dea/cockpit 0.0.0 (Node >=22; source development)\n')
+        expect(result.stdout).toBe('@b0dea/cockpit 0.0.0 (Node ^22.13.0 || ^24.0.0 || ^26.0.0; source development)\n')
         expect(humanStderr(result.stderr)).toBe('')
     })
 })
