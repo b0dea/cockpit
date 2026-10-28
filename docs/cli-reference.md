@@ -90,35 +90,6 @@ Configuration: `none`. Owners: none.
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/health-composition.ts` | no static remedy captured; inspect implementing owners |
 
-## cockpit compare
-
-Validate an isolated comparison, run it, or inspect its operator ledger.
-
-Configuration: `none`. Owners: none.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--fixture` | string | unset |
-| `--config` | string | unset |
-| `--ledger` | string | unset |
-| `--json` | boolean | `false` |
-
-| Operation | Configuration | Required flags | Admitted flags |
-| --- | --- | --- | --- |
-| `validate` | `none` | `--fixture` | `--fixture`, `--json` |
-| `run` | `resolved` | `--fixture`, `--config` | `--fixture`, `--config`, `--json` |
-| `status` | `none` | `--fixture`, `--ledger` | `--fixture`, `--ledger`, `--json` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-| Diagnostic | Implementing owners | Source remedy |
-| --- | --- | --- |
-| `COMPARISON_UNAVAILABLE` | `packages/cockpit/src/comparison/command.ts` | no static remedy captured; inspect implementing owners |
-
 ## cockpit document
 
 Describe an existing cockpit as attributed cockpit.toml content.
@@ -372,6 +343,8 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 ## cockpit upgrade
 
 Inspect a reviewable upgrade sequence without applying changes.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packages/cockpit/src/schema.ts`.
 
@@ -664,6 +637,8 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 
 Record an explicitly confirmed environment baseline.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -685,6 +660,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-intake
 
 Prepare a source-bound work order.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -710,6 +687,8 @@ Configuration: `unavailable`. Owners: none.
 
 Report current work-order state.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -731,6 +710,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-accept
 
 Interactively accept the exact current work order.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -755,6 +736,8 @@ Configuration: `unavailable`. Owners: none.
 
 Interactively renew a changed work-order contract.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -778,6 +761,8 @@ Configuration: `unavailable`. Owners: none.
 
 Resume the next executable step of the single active work order.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -798,6 +783,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-recover
 
 Inspect or explicitly recover one interrupted work lock.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -822,6 +809,8 @@ Configuration: `unavailable`. Owners: none.
 
 Execute one admitted work-order step.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -844,6 +833,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-record
 
 Persist current work-order progress.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -868,6 +859,8 @@ Configuration: `unavailable`. Owners: none.
 
 Review the current accepted work order.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -889,6 +882,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-sweep
 
 Inspect or apply a reversible work-order sweep.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -912,6 +907,8 @@ Configuration: `unavailable`. Owners: none.
 
 Reverse an authenticated work-order sweep.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -933,6 +930,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-programme-mint
 
 Mint the next declared programme work order.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -958,6 +957,8 @@ Configuration: `unavailable`. Owners: none.
 
 Report attributed work-order metrics.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -978,6 +979,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit work-grade
 
 Independently grade the current accepted work order.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -1001,6 +1004,8 @@ Configuration: `unavailable`. Owners: none.
 
 Drive the declared application browser surfaces.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -1022,6 +1027,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit browser-accessibility
 
 Collect bounded application accessibility observations.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
@@ -1045,6 +1052,8 @@ Configuration: `unavailable`. Owners: none.
 
 Capture the declared application surfaces.
 
+Status: experimental. This interface may change before a stable release.
+
 Configuration: `unavailable`. Owners: none.
 
 | Flag | Type | Default |
@@ -1066,6 +1075,8 @@ Configuration: `unavailable`. Owners: none.
 ## cockpit browser-debugger
 
 Prepare an explicitly requested browser debugger.
+
+Status: experimental. This interface may change before a stable release.
 
 Configuration: `unavailable`. Owners: none.
 
