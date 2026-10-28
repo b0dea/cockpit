@@ -82,6 +82,12 @@ Spec and workflow tools also generate files into repositories. cockpit adds thre
 typically lack: a drift check against installed generated files, a `--dry-run` preview of every
 write, and CLI and configuration references generated from the source so they cannot go stale.
 
+## Current platform limits
+
+Native Windows execution is not implemented. Process ownership, filesystem publication and
+shell guards currently require macOS or Linux; use a host meeting the
+[platform requirements](getting-started.md#install-cockpit).
+
 ## Non-goals
 
 - **Not a planner.** cockpit does not decide what work to do. Pair it with a spec or workflow tool.
@@ -89,7 +95,6 @@ write, and CLI and configuration references generated from the source so they ca
   [Safety and autonomy](safety-and-autonomy.md).
 - **No telemetry.** The only network request cockpit makes itself is `doctor` reading the latest
   published version from the npm registry, skipped when `CI` or `NO_UPDATE_NOTIFIER` is set.
-- **No Windows.** Process-group handling and the shell guards target macOS and Linux.
 - **Not a monorepo or build-system replacement.** It can manage one repository or several, but
   delegates each repository's build and dependency graph to that repository's own tools.
 - **No per-test containers.** One stack per checkout, shared across the agent's work.

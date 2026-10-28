@@ -164,7 +164,9 @@ repository carries only synthetic fixtures. What is true today:
   [Getting started](docs/getting-started.md#install-cockpit). Windows is not supported.
 - **Runtime commands need a measured local Docker-compatible runtime.** `up`, `session`,
   `preflight`, `down` and `reset` require Docker Compose and a successful local measurement.
-  Generation, `setup` and `check` work without Docker. See the owned
+  Generation and surfaces-only `setup` and `check` work without a container runtime; validating
+  declared Compose files requires Docker Compose. See the
+  [prerequisites](docs/getting-started.md#install-cockpit) and the owned
   [runtime identity and measurement table](docs/environment.md#measure-the-container-runtime).
 - **Generation and native enforcement have separate evidence.** The
   [capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*
