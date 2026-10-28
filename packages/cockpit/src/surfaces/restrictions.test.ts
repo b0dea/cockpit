@@ -6,7 +6,7 @@ import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stringify } from 'smol-toml'
 import { encodeOwnershipManifest } from './ownership.js'
-import { cockpitId } from '../environment/identity.js'
+import { publicationCockpitId } from '../environment/identity.js'
 import { spawn, spawnSync } from 'node:child_process'
 import { encodeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
@@ -142,7 +142,7 @@ function complete(value: ReturnType<typeof expandRestrictions>): RestrictionExpa
         }
         const sourceSha256 = createHash('sha256').update(context.source).digest('hex')
         const manifest = encodeOwnershipManifest({ root: context.root, configPath: context.configPath,
-            cockpitId: cockpitId({ name: 'synthetic-restrictions', mainCheckoutPath: context.root }),
+            cockpitId: publicationCockpitId({ name: 'synthetic-restrictions' }),
             generation: 'a'.repeat(64), sourceSha256, personaSource: { path: 'fixtures/synthetic.json', sha256: 'b'.repeat(64) },
             owned: files, surfaces: [] })
         writeFileSync(join(context.root, '.cockpit/generated-environment-ownership.json'), manifest.bytes)
