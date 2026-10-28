@@ -2027,7 +2027,6 @@ describe('init command admission', () => {
                 target: input.target,
                 previewSha256,
                 files: [],
-                nextCommand: input.accepted ? 'bootstrap complete' : 'accept exact preview',
                 ...(input.cockpitRoot === undefined ? { cockpitRoot: {
                     field: 'cockpit.root' as const,
                     why: 'the product repository must stay separate from cockpit control files',

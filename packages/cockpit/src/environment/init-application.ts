@@ -445,8 +445,7 @@ export async function runInitApplication(
     }
     if (rootQuestion) return { kind: 'pending', status: 0, artifact: null, destination: null,
         diagnostics: [...(resumed?.diagnostics ?? prepared!.diagnostics)],
-        result: result(current?.value.stage ?? 'surface-previewed', projection,
-            'answer cockpit.root ("dedicated" or "in-repo") before accepting the preview', undefined, { cockpitRoot: rootQuestion }) }
+        result: result(current?.value.stage ?? 'surface-previewed', projection, undefined, { cockpitRoot: rootQuestion }) }
     if (!input.accepted && (current?.value.greenfield === undefined || current.value.stage !== 'surface-published')) {
         const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
         let interview: InterviewPlan | undefined

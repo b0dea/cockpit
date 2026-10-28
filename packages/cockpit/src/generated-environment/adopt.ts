@@ -93,7 +93,7 @@ async function candidate(root: string, requested: string, owned: ReadonlySet<str
     const path = requested as AdoptableSurfacePath
     const destinationPath = adoptedCopyPath(path)
     if (adopted.has(path)) {
-        return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. If ${path} is the original that uninstall restored, delete it and run cockpit sync; its settings are kept in ${destinationPath}`, path)
+        return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. Delete the duplicate ${path} and run cockpit sync; its settings are kept in ${destinationPath}`, path)
     }
     if (owned.has(path)) return refused('SURFACE_ADOPTION_REFUSED', `${path} is cockpit's own published output, not a team file; nothing to adopt`, path)
     const target = join(root, path)

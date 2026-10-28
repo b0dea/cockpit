@@ -199,11 +199,12 @@ describe('init application', () => {
             document: interviewDocument(f.destination) }
         const greenfield = { ...f.input, registry: undefined }
         const dedicated = resolve(f.root, '..', 'checkout-cockpit')
-        expect(await runInitApplication(greenfield, adapters)).toMatchObject({ kind: 'pending', result: {
-            nextCommand: expect.stringContaining('cockpit.root'),
+        const placement = await runInitApplication(greenfield, adapters)
+        expect(placement).toMatchObject({ kind: 'pending', result: {
             cockpitRoot: { field: 'cockpit.root', recommended: 'dedicated', options: [
                 { answer: 'dedicated', root: dedicated, creates: [dedicated], siblingsRoot: '..', firstSibling: f.root },
                 { answer: 'in-repo', root: f.root, creates: [], siblingsRoot: '.', firstSibling: f.root }] } } })
+        expect(placement.result).not.toHaveProperty('nextCommand')
         expect(observed).toEqual([])
         // Consent to the preview bytes is not consent to a location.
         expect(await runInitApplication({ ...greenfield, accepted: true, acceptedPreviewSha256: digest('3') }, adapters))
@@ -223,8 +224,9 @@ describe('init application', () => {
             accepted: true, acceptedPreviewSha256: digest('3') }, beside)
         expect(besideOutcome, JSON.stringify(besideOutcome.diagnostics)).toMatchObject({ kind: 'pending', result: { root: dedicated, question: { field: 'sibling' } } })
         expect(observed).toEqual([{ root: resolve(f.root, '..'), repositories: ['checkout'] }])
-        expect(await runInitApplication({ ...greenfield, cockpitRoot: { kind: 'in-repo' } }, adapters))
-            .toMatchObject({ kind: 'pending', result: { nextCommand: 'confirm selected bootstrap preview' } })
+        const inRepo = await runInitApplication({ ...greenfield, cockpitRoot: { kind: 'in-repo' } }, adapters)
+        expect(inRepo).toMatchObject({ kind: 'pending', result: { root: f.root } })
+        expect(inRepo.result).not.toHaveProperty('nextCommand')
         // In-repo keeps the product: the root is observed as a repository itself, not as an empty cockpit.
         expect(observed.at(-1)).toEqual({ root: f.root, rootIsRepository: true })
     })

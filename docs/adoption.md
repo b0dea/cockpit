@@ -119,8 +119,7 @@ Commit `cockpit/adopted/` with cockpit.toml: it is the team's copy, and the plac
 settings from now on. Editing the merged file by hand is reported by `check` and refused by `sync`;
 edit the adopted copy, delete the merged file and run `sync` again. A changed adopted copy is
 reported as drift by `check` until `sync` merges it again. The recorded SHA-256 says which bytes were
-moved; it is a record, not a lock, so it does not stop the copy from changing. Uninstalling
-cockpit's generated files puts the adopted bytes back at `<path>`.
+moved; it is a record, not a lock, so it does not stop the copy from changing.
 
 Adoption is refused with `SURFACE_ADOPTION_REFUSED`, naming the key, when the adopted file would
 switch off or route around the guard or carry an authority cockpit declares elsewhere:

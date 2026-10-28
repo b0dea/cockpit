@@ -225,9 +225,15 @@ describe('reference generation', () => {
             expect(cli).toContain(`cockpit ${command.name}`)
             for (const flag of Object.keys(command.options)) expect(cli).toContain(`--${flag}`)
         }
-        expect(cli).toContain('| `validate` | `none` | `--fixture` | `--fixture`, `--json` |')
-        expect(cli).toContain('| `run` | `resolved` | `--fixture`, `--config` | `--fixture`, `--config`, `--json` |')
-        expect(cli).toContain('| `status` | `none` | `--fixture`, `--ledger` | `--fixture`, `--ledger`, `--json` |')
+        const commandSection = (name: string, next?: string) => cli.slice(cli.indexOf(`## cockpit ${name}`),
+            next === undefined ? cli.length : cli.indexOf(`## cockpit ${next}`))
+        expect(cli).not.toContain('## cockpit compare')
+        expect(cli).not.toContain('| `validate` | `none` | `--fixture` | `--fixture`, `--json` |')
+        expect(cli).not.toContain('| `run` | `resolved` | `--fixture`, `--config` | `--fixture`, `--config`, `--json` |')
+        expect(cli).not.toContain('| `status` | `none` | `--fixture`, `--ledger` | `--fixture`, `--ledger`, `--json` |')
+        expect(commandSection('sync', 'check')).toContain('| `--adopt` | string | unset |')
+        expect(commandSection('up', 'sleep')).toContain('Start or resume the declared environment.')
+        expect(commandSection('test-run')).toContain('| `--gate` | string | unset |')
         expect(first.files[1]!.bytes).toContain(renderCockpitSchema().trim())
         expect(first.files[1]!.bytes).toContain(String(configurationDefaults().cockpit.guide_cap))
         expect(first.files[1]!.bytes).toContain(skills.source.sha256)
