@@ -326,22 +326,6 @@ function generatedProjectionMatches(
         && projection.inspection.files.filter(({ path }) => path === generated.compose_file).length === 1
 }
 
-function generatedReplayMatches(
-    projection: GeneratedApplicationProjection,
-    replay: Readonly<{
-        sourceSha256: string
-        generation: string
-        profiles: readonly string[]
-        mounts: readonly string[]
-    }> | undefined,
-): boolean {
-    return replay !== undefined
-        && replay.sourceSha256 === projection.sourceSha256
-        && replay.generation === projection.generation
-        && JSON.stringify(replay.profiles) === JSON.stringify(projection.profiles)
-        && JSON.stringify(replay.mounts) === JSON.stringify(projection.mounts)
-}
-
 async function occupiedPort(port: number, timeoutMs: number): Promise<boolean | undefined> {
     return new Promise((complete) => {
         const socket = createConnection({ host: '127.0.0.1', port })
@@ -823,7 +807,10 @@ export function createLifecycleCommandAdapters(
             const stored = await readState(context.namespace.paths.lifecycle(context.stackId))
             if (stored.kind === 'complete') {
                 const decoded = decodeLifecycleRecord(stored.value, context)
-                if (!decoded || !generatedReplayMatches(generatedApplication, decoded.value.generatedReplay)) return undefined
+                // Runtime readiness authenticates the current runtime. The lifecycle application
+                // owns comparison with persisted progress and can name a generated-identity change;
+                // hiding it here turns an actionable mismatch into a generic missing-authority error.
+                if (!decoded) return undefined
             } else if (stored.kind !== 'missing') return undefined
         }
         binding = bindings.get(context)

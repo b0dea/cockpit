@@ -333,7 +333,10 @@ describe('lifecycle application contracts', () => {
             execute: vi.fn(),
         })
 
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT' }] })
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'CLAIM_CO_TENANT',
+            message: `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
+        }] })
         expect(await readState(lifecycleAddress)).toMatchObject({
             kind: 'complete', value: { value: { holderId: previousHolder } },
         })
@@ -1100,6 +1103,7 @@ describe('lifecycle application contracts', () => {
 
         expect(withRuntimeReadiness).not.toHaveBeenCalled()
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }] })
+        expect(result.diagnostics[0]?.message).toContain(`cockpit sleep --config ${JSON.stringify(context.source.path)}`)
     })
 
     it('recovers a failed persisted sleep attempt from its exact reservation', async () => {

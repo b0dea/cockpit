@@ -779,9 +779,18 @@ describe('sleep drain recovery ownership', () => {
             generation: '5'.repeat(64), targetIds: [stackId], actions: drainActions(stackId), expectedCoordinationRevision: 0,
         } })
         if (reserved.kind !== 'complete') throw new Error('expected drain reservation')
-        expect(await reserveDrainAttempt({ namespace: active, authority: reserved.authority })).toMatchObject({ kind: 'complete' })
+        const attempted = await reserveDrainAttempt({ namespace: active, authority: reserved.authority })
+        expect(attempted).toMatchObject({ kind: 'complete' })
+        if (attempted.kind !== 'complete') throw new Error('expected active sleep attempt')
         expect(await inspectSleepDrainRecovery({ namespace: active, stackId, holderId: holderA }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
+        vi.useFakeTimers()
+        vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
+        expect(await inspectSleepDrainRecovery({ namespace: active, stackId, holderId: holderA }))
+            .toMatchObject({ kind: 'recoverable' })
+        expect(await readState(active.paths.coordination(stackId))).toMatchObject({
+            kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } },
+        })
     })
 })
 
@@ -880,9 +889,18 @@ describe('destructive drain recovery inspection', () => {
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'reset' }))
             .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
 
-        expect(await reserveDrainAttempt({ namespace: state, authority: reserved.authority })).toMatchObject({ kind: 'complete' })
+        const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+        expect(attempted).toMatchObject({ kind: 'complete' })
+        if (attempted.kind !== 'complete') throw new Error('expected active destructive attempt')
         await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
             .resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
+        vi.useFakeTimers()
+        vi.setSystemTime(Date.parse(attempted.attempt.validThrough) + 1)
+        await expect(inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
+            .resolves.toEqual({ kind: 'recoverable', request })
+        await expect(readState(state.paths.coordination(stackId))).resolves.toMatchObject({
+            kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } },
+        })
 
         const malformed = await namespace()
         const published = await transactState(malformed, malformed.paths.coordination(stackId), { ownerId: holderA }, () => ({

@@ -9,7 +9,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, rename, unlink } from 'node:fs/promises'
+import { lstat, mkdir, open, rename, rmdir, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { loadCockpitConfig, readBoundedInput } from './load.js'
@@ -66,9 +66,16 @@ export async function writeVerifiedConfig(input: VerifiedWriteInput): Promise<Ve
         return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, messages.changedBefore)
     }
     const next = input.edit(read.bytes.toString('utf8'))
-    const temporary = join(dirname(path), `.${basename(path)}.${input.temporaryTag}-${randomBytes(8).toString('hex')}`)
+    // Keep the candidate's basename equal to the real configuration name. Declared provenance
+    // may intentionally name cockpit.toml without observed_on; validating it under a random
+    // temporary basename would reject bytes that become valid at the atomic destination.
+    const temporaryRoot = join(dirname(path), `.${basename(path)}.${input.temporaryTag}-${randomBytes(8).toString('hex')}`)
+    const temporary = join(temporaryRoot, basename(path))
     let created = false
+    let rootCreated = false
     try {
+        await mkdir(temporaryRoot, { mode: 0o700 })
+        rootCreated = true
         const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, before.mode & 0o777)
         created = true
         try { await handle.writeFile(next); await handle.sync() } finally { await handle.close() }
@@ -90,6 +97,7 @@ export async function writeVerifiedConfig(input: VerifiedWriteInput): Promise<Ve
         try { await directory.sync() } finally { await directory.close() }
     } finally {
         if (created) await unlink(temporary)
+        if (rootCreated) await rmdir(temporaryRoot)
     }
     const written = await loadCockpitConfig(path)
     if (written.kind !== 'complete' || !input.isExactChange(written.result.config)) {

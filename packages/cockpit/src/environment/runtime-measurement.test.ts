@@ -15,6 +15,8 @@ const CONFIG = [
     '[cockpit]', 'name = "synthetic-measure"', 'siblings_root = "siblings"', '',
     '[[sibling]]', 'slug = "api"', 'dir = "api"', 'mount = "always"', 'acquire = "none"',
     'var = "API_DIR"', 'toolchain = "none"', 'purpose = "Synthetic API"', '',
+    '[[sibling.derives.mcp_sources]]', 'path = "browser.mcp.json"', 'format = "mcp-json"',
+    'provenance = { source = "cockpit.toml", kind = "declared", reason = "Declared in this configuration" }', '',
     '[ports]', 'step = 10', 'count = 1', 'bases = { APP_PORT = 61330 }', '',
     '[environment]', 'compose_files = ["compose.yml"]', '',
 ].join('\n')

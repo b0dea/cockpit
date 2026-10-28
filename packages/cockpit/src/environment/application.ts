@@ -2147,7 +2147,11 @@ async function publishLifecycleRecord(
                     kind: 'refusal' as const,
                     status: 2 as const,
                     result: null,
-                    diagnostics: ownership.diagnostics,
+                    diagnostics: ownership.diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.CLAIM_CO_TENANT
+                        ? ownerDiagnostic(diagnostic.code,
+                            `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
+                            diagnostic.target ?? context.stackId)
+                        : diagnostic),
                 })
             }
             return lifecycleStateRecord(context, current, value, new Date().toISOString())
@@ -2631,7 +2635,8 @@ async function executeUpRound(
         if (stored && generated && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                'generated environment identity changed since lifecycle progress was recorded', context.stackId) }
+                `generated environment identity changed since lifecycle progress was recorded; run \`cockpit down --config ${JSON.stringify(context.source.path)}\` to remove the old stack, then \`cockpit up --config ${JSON.stringify(context.source.path)}\``,
+                context.stackId) }
         }
         const completedServiceIds = stored ? new Set(stored.value.completedServices.map(({ service }) => service)) : undefined
         const progressComplete = stored !== null && completedServiceIds?.size === runtime.topology.services.length
@@ -2647,7 +2652,7 @@ async function executeUpRound(
             && (previousHolderActive || !currentHolderActive) && !completedCoTenant) {
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                'lifecycle progress belongs to an active holder',
+                `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
                 context.stackId,
             ) }
         }
@@ -2884,7 +2889,14 @@ async function executeUpRound(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'lifecycle, port or runtime readiness authority is unavailable', context.stackId,
     ) })
-    const refused: ReadinessRefusal<UpRoundResult> = (diagnostics) => ({ kind: 'complete', result: forwardedRefusal(diagnostics) })
+    const refused: ReadinessRefusal<UpRoundResult> = (diagnostics) => ({
+        kind: 'complete',
+        result: forwardedRefusal(diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.CLAIM_CO_TENANT
+            ? ownerDiagnostic(diagnostic.code,
+                `lifecycle progress belongs to another active session; run \`cockpit up --config ${JSON.stringify(context.source.path)}\` to resume it or \`cockpit down --config ${JSON.stringify(context.source.path)}\` to release it`,
+                diagnostic.target ?? context.stackId)
+            : diagnostic)),
+    })
     if (generatedBringupRuns.has(context)) {
         const earliest = Date.now()
         const expected = new Set<string>([
@@ -3115,7 +3127,12 @@ export async function runSleep(
         holderId: context.holderId,
     })
     if (recovery.kind === 'refusal') return {
-        kind: 'refusal', status: 2, result: null, diagnostics: recovery.diagnostics,
+        kind: 'refusal', status: 2, result: null,
+        diagnostics: recovery.diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED
+            ? ownerDiagnostic(diagnostic.code,
+                `cockpit cannot tell whether the interrupted sleep action completed; after its bounded execution window expires, run \`cockpit sleep --config ${JSON.stringify(context.source.path)}\` to retry that persisted action safely`,
+                diagnostic.target ?? context.stackId)
+            : diagnostic),
     }
 
     const retained = await observeRetainedPortFamily({
@@ -3257,7 +3274,7 @@ export async function runSleep(
 function repairRequired(context: LifecycleRunContext): SleepCommandResult {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-        'the active lifecycle attempt requires explicit repair',
+        `cockpit cannot tell whether the interrupted sleep action completed; after its bounded execution window expires, run \`cockpit sleep --config ${JSON.stringify(context.source.path)}\` to retry that persisted action safely`,
         context.stackId,
     )
 }
@@ -3354,7 +3371,7 @@ function destructiveRefusal(
 function destructiveRepairRequired(context: DestructiveRunContext): Extract<DownCommandResult, { kind: 'refusal' }> {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-        'the active destructive attempt requires explicit repair',
+        `cockpit cannot tell whether the interrupted destructive action completed; after its bounded execution window expires, run \`cockpit down --config ${JSON.stringify(context.source.path)}\` to resume down work, or approve \`cockpit reset --config ${JSON.stringify(context.source.path)}\` again to resume reset work`,
         context.stackId,
     )
 }

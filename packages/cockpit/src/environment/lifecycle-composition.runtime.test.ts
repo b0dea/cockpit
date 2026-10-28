@@ -496,4 +496,31 @@ describe('production lifecycle adapter composition', () => {
         expect(result.diagnostics[0]?.message).not.toContain('not implemented')
         expect(result.diagnostics[0]?.message).not.toContain('unavailable by default')
     })
+
+    it('names the generated identity change and cleanup commands instead of hiding it behind readiness', async () => {
+        const first = await runGeneratedScenario()
+        const source = await readFile(first.candidate.configPath, 'utf8')
+        await writeFile(first.candidate.configPath, source.replace(
+            'reason = "Pinned synthetic runtime"',
+            'reason = "Pinned synthetic runtime after configuration review"',
+        ))
+        const adapters = createLifecycleCommandAdapters({
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: first.candidate.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        listenerProbeControl.enabled = true
+
+        const result = await runUp({ configPath: first.candidate.configPath }, adapters)
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'LIFECYCLE_PROGRESS_INVALID',
+            message: `generated environment identity changed since lifecycle progress was recorded; run \`cockpit down --config ${JSON.stringify(loaded.result.source.path)}\` to remove the old stack, then \`cockpit up --config ${JSON.stringify(loaded.result.source.path)}\``,
+        }] })
+    })
 })

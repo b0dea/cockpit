@@ -719,7 +719,10 @@ describe('destructive application contracts', () => {
         await expect(runDown({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             observe: async () => resetObservation(instance, failedRecord), execute,
-        })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }] })
+        })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED',
+            message: expect.stringContaining(`cockpit down --config ${JSON.stringify(context.source.path)}`),
+        }] })
         expect(recover).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
     })
