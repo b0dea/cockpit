@@ -858,6 +858,7 @@ describe('operator-confirmed document completion', () => {
         } })
         expect(testData).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.test_data',
             why: expect.stringContaining('seeded data and signed-in users') } })
+        expect(testData.question?.why).toContain('{ seeded_data: boolean, signed_in_users: boolean }')
         expect(await documentCommand({ ...base, configuration: { ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer,
                 answer(testData.question!, { seeded_data: false })] } })).toMatchObject({ kind: 'refusal',

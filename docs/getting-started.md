@@ -13,8 +13,11 @@ You need a Node.js release admitted by the
 Linux. The commands that run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker Compose and a
 local runtime that has passed cockpit's measurement probe. The
 [runtime identity table and measurement procedure](environment.md#measure-the-container-runtime)
-are the canonical runtime support record. Configuration, generation, `setup` and `check` work
-without Docker.
+are the canonical runtime support record. Configuration, generation and surfaces-only `setup` and
+`check` work without a container runtime; validating declared Compose files requires Docker Compose.
+
+From an existing product repository, install cockpit there and let `init` ask where its
+configuration should live:
 
 ```sh
 npm install --save-dev --save-exact @b0dea/cockpit
@@ -25,6 +28,9 @@ The install is project-local and recorded in the project's lockfile. From the pr
 the exact installed executable as `./node_modules/.bin/cockpit <command>`. This path fails when
 the dependency is missing; it cannot implicitly download a different package. After `init`
 publishes the cockpit-owned package scripts, use those scripts for setup, sync and check.
+For an empty cockpit or a directory containing several repositories, use
+[Bootstrap without a project manifest](#bootstrap-without-a-project-manifest) instead: installing
+into that directory first would give it a product manifest of its own.
 
 ### Install from source
 
@@ -39,7 +45,7 @@ npm ci --ignore-scripts
 npm run build
 COCKPIT_PACKAGE_DIR="$(mktemp -d)"
 npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
-cd /path/to/the-cockpit-project
+cd /path/to/the-product-repository
 npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
 ./node_modules/.bin/cockpit --help
 ```
@@ -48,8 +54,8 @@ Keep the tarball while the project lockfile resolves cockpit from that local fil
 breaks a later `npm ci`; an external local archive is not a portable dependency for teammates.
 After a published version replaces that resolution in both manifest and lockfile, remove the
 archive with `rm -r "$COCKPIT_PACKAGE_DIR"`. If `npm pack` or `npm install` fails, stop there: a source command
-is not evidence that the package users receive works. A new dedicated cockpit directory needs a
-`package.json`; run `npm init --yes` there before installing.
+is not evidence that the package users receive works. When bootstrapping a directory without a
+product manifest, install this same archive in the temporary tool directory described below.
 
 Check the install:
 
@@ -66,6 +72,40 @@ Commands:
 ```
 
 The [CLI reference](cli-reference.md) lists every command and flag.
+
+### Bootstrap without a project manifest
+
+Keep the first tool installation outside an empty, documents-only or central multi-repository
+cockpit directory. `init` treats a Git checkout with a package manifest as a product repository;
+an installation-only manifest and a dependency-free library can look identical, so it does not
+guess that the root should be excluded from the product.
+
+From the intended cockpit directory, install a temporary, explicit executable and preview:
+
+```sh
+COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
+npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/cockpit
+"$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target codexcli --json
+```
+
+For an unpublished source package, replace `@b0dea/cockpit` in that install command with
+`"$COCKPIT_PACKAGE_DIR"/*.tgz` from [Install from source](#install-from-source). Use that exact
+temporary executable for the remaining `init` commands below, including preview and defaults
+acceptance. It is an installed package, not a command runner that downloads a missing binary.
+
+After `init` writes the cockpit's package manifest, install its dependency in the cockpit directory
+and verify `./node_modules/.bin/cockpit --help`. For a source package, install the preserved archive
+there as well. Continue with the project-local executable, then remove only the temporary tool
+installation after the [canonical setup, sync and check sequence](#bring-the-product-up) passes:
+
+```sh
+rm -r -- "$COCKPIT_BOOTSTRAP_DIR"
+```
+
+If the central directory already has an installation manifest, keep it. Declare its repositories
+through the [hand-written configuration route](#choose-a-starting-point) and preview `sync`, or
+start from an actual product repository and choose a dedicated cockpit. Do not delete package
+files or classify a library as tooling just to change discovery.
 
 ## Choose a starting point
 

@@ -104,6 +104,11 @@ cockpit root. A dedicated folder keeps the product repositories free of those fi
 cockpit own several repositories neutrally. It grows from one repository to many with
 `cockpit sibling add` and never needs moving.
 
+An initial tool installation must not change which repositories `init` observes. For an empty,
+documents-only or central directory, follow
+[Bootstrap without a project manifest](getting-started.md#bootstrap-without-a-project-manifest)
+before installing a package manifest in the intended root.
+
 - **A new product, an empty folder or a folder of documents** is itself the cockpit. `init`
   declares that folder as its own first sibling (`dir = "."`), and the product's repositories
   are added under it later with `cockpit sibling add <slug> --create`.

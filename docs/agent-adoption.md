@@ -58,10 +58,14 @@ source-package fallback and supported Node releases. Show the human which direct
 the dependency and lockfile before installing. Installing a local dependency does not put its
 binary on a normal terminal's PATH.
 
-Run commands from the cockpit root through `./node_modules/.bin/cockpit`. Throughout this guide,
-`cockpit <command>` in prose means that exact installed executable; if it is absent, repair the
-local install before continuing. A command runner that downloads a missing package would bypass
-the project's reviewed version.
+For a directory without a product manifest, first follow
+[Bootstrap without a project manifest](getting-started.md#bootstrap-without-a-project-manifest).
+Use its exact temporary installed executable for `init`; adding an installation manifest to the
+root first would make it look like a product repository. After init creates the cockpit manifest,
+install locally and run from the cockpit root through `./node_modules/.bin/cockpit`. During
+bootstrap, replace that prefix in the following `init` examples with the temporary installed
+executable's path. If the selected executable is absent, repair the install before continuing.
+A command runner that downloads a missing package would bypass the project's reviewed version.
 
 Every `init` command needs your harness's target identifier. The
 [capability matrix](capability-matrix.md) names built-in targets and separates generated surfaces
