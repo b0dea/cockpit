@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cockpitId, checkoutId, holderId, stackId } from '../environment/identity.js'
@@ -10,6 +10,7 @@ import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { resolveObservationPostures } from '../environment/observations.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
+import { isPackageDescendant } from './package-paths.js'
 import { bindBrowserRuntimePortLease, resolveBrowserRuntime } from './runtime.js'
 import { executeBrowserProjectOperation, observeBrowserProjectPackage, renderBrowserSurfaces, withBrowserProjectOperationAdmission,
     type BrowserSurfaceInput } from './surfaces.js'
@@ -20,7 +21,7 @@ const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preapprove = true,
-    localHostname = false, nestedProject = false, policy: 'serialized' | 'per-worker' = 'serialized'): Promise<BrowserSurfaceInput> {
+    localHostname = false, nestedProject = false, policy: 'serialized' | 'per-worker' = 'serialized', moduleEntry = 'index.js'): Promise<BrowserSurfaceInput> {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-surface-')))
     roots.push(root)
     const id = cockpitId({ name: 'fixture', mainCheckoutPath: root })
@@ -74,7 +75,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
     const runtime = localHostname ? unresolved : projection && bindBrowserRuntimePortLease(unresolved, projection)
     if (!runtime) throw new Error('browser surface runtime lease binding refused')
     if (!localHostname && runtime.connection.kind !== 'remote') throw new Error('fixture expected a remote browser endpoint')
-    const manifest = JSON.stringify({ name: '@playwright/test', version: '1.2.3', main: 'index.js', bin: { playwright: 'cli.js' } })
+    const manifest = JSON.stringify({ name: '@playwright/test', version: '1.2.3', main: moduleEntry, bin: { playwright: 'cli.js' } })
     const moduleBytes = localHostname ? `module.exports = { chromium: { launch: async options => {
   if (JSON.stringify(options.args) !== JSON.stringify(['--host-resolver-rules=MAP app.example.invalid 127.0.0.1'])) throw new Error('resolver rules missing')
   let handler; const frame = {}; const response = url => ({ url: () => url, status: () => 200, headers: () => ({}), ok: () => true })
@@ -90,7 +91,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
     await mkdir(join(root, '.playwright-cli'), { recursive: true })
     await writeFile(join(projectRoot, 'node_modules/@playwright/test/package.json'), manifest)
     await writeFile(join(projectRoot, 'node_modules/@playwright/test/cli.js'), '/* synthetic pinned CLI */')
-    await writeFile(join(projectRoot, 'node_modules/@playwright/test/index.js'), moduleBytes)
+    await writeFile(join(projectRoot, 'node_modules/@playwright/test', moduleEntry), moduleBytes)
     const input: BrowserSurfaceInput = {
         runtime, cockpitDirectory: root,
         harnesses: [{ target: 'claudecode', version: '2.1.220' }, { target: 'codexcli', version: '0.149.0' }, { target: 'opencode', version: '1.18.15' }],
@@ -105,6 +106,18 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
 }
 
 describe('browser transport surfaces', () => {
+    it('confines browser package paths with the actual POSIX and Windows path rules', () => {
+        for (const [paths, root, candidate, expected] of [
+            [win32, 'C:\\Workspace With Spaces\\node_modules\\@playwright\\test', 'C:\\Workspace With Spaces\\node_modules\\@playwright\\test\\index.js', true],
+            [win32, 'C:\\packages\\test', 'C:\\packages\\test', false],
+            [win32, 'C:\\packages\\test', 'C:\\packages\\test-other\\index.js', false],
+            [win32, 'C:\\packages\\test', 'C:\\packages\\test\\..\\outside.js', false],
+            [win32, 'C:\\packages\\test', 'D:\\packages\\test\\index.js', false],
+            [posix, '/packages/test', '/packages/test/index.js', true],
+            [posix, '/packages/test', '/packages/test/../outside.js', false],
+        ] as const) expect(isPackageDescendant(root, candidate, paths), candidate).toBe(expected)
+    })
+
     it('resolves the authenticated project package relative to a declared nested manifest', async () => {
         const input = await fixture('bypassed', true, false, true)
         const rendered = renderBrowserSurfaces(input)
@@ -115,6 +128,8 @@ describe('browser transport surfaces', () => {
         expect(rendered.probes.find(probe => probe.transport === 'cli')?.transportIdentity).toMatchObject({
             manifest: { path: join(packageRoot, 'package.json') },
         })
+        await expect(fixture('bypassed', true, false, true, 'serialized', '../outside.js'))
+            .rejects.toThrow('module escaped its package root')
         await writeFile(join(input.cockpitDirectory, 'app/package.json'), '{}')
         expect(() => renderBrowserSurfaces(input)).toThrow('project manifest')
     })

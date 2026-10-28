@@ -12,6 +12,7 @@ import { GeneratedHostPath } from '../schema.js'
 import type { RenderedSurfaceFile } from '../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { collectMcpDeclarations, type McpDeclaration } from '../surfaces/mcp.js'
+import { isPackageDescendant } from './package-paths.js'
 import { assertBrowserArtifactRegistration, assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
 
 export const mechanism = {
@@ -344,7 +345,7 @@ function projectPackagePaths(root: string, runtime: BrowserRuntimeProjection): R
     if (!browserRuntimeExecutionReady(runtime)) throw new TypeError('browser project package requires an issued executable runtime')
     const declaredManifest = runtime.runner.project.manifest
     const projectManifestPath = resolve(root, declaredManifest ?? 'package.json')
-    if (!projectManifestPath.startsWith(`${root}${sep}`)) throw new TypeError('browser project manifest escaped its cockpit root')
+    if (!isPackageDescendant(root, projectManifestPath)) throw new TypeError('browser project manifest escaped its cockpit root')
     if (declaredManifest !== undefined) {
         const manifestBytes = observedBytes(projectManifestPath, 1_048_576)
         if (digest(manifestBytes) !== runtime.runner.project.manifestSha256) {
@@ -372,11 +373,11 @@ export function observeBrowserProjectPackage(input: Readonly<{
     const declared = Manifest.safeParse(manifest)
     if (!declared.success) throw new TypeError('browser test package manifest is invalid')
     const cliAbsolute = resolve(packageRoot, declared.data.bin.playwright)
-    if (!cliAbsolute.startsWith(`${packageRoot}${sep}`)) throw new TypeError('browser test package CLI escaped its package root')
+    if (!isPackageDescendant(packageRoot, cliAbsolute)) throw new TypeError('browser test package CLI escaped its package root')
     let moduleAbsolute: string
     try { moduleAbsolute = realpathSync(createRequire(projectManifestPath).resolve('@playwright/test')) }
     catch { throw new TypeError('browser project module entry could not be resolved') }
-    if (!moduleAbsolute.startsWith(`${packageRoot}${sep}`)) throw new TypeError('browser project module escaped its package root')
+    if (!isPackageDescendant(packageRoot, moduleAbsolute)) throw new TypeError('browser project module escaped its package root')
     const cliBytes = observedBytes(cliAbsolute, 65_536)
     const moduleBytes = observedBytes(moduleAbsolute, 65_536)
     return Object.freeze({ directory, artifactRoot: parsed.data.artifactRoot,
@@ -420,7 +421,7 @@ function projectClient(value: z.infer<typeof ProjectPackage>, row: Pick<BrowserT
     try { resolvedModule = realpathSync(createRequire(projectManifestPath).resolve('@playwright/test')) }
     catch { throw new TypeError('browser project module entry could not be resolved') }
     const declaredModule = resolve(packageRoot, value.module.path)
-    if (resolvedModule !== declaredModule || !resolvedModule.startsWith(`${packageRoot}/`)
+    if (resolvedModule !== declaredModule || !isPackageDescendant(packageRoot, resolvedModule)
         || value.module.sha256 !== digest(value.module.bytes)
         || observedBytes(resolvedModule, 1_048_576) !== value.module.bytes) {
         throw new TypeError('browser project module entry differs from the installed resolved entry')
