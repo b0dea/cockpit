@@ -654,6 +654,22 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
         && Object.getPrototypeOf(value) === Object.prototype ? value as Record<string, unknown> : undefined
 }
 
+function grokPermissionRules(sources: SurfaceBatch['sources']): boolean {
+    const source = sources.find(candidate => candidate.path === 'permissions.jsonc')
+    if (!source) return false
+    try {
+        const record = ownRecord(JSON.parse(source.bytes))
+        const sections = [ownRecord(record?.permission), ownRecord(ownRecord(record?.grokcli)?.permission)]
+        return sections.some(permission => permission !== undefined && Object.values(permission).some(value => {
+            const rules = ownRecord(value)
+            return rules !== undefined && Object.keys(rules).length > 0
+        }))
+    } catch {
+        // Retain malformed input so Rulesync's authenticated parser error is returned to the caller.
+        return true
+    }
+}
+
 function stringArray(value: unknown): readonly string[] | undefined {
     return Array.isArray(value) && value.every(item => typeof item === 'string') ? value : undefined
 }
@@ -974,7 +990,12 @@ async function runEstatePass(
             const missing = receipt.features.filter(feature => feature.count < 1 || feature.paths.length < 1).map(feature => feature.feature).join(', ')
             generatedFailures.set(job.id, diagnostic('SURFACE_FEATURE_COVERAGE', `surface generator did not cover requested features: ${missing}`, 'coverage', job.generatorTarget))
         } else if (!samePaths(receipt.reportedPaths, job.expected) || !samePaths(receipt.actualFiles.map(file => file.path), job.expected)) {
-            generatedFailures.set(job.id, diagnostic('SURFACE_OUTPUT_COVERAGE', 'surface generator output did not exactly match the expected path set', 'coverage', job.generatorTarget))
+            const actual = [...new Set([...receipt.reportedPaths, ...receipt.actualFiles.map(file => file.path)])]
+            const missing = job.expected.filter(path => !actual.includes(path))
+            const unexpected = actual.filter(path => !job.expected.includes(path))
+            generatedFailures.set(job.id, diagnostic('SURFACE_OUTPUT_COVERAGE',
+                `surface generator output did not exactly match the expected path set (missing: ${missing.join(', ') || 'none'}; unexpected: ${unexpected.join(', ') || 'none'})`,
+                'coverage', job.generatorTarget))
         } else generatedReceipts.set(job.id, receipt)
     }
     const readerJobs = jobs.filter(job => !generatedFailures.has(job.id))
@@ -1094,7 +1115,8 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             target,
             generatorTarget: harnessFact(target).rulesyncTarget,
             batch,
-            features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)),
+            features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
+                && (feature !== 'permissions' || target !== 'grokcli' || grokPermissionRules(batch.sources))),
             expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
         })) : [],
         ...bundleRequest && bundleBatch ? [Object.freeze({

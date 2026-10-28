@@ -11,6 +11,7 @@ import { checkGeneratedEnvironment, syncGeneratedEnvironment } from '../generate
 import { cockpitId } from '../environment/identity.js'
 import { deriveRegistry } from '../registry-derivation.js'
 import { observeSiblingGuides, planSiblingProjection } from './projection.js'
+import { SURFACE_TARGETS } from './harness-registry.js'
 
 const baselineFixture = resolve('fixtures/registries/generated-environment.toml')
 const rowFixture = resolve('packages/cockpit/src/surfaces/fixtures/one-row.toml')
@@ -133,7 +134,7 @@ describe('one-row generated surface integration', () => {
             mountedPaths: registry.result.config.sibling.map(sibling => ({
                 slug: sibling.slug, path: join(added.root, sibling.dir),
             })),
-            directoryGrants: registry.result.config.sibling.flatMap(sibling => targets.map(target => ({
+            directoryGrants: registry.result.config.sibling.flatMap(sibling => SURFACE_TARGETS.map(target => ({
                 slug: sibling.slug, target, path: join(added.root, sibling.dir),
             }))),
             guideObservations: guideObservation.observations,
@@ -186,6 +187,9 @@ describe('one-row generated surface integration', () => {
             '.claude/settings.json',
             '.cockpit/mcp/65dfe895cdc7ae8504fb9a4430d8a72d14b21aa8792a20d78ac1eecfa6113cc6.sh',
             '.codex/config.toml',
+            '.cursor/cli.json',
+            '.cursor/mcp.json',
+            '.grok/config.toml',
             '.mcp.json',
             '.sibling-worker-AGENTS.md',
             'AGENTS.md',

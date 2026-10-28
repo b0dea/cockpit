@@ -3,8 +3,8 @@ import { lstat, open, readlink, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import type { SurfaceTarget } from './contract.js'
-import { GUARD_SURFACE_TARGETS as SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
+import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
+import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
 
 export const mechanism = {
     id: 'sibling-projection',
@@ -660,8 +660,8 @@ function capturePlannerInput(input: unknown): CapturedInput | undefined {
     }
 
     const loadCharacterizations: Partial<Record<SurfaceTarget, LoadCostCharacterization>> = {}
-    if (Object.keys(value.loadCharacterizations).some(key => !(SURFACE_TARGETS as readonly string[]).includes(key))) return undefined
-    for (const harness of SURFACE_TARGETS) {
+    if (Object.keys(value.loadCharacterizations).some(key => !(INSTRUCTION_TARGETS as readonly string[]).includes(key))) return undefined
+    for (const harness of INSTRUCTION_TARGETS) {
         const row = value.loadCharacterizations[harness]
         if (row === undefined || row === null) continue
         if (!isObject(row) || !exactKeys(row, ['measuredOn', 'provenance', 'metric', 'scopeSemantics'])
@@ -781,7 +781,9 @@ function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, 
 function grantSpelling(targetName: SurfaceTarget, path: string): string {
     if (targetName === 'claudecode') return `permissions.additionalDirectories:${path}`
     if (targetName === 'codexcli') return `sandbox_workspace_write.writable_roots:${path}`
-    return `permission.external_directory:${path}/**=allow`
+    if (targetName === 'opencode') return `permission.external_directory:${path}/**=allow`
+    if (targetName === 'cursor') return `permission.read+write:${path}/**=allow`
+    return `permission.read+edit:${path}/**=allow`
 }
 
 function lines(content: string): number {
@@ -861,13 +863,13 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
 
     links.sort((left, right) => left.path.localeCompare(right.path))
     grants.sort((left, right) => left.slug.localeCompare(right.slug)
-        || SURFACE_TARGETS.indexOf(left.target as GuardSurfaceTarget) - SURFACE_TARGETS.indexOf(right.target as GuardSurfaceTarget))
-    const projectedEntries = links.length * (SURFACE_TARGETS.length + 2) + grants.length
-        + captured.priorOwnedLinks.length + SURFACE_TARGETS.length
+        || SURFACE_TARGETS.indexOf(left.target) - SURFACE_TARGETS.indexOf(right.target))
+    const projectedEntries = links.length * (INSTRUCTION_TARGETS.length + 2) + grants.length
+        + captured.priorOwnedLinks.length + INSTRUCTION_TARGETS.length
     if (projectedEntries > PROJECTION_RESULT_ENTRY_LIMIT) return PLANNER_RESULT_BOUNDS
-    const native = links.flatMap(link => SURFACE_TARGETS.map(harness => nativeProjection(harness, link, link.sibling)))
-        .sort((left, right) => SURFACE_TARGETS.indexOf(left.target as GuardSurfaceTarget)
-            - SURFACE_TARGETS.indexOf(right.target as GuardSurfaceTarget) || left.linkPath.localeCompare(right.linkPath))
+    const native = links.flatMap(link => INSTRUCTION_TARGETS.map(harness => nativeProjection(harness, link, link.sibling)))
+        .sort((left, right) => INSTRUCTION_TARGETS.indexOf(left.target as GuardSurfaceTarget)
+            - INSTRUCTION_TARGETS.indexOf(right.target as GuardSurfaceTarget) || left.linkPath.localeCompare(right.linkPath))
 
     const current = new Map(captured.existingEntries.map(entry => [entry.path, entry]))
     const comparisons: ProjectionComparison[] = links.map(link => {
@@ -890,7 +892,7 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
     })
 
     const costs: StandingCost[] = []
-    for (const harness of SURFACE_TARGETS) {
+    for (const harness of INSTRUCTION_TARGETS) {
         const characterization = captured.loadCharacterizations[harness]
         if (!characterization) {
             costs.push({ target: harness, status: 'unavailable', reason: 'load cost is not characterized' })

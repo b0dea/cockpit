@@ -31,7 +31,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { deriveRegistry, type DerivedRegistry } from '../registry-derivation.js'
 import { SURFACE_FEATURES, SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../surfaces/contract.js'
-import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
+import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, SURFACE_PUBLICATION_ANCHORS } from '../surfaces/harness-registry.js'
 import { mergeAdoptedSurface } from '../surfaces/adoption.js'
 import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from '../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations, type ActiveSurfaceOverride, type SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -1405,15 +1405,24 @@ function expectedSurfaceOutputs(
     const rows = Object.fromEntries(SURFACE_TARGETS.map(target => [target, []])) as unknown as Record<SurfaceTarget, string[]>
     if (has('rules')) for (const target of SURFACE_TARGETS) {
         const root = harnessFact(target).outputs.instruction
-        rows[target].push(target === 'cursor' ? `${root}/base.mdc` : root)
+        if (target === 'cursor') rows[target].push(...names('rules/', '.md').map(name => `${root}/${name}.mdc`))
+        else rows[target].push(root)
     }
     if (has('mcp')) for (const target of SURFACE_TARGETS) rows[target].push(harnessFact(target).outputs.mcp)
     if (has('hooks')) rows.claudecode.push('.claude/settings.json'), rows.codexcli.push('.codex/hooks.json'), rows.opencode.push('.opencode/plugins/rulesync-hooks.js')
     if (has('hooks')) rows.cursor.push('.cursor/hooks.json'), rows.grokcli.push('.grok/hooks/rulesync.json')
-    if (has('permissions')) {
-        rows.claudecode.push('.claude/settings.json')
-        rows.codexcli.push('.codex/config.toml', '.codex/rules/rulesync.rules')
-        rows.opencode.push('opencode.jsonc')
+    if (has('permissions')) for (const target of SURFACE_TARGETS) {
+        const permissionSource = sources.find(source => source.path === 'permissions.jsonc')
+        const grokRules = (() => {
+            if (!permissionSource) return false
+            const source = ownRecord(JSON.parse(permissionSource.bytes))
+            const sections = [ownRecord(source?.permission), ownRecord(ownRecord(source?.grokcli)?.permission)]
+            return sections.some(permission => permission !== undefined && Object.values(permission).some(value => {
+                const rules = ownRecord(value)
+                return rules !== undefined && Object.keys(rules).length > 0
+            }))
+        })()
+        if (target !== 'grokcli' || grokRules) rows[target].push(...harnessFact(target).outputs.permissions)
     }
     if (has('subagents')) for (const name of names('subagents/', '.md')) {
         rows.claudecode.push(`.claude/agents/${name}.md`)
@@ -1533,6 +1542,18 @@ function nativeSources(mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
             opencode: {
                 permission: { external_directory: Object.fromEntries(paths('opencode').map(path => [`${path}/**`, 'allow'])) },
             },
+            cursor: {
+                permission: {
+                    read: Object.fromEntries(paths('cursor').map(path => [`${path}/**`, 'allow'])),
+                    write: Object.fromEntries(paths('cursor').map(path => [`${path}/**`, 'allow'])),
+                },
+            },
+            grokcli: {
+                permission: {
+                    read: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
+                    edit: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
+                },
+            },
         }, null, 2)}\n` }))
     }
     return Object.freeze(sources)
@@ -1558,8 +1579,7 @@ function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Rec
 }
 
 function nativeGrantPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
-    const paths: Partial<Record<SurfaceTarget, string>> = { claudecode: '.claude/settings.json', codexcli: '.codex/config.toml', opencode: 'opencode.jsonc' }
-    return Object.freeze(Object.fromEntries(targets.flatMap(target => paths[target] ? [[target, paths[target]]] : [])))
+    return Object.freeze(Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.permissions[0]])))
 }
 
 const CUSTOM_SURFACE_WORKER = String.raw`
@@ -1868,7 +1888,7 @@ async function prepareSurfaces(
         guideCapLines: config.cockpit.guide_cap,
         siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...projectionGuides(row)] })),
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),
-        directoryGrants: selected.flatMap(row => GUARD_SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
+        directoryGrants: selected.flatMap(row => SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
         guideObservations: observedGuides.observations,
         existingEntries: [],
         priorOwnedLinks: priorOwned.filter((row): row is Extract<SurfacePriorOwnedEntry, { kind: 'symlink' }> => row.kind === 'symlink')
@@ -2694,11 +2714,7 @@ function surfaceMutations(
     compactSurfacePaths: ReadonlySet<string>,
 ): readonly PublicationMutation[] | undefined {
     const compactAnchorFor = (path: string): string | undefined => {
-        if (path.startsWith('.agents/skills/')) return '.agents'
-        for (const anchor of ['.claude', '.codex', '.opencode']) {
-            if (path.startsWith(`${anchor}/`)) return anchor
-        }
-        return undefined
+        return SURFACE_PUBLICATION_ANCHORS.find(anchor => path.startsWith(`${anchor}/`))
     }
     const result: PublicationMutation[] = []
     for (const action of actions) {

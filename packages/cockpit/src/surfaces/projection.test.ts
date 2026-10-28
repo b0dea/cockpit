@@ -57,6 +57,7 @@ import {
     shippedInstructionCapabilities,
     type ProjectionPlannerInput,
 } from './projection.js'
+import { SURFACE_TARGETS } from './harness-registry.js'
 
 const roots: string[] = []
 
@@ -140,6 +141,8 @@ async function validInput(options: { override?: string } = {}): Promise<Projecti
             { slug: 'api', target: 'claudecode', path: resolvedApi },
             { slug: 'api', target: 'codexcli', path: resolvedApi },
             { slug: 'api', target: 'opencode', path: resolvedApi },
+            { slug: 'api', target: 'cursor', path: resolvedApi },
+            { slug: 'api', target: 'grokcli', path: resolvedApi },
         ],
         guideObservations: observations.observations,
         existingEntries: [],
@@ -204,6 +207,8 @@ describe('live sibling projection planner', () => {
             ['claudecode', `permissions.additionalDirectories:${input.mountedPaths[0]!.path}`],
             ['codexcli', `sandbox_workspace_write.writable_roots:${input.mountedPaths[0]!.path}`],
             ['opencode', `permission.external_directory:${input.mountedPaths[0]!.path}/**=allow`],
+            ['cursor', `permission.read+write:${input.mountedPaths[0]!.path}/**=allow`],
+            ['grokcli', `permission.read+edit:${input.mountedPaths[0]!.path}/**=allow`],
         ])
         expect(result.links.every(link => !link.sourceGuidePath.includes('mobile') && !link.sourceGuidePath.includes('docs') && !link.sourceGuidePath.includes('data'))).toBe(true)
         expect(Object.isFrozen(result)).toBe(true)
@@ -250,7 +255,7 @@ describe('live sibling projection planner', () => {
         if (observed.kind !== 'complete') throw new Error(`profile guide observation failed: ${JSON.stringify(observed)}`)
         input.activeProfiles = ['mobile']
         input.mountedPaths.push({ slug: 'mobile', path: mobile })
-        input.directoryGrants.push(...(['claudecode', 'codexcli', 'opencode'] as const).map(target => ({ slug: 'mobile', target, path: mobile })))
+        input.directoryGrants.push(...SURFACE_TARGETS.map(target => ({ slug: 'mobile', target, path: mobile })))
         input.guideObservations = [...input.guideObservations, ...observed.observations]
 
         const result = planSiblingProjection(input)
@@ -467,7 +472,7 @@ describe('live sibling projection planner', () => {
             const path = resolve(input.canonicalMainCheckout, '..', directoryAuthority)
             input.siblings.push({ slug, mount: 'always', directoryAuthority, guides: ['AGENTS.md'] })
             input.mountedPaths.push({ slug, path })
-            input.directoryGrants.push(...(['claudecode', 'codexcli', 'opencode'] as const).map(target => ({ slug, target, path })))
+            input.directoryGrants.push(...SURFACE_TARGETS.map(target => ({ slug, target, path })))
             guideObservations.push({ ...template, slug, sourcePath: join(path, 'AGENTS.md') })
         }
 

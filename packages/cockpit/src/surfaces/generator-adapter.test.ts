@@ -12,7 +12,7 @@ import * as ts from 'typescript'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { snapshotExecutionStep, type ExecutionStep } from '../environment/contract.js'
 import { SURFACE_FILE_MAX_BYTES } from './contract.js'
-import { generateSurfaceBatch, generateSurfaceBundle } from './generator-adapter.js'
+import { generateSurfaceBatch, generateSurfaceBundle, generateSurfaceEstate } from './generator-adapter.js'
 
 const authorityFault = vi.hoisted(() => ({
     kind: 'none' as 'none' | 'grown-bundle' | 'tampered-bundle' | 'node-close' | 'bundle-close' | 'stage-variance' | 'warning-stage-variance' | 'warning-receipt-bounds',
@@ -27,6 +27,7 @@ const authorityFault = vi.hoisted(() => ({
     activeGeneratorExecutions: 0,
     maxActiveGeneratorExecutions: 0,
     cleanupActiveTargetPipelines: [] as number[],
+    observedGrokFeatures: [] as string[],
     releaseFirstTarget: undefined as (() => void) | undefined,
 }))
 
@@ -123,6 +124,10 @@ vi.mock('../environment-exec/execute.js', async importOriginal => {
             const current = stage(step)
             const generation = step.id.startsWith('surface-generate-') || step.id.startsWith('surface-estate-generate-')
             const read = step.id.startsWith('surface-read-') || step.id.startsWith('surface-estate-read-')
+            if (step.id.startsWith('surface-estate-generate-')) {
+                const request = JSON.parse(step.argv[3]!) as { jobs: Array<{ target: string; features: string[] }> }
+                authorityFault.observedGrokFeatures = request.jobs.find(job => job.target === 'grokcli')?.features ?? []
+            }
             if (authorityFault.observeTargetConcurrency && generation && current) {
                 const order = authorityFault.stageOrder[current.target] ?? []
                 order.push(current.pass)
@@ -210,6 +215,7 @@ afterEach(() => {
     authorityFault.activeGeneratorExecutions = 0
     authorityFault.maxActiveGeneratorExecutions = 0
     authorityFault.cleanupActiveTargetPipelines.length = 0
+    authorityFault.observedGrokFeatures.length = 0
     authorityFault.releaseFirstTarget?.()
     authorityFault.releaseFirstTarget = undefined
 })
@@ -383,6 +389,36 @@ it('compiles Cursor and Grok Build rules while rejecting a mismatched output con
     ] })
 })
 
+it('covers every supported Cursor and Grok Build feature without claiming native enforcement', async () => {
+    const generated = await generateSurfaceBatch({
+        targets: ['cursor', 'grokcli'],
+        features: ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'],
+        sources,
+        expectedOutputs: {
+            cursor: ['.cursor/agents/reviewer.md', '.cursor/cli.json', '.cursor/hooks.json', '.cursor/mcp.json',
+                '.cursor/rules/base.mdc', '.cursor/skills/check/SKILL.md'],
+            grokcli: ['.grok/agents/reviewer.md', '.grok/config.toml', '.grok/hooks/rulesync.json',
+                '.grok/skills/check/SKILL.md', 'AGENTS.md'],
+        },
+    })
+
+    expect(generated.kind, JSON.stringify(generated)).toBe('complete')
+    if (generated.kind !== 'complete') return
+    expect(generated.files.map(({ target, path }) => `${target}:${path}`)).toEqual([
+        'cursor:.cursor/agents/reviewer.md',
+        'cursor:.cursor/cli.json',
+        'cursor:.cursor/hooks.json',
+        'cursor:.cursor/mcp.json',
+        'cursor:.cursor/rules/base.mdc',
+        'cursor:.cursor/skills/check/SKILL.md',
+        'grokcli:.grok/agents/reviewer.md',
+        'grokcli:.grok/config.toml',
+        'grokcli:.grok/hooks/rulesync.json',
+        'grokcli:.grok/skills/check/SKILL.md',
+        'grokcli:AGENTS.md',
+    ])
+})
+
 it('runs the two estate passes concurrently and settles both readers before cleanup', async () => {
     authorityFault.observeTargetConcurrency = true
 
@@ -466,6 +502,61 @@ it('authenticates a present empty enabled MCP subset in the pinned Claude warnin
         permissions: { additionalDirectories: ['../shared'] },
         enabledMcpjsonServers: [],
     })
+})
+
+it.each([
+    { name: 'empty', bytes: '{\n  // no generic rules\n  "permission": {},\n}\n', expected: [] },
+    { name: 'nonempty', bytes: '{\n  // one generic rule\n  "permission": { "read": { "./**": "allow" } },\n}\n', expected: ['.grok/config.toml'] },
+])('matches Grok Build permission output for a $name JSONC source', async ({ bytes, expected }) => {
+    const outcome = await generateSurfaceBatch({
+        targets: ['grokcli'],
+        features: ['rules', 'permissions'],
+        sources: [sources[0], { path: 'permissions.jsonc', bytes }],
+        expectedOutputs: { grokcli: ['AGENTS.md', ...expected] },
+    })
+
+    if (expected.length === 0) {
+        expect(outcome).toMatchObject({ kind: 'refusal', files: [], diagnostics: [expect.objectContaining({
+            code: 'SURFACE_FEATURE_COVERAGE', target: 'grokcli',
+        })] })
+        return
+    }
+    expect(outcome.kind, JSON.stringify(outcome)).toBe('complete')
+    if (outcome.kind !== 'complete') return
+    expect(outcome.files.map(file => file.path)).toEqual(['AGENTS.md', ...expected])
+})
+
+it('compiles target-specific Cursor and Grok Build directory grant fragments', async () => {
+    const shared = '../shared/**'
+    const outcome = await generateSurfaceBatch({
+        targets: ['cursor', 'grokcli'],
+        features: ['permissions'],
+        sources: [{ path: 'permissions.jsonc', bytes: `${JSON.stringify({
+            permission: {},
+            cursor: { permission: { read: { [shared]: 'allow' }, write: { [shared]: 'allow' } } },
+            grokcli: { permission: { read: { [shared]: 'allow' }, edit: { [shared]: 'allow' } } },
+        }, null, 2)}\n` }],
+        expectedOutputs: { cursor: ['.cursor/cli.json'], grokcli: ['.grok/config.toml'] },
+    })
+
+    expect(outcome.kind, JSON.stringify(outcome)).toBe('complete')
+    if (outcome.kind !== 'complete') return
+    expect(outcome.files).toHaveLength(2)
+    expect(outcome.files.every(file => file.bytes.includes('../shared'))).toBe(true)
+})
+
+it('does not infer a Grok Build permission feature from its shared MCP output path', async () => {
+    const outcome = await generateSurfaceEstate({ batch: {
+        targets: ['grokcli'],
+        features: ['mcp', 'permissions'],
+        sources: [sources[1], { path: 'permissions.jsonc', bytes: '{"permission":{}}\n' }],
+        expectedOutputs: { grokcli: ['.grok/config.toml'] },
+    } })
+
+    expect(outcome.kind, JSON.stringify(outcome)).toBe('complete')
+    if (outcome.kind !== 'complete') return
+    expect(authorityFault.observedGrokFeatures).toEqual(['mcp'])
+    expect(outcome.batch?.files.map(file => file.path)).toEqual(['.grok/config.toml'])
 })
 
 it('refuses an unrecognized Rulesync warning without admitting generated bytes', async () => {

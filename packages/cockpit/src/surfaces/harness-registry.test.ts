@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
     GUARD_SURFACE_TARGETS,
     HARNESS_REGISTRY,
+    SURFACE_PUBLICATION_ANCHORS,
     SURFACE_TARGETS,
     type GuardSurfaceTarget,
     type SurfaceTarget,
@@ -18,20 +19,23 @@ describe('shipped harness registry', () => {
             row.outputs.instruction,
             row.outputs.skills,
             row.outputs.mcp,
+            row.outputs.permissions,
             row.rulesyncFeatures,
             row.guard.capability,
             row.native.state,
             row.native.measuredOn,
         ])).toEqual([
-            ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
-            ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
-            ['opencode', 'OpenCode', 'opencode', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
-            ['cursor', 'Cursor', 'cursor', '.cursor/rules', '.cursor/skills', '.cursor/mcp.json', ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'unavailable', 'unavailable', '2026-10-28'],
-            ['grokcli', 'Grok Build', 'grokcli', 'AGENTS.md', '.grok/skills', '.grok/config.toml', ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'unavailable', 'unavailable', '2026-10-28'],
+            ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['.claude/settings.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
+            ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['.codex/config.toml', '.codex/rules/rulesync.rules'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
+            ['opencode', 'OpenCode', 'opencode', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['opencode.jsonc'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
+            ['cursor', 'Cursor', 'cursor', '.cursor/rules', '.cursor/skills', '.cursor/mcp.json', ['.cursor/cli.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'unavailable', '2026-10-28'],
+            ['grokcli', 'Grok Build', 'grokcli', 'AGENTS.md', '.grok/skills', '.grok/config.toml', ['.grok/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'unavailable', '2026-10-28'],
         ])
         expect(GUARD_SURFACE_TARGETS).toEqual(['claudecode', 'codexcli', 'opencode'])
+        expect(SURFACE_PUBLICATION_ANCHORS).toEqual(['.agents', '.claude', '.codex', '.cursor', '.grok', '.opencode'])
         expect(Object.isFrozen(HARNESS_REGISTRY)).toBe(true)
         expect(HARNESS_REGISTRY.every(row => Object.isFrozen(row) && Object.isFrozen(row.outputs)
+            && Object.isFrozen(row.outputs.permissions)
             && Object.isFrozen(row.guard) && Object.isFrozen(row.native))).toBe(true)
     })
 

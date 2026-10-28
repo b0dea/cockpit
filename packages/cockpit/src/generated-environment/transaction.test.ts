@@ -145,6 +145,31 @@ async function smallFilePublication() {
         ledgerExpected: { kind: 'file' as const, sha256: digest(ledger.bytes), identity: { dev, ino } } } }
 }
 
+async function compactPublication(options: { count?: number; segmentLength?: number; preexisting?: boolean } = {}) {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-compact-transaction-')))
+    roots.push(root)
+    await mkdir(join(root, '.cursor'))
+    const authority = { root, cockpitId: 'synthetic-publication', configPath: join(root, 'cockpit.toml') }
+    const sourceSha256 = digest('compact-source')
+    const generation = digest('compact-generation')
+    const files = Array.from({ length: options.count ?? 61 }, (_, index) => ({
+        path: `.cursor/${(`skill-${String(index).padStart(3, '0')}`).padEnd(options.segmentLength ?? 9, 'x')}/SKILL.md`, bytes: `skill ${index}\n`,
+    }))
+    if (options.preexisting) await Promise.all(files.map(file => mkdir(dirname(join(root, file.path)), { recursive: true })))
+    const ledger = encodeOwnershipManifest({ ...authority, generation, sourceSha256,
+        personaSource: { path: 'source.json', sha256: sourceSha256 },
+        owned: files.map(file => ({ path: file.path, sha256: digest(file.bytes) })), surfaces: [] })
+    const status = await lstat(root)
+    const node = await nodeAuthority()
+    if (!node) throw new Error('Node authority unavailable')
+    return { root, files, input: {
+        authority, generation, sourceSha256, rootIdentity: { dev: status.dev, ino: status.ino }, node,
+        mode: 'sync' as const, ledgerExpected: { kind: 'missing' as const }, nextLedgerBytes: ledger.bytes,
+        mutations: files.map(file => ({ path: file.path, phase: 'desired' as const, operation: 'write-file' as const,
+            bytes: file.bytes, sha256: digest(file.bytes), expected: { kind: 'missing' as const }, compactAnchor: '.cursor' })),
+    } }
+}
+
 async function referencePublication() {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-reference-transaction-')))
     roots.push(root)
@@ -241,6 +266,51 @@ async function syntheticBootstrap(variant: 'sha256' | 'unsupported-format' | 'no
 const approve = async (request: { digest: string }) => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest })
 
 describe('generated publication transaction', () => {
+    it('refuses a compact cluster whose longer pre-existing-directory receipts exceed the frame bound', async () => {
+        const nearLimit = await compactPublication({ count: 144, segmentLength: 12, preexisting: true })
+        const admitted = await admitPublicationPlan(nearLimit.input, { execute: executeProbe })
+
+        expect(admitted).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+            code: 'GENERATED_PUBLICATION_FAILED',
+            message: 'generated publication exceeds the bounded helper schedule',
+        })] })
+        await Promise.all(nearLimit.files.map(file => expect(lstat(join(nearLimit.root, file.path))).rejects.toMatchObject({ code: 'ENOENT' })))
+    })
+
+    it('publishes more than sixty bounded parents as one compact helper unit and refuses a partial rollback', async () => {
+        const successful = await compactPublication()
+        const admitted = await admitPublicationPlan(successful.input, { execute: executeProbe })
+        expect(admitted).toMatchObject({ kind: 'complete' })
+        if (admitted.kind !== 'complete') return
+        expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true }))
+            .toMatchObject({ kind: 'complete' })
+        expect(await Promise.all(successful.files.map(file => readFile(join(successful.root, file.path), 'utf8'))))
+            .toEqual(successful.files.map(file => file.bytes))
+
+        const interrupted = await compactPublication()
+        const interruptedPlan = await admitPublicationPlan(interrupted.input, { execute: executeProbe })
+        expect(interruptedPlan).toMatchObject({ kind: 'complete' })
+        if (interruptedPlan.kind !== 'complete') return
+        const actions: string[] = []
+        let damaged = false
+        const result = await runPublicationPlan(interruptedPlan.plan, { revalidate: async () => true,
+            execute: async step => {
+                actions.push(step.labels.action!)
+                if (!damaged && step.labels.action === 'verify-batch') {
+                    damaged = true
+                    await writeFile(join(interrupted.root, interrupted.files[0]!.path), 'damaged\n')
+                }
+                return executeProbe(step)
+            } })
+        expect(damaged).toBe(true)
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_COMPENSATION_FAILED' })] })
+        expect(actions).toContain('rollback')
+        expect(await readFile(join(interrupted.root, interrupted.files[0]!.path), 'utf8')).toBe('damaged\n')
+        expect(await Promise.all(interrupted.files.slice(1).map(file => readFile(join(interrupted.root, file.path), 'utf8'))))
+            .toEqual(interrupted.files.slice(1).map(file => file.bytes))
+        await expect(lstat(join(interrupted.root, ledgerPath))).rejects.toMatchObject({ code: 'ENOENT' })
+    }, 120_000)
+
     it('admits small owned files with the minimum bounded authenticated helper count', async () => {
         const { input, owned, ledger } = await smallFilePublication()
         const batches: Array<Array<{ action: string; segments: string[]; name: string; maxBytes: number }>> = []

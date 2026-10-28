@@ -68,6 +68,8 @@ describe('public surface publication transaction', () => {
             }
             const ownerId = (await ownership(fixture.root)).cockpitId
             const openCodeBytes = await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8')
+            const cursorGrant = await readFile(join(fixture.root, '.cursor/cli.json'), 'utf8')
+            const grokGrant = await readFile(join(fixture.root, '.grok/config.toml'), 'utf8')
             expect(openCodeBytes).toContain(`/* cockpit:owner:${ownerId}:start */`)
             const openCode = JSON.parse(openCodeBytes
                 .replace(`/* cockpit:owner:${ownerId}:start */`, '')
@@ -81,6 +83,12 @@ describe('public surface publication transaction', () => {
             expect(Object.fromEntries(Object.entries(openCode.mcp).map(([name, server]) => [name, server.enabled]))).toEqual({
                 'approved-server': true, 'unapproved-server': false,
             })
+            expect(cursorGrant).toContain(outside)
+            expect(cursorGrant).toContain('Read')
+            expect(cursorGrant).toContain('Write')
+            expect(grokGrant).toContain(outside)
+            expect(grokGrant).toContain('Read(')
+            expect(grokGrant).toContain('Edit(')
 
             const approved = claude.mcpServers['approved-server']!
             const wrapper = approved.args[0]!

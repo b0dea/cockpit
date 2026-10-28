@@ -1471,7 +1471,7 @@ function publicationEntrySegments(parent: string, path: string): readonly string
 
 function groupFrameBounded(parent: string, entries: readonly PublicationMutation[]): boolean {
         const identity = { dev: Number.MAX_SAFE_INTEGER, ino: Number.MAX_SAFE_INTEGER }
-        const chain = (parent === '.' ? [] : parent.split('/')).map(name => ({ name, ...identity, created: true }))
+        const chain = (parent === '.' ? [] : parent.split('/')).map(name => ({ name, ...identity, created: false }))
         const requestEntries = entries.map((entry, index) => {
             const segments = publicationEntrySegments(parent, entry.path)
             return segments && { chain: segments.map(name => ({ name, ...identity })), segments: [], name: basename(entry.path), operation: entry.operation,
@@ -1479,7 +1479,7 @@ function groupFrameBounded(parent: string, entries: readonly PublicationMutation
                 input: entry.operation === 'write-file' ? Number.MAX_SAFE_INTEGER - index : null }
         })
         if (requestEntries.some(entry => entry === undefined)) return false
-        const receiptEntries = entries.map((entry, index) => ({ chain: publicationEntrySegments(parent, entry.path)!.map(name => ({ name, ...identity, created: true })),
+        const receiptEntries = entries.map((entry, index) => ({ chain: publicationEntrySegments(parent, entry.path)!.map(name => ({ name, ...identity, created: false })),
             name: basename(entry.path), operation: entry.operation,
             sha256: entry.sha256 ?? null, target: entry.target ?? null, stage: `.cockpit-stage-${'0'.repeat(32)}-${index}`,
             backup: `.cockpit-backup-${'0'.repeat(32)}-${index}`, priorKind: entry.expected.kind,
@@ -1549,7 +1549,7 @@ function groupMutations(mutations: readonly PublicationMutation[]): readonly Pub
         const parents = new Set(cluster.map(row => row.parent))
         const entries = cluster.flatMap(row => row.mutations).sort((left, right) => compareCodeUnits(left.path, right.path))
         if (parents.size > 1 && groupFrameBounded(anchor!, entries)) {
-            result.push(Object.freeze({ parent: anchor!, phase: group.phase, mutations: Object.freeze(entries), logicalWeight: cluster.length }))
+            result.push(Object.freeze({ parent: anchor!, phase: group.phase, mutations: Object.freeze(entries), logicalWeight: 1 }))
         } else for (const row of cluster) result.push(Object.freeze({ ...row, logicalWeight: 1 }))
     }
     result.sort((left, right) => phaseOrder[left.phase] - phaseOrder[right.phase] || compareCodeUnits(left.parent, right.parent))

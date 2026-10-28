@@ -1,7 +1,7 @@
 export const mechanism = {
     id: 'shipped-harness-registry',
     module: 'packages/cockpit/src/surfaces/harness-registry.ts',
-    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'harnessFact', 'isGuardSurfaceTarget'],
+    exports: ['HARNESS_REGISTRY', 'SURFACE_TARGETS', 'GUARD_SURFACE_TARGETS', 'SURFACE_PUBLICATION_ANCHORS', 'harnessFact', 'isGuardSurfaceTarget'],
 } as const
 
 const pendingNative = (measuredOn: '2026-09-26') => Object.freeze({
@@ -16,37 +16,36 @@ const unavailableNative = Object.freeze({
     reason: 'no authenticated native candidate and broken-control probe is committed',
 })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
-const unguardedRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
 export const HARNESS_REGISTRY = Object.freeze([
     Object.freeze({
         target: 'claudecode', type: 'agent' as const, displayName: 'Claude Code', rulesyncTarget: 'claudecode',
         rulesyncFeatures: completeRulesyncFeatures,
-        outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json' }),
+        outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
         guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
-        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml' }),
+        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml', '.codex/rules/rulesync.rules']) }),
         guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencode',
         rulesyncFeatures: completeRulesyncFeatures,
-        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc' }),
+        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
         guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',
-        rulesyncFeatures: unguardedRulesyncFeatures,
-        outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json' }),
+        rulesyncFeatures: completeRulesyncFeatures,
+        outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
         guard: Object.freeze({ capability: 'unavailable' as const }), native: unavailableNative,
     }),
     Object.freeze({
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
-        rulesyncFeatures: unguardedRulesyncFeatures,
-        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml' }),
+        rulesyncFeatures: completeRulesyncFeatures,
+        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
         guard: Object.freeze({ capability: 'unavailable' as const }), native: unavailableNative,
     }),
 ] as const)
@@ -59,6 +58,9 @@ export const SURFACE_TARGETS = Object.freeze(HARNESS_REGISTRY.map(row => row.tar
 export const GUARD_SURFACE_TARGETS = Object.freeze(HARNESS_REGISTRY
     .filter((row): row is Extract<HarnessRegistryRow, { readonly guard: { readonly capability: 'instructed' } }> => row.guard.capability === 'instructed')
     .map(row => row.target)) as readonly GuardSurfaceTarget[]
+export const SURFACE_PUBLICATION_ANCHORS = Object.freeze([...new Set(HARNESS_REGISTRY.flatMap(row =>
+    [row.outputs.instruction, row.outputs.skills, row.outputs.mcp, ...row.outputs.permissions]
+        .filter(path => path.includes('/')).map(path => path.split('/')[0]!).filter(path => path.startsWith('.'))))].sort())
 
 export function isGuardSurfaceTarget(value: unknown): value is GuardSurfaceTarget {
     return typeof value === 'string' && GUARD_SURFACE_TARGETS.some(target => target === value)

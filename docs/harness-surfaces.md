@@ -62,8 +62,8 @@ Each feature is represented as `enforced`, `instructed`, or `unavailable`:
 - `instructed` emits guidance or a harness setting whose enforcement has not been established.
 - `unavailable` emits no pretend control and records why the harness cannot provide it.
 
-Built-in generation covers rules, MCP servers, subagents, skills, and hooks. Permissions and the
-shared guard are generated only for targets with an admitted adapter. Native spellings differ,
+Built-in generation covers rules, MCP servers, subagents, skills, hooks, and permissions. The
+shared guard is generated only for targets with an admitted adapter. Native spellings differ,
 and generated output does not promote an unmeasured native capability. A custom harness must
 declare exactly one row for every feature.
 Each non-unavailable row names a measured date, output spelling, deliberately broken control,
@@ -91,7 +91,7 @@ control have been measured.
 | Subagents | instructed | instructed | instructed | unavailable | unavailable | Native role behavior needs evidence. |
 | Skills | instructed | instructed | instructed | unavailable | unavailable | Native parity and required human reviews remain pending only for admitted candidates. |
 | Hooks | instructed | instructed | instructed | unavailable | unavailable | Generated hook files do not establish that the harness invokes them. |
-| Permissions | instructed | instructed | instructed | unavailable | unavailable | No permission or shared-guard surface is emitted without an admitted adapter. |
+| Permissions | instructed | instructed | instructed | unavailable | unavailable | Generated permission files do not establish native loading; the shared guard remains unavailable without an admitted adapter. |
 
 The checked-in guard adapters (the
 [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),

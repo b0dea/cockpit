@@ -16,6 +16,7 @@ import {
     type GeneratedStaleRemovalApprovalRequest,
 } from '../environment/generated-application.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
+import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
@@ -251,7 +252,7 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             expect(projection.manifestSha256).toBe(createHash('sha256').update(JSON.stringify({
                 schema, configuredHarnesses, declarations, entries, custom,
             })).digest('hex'))
-            expect(configuredHarnesses).toEqual(['claudecode', 'codexcli', 'opencode', 'synthetic-harness'])
+            expect(configuredHarnesses).toEqual([...SURFACE_TARGETS, 'synthetic-harness'].sort())
             expect(declarations).toHaveLength(1)
             expect(declarations[0]?.capabilities).toHaveLength(6)
             expect(custom).toHaveLength(1)
