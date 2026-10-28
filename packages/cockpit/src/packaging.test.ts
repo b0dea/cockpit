@@ -799,3 +799,43 @@ it('runs installed init for each isolated target and refuses missing roots or br
         expect(existsSync(join(untouched, '.agents'))).toBe(false)
     } finally { writeFileSync(asset, bytes) }
 }, 240_000)
+
+
+it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a product using the %s cockpit root', rootChoice => {
+    const launcher = join(packedPackageRoot(), 'bin/cockpit.mjs')
+    const parent = join(packScratch, `product-${rootChoice}`)
+    const product = join(parent, 'store')
+    const home = join(parent, 'home')
+    mkdirSync(product, { recursive: true })
+    mkdirSync(home)
+    execFileSync('git', ['init', '--quiet', product])
+    const manifest = `${JSON.stringify({ name: 'synthetic-store', version: '0.0.0', scripts: { test: 'node test.mjs' } })}\n`
+    writeFileSync(join(product, 'package.json'), manifest)
+    const root = rootChoice === 'dedicated' ? `${product}-cockpit` : product
+    const answers = join(parent, 'answers.toml')
+    writeFileSync(answers, [
+        '[cockpit]', `root = "${rootChoice}"`, '',
+        '[[sibling]]', 'slug = "store"', `dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`,
+        'mount = "none"', 'acquire = "none"', 'var = "STORE_DIR"', 'purpose = "Synthetic store library"', '',
+        '[ports]', 'bases = {}', '', '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',
+    ].join('\n'))
+    const env = { ...npmEnvironment(), HOME: home, XDG_STATE_HOME: join(home, 'state') }
+    const run = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', product, '--target', 'codexcli',
+        '--answers', answers, ...extra, '--json'], { cwd: product, env, encoding: 'utf8' })
+    const preview = run()
+    expect(preview.status, preview.stdout + preview.stderr).toBe(0)
+    const shown = JSON.parse(preview.stdout).result
+    const pending = run('--accept-preview', shown.previewSha256)
+    expect(pending.status, pending.stdout + pending.stderr).toBe(0)
+    const defaults = JSON.parse(pending.stdout).result.question
+    expect(defaults).toMatchObject({ field: 'configuration.defaults' })
+    const completed = run('--accept-preview', shown.previewSha256, '--accept-defaults', defaults.expectedSha256)
+    expect(completed.status, completed.stdout + completed.stderr).toBe(0)
+    expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'environment-verified' })
+    expect(statSync(join(root, '.git')).isDirectory()).toBe(true)
+    expect(readFileSync(join(product, 'package.json'), 'utf8')).toBe(manifest)
+    expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain(`dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`)
+    const check = spawnSync(process.execPath, [launcher, 'check', '--config', join(root, 'cockpit.toml'), '--json'],
+        { cwd: root, env, encoding: 'utf8' })
+    expect(check.status, check.stdout + check.stderr).toBe(0)
+}, 180_000)

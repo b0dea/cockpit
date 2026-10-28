@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
-import { runSiblingAdd, runSiblingRemove, type SiblingAddInput } from './sibling-registration.js'
+import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput } from './sibling-registration.js'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -67,6 +67,43 @@ async function treeDigest(root: string): Promise<string> {
     await walk(root)
     return hash.digest('hex')
 }
+
+describe('local repository initialization', () => {
+    it.each(['symlink', 'gitfile', 'unrelated'] as const)('refuses %s content before adopting a dedicated directory', async kind => {
+        const { root } = await estate()
+        const target = join(root, 'dedicated')
+        const external = join(root, 'external')
+        await mkdir(target)
+        execFileSync('git', ['init', '--quiet', external])
+        if (kind === 'symlink') await symlink(join(external, '.git'), join(target, '.git'), 'dir')
+        else if (kind === 'gitfile') await writeFile(join(target, '.git'), `gitdir: ${join(external, '.git')}\n`)
+        else await writeFile(join(target, 'notes.txt'), 'unrelated work\n')
+        const before = await treeDigest(external)
+
+        const outcome = await initializeLocalGitRepository({ path: target, env }, { execute: executeProbe })
+
+        expect(outcome).toMatchObject({ kind: 'refusal', reason: expect.stringContaining(target) })
+        expect(await treeDigest(external)).toBe(before)
+        if (kind === 'unrelated') await expect(stat(join(target, '.git'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('resumes a genuine dedicated repository without reinitializing it', async () => {
+        const { root } = await estate()
+        const target = join(root, 'dedicated')
+        execFileSync('git', ['init', '--quiet', target])
+        await writeFile(join(target, 'notes.txt'), 'product notes\n')
+        const before = await treeDigest(target)
+        const invocations: string[][] = []
+        const outcome = await initializeLocalGitRepository({ path: target, env }, { execute: async step => {
+            invocations.push([...step.argv])
+            return executeProbe(step)
+        } })
+
+        expect(outcome).toEqual({ kind: 'complete' })
+        expect(invocations.some(argv => argv.includes('init'))).toBe(false)
+        expect(await treeDigest(target)).toBe(before)
+    })
+})
 
 describe('sibling add', () => {
     it('--create initialises a repository, records acquire none, and prints how to publish it', async () => {

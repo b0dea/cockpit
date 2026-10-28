@@ -314,8 +314,12 @@ function sourceObservationSha256(root: string, rows: readonly EstateRepositoryOb
     })).digest('hex')
 }
 
-function sameStat(left: Awaited<ReturnType<typeof lstat>>, right: Awaited<ReturnType<typeof lstat>>): boolean {
+function sameIdentity(left: Awaited<ReturnType<typeof lstat>>, right: Awaited<ReturnType<typeof lstat>>): boolean {
     return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
+}
+
+function sameStat(left: Awaited<ReturnType<typeof lstat>>, right: Awaited<ReturnType<typeof lstat>>): boolean {
+    return sameIdentity(left, right)
         && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs
 }
 
@@ -410,7 +414,7 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
                 if (!sameStat(before, after)
                     || createHash('sha256').update(bytes).digest('hex') !== source.sha256) return false
             }
-            if (!sameStat(repositoryBefore, await lstat(repository))) return false
+            if (!(ownRoot ? sameIdentity : sameStat)(repositoryBefore, await lstat(repository))) return false
         }
         return true
     } catch {
@@ -434,7 +438,7 @@ export async function classifyEstateObservation(
         if (root !== captured.root || !before.isDirectory() || before.isSymbolicLink()) {
             return estateRefusal('estate root is linked, missing or non-canonical', captured.root)
         }
-        directories = await estateDirectories(root, only)
+        directories = captured.rootIsRepository ? [] : await estateDirectories(root, only)
     } catch {
         return estateRefusal(only === undefined ? 'estate root is linked, missing or non-canonical'
             : `estate root is linked, missing or non-canonical, or does not hold ${only.join(', ')} as a plain directory`, captured.root)
@@ -448,13 +452,13 @@ export async function classifyEstateObservation(
         return estateRefusal('estate observation is malformed, ambiguous, stale or unbound to current source bytes', root)
     }
     try {
-        const currentDirectories = await estateDirectories(root, only)
+        const currentDirectories = captured.rootIsRepository ? [] : await estateDirectories(root, only)
         if (directories.length !== currentDirectories.length || directories.some((entry, index) =>
             entry.name !== currentDirectories[index]!.name || !sameStat(entry.stat, currentDirectories[index]!.stat))) {
             return estateRefusal('estate candidate directories changed during observation', root)
         }
         const after = await lstat(root)
-        if (!sameStat(before, after)) return estateRefusal('estate root changed during observation', root)
+        if (!(captured.rootIsRepository ? sameIdentity : sameStat)(before, after)) return estateRefusal('estate root changed during observation', root)
     } catch { return estateRefusal('estate root changed during observation', root) }
 
     const confirmed = rows.filter(row => row.runnable === 'confirmed')

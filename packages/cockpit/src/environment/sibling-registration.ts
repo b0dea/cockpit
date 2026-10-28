@@ -115,13 +115,42 @@ export async function initializeLocalGitRepository(
     input: Readonly<{ path: string; env: Readonly<Record<string, string | undefined>> }>,
     dependencies: SiblingDependencies,
 ): Promise<GitRepositoryInitializationOutcome> {
+    const refuse = (reason: string): GitRepositoryInitializationOutcome => ({ kind: 'refusal',
+        reason: `${input.path}: ${reason}; choose an empty directory or an existing local Git repository` })
     const git = await resolveGitExecutable({ PATH: input.env.PATH ?? '' })
-    if (git.state !== 'available') return { kind: 'refusal', reason: git.reason }
-    const initialised = await runGit(dependencies, gitStep(git.value, dirname(input.path),
-        { PATH: input.env.PATH ?? '' }, 'repository:init', ['init', input.path]))
-    return initialised.kind === 'complete'
-        ? { kind: 'complete' }
-        : { kind: 'refusal', reason: `git init failed (${initialised.detail})` }
+    if (git.state !== 'available') return refuse(git.reason)
+    try {
+        const directory = await lstat(input.path)
+        if (!directory.isDirectory() || directory.isSymbolicLink() || await realpath(input.path) !== input.path) {
+            return refuse('the dedicated cockpit directory is not a canonical plain directory')
+        }
+        const entries = await readdir(input.path)
+        if (entries.length > 0) {
+            if (!entries.includes('.git')) return refuse('the dedicated cockpit directory already contains unrelated files')
+            const metadata = await lstat(resolve(input.path, '.git'))
+            if (!metadata.isDirectory() || metadata.isSymbolicLink()
+                || await realpath(resolve(input.path, '.git')) !== resolve(input.path, '.git')) {
+                return refuse('the existing Git metadata must be a plain local .git directory')
+            }
+        } else {
+            const initialised = await runGit(dependencies, gitStep(git.value, dirname(input.path),
+                { PATH: input.env.PATH ?? '' }, 'repository:init', ['init', input.path]))
+            if (initialised.kind !== 'complete') return refuse(`git init failed (${initialised.detail})`)
+            const metadata = await lstat(resolve(input.path, '.git'))
+            if (!metadata.isDirectory() || metadata.isSymbolicLink()
+                || await realpath(resolve(input.path, '.git')) !== resolve(input.path, '.git')) {
+                return refuse('git init did not create plain local metadata')
+            }
+        }
+        const top = await runGit(dependencies, gitStep(git.value, input.path,
+            { PATH: input.env.PATH ?? '' }, 'repository:root', ['rev-parse', '--show-toplevel']))
+        if (top.kind !== 'complete' || top.text !== input.path) {
+            return refuse('the Git repository does not belong to this exact directory')
+        }
+        return { kind: 'complete' }
+    } catch (error) {
+        return refuse(`the local repository could not be verified (${error instanceof Error ? error.message : String(error)})`)
+    }
 }
 
 /** `FOO-bar` becomes `FOO_BAR_DIR`; a slug that cannot start a variable name must be given one with --var. */

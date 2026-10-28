@@ -1061,6 +1061,30 @@ describe('operator-confirmed document completion', () => {
         expect(pending, JSON.stringify(pending.diagnostics)).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.install_policies' } })
     })
 
+    it('binds an in-repo estate to its manifest while unrelated child directories change', async () => {
+        const requested = temporaryPath('root-product')
+        mkdirSync(requested)
+        const product = realpathSync(requested)
+        writeFileSync(join(product, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.mjs' } }))
+        for (let index = 0; index < 65; index++) mkdirSync(join(product, `component-${index}`))
+        const estate = { root: product, rootIsRepository: true as const }
+
+        const observed = await classifyEstateObservation(estate, { observe: async input => {
+            const value = await observePublicEstate(input)
+            mkdirSync(join(product, 'another-component'))
+            return value
+        } })
+
+        expect(observed).toMatchObject({ kind: 'complete', result: { classification: 'one-sibling',
+            runnable: [{ path: '.', disposition: 'confirmed' }] } })
+        const stale = await classifyEstateObservation(estate, { observe: async input => {
+            const value = await observePublicEstate(input)
+            writeFileSync(join(product, 'package.json'), JSON.stringify({ scripts: { start: 'node changed.mjs' } }))
+            return value
+        } })
+        expect(stale).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID' }] })
+    })
+
     it('completes a no-runnable estate as a surfaces-only configuration that states no runtime is declared', async () => {
         const estateRoot = temporaryPath('empty-product')
         mkdirSync(estateRoot)
