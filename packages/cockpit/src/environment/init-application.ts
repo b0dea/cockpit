@@ -7,6 +7,7 @@ import {
     type EstateObservationInput,
 } from '../document/command.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
+import { snapshotJson } from './contract.js'
 import { bootstrapHolderId } from './identity.js'
 import {
     authenticateStatePublication,
@@ -560,6 +561,10 @@ export async function runInitApplication(
             }
             return ownerRefusal(documented, current.value.stage, projection)
         }
+        const draftRemedy = `shorten the answers; for a saved answer, from the cockpit root, preview its reset with cockpit init . --target ${input.target} --reset-answer <field> --json, then repeat with --accept-reset <previewSha256> before answering again`
+        if (Buffer.byteLength(documented.artifact, 'utf8') > DRAFT_BYTE_LIMIT) {
+            return refused('INIT_DRAFT_INVALID', `cockpit.toml exceeds the draft byte limit and cannot be offered for confirmation; ${draftRemedy}`, destination)
+        }
         const question = documented.question
         if (question) {
             const surfacedQuestion = question.field === 'configuration.defaults'
@@ -569,13 +574,15 @@ export async function runInitApplication(
                 return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration question changed after it was persisted', address.path)
             }
             const interview = classification ? await interviewPlan(input, adapters, classification, answers.length) : undefined
-            if (!input.accepted) {
-                const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
-                return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
-                    result: result('surface-published', projection, undefined,
-                        { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
-                            ...(appliedReset ? { resetAnswer: appliedReset } : {}) }) }
+            const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
+            const pendingResult = result('surface-published', projection, undefined,
+                { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
+                    ...(!input.accepted && appliedReset ? { resetAnswer: appliedReset } : {}) })
+            if (snapshotJson(pendingResult) === undefined) {
+                return refused('INIT_DRAFT_INVALID', `configuration review cannot be shown exactly within the bounded human output; ${draftRemedy}`, destination)
             }
+            if (!input.accepted) return { kind: 'pending', status: 0, artifact: null, destination: null,
+                diagnostics: documented.diagnostics, result: pendingResult }
             const questions = [...(state?.questions ?? []),
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]
             const nextState = { ...(mode === 'registry' ? { mode } : {}), stage: 'question-pending' as const, sourceObservationSha256,
@@ -583,14 +590,12 @@ export async function runInitApplication(
             const recorded = await persist(namespace, address, input, projection, adapters, 'surface-published', current,
                 { published: current.value.published, greenfield: nextState })
             if (recorded.kind !== 'complete') return stateFailure(recorded)
-            const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
-            return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
-                result: result('surface-published', projection, undefined,
-                    { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
+            return { kind: 'pending', status: 0, artifact: null, destination: null,
+                diagnostics: documented.diagnostics, result: pendingResult }
         }
         if (documented.kind !== 'complete') return ownerRefusal(documented, current.value.stage, projection)
-        if (documented.destination !== destination || Buffer.byteLength(documented.artifact, 'utf8') > DRAFT_BYTE_LIMIT) {
-            return refused('INIT_DRAFT_INVALID', 'document owner returned an unbound or oversized cockpit.toml artifact', destination)
+        if (documented.destination !== destination) {
+            return refused('INIT_DRAFT_INVALID', 'document owner returned an unbound cockpit.toml artifact', destination)
         }
         const resolvedState = { ...(mode === 'registry' ? { mode } : {}), stage: answers.length === 0 ? 'resolved' as const : 'answers-recorded' as const,
             sourceObservationSha256, ...(classification ? { classification: classification.classification,

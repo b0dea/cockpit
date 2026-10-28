@@ -13,7 +13,7 @@ import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
-import { selectBootstrapStateRoot } from './state.js'
+import { readState, selectBootstrapStateRoot } from './state.js'
 
 const scratch: string[] = []
 const digest = (character: string) => character.repeat(64)
@@ -685,4 +685,85 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     expect(completed, JSON.stringify(completed)).toMatchObject({ kind: 'complete', status: 0,
         result: { stage: 'environment-verified' } })
     expect(synchronizeInputs).toEqual([true])
+}, 120_000)
+
+
+it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft before confirmation (%s bound)', async bound => {
+    const f = fixture()
+    mkdirSync(join(f.root, 'app'))
+    mkdirSync(join(f.root, 'fixtures'))
+    await writeFile(join(f.root, 'app/package.json'), JSON.stringify({ scripts: { start: 'node server.mjs' } }))
+    await writeFile(join(f.root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
+    const sourceConfig = parseToml(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
+        sibling: { purpose: string }[]; ports: { bases: Record<string, number> }; environment: {
+            install_policies: { load_probe: string[] }[]; generated: { services: { command: string[] }[] }
+        }
+    }
+    const guards = { hosted_db_hosts: [] as string[], vendor_endpoint_hosts: [] as string[] }
+    if (bound === 'scalar') {
+        sourceConfig.environment.install_policies[0]!.load_probe.push(...Array.from({ length: 14_000 }, () => 'a'))
+    } else {
+        sourceConfig.sibling[0]!.purpose = 'p'.repeat(60_000)
+        sourceConfig.ports.bases['A'.repeat(60_000)] = 4101
+        sourceConfig.environment.generated.services[0]!.command.push(...Array.from({ length: 5 }, () => 'a'.repeat(8_000)))
+        sourceConfig.environment.install_policies[0]!.load_probe.push('a'.repeat(60_000))
+        for (let index = 0; index < 128; index += 1) {
+            const host = `${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${index}.example.test`
+            guards.hosted_db_hosts.push(`db.${host}`)
+            guards.vendor_endpoint_hosts.push(`vendor.${host}`)
+        }
+    }
+    let defaultsDocument: string | undefined
+    const adapters: InitApplicationAdapters = {
+        ...f.adapters,
+        prepareBootstrap: prepareSelectedBootstrapSurface,
+        resumeBootstrap: resumeSelectedBootstrapSurface,
+        applyBootstrap: applySelectedBootstrapSurface,
+        document: async input => {
+            const outcome = await documentObservedCommand(input)
+            if (outcome.question?.field === 'configuration.defaults') defaultsDocument = outcome.artifact ?? undefined
+            return outcome
+        },
+        classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+    }
+    const input = { ...f.input, registry: undefined }
+    const preview = await runInitApplication(input, adapters)
+    const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
+    let outcome = await runInitApplication(accepted, adapters)
+    for (let count = 0; outcome.kind === 'pending' && outcome.result?.question
+        && outcome.result.question.field !== 'configuration.defaults'; count += 1) {
+        expect(count).toBeLessThan(8)
+        const question = outcome.result.question
+        const value = question.field === 'sibling' ? sourceConfig.sibling
+            : question.field === 'ports.bases' ? sourceConfig.ports.bases
+                : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
+                    : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
+                        : question.field === 'environment.generated' ? sourceConfig.environment.generated
+                            : question.field === 'environment.machine'
+                                ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
+                                : question.field === 'guards' ? guards : undefined
+        expect(value, question.field).toBeDefined()
+        const bytes = JSON.stringify(value)
+        expect(Buffer.byteLength(bytes)).toBeLessThanOrEqual(65_536)
+        outcome = await runInitApplication({ ...accepted, greenfieldAnswer: {
+            questionId: question.id, bytes, provenance: 'operator-confirmed',
+        } }, adapters)
+    }
+    expect(defaultsDocument, JSON.stringify(outcome)).toBeDefined()
+    if (bound === 'scalar') {
+        expect(Buffer.byteLength(defaultsDocument!)).toBeLessThan(262_144)
+        expect(defaultsDocument!.split('\n').some(line => Buffer.byteLength(line) > 65_536)).toBe(true)
+    } else {
+        expect(Buffer.byteLength(defaultsDocument!)).toBeGreaterThan(262_144)
+        expect(defaultsDocument!.split('\n').every(line => Buffer.byteLength(line) <= 65_536)).toBe(true)
+    }
+    expect(outcome).toMatchObject({ kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+        diagnostics: [{ code: 'INIT_DRAFT_INVALID', message: expect.stringContaining('--reset-answer') }] })
+    expect(existsSync(f.destination)).toBe(false)
+    const selected = await selectBootstrapStateRoot({ platform: input.platform, home: input.home,
+        xdgStateHome: input.xdgStateHome, checkoutRoot: input.root, target: input.target })
+    if (selected.kind !== 'complete') throw new Error(JSON.stringify(selected))
+    const saved = await readState(selected.value.paths.bootstrap(input.target))
+    if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
+    expect(saved.value.value.greenfield!.questions.some(question => question.field === 'configuration.defaults')).toBe(false)
 }, 120_000)

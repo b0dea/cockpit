@@ -188,6 +188,10 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
    is the digest covering those values.
    Read the document before asking the human to accept that digest. The human output and the
    interactive question show the same document; it is not written to `cockpit.toml`.
+   If the draft or its exact review cannot fit the existing output bounds, init refuses it with
+   `INIT_DRAFT_INVALID` before offering defaults confirmation. Shorten the answers so the whole
+   configuration can be reviewed; for a recorded answer, use the reset commands below before
+   supplying its replacement.
 4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one
    is refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 

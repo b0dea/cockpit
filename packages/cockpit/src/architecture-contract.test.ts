@@ -2515,6 +2515,7 @@ function initBoundaryViolations(sources: Sources): string[] {
                 'packages/cockpit/src/diagnostics.ts',
                 'packages/cockpit/src/document/command.ts',
                 'packages/cockpit/src/surfaces/contract.ts',
+                'packages/cockpit/src/environment/contract.ts',
                 'packages/cockpit/src/environment/identity.ts',
                 'packages/cockpit/src/environment/state.ts',
             ])
