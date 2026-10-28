@@ -32,7 +32,7 @@ repository. The configuration declares both as siblings.
 ## Preview the generated files
 
 ```sh
-cockpit sync --config cockpit.toml --dry-run
+npx cockpit sync --config cockpit.toml --dry-run
 ```
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
@@ -73,11 +73,11 @@ stderr; add `--json` to get one JSON document on stdout instead.
 ## Apply the sync and set up
 
 ```sh
-cockpit sync --config cockpit.toml
+npx cockpit sync --config cockpit.toml
 git -C repositories/app add .env.example
 git -C repositories/app -c user.name=Synthetic -c user.email=synthetic@example.invalid commit --quiet -m 'generated synthetic template'
-cockpit setup --config cockpit.toml
-cockpit check --config cockpit.toml
+npx cockpit setup --config cockpit.toml
+npx cockpit check --config cockpit.toml
 ```
 
 `sync` writes everything the dry run listed, including **repositories/app/.env.example**, the
@@ -118,7 +118,7 @@ Edit a generated file by hand, then check again:
 
 ```sh
 echo "# edited by hand" >> compose.generated.yml
-cockpit check --config cockpit.toml
+npx cockpit check --config cockpit.toml
 ```
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
@@ -199,15 +199,8 @@ Each operation and probe has a `provenance` table saying where the value came fr
 
 The example declares services but ships no service code to run, so it ends here. On a product
 with real services, the next commands are `up`, `preflight` and, for everyday work, `session`.
-They currently need Docker Desktop; on any other Docker runtime `up` refuses like this (captured
-on OrbStack):
-
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
-```console
-$ cockpit up --config cockpit.toml
-ERROR LIFECYCLE_EVIDENCE_INVALID [stack:2c3cf884...]: lifecycle, port or runtime readiness authority is unavailable
-...
-```
+They need Docker Compose and a runtime recorded by the
+[runtime identity and measurement procedure](environment.md#measure-the-container-runtime).
 
 [Bring the product up](getting-started.md#bring-the-product-up) and
 [Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment)

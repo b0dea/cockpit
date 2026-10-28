@@ -2,36 +2,55 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide takes you from a source install to your own product running under cockpit. It is
+This guide takes you from an npm install to your own product running under cockpit. It is
 for developers setting up cockpit for a product made of several repositories. To see cockpit
 work first on a throwaway example, follow the [tutorial](tutorial.md).
 
 ## Install cockpit
 
 You need Node.js `^22.13.0 || ^24.0.0 || ^26.0.0`, Git, and macOS or Linux. The commands that
-run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker with Compose, and
-today their runtime check admits only Docker Desktop: OrbStack, Colima, Rancher Desktop and
-Linux Docker Engine are refused with `LIFECYCLE_EVIDENCE_INVALID`. Wider runtime support is being
-designed. Configuration, generation, `setup` and `check` work without Docker.
+run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker Compose and a
+local runtime that has passed cockpit's measurement probe. The
+[runtime identity table and measurement procedure](environment.md#measure-the-container-runtime)
+are the canonical runtime support record. Configuration, generation, `setup` and `check` work
+without Docker.
+
+```sh
+npm install -D @b0dea/cockpit
+npx cockpit --help
+```
+
+The install is project-local and recorded in the project's lockfile. Run it as
+`npx cockpit <command>`.
+
+### Install from source
+
+To test an unpublished checkout, pack the package and install that tarball. This exercises the
+same package files, lifecycle scripts, dependencies and binary entry point as the registry
+package; `npm link` does not.
 
 ```sh
 git clone https://github.com/b0dea/cockpit.git
 cd cockpit
 npm ci --ignore-scripts
 npm run build
-npm link --workspace @b0dea/cockpit
+COCKPIT_PACKAGE_DIR="$(mktemp -d)"
+npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
+cd /path/to/the-cockpit-project
+npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
+npx cockpit --help
 ```
 
-`npm link` puts a `cockpit` command on your PATH that runs this checkout, so a later
-`git pull && npm run build` updates it. Every page in these docs writes commands as `cockpit
-<command>`. If you prefer not to link, use `node /path/to/cockpit/packages/cockpit/bin/cockpit.mjs`
-in place of `cockpit`.
+Keep `COCKPIT_PACKAGE_DIR` until the install finishes, then remove it with
+`rm -r "$COCKPIT_PACKAGE_DIR"`. If `npm pack` or `npm install` fails, stop there: a source command
+is not evidence that the package users receive works. A new dedicated cockpit directory needs a
+`package.json`; run `npm init --yes` there before installing.
 
 Check the install:
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
-$ cockpit --help
+$ npx cockpit --help
 Usage: cockpit <command> [options]
 
 Commands:
@@ -61,7 +80,7 @@ Pick the agent harness you will use first: `claudecode`, `codexcli` or `opencode
 directory that will hold the configuration, preview the bootstrap:
 
 ```sh
-cockpit init "$(pwd)" --target codexcli --json
+npx cockpit init "$(pwd)" --target codexcli --json
 ```
 
 The preview writes nothing. It returns the files it would install (the cockpit-setup skill for that
@@ -69,7 +88,7 @@ harness), a `previewSha256` digest and the next step. To accept, run the same co
 interactively in a terminal and type the digest it shows:
 
 ```sh
-cockpit init "$(pwd)" --target codexcli --interactive
+npx cockpit init "$(pwd)" --target codexcli --interactive
 ```
 
 `init` then looks at the repositories under the directory and asks for every fact it cannot
@@ -111,9 +130,9 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
    is refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 
 ```sh
-cockpit init "$(pwd)" --target codexcli --json
-cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json
-cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+npx cockpit init "$(pwd)" --target codexcli --json
+npx cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json
+npx cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
 ```
 
 The answers file spells each field as a TOML path, so `ports.bases` is the `bases` key of a
@@ -168,10 +187,10 @@ about which host it points at, not as a host. Each is a proposal to confirm, not
 This is the canonical sequence. Every other page links here rather than repeating it.
 
 ```sh
-cockpit setup --config ./cockpit.toml
-cockpit sync --config ./cockpit.toml --dry-run
-cockpit sync --config ./cockpit.toml
-cockpit check --config ./cockpit.toml
+npx cockpit setup --config ./cockpit.toml
+npx cockpit sync --config ./cockpit.toml --dry-run
+npx cockpit sync --config ./cockpit.toml
+npx cockpit check --config ./cockpit.toml
 ```
 
 - `setup` clones or verifies each declared repository and checks its remote.
@@ -184,8 +203,8 @@ cockpit check --config ./cockpit.toml
 Review and commit the generated files, then start the stack and run the gate:
 
 ```sh
-cockpit up --config ./cockpit.toml
-cockpit preflight --config ./cockpit.toml
+npx cockpit up --config ./cockpit.toml
+npx cockpit preflight --config ./cockpit.toml
 ```
 
 `up` starts or resumes the stack. `preflight` is the gate: a successful `up` is not proof the
@@ -203,16 +222,16 @@ where the repository is:
 
 ```sh
 # a directory that already exists under the siblings root (acquire = "none")
-cockpit sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
+npx cockpit sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
 
 # a repository that does not exist yet: runs `git init` on an empty or missing path
-cockpit sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
+npx cockpit sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
 
 # a checkout elsewhere on disk: records its origin so `setup` clones a fresh copy
-cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
+npx cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
 
 # a known remote (acquire = "auto"); also records a remote for an existing acquire = "none" sibling
-cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
+npx cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
 ```
 
 `--dir <relative dir>` sets the directory under the siblings root (default: the slug), `--var <NAME>`
@@ -225,7 +244,7 @@ the result, and with `--json` returns them as `result.publish.command` and
 no `origin` remote.
 
 ```sh
-cockpit sibling remove api --config ./cockpit.toml
+npx cockpit sibling remove api --config ./cockpit.toml
 ```
 
 `remove` drops the table only if nothing else refers to the sibling (generated services, vendor
@@ -239,7 +258,7 @@ It never deletes the checkout or any generated file. After either command, run
 releases it when the agent exits:
 
 ```sh
-cockpit session --config ./cockpit.toml -- codex
+npx cockpit session --config ./cockpit.toml -- codex
 ```
 
 Put the agent command after `--`, with its own arguments. Once the command's process group has

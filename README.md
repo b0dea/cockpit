@@ -14,7 +14,7 @@ checkouts, gives Claude Code, Codex CLI and OpenCode the same instructions, skil
 permissions, and hands finished work to an independent evaluator. It holds none of your product
 code.
 
-> **Status: pre-alpha, version 0.0.0, install from source.** Commands, configuration and the
+> **Status: pre-alpha, version 0.0.0.** Commands, configuration and the
 > generated file layout will change in backward-incompatible ways before 1.0.
 > See [Status and limits](#status-and-limits).
 
@@ -63,28 +63,28 @@ Requires Node.js, Git, and macOS or Linux; versions are in
 [Getting started](docs/getting-started.md#install-cockpit). The synthetic
 example needs no credentials and no Docker.
 
-**1. Install from source** and put `cockpit` on your PATH:
-
-```sh
-git clone https://github.com/b0dea/cockpit.git && cd cockpit
-npm ci --ignore-scripts && npm run build
-npm link --workspace @b0dea/cockpit
-```
-
-**2. Copy the example** somewhere outside the checkout, then run the first command block of
-[examples/synthetic/README.md](examples/synthetic/README.md) there. It creates two throwaway
-Git repositories for cockpit to manage.
+**1. Copy the example** somewhere outside the checkout. It creates two throwaway Git repositories
+for cockpit to manage:
 
 ```sh
 cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo" && cd "${TMPDIR:-/tmp}/cockpit-demo"
+npm init --yes
+npm install -D @b0dea/cockpit
+npx cockpit --help
 ```
+
+Until the package is published, use the verified
+[source-package installation](docs/getting-started.md#install-from-source) instead of an npm link.
+
+**2. Run the first command block** of
+[examples/synthetic/README.md](examples/synthetic/README.md) in that directory.
 
 **3. Preview what cockpit generates.** The dry run lists every file it would write for the
 agent tools and the stack, and writes none of them (output trimmed):
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
-$ cockpit sync --config cockpit.toml --dry-run
+$ npx cockpit sync --config cockpit.toml --dry-run
 write "AGENTS.md"
 write "CLAUDE.md"
 write "compose.generated.yml"
@@ -154,18 +154,18 @@ every built-in cell is *instructed*; see [Status and limits](#status-and-limits)
 cockpit is pre-alpha. It is developed against real multi-repository products, and the public
 repository carries only synthetic fixtures. What is true today:
 
-- **Source install only.** The package is private at 0.0.0 and is not on npm. Install with the
-  [Quickstart](#quickstart) commands.
+- **Package publication is pending.** Before publication, install the same package shape from a
+  source-built tarball as described in
+  [Getting started](docs/getting-started.md#install-from-source).
 - **Breaking changes before 1.0.** Commands, configuration fields and the generated file layout
   can change between minors. [Release policy](docs/release-policy.md) covers deprecation and
   migration notes.
 - **macOS and Linux.** CI runs both; supported Node versions are in
   [Getting started](docs/getting-started.md#install-cockpit). Windows is not supported.
-- **Bringing the stack up currently needs Docker Desktop.** `up`, `session`, `preflight`, `down`
-  and `reset` need Docker with Compose, and the runtime check today admits only Docker Desktop.
-  OrbStack, Colima, Rancher Desktop and Linux Docker Engine are refused, currently with a
-  generic `LIFECYCLE_EVIDENCE_INVALID`. Wider runtime support is being designed. Generation,
-  `setup` and `check` work without Docker.
+- **Runtime commands need a measured local Docker-compatible runtime.** `up`, `session`,
+  `preflight`, `down` and `reset` require Docker Compose and a successful local measurement.
+  Generation, `setup` and `check` work without Docker. See the owned
+  [runtime identity and measurement table](docs/environment.md#measure-the-container-runtime).
 - **Native enforcement is not yet measured.** cockpit generates the hooks, permissions and rules,
   and its guard adapters were probed against specific harness versions recorded in the
   [capability matrix](docs/capability-matrix.md). It has not re-measured them against current

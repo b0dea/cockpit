@@ -377,11 +377,10 @@ Before the first `up`, measure the local container runtime and record it:
 cockpit runtime measure --config cockpit.toml --image <local-image> --write --json
 ```
 
-Name an image already on the machine; the probe never pulls. cockpit recognises Docker Desktop,
-OrbStack, Colima, Rancher Desktop and Linux Docker Engine, and so far only OrbStack has been
-observed; the others are recognised from vendor `docker info` output. The probe runs only from an
-installed `@b0dea/cockpit` package, not from a linked source checkout. The table and the rules are
-in [Measure the container runtime](environment.md#measure-the-container-runtime).
+Name an image already on the machine; the probe never pulls. The probe runs only from an installed
+`@b0dea/cockpit` package, not from a linked source checkout. The owned runtime identities,
+measurement evidence and admission rules are in
+[Measure the container runtime](environment.md#measure-the-container-runtime).
 
 ## Daily loop
 
