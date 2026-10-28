@@ -626,6 +626,59 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 })
 
+it('normalizes an authenticated source install during installed init without changing product metadata', () => {
+    const requestedRoot = join(packScratch, 'source-install-init')
+    mkdirSync(join(requestedRoot, 'library'), { recursive: true })
+    const root = realpathSync(requestedRoot)
+    writeFileSync(join(root, 'package.json'), `${JSON.stringify({
+        name: 'synthetic-cockpit-root', private: true, scripts: { lint: 'node --check synthetic.mjs' }, synthetic: { retained: true },
+    }, null, 2)}\n`)
+    writeFileSync(join(root, 'library/package.json'), `${JSON.stringify({
+        name: 'synthetic-library', version: '0.0.0', scripts: { test: 'node test.mjs' },
+    })}\n`)
+    writeFileSync(join(root, 'library/Dockerfile'), 'FROM node:22-slim\nEXPOSE 4100\nCMD ["node", "index.mjs"]\n')
+    const answers = join(packScratch, 'source-install-answers.toml')
+    writeFileSync(answers, [
+        '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
+        'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
+        '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',
+    ].join('\n'))
+    const sourceArchive = join(packScratch, 'artifact', packedArtifact().filename)
+    const env = npmEnvironment()
+    execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact', sourceArchive], {
+        cwd: root, env, stdio: 'ignore', timeout: 30_000,
+    })
+    const launcher = join(root, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
+    const run = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
+        cwd: root, env, encoding: 'utf8', timeout: 30_000,
+    })
+    const first = run()
+    expect(first.status, first.stdout + first.stderr).toBe(0)
+    const preview = JSON.parse(first.stdout).result
+    const second = run('--accept-preview', preview.previewSha256, '--answers', answers)
+    expect(second.status, second.stdout + second.stderr).toBe(0)
+    const defaults = JSON.parse(second.stdout).result.question
+    expect(defaults).toMatchObject({ field: 'configuration.defaults' })
+    const third = run('--accept-preview', preview.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
+    expect(third.status, third.stdout + third.stderr).toBe(0)
+    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
+
+    expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
+        name: 'synthetic-cockpit-root', private: true,
+        scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': 'cockpit setup --config cockpit.toml' },
+        synthetic: { retained: true }, devDependencies: { '@b0dea/cockpit': '0.0.0' },
+    })
+    const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+    expect(lock.packages[''].devDependencies['@b0dea/cockpit']).toBe('0.0.0')
+    expect(lock.packages['node_modules/@b0dea/cockpit']).toMatchObject({
+        version: '0.0.0', resolved: expect.stringContaining(packedArtifact().filename),
+    })
+    execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
+        cwd: root, env, stdio: 'ignore', timeout: 30_000,
+    })
+}, 120_000)
+
+
 it('runs installed init for each isolated target and refuses missing roots or broken adjacent assets', async () => {
     const installed = packedPackageRoot(), launcher = join(installed, 'bin/cockpit.mjs')
     const home = join(packScratch, 'init-home')

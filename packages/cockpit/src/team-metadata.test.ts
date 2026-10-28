@@ -35,6 +35,24 @@ describe('team metadata', () => {
             message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
     })
 
+    it('does not normalize an unauthenticated local package reference', async () => {
+        const root = await fixture()
+        const spec = 'file:../archives/cockpit.tgz'
+        const manifest = `${JSON.stringify({ private: true, devDependencies: { [installedPackageMetadata.name]: spec } }, null, 2)}\n`
+        const lock = `${JSON.stringify({ lockfileVersion: 3, packages: {
+            '': { devDependencies: { [installedPackageMetadata.name]: spec } },
+            [`node_modules/${installedPackageMetadata.name}`]: { version: installedPackageMetadata.version, resolved: spec },
+        } }, null, 2)}\n`
+        await writeFile(join(root, 'package.json'), manifest)
+        await writeFile(join(root, 'package-lock.json'), lock)
+
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({
+            kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE', target: join(root, 'package.json'),
+        })
+        expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
+        expect(await readFile(join(root, 'package-lock.json'), 'utf8')).toBe(lock)
+    })
+
     it('refuses redirected metadata without reading or overwriting its target', async () => {
         const root = await fixture()
         const outside = join(root, 'outside'); await writeFile(outside, 'outside-canary')

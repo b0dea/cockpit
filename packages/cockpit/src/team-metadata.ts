@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES } from './environment/contract.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -13,6 +14,7 @@ export const mechanism = {
 
 const PACKAGE = installedPackageMetadata.name
 const VERSION = installedPackageMetadata.version
+const INSTALLED_PACKAGE_ROOT = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
 const SCRIPTS = Object.freeze({
     'cockpit:setup': 'cockpit setup --config cockpit.toml',
     'cockpit:sync': 'cockpit sync --config cockpit.toml',
@@ -114,7 +116,7 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
     }
 }
 
-function packageCandidate(bytes: string | undefined): Readonly<{ bytes: string; valid: boolean }> {
+function packageCandidate(bytes: string | undefined, authenticatedSourceSpec?: string): Readonly<{ bytes: string; valid: boolean }> {
     let parsed: unknown = {}
     try { parsed = bytes === undefined || bytes.trim() === '' ? {} : JSON.parse(bytes) } catch { return { bytes: '', valid: false } }
     if (!object(parsed)) return { bytes: '', valid: false }
@@ -122,11 +124,65 @@ function packageCandidate(bytes: string | undefined): Readonly<{ bytes: string; 
     const scripts = parsed.scripts === undefined ? {} : parsed.scripts
     if (!object(dependencies) || !object(scripts)) return { bytes: '', valid: false }
     const conflictingDependency = dependencies[PACKAGE] !== undefined && dependencies[PACKAGE] !== VERSION
+        && dependencies[PACKAGE] !== authenticatedSourceSpec
     const conflictingScript = Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== undefined && scripts[name] !== command)
     if (conflictingDependency || conflictingScript) return { bytes: '', valid: false }
     return { valid: true, bytes: `${JSON.stringify({ ...parsed,
         scripts: { ...scripts, ...SCRIPTS }, devDependencies: { ...dependencies, [PACKAGE]: VERSION },
     }, null, 2)}\n` }
+}
+
+interface SourceInstallCandidate {
+    readonly before: NonNullable<Awaited<ReturnType<typeof readOptional>>>
+    readonly bytes: string
+    readonly spec: string
+    readonly installedPath: string
+    readonly installedDev: number
+    readonly installedIno: number
+}
+
+async function sourceInstallCandidate(authority: RootAuthority, packageBytes: string | undefined): Promise<SourceInstallCandidate | undefined> {
+    let manifest: unknown
+    try { manifest = packageBytes === undefined ? undefined : JSON.parse(packageBytes) } catch { return undefined }
+    const dependencies = object(manifest) && object(manifest.devDependencies) ? manifest.devDependencies : undefined
+    const spec = dependencies?.[PACKAGE]
+    if (typeof spec !== 'string' || !spec.startsWith('file:') || spec.length > 4096) return undefined
+
+    const installedPath = join(authority.root, 'node_modules', ...PACKAGE.split('/'))
+    let installed: Awaited<ReturnType<typeof lstat>>
+    try { installed = await lstat(installedPath) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+        throw error
+    }
+    if (!installed.isDirectory() || installed.isSymbolicLink()
+        || await realpath(installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) return undefined
+
+    const lockPath = join(authority.root, 'package-lock.json')
+    const before = await readOptional(authority, lockPath)
+    if (!before) return undefined
+    let lock: unknown
+    try { lock = JSON.parse(before.bytes) } catch { return undefined }
+    const lockRecord = object(lock) ? lock : undefined
+    const packages = lockRecord && object(lockRecord.packages) ? lockRecord.packages : undefined
+    const rootValue = packages?.['']
+    const rootEntry = object(rootValue) ? rootValue : undefined
+    const rootDependencies = rootEntry && object(rootEntry.devDependencies) ? rootEntry.devDependencies : undefined
+    const installedValue = packages?.[`node_modules/${PACKAGE}`]
+    const installedEntry = object(installedValue) ? installedValue : undefined
+    if (!packages || !rootEntry || !rootDependencies || !installedEntry || rootDependencies[PACKAGE] !== spec
+        || installedEntry.version !== VERSION || installedEntry.resolved !== spec) return undefined
+    const bytes = `${JSON.stringify({ ...lockRecord, packages: { ...packages, '': {
+        ...rootEntry, devDependencies: { ...rootDependencies, [PACKAGE]: VERSION },
+    } } }, null, 2)}\n`
+    return { before, bytes, spec, installedPath, installedDev: installed.dev, installedIno: installed.ino }
+}
+
+async function authenticateSourceInstall(candidate: SourceInstallCandidate): Promise<void> {
+    const current = await lstat(candidate.installedPath)
+    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== candidate.installedDev || current.ino !== candidate.installedIno
+        || await realpath(candidate.installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) {
+        throw new Error('installed cockpit package changed before metadata replacement')
+    }
 }
 
 function ignoreBlock(root: string, siblingsRoot: string): string {
@@ -156,7 +212,8 @@ export async function initializeTeamMetadata(configPath: string): Promise<TeamMe
         if (loaded.kind !== 'complete') return refuse('TEAM_METADATA_UNAVAILABLE', 'cockpit.toml must be valid before team metadata can be written', configPath)
         const packagePath = join(root, 'package.json')
         const packageBefore = await readOptional(authority, packagePath)
-        const candidate = packageCandidate(packageBefore?.bytes)
+        const sourceInstall = await sourceInstallCandidate(authority, packageBefore?.bytes)
+        const candidate = packageCandidate(packageBefore?.bytes, sourceInstall?.spec)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
             `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run cockpit init again`, packagePath)
         const ignorePath = join(root, '.gitignore')
@@ -166,7 +223,16 @@ export async function initializeTeamMetadata(configPath: string): Promise<TeamMe
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
         let changed = false
-        if (packageBefore?.bytes !== candidate.bytes) { await replaceAuthenticated(authority, packagePath, packageBefore, candidate.bytes); changed = true }
+        if (sourceInstall && sourceInstall.before.bytes !== sourceInstall.bytes) {
+            await authenticateSourceInstall(sourceInstall)
+            await replaceAuthenticated(authority, join(root, 'package-lock.json'), sourceInstall.before, sourceInstall.bytes)
+            changed = true
+        }
+        if (packageBefore?.bytes !== candidate.bytes) {
+            if (sourceInstall) await authenticateSourceInstall(sourceInstall)
+            await replaceAuthenticated(authority, packagePath, packageBefore, candidate.bytes)
+            changed = true
+        }
         if (ignoreBefore?.bytes !== nextIgnore) { await replaceAuthenticated(authority, ignorePath, ignoreBefore, nextIgnore); changed = true }
         return { kind: 'complete', changed }
     } catch (error) {
