@@ -275,7 +275,7 @@ describe('the public synthetic cockpit', () => {
         const planted = new Map(documents)
         planted.set('docs/environment.md', `${planted.get('docs/environment.md')}\n\`\`\`sh\ncockpit unknown-command\n\`\`\`\n`)
         expect(publicShellInventory(planted).filter(row => row.kind === 'unclassified')).toContainEqual({
-            path: 'docs/environment.md', block: 2, kind: 'unclassified', reason: 'shell block and classification table differ',
+            path: 'docs/environment.md', block: 3, kind: 'unclassified', reason: 'shell block and classification table differ',
         })
     })
 })

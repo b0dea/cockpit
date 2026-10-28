@@ -21,12 +21,12 @@ import {
 } from './contract.js'
 
 /** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
-export const SETUP_SKILL = 'cockpit-setup' as const
+export const SHIPPED_SETUP_SKILL = 'cockpit-setup' as const
 
 export const mechanism = {
     id: 'skill-contract',
     module: 'packages/cockpit/src/surfaces/skill-contract.ts',
-    exports: ['SETUP_SKILL', 'inspectSkillSet', 'inspectRenderedSkillSet', 'isAdmittedSkillCollection',
+    exports: ['SHIPPED_SETUP_SKILL', 'inspectSkillSet', 'inspectRenderedSkillSet', 'isAdmittedSkillCollection',
         'projectInspectedSkillOutputs', 'isInspectedBootstrapOutputs'],
 } as const
 
@@ -87,7 +87,7 @@ export type SkillContractResult =
 export type InspectedBootstrapOutputs = Readonly<{
     kind: 'complete'
     target: SurfaceTarget
-    skill: typeof SETUP_SKILL
+    skill: typeof SHIPPED_SETUP_SKILL
     files: readonly RenderedSurfaceFile[]
 }>
 
@@ -429,10 +429,10 @@ function inspectRendered(
 export function projectInspectedSkillOutputs(
     result: SkillContractResult,
     target: SurfaceTarget,
-    skill: typeof SETUP_SKILL,
+    skill: typeof SHIPPED_SETUP_SKILL,
 ): InspectedSkillOutputProjection {
     const expected = typeof result === 'object' && result !== null ? inspectedSkillResults.get(result) : undefined
-    if (!expected || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== SETUP_SKILL) {
+    if (!expected || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== SHIPPED_SETUP_SKILL) {
         return refusal('SKILL_PROJECTION_INVALID', 'skill output projection requires the exact issued inspection result and target')
     }
     const prefix = `${TARGET_PATH_PREFIX[target]}/${skill}/`

@@ -66,7 +66,7 @@ import { expandRestrictions } from '../surfaces/restrictions.js'
 import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
-import { SETUP_SKILL, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
+import { SHIPPED_SETUP_SKILL, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import {
     nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, runPublicationPlan,
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
@@ -779,7 +779,7 @@ export async function prepareSelectedBootstrapSurface(
         collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
         terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SETUP_SKILL)
+    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'selected bootstrap output set was refused', captured.target)
     const reads = await readAnchoredBatches(root, inspected.files.map(file => Object.freeze({
         path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
@@ -853,7 +853,7 @@ export async function resumeSelectedBootstrapSurface(
         collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
         terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SETUP_SKILL)
+    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume output projection was refused', captured.target)
     const sourceRows = Object.freeze(sources.map(source => Object.freeze({ path: source.path, sha256: sha256(source.bytes) })))
     const files = Object.freeze(inspected.files.map(file => Object.freeze({ path: file.path, sha256: file.sha256 })))
@@ -908,7 +908,7 @@ async function authenticatedBootstrapPriorSurfaces(
         collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
         terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
     if (inspection.kind !== 'complete') return undefined
-    const inspected = projectInspectedSkillOutputs(inspection, record.target, SETUP_SKILL)
+    const inspected = projectInspectedSkillOutputs(inspection, record.target, SHIPPED_SETUP_SKILL)
     if (inspected.kind !== 'complete') return undefined
     const published = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
     if (JSON.stringify(published) !== JSON.stringify(record.value.published)) return undefined
@@ -2208,7 +2208,7 @@ async function prepareSurfaces(
     })
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
-        skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SETUP_SKILL, path, bytes: asset(path).bytes })),
+        skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
         browserRunner: browser && prepared.workEnvironment.browser && Object.hasOwn(prepared.workEnvironment.browser, 'endpoint')
             ? { path: runnerAsset.path, bytes: runnerAsset.bytes, sha256: runnerAsset.sha256 } : null,
         testing: Object.freeze({ tierGuide, nativeHooks }),
