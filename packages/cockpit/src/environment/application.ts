@@ -1835,10 +1835,10 @@ export async function runSetup(
                 if (sourceFailure) return sourceFailure
             }
             const pointer = exactInstructionPointerResult(await adapters.syncInstructionPointer({
-                cockpitRoot: context.mainCheckoutPath,
+                cockpitRoot: dirname(context.source.path),
                 siblingRoot: siblingResult.target,
                 write: context.writeInstructionPointers,
-            }), context.mainCheckoutPath, siblingResult.target)
+            }), dirname(context.source.path), siblingResult.target)
             if (!pointer) {
                 return sequenceRefusal(context, adapters, [...diagnostics, ownerDiagnostic(
                     ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_INVALID,

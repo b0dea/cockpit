@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
+import { synchronizeInstructionPointer } from './instruction-pointer.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { planAutonomyLaunch } from '../autonomy/launcher.js'
 import { evaluateGuard } from '../guards/evaluator.js'
@@ -343,6 +344,30 @@ describe('setup application choreography', () => {
             severity: 'info', code: 'SETUP_INSTRUCTION_POINTER_OFFERED', target: resolve(siblingRoot, 'AGENTS.md'),
         }))
         expect(syncInstructionPointer).toHaveBeenCalledWith(expect.objectContaining({ write: false }))
+    })
+
+    it('points sibling guides at the configured cockpit directory inside a Git checkout', async () => {
+        const { configPath, context, adapters } = await sequenceFixture({ instruction_pointer: true })
+        const cockpitRoot = join(context.mainCheckoutPath, 'control')
+        mkdirSync(cockpitRoot)
+        const nestedConfig = join(cockpitRoot, 'cockpit.toml')
+        writeFileSync(nestedConfig, readFileSync(configPath))
+        const loaded = await loadCockpitConfig(nestedConfig)
+        if (loaded.kind !== 'complete') throw new Error('nested configuration did not load')
+        const issued = await issueContext({ ...context, source: loaded.result.source, observedAt: new Date().toISOString() }, loaded.result,
+            input => ({ ...input, writeInstructionPointers: true }))
+        if (issued.kind !== 'complete') throw new Error('nested setup context was not issued')
+        adapters.load = async () => ({ kind: 'complete', status: 0, diagnostics: [], result: issued.result })
+        adapters.observeSource = async () => ({ state: 'available', ...issued.result.source })
+        adapters.syncInstructionPointer = synchronizeInstructionPointer
+        const siblingRoot = resolve(context.siblingsRoot, 'api')
+        mkdirSync(siblingRoot)
+
+        const outcome = await runSetupSequence({ configPath: nestedConfig }, adapters)
+
+        expect(outcome).toMatchObject({ kind: 'complete' })
+        const destination = relative(siblingRoot, join(cockpitRoot, 'AGENTS.md')).split(sep).join('/')
+        expect(readFileSync(join(siblingRoot, 'AGENTS.md'), 'utf8')).toContain(`(<${destination}>)`)
     })
 
     it.each([

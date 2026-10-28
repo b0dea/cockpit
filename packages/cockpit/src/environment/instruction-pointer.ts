@@ -15,7 +15,10 @@ export type InstructionPointerResult = Readonly<{
 }> | Readonly<{ kind: 'refusal'; path: string; reason: string }>
 
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
-const block = (target: string): string => `${BEGIN}\nRead [the cockpit instructions](<${target}>) before editing this repository.\n${END}`
+function block(target: string): string {
+    const destination = target.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    return `${BEGIN}\nRead [the cockpit instructions](<${destination}>) before editing this repository.\n${END}`
+}
 
 async function syncDirectory(path: string): Promise<void> {
     const directory = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)

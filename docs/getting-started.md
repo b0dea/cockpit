@@ -252,7 +252,9 @@ cockpit setup --config ./cockpit.toml --json
 cockpit setup --config ./cockpit.toml --write-instruction-pointers
 ```
 
-The approved write preserves existing team text and appends only the marked block. If **AGENTS.md**
+The link points to **AGENTS.md** beside the selected **cockpit.toml**, including when that configuration
+is below the Git checkout root. Paths are encoded as Markdown destinations. The approved write
+preserves existing team text and appends only the marked block. If **AGENTS.md**
 is missing, the proposal is a new guide containing that block. An edited, partial or duplicate
 pointer is refused rather than replaced. The root sibling (`dir = "."`) cannot opt in because its
 guide already is the cockpit guide.

@@ -51,6 +51,22 @@ describe('sibling instruction pointer', () => {
             '<!-- cockpit:instruction-pointer:start -->\nRead [the cockpit instructions](<../cockpit/AGENTS.md>) before editing this repository.\n<!-- cockpit:instruction-pointer:end -->\n',
         )
     })
+    it('encodes a Markdown destination while preserving the literal relative target', async () => {
+        const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-pointer-link-')))
+        roots.push(estate)
+        const cockpitRoot = join(estate, 'cockpit #<guide>')
+        const siblingRoot = join(estate, 'product')
+        await Promise.all([mkdir(cockpitRoot), mkdir(siblingRoot)])
+
+        expect(await synchronizeInstructionPointer({ cockpitRoot, siblingRoot, write: true })).toMatchObject({
+            kind: 'written', target: '../cockpit #<guide>/AGENTS.md',
+        })
+        expect(await readFile(join(siblingRoot, 'AGENTS.md'), 'utf8')).toBe(
+            '<!-- cockpit:instruction-pointer:start -->\nRead [the cockpit instructions](<../cockpit%20%23%3Cguide%3E/AGENTS.md>) before editing this repository.\n<!-- cockpit:instruction-pointer:end -->\n',
+        )
+        expect(await synchronizeInstructionPointer({ cockpitRoot, siblingRoot, write: true })).toMatchObject({ kind: 'unchanged' })
+    })
+
     it('refuses a sibling root replaced by a symlink without changing the destination guide', async () => {
         const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-pointer-redirect-')))
         roots.push(estate)

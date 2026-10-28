@@ -451,9 +451,15 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
             })
 
             const fencedImport = await surfaceConsumer('fenced-claude-import', { rules: true })
-            await writeFile(join(fencedImport.root, 'CLAUDE.md'), '# Team guide\n\n```text\n@AGENTS.md\n```\n')
+            await writeFile(join(fencedImport.root, 'CLAUDE.md'), '# Team guide\n\n````text\n```\n@AGENTS.md\n````\n')
             expect(await syncGeneratedEnvironment({ configPath: fencedImport.configPath })).toMatchObject({ kind: 'complete' })
             expect(await readFile(join(fencedImport.root, 'CLAUDE.md'), 'utf8')).toContain('<!-- cockpit:instructions:start -->')
+
+            const commentedExample = await surfaceConsumer('commented-claude-example', { rules: true })
+            const activeGuide = '# Team guide\n\n```text\n<!-- example only\n```\n\n@AGENTS.md\n'
+            await writeFile(join(commentedExample.root, 'CLAUDE.md'), activeGuide)
+            expect(await syncGeneratedEnvironment({ configPath: commentedExample.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await readFile(join(commentedExample.root, 'CLAUDE.md'), 'utf8')).toBe(activeGuide)
         })
 
         it('refuses a replaced guide after every publication group is prepared', async () => {

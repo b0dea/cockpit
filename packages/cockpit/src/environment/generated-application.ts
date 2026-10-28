@@ -249,10 +249,16 @@ interface AuthenticatedSiblingRoots {
 
 function activeClaudeImports(bytes: string): readonly number[] {
     const imports: number[] = []
-    let fence: '`' | '~' | undefined
+    let fence: Readonly<{ marker: '`' | '~'; length: number }> | undefined
     let inComment = false
     for (const [index, line] of bytes.split(/\r?\n/u).entries()) {
         const trimmed = line.trimStart()
+        const marker = /^ {0,3}(?<fence>`{3,}|~{3,})(?<suffix>.*)$/u.exec(line)?.groups
+        if (fence) {
+            if (marker?.fence?.[0] === fence.marker && marker.fence.length >= fence.length
+                && marker.suffix?.trim() === '') fence = undefined
+            continue
+        }
         if (inComment) {
             if (trimmed.includes('-->')) inComment = false
             continue
@@ -261,14 +267,11 @@ function activeClaudeImports(bytes: string): readonly number[] {
             if (!trimmed.includes('-->')) inComment = true
             continue
         }
-        const marker = /^(?<fence>`{3,}|~{3,})/u.exec(trimmed)?.groups?.fence
-        if (marker) {
-            const candidate = marker[0] as '`' | '~'
-            if (!fence) fence = candidate
-            else if (fence === candidate) fence = undefined
+        if (marker?.fence && (marker.fence[0] !== '`' || !marker.suffix?.includes('`'))) {
+            fence = { marker: marker.fence[0] as '`' | '~', length: marker.fence.length }
             continue
         }
-        if (!fence && line === '@AGENTS.md') imports.push(index)
+        if (line === '@AGENTS.md') imports.push(index)
     }
     return imports
 }
