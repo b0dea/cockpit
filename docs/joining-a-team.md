@@ -35,6 +35,11 @@ writes its machine identity under `.cockpit/local/`, and refreshes generated fil
 different directory does not rewrite them. Docker ownership values remain path-bound but enter
 Compose only at execution; they are not committed.
 
+For Codex, cockpit writes those relative grants to
+`sandbox_workspace_write.writable_roots` with `sandbox_mode = "workspace-write"`. It does not
+also publish a permission profile, because Codex gives the workspace-write settings precedence;
+run `npm run cockpit:sync` after changing sibling declarations to regenerate the exact list.
+
 The root `.gitignore` has a `cockpit:ignore` region for installed dependencies, machine-local
 state, secret resolver material, and a sibling checkout directory that lives below the cockpit
 root. `init` creates that region while preserving every line outside it. Later `sync` and `check`

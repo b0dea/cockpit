@@ -659,12 +659,12 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
         && Object.getPrototypeOf(value) === Object.prototype ? value as Record<string, unknown> : undefined
 }
 
-function grokPermissionRules(sources: SurfaceBatch['sources']): boolean {
+function permissionRulesForTarget(sources: SurfaceBatch['sources'], target: 'codexcli' | 'grokcli'): boolean {
     const source = sources.find(candidate => candidate.path === 'permissions.jsonc')
     if (!source) return false
     try {
         const record = ownRecord(JSON.parse(source.bytes))
-        const sections = [ownRecord(record?.permission), ownRecord(ownRecord(record?.grokcli)?.permission)]
+        const sections = [ownRecord(record?.permission), ownRecord(ownRecord(record?.[target])?.permission)]
         return sections.some(permission => permission !== undefined && Object.values(permission).some(value => {
             const rules = ownRecord(value)
             return rules !== undefined && Object.keys(rules).length > 0
@@ -1121,7 +1121,8 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             generatorTarget: harnessFact(target).rulesyncTarget,
             batch,
             features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
-                && (feature !== 'permissions' || target !== 'grokcli' || grokPermissionRules(batch.sources))),
+                && (feature !== 'permissions' || (target !== 'codexcli' && target !== 'grokcli')
+                    || permissionRulesForTarget(batch.sources, target))),
             expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
         })) : [],
         ...bundleRequest && bundleBatch ? [Object.freeze({

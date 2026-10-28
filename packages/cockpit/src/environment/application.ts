@@ -89,9 +89,9 @@ import {
 } from './install-policy-observation.js'
 import { resolveInstallPolicies, renderGuardProjectCommand, type InstallPolicyResolution, type ResolvedInstallPolicyBinding } from './install-policy.js'
 import {
-    cockpitId as deriveCockpitId,
     checkoutId as deriveCheckoutId,
     holderId as deriveHolderId,
+    publicationCockpitId,
     stackId as deriveStackId,
 } from './identity.js'
 import {
@@ -406,7 +406,7 @@ export async function runGuardEvaluationApplication(
         const manifestRead = publication.get(manifestPath)!
         const ownership = parseOwnershipManifest(manifestRead.bytes.toString('utf8'), {
             root: identity.root, configPath: identity.configPath,
-            cockpitId: deriveCockpitId({ name: config.cockpit.name, mainCheckoutPath: identity.root }),
+            cockpitId: publicationCockpitId({ name: config.cockpit.name }),
         })
         if (ownership.kind !== 'complete' || ownership.manifest.source.sha256 !== identity.configSha256) return unavailable('Installed guard publication is stale or unauthenticated.')
         const producer = ownership.manifest.producer

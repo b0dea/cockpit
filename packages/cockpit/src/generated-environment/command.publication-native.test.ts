@@ -10,9 +10,10 @@ import { parse as parseYaml } from 'yaml'
 import { loadCockpitConfig } from '../config/load.js'
 import { CockpitConfig } from '../schema.js'
 import type { HolderId } from '../environment/contract.js'
-import { checkoutId, cockpitId, stackId } from '../environment/identity.js'
+import { checkoutId, cockpitId, publicationCockpitId, stackId } from '../environment/identity.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
+import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { selectStateRoot, transactState } from '../environment/state.js'
 import { recordLifecycleStarted } from '../environment/lifecycle-stage.js'
 import {
@@ -23,7 +24,7 @@ import {
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
-const { roots, cleanup, surfaceConsumer, digest, ownership, runGeneratedGuard, bytes } = createGeneratedCommandFixture()
+const { roots, cleanup, surfaceConsumer, digest, runGeneratedGuard, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
 
 describe('generated environment command', () => {
@@ -65,11 +66,28 @@ describe('public surface publication transaction', () => {
             }
             const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
                 mcp_servers: Record<string, { enabled?: boolean }>
+                sandbox_mode?: string
+                sandbox_workspace_write?: { writable_roots?: string[] }
+                default_permissions?: unknown
+                permissions?: unknown
             }
-            const ownerId = (await ownership(fixture.root)).cockpitId
+            const ownershipBytes = await readFile(join(fixture.root, '.cockpit/generated-environment-ownership.json'), 'utf8')
+            const publishedOwnership = JSON.parse(ownershipBytes) as {
+                cockpitId: string
+                source: { sha256: string }
+            }
+            const ownerId = publishedOwnership.cockpitId
+            expect(ownerId).toBe(publicationCockpitId({ name: 'generated-environment' }))
+            expect(parseOwnershipManifest(ownershipBytes, {
+                root: fixture.root,
+                cockpitId: publicationCockpitId({ name: 'generated-environment' }),
+                configPath: fixture.configPath,
+            })).toMatchObject({ kind: 'complete' })
+            expect(publishedOwnership.source.sha256).toBe(digest(await readFile(fixture.configPath)))
             const openCodeBytes = await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8')
             const cursorGrant = await readFile(join(fixture.root, '.cursor/cli.json'), 'utf8')
             const grokGrant = await readFile(join(fixture.root, '.grok/config.toml'), 'utf8')
+            const grokPermissions = parseToml(grokGrant) as { permission: { allow: string[] } }
             expect(openCodeBytes).toContain(`/* cockpit:owner:${ownerId}:start */`)
             const openCode = JSON.parse(openCodeBytes
                 .replace(`/* cockpit:owner:${ownerId}:start */`, '')
@@ -81,17 +99,29 @@ describe('public surface publication transaction', () => {
             expect(settings.enabledMcpjsonServers).toEqual(['approved-server'])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
+            expect(codex).toMatchObject({
+                sandbox_mode: 'workspace-write',
+                sandbox_workspace_write: { writable_roots: ['../external', 'app'] },
+            })
+            expect(codex).not.toHaveProperty('default_permissions')
+            expect(codex).not.toHaveProperty('permissions')
             expect(Object.fromEntries(Object.entries(openCode.mcp).map(([name, server]) => [name, server.enabled]))).toEqual({
                 'approved-server': true, 'unapproved-server': false,
             })
             expect(openCode.permission.external_directory).toEqual({
-                [`${join(fixture.root, 'app')}/**`]: 'allow',
-                [`${outside}/**`]: 'allow',
+                '../external/**': 'allow',
+                'app/**': 'allow',
             })
-            expect(cursorGrant).toContain(outside)
+            expect(cursorGrant).toContain('../external')
+            expect(cursorGrant).toContain('app/**')
+            expect(cursorGrant).not.toContain(estate)
             expect(cursorGrant).toContain('Read')
             expect(cursorGrant).toContain('Write')
-            expect(grokGrant).toContain(outside)
+            expect(grokGrant).toContain('../external')
+            expect(grokGrant).toContain('app/**')
+            expect(grokPermissions.permission.allow).toEqual([
+                'Edit(../external/**)', 'Edit(app/**)', 'Read(../external/**)', 'Read(app/**)',
+            ])
             expect(grokGrant).toContain('Read(')
             expect(grokGrant).toContain('Edit(')
 

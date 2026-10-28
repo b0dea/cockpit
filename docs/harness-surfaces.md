@@ -140,6 +140,13 @@ observation and planning, escapes its root, conflicts with the mount or director
 would replace an unmanaged link. The generated state records both the link target and the source
 content identity.
 
+Codex sibling grants are core-owned `sandbox_workspace_write.writable_roots` entries under
+`sandbox_mode = "workspace-write"`. Cockpit keeps them checkout-relative so clones do not drift,
+and emits no competing permission profile because Codex would ignore it when the workspace-write
+settings are present. This is generated configuration with `pending_evidence`, not a claim of
+current native enforcement; run the paired [capability procedure](#skills-and-selftest-evidence)
+before promoting that matrix cell.
+
 The `[cockpit].guide_cap` limit applies to always-loaded guidance. Cockpit reports the measured
 line cost per harness only when it has a dated load characterization. When a harness loads every
 rule regardless of scope, scoped text still counts toward that total. Missing characterization

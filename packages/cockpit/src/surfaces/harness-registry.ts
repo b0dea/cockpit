@@ -28,7 +28,7 @@ export const HARNESS_REGISTRY = Object.freeze([
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
-        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml', '.codex/rules/rulesync.rules']) }),
+        outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
         guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({

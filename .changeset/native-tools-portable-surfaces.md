@@ -8,4 +8,8 @@ Refresh the bundled surface generator and development dependencies. Build with t
 
 Keep target-scoped MCP exclusions bound to the selected generator target, including OpenCode V1.
 
+Keep Codex sibling write grants checkout-relative under its supported workspace-write settings without publishing a competing generated permission profile.
+
+Authenticate path-independent generated ownership when a shipped guard loads its publication.
+
 Advertise the same maintained Node release lines in the installed package and contributor workspace, so installation rejects unsupported runtimes before the CLI starts.

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isProxy } from 'node:util/types'
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 import { parseDocument } from 'yaml'
 
 import {
@@ -1436,6 +1437,16 @@ function expectedSurfaceOutputs(
     const names = (prefix: string, suffix: string) => sources.filter(source => source.path.startsWith(prefix))
         .map(source => source.path.slice(prefix.length, suffix.length === 0 ? undefined : -suffix.length))
     const skills = sources.filter(source => source.path.startsWith('skills/')).map(source => source.path.slice('skills/'.length))
+    const permissionRulesForTarget = (target: 'codexcli' | 'grokcli') => {
+        const permissionSource = sources.find(source => source.path === 'permissions.jsonc')
+        if (!permissionSource) return false
+        const source = ownRecord(JSON.parse(permissionSource.bytes))
+        const sections = [ownRecord(source?.permission), ownRecord(ownRecord(source?.[target])?.permission)]
+        return sections.some(permission => permission !== undefined && Object.values(permission).some(value => {
+            const rules = ownRecord(value)
+            return rules !== undefined && Object.keys(rules).length > 0
+        }))
+    }
     const rows = Object.fromEntries(SURFACE_TARGETS.map(target => [target, []])) as unknown as Record<SurfaceTarget, string[]>
     if (has('rules')) for (const target of SURFACE_TARGETS) {
         if (!hasFor(target, 'rules')) continue
@@ -1450,17 +1461,9 @@ function expectedSurfaceOutputs(
     if (has('hooks')) rows.cursor.push('.cursor/hooks.json'), rows.grokcli.push('.grok/hooks/rulesync.json')
     if (has('permissions')) for (const target of SURFACE_TARGETS) {
         if (!hasFor(target, 'permissions')) continue
-        const permissionSource = sources.find(source => source.path === 'permissions.jsonc')
-        const grokRules = (() => {
-            if (!permissionSource) return false
-            const source = ownRecord(JSON.parse(permissionSource.bytes))
-            const sections = [ownRecord(source?.permission), ownRecord(ownRecord(source?.grokcli)?.permission)]
-            return sections.some(permission => permission !== undefined && Object.values(permission).some(value => {
-                const rules = ownRecord(value)
-                return rules !== undefined && Object.keys(rules).length > 0
-            }))
-        })()
-        if (target !== 'grokcli' || grokRules) rows[target].push(...harnessFact(target).outputs.permissions)
+        if ((target !== 'codexcli' && target !== 'grokcli') || permissionRulesForTarget(target)) {
+            rows[target].push(...harnessFact(target).outputs.permissions)
+        }
     }
     if (has('subagents')) for (const name of names('subagents/', '.md')) {
         rows.claudecode.push(`.claude/agents/${name}.md`)
@@ -1576,9 +1579,6 @@ function nativeSources(mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
                 permissions: { additionalDirectories: paths('claudecode') },
                 enabledMcpjsonServers,
             },
-            codexcli: {
-                permission: { write: Object.fromEntries(paths('codexcli').map(path => [path, 'allow'])) },
-            },
             opencode: {
                 permission: { external_directory: Object.fromEntries(paths('opencode').map(path => [`${path}/**`, 'allow'])) },
             },
@@ -1623,8 +1623,27 @@ function nativeGrantFragmentSet(
     if (!modelSha256) return undefined
     const fragments = Object.entries(paths).map(([target, path]) => {
         const row = generated.files.find(candidate => candidate.target === target && candidate.path === path)
-        if (target !== 'opencode') {
+        if (target !== 'opencode' && target !== 'codexcli') {
             return row ? Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row.sha256, bytes: row.bytes, sha256: row.sha256 }) : undefined
+        }
+        if (target === 'codexcli') {
+            let base: Record<string, unknown> = {}
+            if (row) {
+                try {
+                    const parsed = ownRecord(parseToml(row.bytes))
+                    if (!parsed) return undefined
+                    base = parsed
+                } catch { return undefined }
+                if (['sandbox_mode', 'sandbox_workspace_write', 'default_permissions', 'permissions']
+                    .some(key => Object.hasOwn(base, key))) return undefined
+            }
+            // Codex permission profiles reject the `..` segment required by a portable sibling
+            // grant. Publish the core-owned workspace-write settings alone: mixing the legacy
+            // sandbox with a generated profile would make Codex ignore that profile.
+            const writableRoots = [...new Set(grants.filter(grant => grant.target === target)
+                .map(grant => grant.path))].sort(compareCodeUnits)
+            const bytes = stringifyToml({ ...base, sandbox_mode: 'workspace-write', sandbox_workspace_write: { writable_roots: writableRoots } })
+            return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
         }
         let base: Record<string, unknown> = {}
         if (row) {
@@ -1644,16 +1663,21 @@ function nativeGrantFragmentSet(
     return Object.freeze({ modelSha256, fragments: Object.freeze(fragments as NonNullable<typeof fragments[number]>[]) })
 }
 
-function bindOpenCodeGrantToMcp(
+function bindNativeGrantsToMcp(
     mcp: NativeFragmentSet,
     grants: NativeFragmentSet,
 ): NativeFragmentSet | undefined {
-    const grant = grants.fragments.find(fragment => fragment.target === 'opencode' && fragment.path === 'opencode.jsonc')
-    const base = mcp.fragments.find(fragment => fragment.target === 'opencode' && fragment.path === 'opencode.jsonc')
-    if (!grant || !base) return mcp
-    if (grant.baseSha256 !== base.sha256) return undefined
-    return Object.freeze({ ...mcp, fragments: Object.freeze(mcp.fragments.map(fragment => fragment === base
-        ? Object.freeze({ ...fragment, bytes: grant.bytes, sha256: grant.sha256 }) : fragment)) })
+    const replacements = new Map<string, NativeFragmentSet['fragments'][number]>()
+    for (const base of mcp.fragments) {
+        const grant = grants.fragments.find(fragment => fragment.target === base.target && fragment.path === base.path)
+        if (!grant) continue
+        if (grant.baseSha256 !== base.sha256) return undefined
+        replacements.set(`${base.target}\0${base.path}`, grant)
+    }
+    return Object.freeze({ ...mcp, fragments: Object.freeze(mcp.fragments.map(fragment => {
+        const grant = replacements.get(`${fragment.target}\0${fragment.path}`)
+        return grant ? Object.freeze({ ...fragment, bytes: grant.bytes, sha256: grant.sha256 }) : fragment
+    })) })
 }
 
 function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
@@ -2304,7 +2328,7 @@ async function prepareSurfaces(
     const grantTargets = [...new Set(projection.grants.map(row => row.target))]
     const generatedNativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
     const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets))
-    const nativeMcp = generatedNativeMcp && nativeGrants ? bindOpenCodeGrantToMcp(generatedNativeMcp, nativeGrants) : undefined
+    const nativeMcp = generatedNativeMcp && nativeGrants ? bindNativeGrantsToMcp(generatedNativeMcp, nativeGrants) : undefined
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const runnerAsset = asset('scripts/browser-runner.sh')
     const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) === true
