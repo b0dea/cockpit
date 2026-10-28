@@ -356,8 +356,12 @@ function admitDeclarations(captured: CapturedInput): SkillDeclaration[] | SkillC
             return refusal('SKILL_NAME_DUPLICATE', 'skill names must be unique and match their source directory', source.path)
         }
         const procedurePath = `skills/${admitted.name}/${admitted.procedure}`
-        if (!captured.sources.some(candidate => candidate.path === procedurePath && candidate.bytes === captured.terminal.bytes)
-            || `skills/${admitted.procedure}` !== captured.authority.displacement) {
+        const procedure = captured.sources.find(candidate => candidate.path === procedurePath)
+        const extension = captured.declaredExtensions.includes(admitted.name)
+        const parsed = procedure && parseEntryPoint(procedure.bytes)
+        if (extension ? !parsed || !exact(parsed.frontmatter, ['loading', 'budget'])
+            || parsed.frontmatter.loading !== 'pull' || parsed.frontmatter.budget !== 'uncapped' || parsed.body.length === 0
+            : procedure?.bytes !== captured.terminal.bytes || `skills/${admitted.procedure}` !== captured.authority.displacement) {
             return refusal('SKILL_PROCEDURE_MISSING', 'skill procedure is missing or empty', procedurePath)
         }
         declarations.push(admitted)
@@ -406,7 +410,8 @@ function inspectRendered(
         caps: Object.freeze({ ...captured.authority.caps }), displacement: captured.authority.displacement,
         terminal: Object.freeze({ path: captured.terminal.path, sha256: captured.terminal.sha256, loading: 'pull', budget: 'uncapped' }),
         entrypoints: Object.freeze(declarations.map(skill => Object.freeze({ path: `skills/${skill.name}/SKILL.md`,
-            cap: skill.cap, metric: 'lines' as const, displacement: captured.authority.displacement }))),
+            cap: skill.cap, metric: 'lines' as const, displacement: captured.declaredExtensions.includes(skill.name)
+                ? `skills/${skill.name}/${skill.procedure}` : captured.authority.displacement }))),
     })
     admittedCollections.add(collection)
     const result = Object.freeze({

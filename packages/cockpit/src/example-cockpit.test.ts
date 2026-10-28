@@ -366,7 +366,7 @@ describe('cockpits without a generated environment', () => {
         expect(upgraded.status, `${upgraded.stdout}\n${upgraded.stderr}`).toBe(0)
         for (const [path, bytes] of owned) expect(readFileSync(join(root, path), 'utf8')).toBe(bytes)
         const manifest = JSON.parse(readFileSync(ownershipPath, 'utf8'))
-        expect(manifest.entries.map((entry: { path: string }) => entry.path)).not.toEqual(expect.arrayContaining(owned.map(([path]) => path)))
+        for (const [path] of owned) expect(manifest.entries.map((entry: { path: string }) => entry.path)).not.toContain(path)
         expect(existsSync(join(root, '.agents/skills/verify-workflow/SKILL.md'))).toBe(true)
         expect(existsSync(join(root, '.codex/hooks.json'))).toBe(true)
         expect(spawnSync('make', ['verify'], { cwd: root }).status).toBe(0)

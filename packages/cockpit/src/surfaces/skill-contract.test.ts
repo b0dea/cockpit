@@ -49,8 +49,10 @@ describe('shipped skill contract', () => {
     it('admits only the exact union of shipped skills and explicitly declared extensions', async () => {
         const shipped = await shippedSources()
         const extension = shipped.filter(source => source.path.startsWith('skills/cockpit-setup/')).map(source => ({
-            path: source.path.replace('skills/cockpit-setup/', 'skills/inspect/'),
-            bytes: source.bytes.replace('name: cockpit-setup', 'name: inspect'),
+            path: source.path.replace('skills/cockpit-setup/', 'skills/inspect/').replace('procedures/onboarding.md', 'procedures/inspect.md'),
+            bytes: source.path.endsWith('/SKILL.md')
+                ? source.bytes.replace('name: cockpit-setup', 'name: inspect').replace('procedures/onboarding.md', 'procedures/inspect.md')
+                : '---\nloading: pull\nbudget: uncapped\n---\n\nInspect the product-owned verification target.\n',
         }))
         const captured = input([...shipped, ...extension])
         const admitted = await inspectSkillSet({ ...captured, declaredExtensions: ['inspect'] })
@@ -58,6 +60,8 @@ describe('shipped skill contract', () => {
             collection: { source: { sha256: captured.collection.sha256 }, skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'],
                 metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path } })
         if (admitted.kind !== 'complete') throw new Error('Declared skill extension refused')
+        expect(admitted.collection.entrypoints).toContainEqual(expect.objectContaining({
+            path: 'skills/inspect/SKILL.md', displacement: 'skills/inspect/procedures/inspect.md' }))
         expect(admitted.files.filter(file => file.path.endsWith('/SKILL.md'))).toHaveLength(15)
         const paths = captured.sources.map(source => source.path.slice('skills/'.length))
         const generated = await generateSurfaceBatch({ targets: SURFACE_TARGETS, features: ['skills'], sources: captured.sources,
@@ -69,6 +73,12 @@ describe('shipped skill contract', () => {
             } })
         expect(await inspectRenderedSkillSet({ ...captured, declaredExtensions: ['inspect'], generated }))
             .toMatchObject({ kind: 'complete', skills: admitted.skills })
+        for (const bytes of ['', '---\nloading: eager\nbudget: uncapped\n---\nInspect.\n',
+            '---\nloading: pull\nbudget: uncapped\n---\n']) {
+            expect(await inspectSkillSet({ ...captured, declaredExtensions: ['inspect'],
+                sources: captured.sources.map(source => source.path === 'skills/inspect/procedures/inspect.md'
+                    ? { ...source, bytes } : source) })).toMatchObject({ kind: 'refusal' })
+        }
         expect(await inspectSkillSet(captured)).toMatchObject({ kind: 'refusal' })
         expect(await inspectSkillSet({ ...input(shipped), declaredExtensions: ['inspect'] })).toMatchObject({ kind: 'refusal' })
         expect(await inspectRenderedSkillSet({ ...captured, generated })).toMatchObject({ kind: 'refusal' })

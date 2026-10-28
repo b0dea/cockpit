@@ -25,7 +25,8 @@ owns only the generated files named in its ownership manifest.
 
 Keep the product's `Makefile`, task runner or scripts consumer-owned. Expose a narrow target such as
 `make verify`, add a skill overlay that tells agents when to use it, then add an exact guard allow
-with a reason. Cockpit can publish the skill and permission while the build logic stays directly
+with a reason. Give the skill its own short procedure with `loading: pull` and `budget: uncapped`
+frontmatter; keep that procedure outside the entry point so agents load it only when needed. Cockpit can publish the skill and permission while the build logic stays directly
 runnable by people and CI. The [extended example](../examples/extended/README.md) shows this pattern.
 
 Generated ownership is the upgrade boundary. A later `sync` may replace authenticated cockpit-owned
