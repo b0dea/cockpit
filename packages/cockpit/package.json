@@ -26,7 +26,7 @@
     "cockpit": "bin/cockpit.mjs"
   },
   "scripts": {
-    "build": "node ../../node_modules/typescript/bin/tsc --project tsconfig.build.json --declaration --singleThreaded",
+    "build": "node scripts/build.mjs",
     "bundle:rulesync": "node scripts/build-rulesync-generator.mjs",
     "bundle:rulesync:check": "node scripts/build-rulesync-generator.mjs --check",
     "schema": "node --input-type=module --eval \"import { writeFile } from 'node:fs/promises'; import { renderCockpitSchema } from './dist/schema-json.js'; await writeFile('./cockpit.schema.json', renderCockpitSchema())\"",
