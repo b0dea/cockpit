@@ -243,13 +243,13 @@ async function syntheticBootstrap(variant: 'sha256' | 'unsupported-format' | 'no
                                 : variant === 'missing-nul' ? validRow.slice(0, -1)
                                     : variant === 'empty-stream' ? ''
                                         : variant === 'two-rows' ? validRow + secondRow : validRow
-    const listingPath = join(root, 'index-rows')
-    await writeFile(listingPath, rows)
+    const listingPath = join(root, 'committed-tree-rows')
+    await writeFile(listingPath, rows.replace(/(100644|100755) ([a-f0-9]+) 0\t/g, '$1 blob $2\t'))
     const script = `#!${process.execPath}\n` +
         `const args=process.argv.slice(2);const out=value=>process.stdout.write(value);` +
         `if(args[0]==='rev-parse'&&args[1]==='--show-object-format')out(${JSON.stringify(objectFormat + '\n')});` +
         `else if(args[0]==='rev-parse')out(${JSON.stringify(head + '\n')});` +
-        `else if(args[0]==='ls-files')out(require('node:fs').readFileSync(${JSON.stringify(listingPath)}));` +
+        `else if(args[0]==='ls-tree')out(require('node:fs').readFileSync(${JSON.stringify(listingPath)}));` +
         `else if(args[0]==='cat-file'){` +
         (variant === 'nonblob' ? `process.stderr.write('not a blob');process.exitCode=1;`
             : variant === 'oversize' ? `out(Buffer.alloc(16777217,97));`
@@ -850,6 +850,34 @@ describe('generated publication transaction', () => {
         await writeFile(editedPath, 'uncommitted human edit\n')
         expect((await admitPublicationPlan(next, { execute: executeProbe })).kind).toBe('refusal')
         await writeFile(editedPath, committedBytes)
+
+        const stagedCli = 'staged uncommitted cli\n'
+        const stagedTrouble = postimage.replace('new diagnostic index', 'staged uncommitted diagnostic index')
+        await Promise.all([
+            writeFile(join(root, cliPath), stagedCli),
+            writeFile(join(root, troublePath), stagedTrouble),
+        ])
+        execFileSync('git', ['add', '--', ...input.references.map(({ path }) => path)], { cwd: root })
+        const stagedBootstrap = await captureReferenceBootstrap(root, git.value, { execute: executeProbe })
+        if (stagedBootstrap.kind !== 'complete') throw new Error(JSON.stringify(stagedBootstrap))
+        const stagedCliStat = await lstat(join(root, cliPath))
+        const stagedTroubleStat = await lstat(join(root, troublePath))
+        const staged = {
+            ...next,
+            referenceBootstrap: stagedBootstrap.bootstrap,
+            references: input.references.map(row => row.kind === 'markdown-region' ? { ...row, preimageSha256: digest(stagedTrouble) } : row),
+            mutations: [
+                { ...input.mutations[0]!, expected: { kind: 'file' as const, sha256: digest(stagedCli), identity: { dev: stagedCliStat.dev, ino: stagedCliStat.ino } } },
+                { ...input.mutations.at(-1)!, expected: { kind: 'file' as const, sha256: digest(stagedTrouble), identity: { dev: stagedTroubleStat.dev, ino: stagedTroubleStat.ino } } },
+            ],
+        }
+        expect((await admitPublicationPlan(staged, { execute: executeProbe })).kind).toBe('refusal')
+        await Promise.all([
+            writeFile(join(root, cliPath), rebasedCli),
+            writeFile(join(root, troublePath), rebasedTrouble),
+        ])
+        execFileSync('git', ['add', '--', ...input.references.map(({ path }) => path)], { cwd: root })
+
         const refreshed = await admitPublicationPlan(next, { execute: executeProbe })
         expect(refreshed.kind, JSON.stringify(refreshed)).toBe('complete')
         if (refreshed.kind !== 'complete') return
@@ -859,12 +887,12 @@ describe('generated publication transaction', () => {
         expect(await readFile(join(root, troublePath), 'utf8')).toBe(postimage)
     }, 120_000)
 
-    it('binds bootstrap authority to the captured index rows while retaining immutable blob bytes', async () => {
+    it('binds bootstrap authority to committed tree rows while retaining immutable blob bytes', async () => {
         const { root, bootstrap } = await referencePublication()
         const captured = referenceBootstrapFiles(bootstrap)!
         await writeFile(join(root, 'docs/cli-reference.md'), 'newly staged\n')
         execFileSync('git', ['add', '--', 'docs/cli-reference.md'], { cwd: root })
-        expect(await revalidateReferenceBootstrap(bootstrap, { execute: executeProbe })).toBe(false)
+        expect(await revalidateReferenceBootstrap(bootstrap, { execute: executeProbe })).toBe(true)
         expect(referenceBootstrapFiles(bootstrap)).toEqual(captured)
     })
 

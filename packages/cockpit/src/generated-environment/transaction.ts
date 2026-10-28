@@ -206,7 +206,7 @@ async function referenceGitState(root: string, git: ResolvedExecutable, adapters
     const headBytes = await runGit(root, git, ['rev-parse', '--verify', 'HEAD^{commit}'], 'head', 80, adapters, deadline)
     const head = headBytes?.toString('utf8').trim()
     if (!head || !oidPattern.test(head)) return undefined
-    const listing = await runGit(root, git, ['ls-files', '--stage', '-z', '--', ...REFERENCE_PATHS], 'index', 4096, adapters, deadline)
+    const listing = await runGit(root, git, ['ls-tree', '-z', head, '--', ...REFERENCE_PATHS], 'committed-reference-estate', 4096, adapters, deadline)
     if (!listing) return undefined
     let text: string
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(listing) } catch { return undefined }
@@ -217,7 +217,7 @@ async function referenceGitState(root: string, git: ResolvedExecutable, adapters
     const parsed: Array<Readonly<{ mode: '100644' | '100755'; oid: string; path: typeof REFERENCE_PATHS[number] }>> = []
     const seen = new Set<string>()
     for (const raw of records) {
-        const match = /^(100644|100755) ([a-f0-9]+) 0\t([^\0\r\n]+)$/.exec(raw)
+        const match = /^(100644|100755) blob ([a-f0-9]+)\t([^\0\r\n]+)$/.exec(raw)
         if (!match || !oidPattern.test(match[2]!) || !REFERENCE_PATHS.includes(match[3] as typeof REFERENCE_PATHS[number]) || seen.has(match[3]!)) return undefined
         seen.add(match[3]!)
         parsed.push(Object.freeze({ mode: match[1] as '100644' | '100755', oid: match[2]!, path: match[3] as typeof REFERENCE_PATHS[number] }))
@@ -232,7 +232,7 @@ async function referenceGitState(root: string, git: ResolvedExecutable, adapters
 export async function captureReferenceBootstrap(root: string, git: ResolvedExecutable, adapters: PublicationAdapters): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; bootstrap: ReferenceBootstrap }>> {
     const trustedGit = resolvedGitExecutable(git)
     const state = trustedGit && await referenceGitState(root, trustedGit, adapters)
-    if (!state) return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference bootstrap could not authenticate the fixed Git index rows', 'references')
+    if (!state) return refuse('GENERATED_REFERENCE_BOOTSTRAP_INVALID', 'reference bootstrap could not authenticate the fixed committed Git estate', 'references')
     const blobs = new Map<string, Buffer>()
     let aggregateBytes = 0
     for (const oid of [...new Set(state.parsed.map(row => row.oid))]) {
