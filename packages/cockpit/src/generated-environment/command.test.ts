@@ -213,6 +213,48 @@ describe('generated sibling-root authority', () => {
         })
     }, 120_000)
 
+    it('publishes a generated build from an authenticated sibling beside the cockpit without writing into it', async () => {
+        const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-build-estate-')))
+        roots.push(estate)
+        const { root, configPath } = await consumer('sibling-build', estate)
+        const sibling = join(estate, 'api')
+        await mkdir(sibling)
+        const dockerfile = 'FROM synthetic.invalid/runtime@sha256:' + 'a'.repeat(64) + '\n'
+        await writeFile(join(sibling, 'Dockerfile'), dockerfile)
+        await writeFile(configPath, `
+[cockpit]
+name = "sibling-build"
+siblings_root = ".."
+
+[[sibling]]
+slug = "api"
+dir = "api"
+mount = "always"
+acquire = "none"
+var = "API_DIR"
+purpose = "Synthetic API"
+
+[ports]
+bases = {}
+
+[environment.generated]
+compose_file = "compose.generated.yml"
+
+[[environment.generated.services]]
+id = "api"
+sibling = "api"
+command = ["node", "server.mjs"]
+build = { context = ".", dockerfile = "Dockerfile" }
+health = { property = "Synthetic API responds", interval_seconds = 2, timeout_seconds = 2, retries = 10, start_period_seconds = 1, probe = { location = "in-stack", service = "api", cwd = ".", argv = ["node", "--version"], timeout_seconds = 30 } }
+`)
+        const result = await syncGeneratedEnvironment({ configPath })
+        expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, 'compose.generated.yml'), 'utf8')).toContain('context: ../api')
+        expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        expect(await readdir(sibling)).toEqual(['Dockerfile'])
+        expect(await readFile(join(sibling, 'Dockerfile'), 'utf8')).toBe(dockerfile)
+    }, 120_000)
+
     it('refuses a vendor template outside the publication root instead of writing a local lookalike', async () => {
         const { root, configPath } = await consumer('external-vendor-template')
         const siblings = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-vendor-siblings-')))

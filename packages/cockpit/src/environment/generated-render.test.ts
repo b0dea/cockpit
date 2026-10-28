@@ -35,6 +35,40 @@ describe('generated browser runner rendering', () => {
             stackId: `stack:${'e'.repeat(64)}`, cockpitId: `cockpit:portable:${'f'.repeat(64)}`,
         })
     })
+    it('renders declared sibling build inputs beside the cockpit while confining generated outputs', () => {
+        const declaration = {
+            compose_file: 'compose.generated.yml',
+            services: [{ id: 'api', sibling: 'api', build: { context: '.', dockerfile: 'Dockerfile' },
+                command: ['node', 'server.mjs'], health: { property: 'The synthetic API responds',
+                    interval_seconds: 2, timeout_seconds: 2, retries: 10, start_period_seconds: 1,
+                    probe: { location: 'in-stack', service: 'api', cwd: '.', argv: ['node', '--version'], timeout_seconds: 30 } } }],
+        }
+        const input = { declaration, sourceSha256: 'a'.repeat(64), generation: 'b'.repeat(64),
+            stackId: `stack:${'c'.repeat(64)}`, cockpitId: `cockpit:build:${'d'.repeat(64)}`, portDefaults: {} }
+        for (const [directory, context, expected] of [
+            ['../api', '.', '../api'],
+            ['../../product repositories/api', 'service', '../../product repositories/api/service'],
+            ['.', '.', '.'],
+            ['api', 'service', 'api/service'],
+            ['..', '.', '..'],
+        ] as const) {
+            const rendered = renderGeneratedEnvironment({ ...input,
+                declaration: { ...declaration, services: [{ ...declaration.services[0], build: { context, dockerfile: 'Dockerfile' } }] },
+                siblingDirectories: { api: directory } })
+            expect(rendered, directory).toMatchObject({ kind: 'complete' })
+            if (rendered.kind !== 'complete') throw new Error('declared sibling build unavailable')
+            expect(parse(rendered.compose).services.api.build).toEqual({ context: expected, dockerfile: 'Dockerfile' })
+            expect(rendered.manifest.map(file => file.path)).toEqual(['compose.generated.yml', 'docs/cockpit/environment-decisions.md'])
+        }
+        for (const directory of ['/outside/api', 'api/../../outside', '../api/../outside', 'C:\\outside', 'C:/outside', 'api\\nested', 'api\u0000suffix']) {
+            expect(renderGeneratedEnvironment({ ...input, siblingDirectories: { api: directory } })).toMatchObject({
+                kind: 'refusal', code: 'GENERATED_INPUT_INVALID',
+            })
+        }
+        expect(renderGeneratedEnvironment({ ...input, declaration: { ...declaration, compose_file: '../outside.yml' },
+            siblingDirectories: { api: '../api' } })).toMatchObject({ kind: 'refusal', code: 'GENERATED_DECLARATION_INVALID' })
+    })
+
     it('refuses cyclic generated input within the shared capture bounds', () => {
         const cyclic: Record<string, unknown> = {}
         cyclic.self = cyclic

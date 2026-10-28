@@ -77,6 +77,12 @@ summarizes its failing paths, so a healthy file cannot hide another file's missi
 stale key names. Restore the named checkout or synchronize its instance keys with its template,
 then rerun `cockpit doctor --config cockpit.toml`.
 
+For generated services, `build.context` is relative to the declared sibling checkout. A dedicated
+cockpit can build a sibling beside its own checkout; the generated Compose file records that
+relative input path. Declare the sibling under `cockpit.siblings_root`, then run `cockpit sync`
+and `cockpit check` before starting the stack. This input permission does not authorize writing
+files outside the cockpit.
+
 Generated vendor templates must also lie inside the cockpit checkout. External sibling checkouts
 remain valid for mounted surfaces, but a vendor template outside the checkout is refused, and
 cockpit never substitutes a similarly named directory inside its own checkout. The

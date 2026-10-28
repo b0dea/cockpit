@@ -147,6 +147,12 @@ function safeGeneratedPath(value: string): boolean {
     return SAFE_PATH.test(value)
 }
 
+// Build inputs may be authenticated sibling checkouts beside the cockpit; owned outputs may not.
+function safeSiblingBuildDirectory(value: string): boolean {
+    const remainder = value.replace(/^(?:\.\.\/)*/, '')
+    return !/^[a-z]:/i.test(remainder) && (remainder === '..' || safeGeneratedPath(remainder))
+}
+
 function decisionValue(value: unknown): string {
     return JSON.stringify(value)
 }
@@ -445,8 +451,8 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'generated output path is invalid' })
     }
     if (declaration.services.some(({ build, sibling }) => build !== undefined
-        && (typeof safeInput.siblingDirectories[sibling] !== 'string' || !safeGeneratedPath(safeInput.siblingDirectories[sibling]!)))) {
-        return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'a built service names a sibling without a confined checkout directory' })
+        && (typeof safeInput.siblingDirectories[sibling] !== 'string' || !safeSiblingBuildDirectory(safeInput.siblingDirectories[sibling]!)))) {
+        return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'a built service names a sibling without a valid relative checkout directory' })
     }
     const compose = renderCompose(declaration, safeInput)
     const secretsTemplates = renderSecretsTemplates(declaration, safeInput.siblingDirectories)
