@@ -67,6 +67,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     gate: 'Declared product gate to run',
     image: 'Pinned container image used for runtime measurement',
     intent: 'Human-readable work intent',
+    'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
     interactive: 'Ask for explicit approval in a terminal',
     item: 'Declared programme item key',
     json: 'Emit one machine-readable JSON response',
@@ -90,6 +91,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     var: 'Environment variable mapping for the sibling',
     'work-order': 'Work-order identifier',
     write: 'Write the measured runtime support row to cockpit.toml',
+    'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
 })
 
 export function describePublicOption(name: string): string {
