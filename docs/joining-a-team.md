@@ -44,6 +44,10 @@ The root `.gitignore` has a `cockpit:ignore` region for installed dependencies, 
 state, secret resolver material, and a sibling checkout directory that lives below the cockpit
 root. `init` creates that region while preserving every line outside it. Later `sync` and `check`
 authenticate the exact region and refuse an edited or stale one instead of overwriting it.
+The sibling directory is escaped as a literal Git ignore path, so wildcard-shaped names do not
+match nearby directories. A `siblings_root` containing a line break or NUL is refused before
+metadata changes because `.gitignore` cannot represent it; choose a single-line path and rerun
+`cockpit init`.
 
 ## Verify a clean join
 

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES } from './environment/contract.js'
@@ -186,12 +186,14 @@ async function authenticateSourceInstall(candidate: SourceInstallCandidate): Pro
     }
 }
 
-function ignoreBlock(root: string, siblingsRoot: string): string {
+function ignoreBlock(root: string, siblingsRoot: string): string | undefined {
+    if (/[\0\r\n]/.test(siblingsRoot)) return undefined
     const patterns = ['/node_modules/', '/.cockpit/local/', '/env/.secrets/*', '!/env/.secrets/.gitignore']
     const siblings = resolve(root, siblingsRoot)
     const local = relative(root, siblings)
     if (local !== '' && !local.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && local !== '..' && !isAbsolute(local)) {
-        patterns.push(`/${local.replaceAll('\\', '/')}/`)
+        const literal = local.split(sep).map((part) => part.replace(/[\\*?\[\] !#]/g, '\\$&')).join('/')
+        patterns.push(`/${literal}/`)
     }
     return [START, ...patterns, END].join('\n')
 }
@@ -211,6 +213,12 @@ export async function initializeTeamMetadata(configPath: string): Promise<TeamMe
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
         if (loaded.kind !== 'complete') return refuse('TEAM_METADATA_UNAVAILABLE', 'cockpit.toml must be valid before team metadata can be written', configPath)
+        const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
+        if (block === undefined) {
+            return refuse('TEAM_METADATA_UNAVAILABLE',
+                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
+                'cockpit.siblings_root')
+        }
         const packagePath = join(root, 'package.json')
         const packageBefore = await readOptional(authority, packagePath)
         const sourceInstall = await sourceInstallCandidate(authority, packageBefore?.bytes)
@@ -219,7 +227,6 @@ export async function initializeTeamMetadata(configPath: string): Promise<TeamMe
             `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run cockpit init again`, packagePath)
         const ignorePath = join(root, '.gitignore')
         const ignoreBefore = await readOptional(authority, ignorePath)
-        const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
@@ -259,9 +266,15 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
         if (loaded.kind !== 'complete') return refuse('TEAM_METADATA_UNAVAILABLE', 'cockpit.toml is invalid', configPath)
+        const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
+        if (block === undefined) {
+            return refuse('TEAM_METADATA_UNAVAILABLE',
+                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
+                'cockpit.siblings_root')
+        }
         const ignorePath = join(root, '.gitignore')
         const ignore = await readOptional(authority, ignorePath)
-        const expected = ignoreCandidate(ignore?.bytes ?? '', ignoreBlock(root, loaded.result.config.cockpit.siblings_root))
+        const expected = ignoreCandidate(ignore?.bytes ?? '', block)
         if (!ignore || expected === undefined || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block is missing, stale or edited; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
         return { kind: 'complete', changed: false }
