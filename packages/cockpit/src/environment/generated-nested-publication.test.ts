@@ -54,17 +54,19 @@ describe('nested generated publication', () => {
         expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete' })
         if (result.kind !== 'complete') return
         expect(parents).toEqual([
-            '.', '.agents', '.claude', '.cockpit/guards', '.codex', '.opencode', '.opencode/plugin',
+            '.', '.agents', '.agents/skills/cockpit-setup/references',
+            '.claude', '.claude/skills/cockpit-setup/references', '.cockpit/guards',
+            '.codex', '.codex/agents', '.cursor', '.cursor/skills/cockpit-setup/references',
+            '.grok', '.grok/skills/cockpit-setup/references', '.opencode', '.opencode/plugin',
+            '.opencode/skills/cockpit-setup/references',
             'app', 'docs/cockpit', 'env/.secrets', 'fixtures', '.cockpit',
         ])
         expect(committedParents).toEqual(parents)
         const publishedPaths = preparedPaths.filter(path => path !== '.cockpit/generated-environment-ownership.json')
-        const presentPaths = (await Promise.all(result.result.paths.map(async path => {
-            try { await readFile(join(root, path)); return path } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-                throw error
-            }
-        }))).filter((path): path is string => path !== undefined)
+        const presentPaths = await Promise.all(result.result.paths.map(async path => {
+            await readFile(join(root, path))
+            return path
+        }))
         expect([...publishedPaths].sort()).toEqual(presentPaths.sort())
     })
 

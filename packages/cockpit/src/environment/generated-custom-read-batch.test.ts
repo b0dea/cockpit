@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import * as surfaceGenerator from '../surfaces/generator-adapter.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
-import { cockpitId } from './identity.js'
+import { publicationCockpitId } from './identity.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 
 const fixture = resolve('fixtures/registries/generated-environment.toml')
@@ -89,7 +89,7 @@ describe('custom surface output authentication batching', () => {
         if (existing) {
             const sourceSha256 = digest(await readFile(configPath, 'utf8'))
             initialBytes = encodeOwnershipManifest({
-                root, configPath, cockpitId: cockpitId({ name: 'generated-environment', mainCheckoutPath: root }),
+                root, configPath, cockpitId: publicationCockpitId({ name: 'generated-environment' }),
                 generation: digest(`generated-environment\0${sourceSha256}`), sourceSha256,
                 personaSource: { path: 'fixtures/personas.json', sha256: digest(await readFile(join(root, 'fixtures/personas.json'), 'utf8')) },
                 owned: [], surfaces: [],

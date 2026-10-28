@@ -8,7 +8,7 @@ import { parse as parseToml } from 'smol-toml'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from '../generated-environment/command.js'
-import { cockpitId } from '../environment/identity.js'
+import { publicationCockpitId } from '../environment/identity.js'
 import { deriveRegistry } from '../registry-derivation.js'
 import { observeSiblingGuides, planSiblingProjection } from './projection.js'
 import { SURFACE_TARGETS } from './harness-registry.js'
@@ -176,12 +176,17 @@ describe('one-row generated surface integration', () => {
         expect(addedSync, JSON.stringify(addedSync.diagnostics)).toMatchObject({ kind: 'complete' })
         if (baselineSync.kind !== 'complete' || addedSync.kind !== 'complete') return
 
+        const sharedOwner = publicationCockpitId({ name: 'generated-environment' })
+        expect(baselineSync.result.paths).toContain('CLAUDE.md')
+        expect(addedSync.result.paths).toContain('CLAUDE.md')
         const before = await capturedOutputs(baseline.root, baselineSync.result.paths)
         const after = await capturedOutputs(added.root, addedSync.result.paths)
+        expect(before['CLAUDE.md']).toBe(after['CLAUDE.md'])
+        expect(after['CLAUDE.md']).toBe(`file:<!-- cockpit:instructions:start -->\n<!-- cockpit:owner:${sharedOwner}:start -->\n@AGENTS.md\n<!-- cockpit:owner:${sharedOwner}:end -->\n<!-- cockpit:instructions:end -->\n`)
         const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
             .filter(path => before[path] !== after[path])
             .sort()
-        // The guard transport and its registrations name neither the checkout nor the configuration,
+        // The common-guide import and guard registrations name neither the checkout nor the row,
         // so a new row leaves them byte-identical.
         expect(changed).toEqual([
             '.claude/settings.json',
@@ -194,7 +199,6 @@ describe('one-row generated surface integration', () => {
             '.sibling-worker-AGENTS.md',
             'AGENTS.md',
             'CLAUDE.local.md',
-            'CLAUDE.md',
             'compose.generated.yml',
             'docs/cockpit/environment-decisions.md',
             'opencode.jsonc',
@@ -221,7 +225,7 @@ describe('one-row generated surface integration', () => {
         }
         const openCodeBytes = await readFile(join(added.root, 'opencode.jsonc'), 'utf8')
         const ownerPattern = /\/\* cockpit:owner:(cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}):(start|end) \*\//g
-        const ownerId = cockpitId({ name: 'generated-environment', mainCheckoutPath: added.root })
+        const ownerId = publicationCockpitId({ name: 'generated-environment' })
         expect([...openCodeBytes.matchAll(ownerPattern)].map(match => [match[1], match[2]])).toEqual([
             [ownerId, 'start'], [ownerId, 'end'],
         ])

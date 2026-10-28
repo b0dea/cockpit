@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
+import { parse as parseToml } from 'smol-toml'
 
 import { loadCockpitConfig } from '../config/load.js'
 import type { HolderId } from './contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { nodeAuthority, readAnchoredBatches } from '../generated-environment/transaction.js'
-import { checkoutId, cockpitId, stackId } from './identity.js'
+import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
 import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
@@ -227,16 +228,31 @@ describe('generated application authenticated read batching', () => {
             'fixtures/personas.generated.ts',
         ])
         const surfacePaths = new Set(result.result.paths.filter(path => !environmentPaths.has(path)))
-        expect(surfacePaths.size).toBe(46)
+        const skills = ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']
+        const skillRoots = ['.agents/skills', '.claude/skills', '.opencode/skills', '.cursor/skills', '.grok/skills']
+        const expectedSurfacePaths = [
+            ...skillRoots.flatMap(prefix => [
+                ...skills.flatMap(name => [`${prefix}/${name}/SKILL.md`, `${prefix}/${name}/procedures/onboarding.md`]),
+                `${prefix}/cockpit-setup/references/test-data-and-personas.md`,
+                `${prefix}/cockpit-setup/references/identity-provider-clerk.md`,
+            ]),
+            ...skills.map(name => `.agents/skills/${name}/agents/openai.yaml`),
+            '.claude/agents/evaluator.md', '.codex/agents/evaluator.toml', '.opencode/agents/evaluator.md',
+            '.cursor/agents/evaluator.md', '.grok/agents/evaluator.md',
+            '.claude/settings.json', '.cockpit/guards/bash-guard.sh', '.codex/config.toml', '.codex/hooks.json',
+            '.cursor/cli.json', '.grok/config.toml', '.opencode/plugin/cockpit-guards.js',
+            'AGENTS.md', 'CLAUDE.md', 'opencode.jsonc',
+        ].sort()
+        expect([...surfacePaths].sort()).toEqual(expectedSurfacePaths)
         // The application checks the ledger before surface observation; admission reads it again.
         const admissionBatchOffset = ownershipReadOffsets[1]
         expect(admissionBatchOffset).toBeDefined()
         const surfaceObservationBatches = batches.slice(0, admissionBatchOffset).filter(batch => batch.entries.every(entry => entry.maxBytes === 1)
             && batch.entries.some(entry => entry.action === 'read-entry' && surfacePaths.has([...entry.segments, entry.name].join('/'))))
-        const observedSurfaceEntries = surfaceObservationBatches.flatMap(batch => batch.entries.filter(entry =>
-            surfacePaths.has([...entry.segments, entry.name].join('/'))))
-        expect(surfaceObservationBatches).toHaveLength(1)
-        expect(new Set(observedSurfaceEntries.map(entry => [...entry.segments, entry.name].join('/')))).toEqual(surfacePaths)
+        const observedSurfaceEntries = surfaceObservationBatches.flatMap(batch => batch.entries)
+        expect(surfaceObservationBatches.map(batch => batch.entries.length)).toEqual([64, 6])
+        expect(observedSurfaceEntries.map(entry => ({ action: entry.action, path: [...entry.segments, entry.name].join('/') })))
+            .toEqual([...expectedSurfacePaths, 'opencode.json'].sort().map(path => ({ action: 'read-entry', path })))
         expect(surfaceObservationBatches.flatMap(batch => batch.entries).every(entry => entry.maxBytes === 1)).toBe(true)
         const surfaceAssetBatches = batches.filter(batch => batch.entries.length === surfaceAssets.size
             && batch.entries.every(entry => surfaceAssets.has([...entry.segments, entry.name].join('/'))))
@@ -407,6 +423,17 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             if (lifecycle.kind !== 'complete') throw new Error('browser lifecycle authority unavailable')
             const result = await syncGeneratedEnvironment({ configPath }, {}, ports)
             expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
+            if (result.kind !== 'complete') throw new Error('browser surfaces were not published')
+            expect(Object.keys(JSON.parse(await readFile(join(root, '.mcp.json'), 'utf8')).mcpServers)).toEqual(['playwright'])
+            expect(Object.keys(parseToml(await readFile(join(root, '.codex/config.toml'), 'utf8')).mcp_servers as object)).toEqual(['playwright'])
+            const openCode = JSON.parse((await readFile(join(root, 'opencode.jsonc'), 'utf8'))
+                .replace(/\/\* cockpit:owner:cockpit:[a-z0-9-]+:[a-f0-9]{64}:(?:start|end) \*\//g, ''))
+            expect(Object.keys(openCode.mcp)).toEqual(['playwright'])
+            await expect(readFile(join(root, '.cursor/mcp.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+            expect(parseToml(await readFile(join(root, '.grok/config.toml'), 'utf8')).mcp_servers).toBeUndefined()
+            expect(result.result.paths).toEqual(expect.arrayContaining([
+                '.cursor/skills/cockpit-setup/SKILL.md', '.grok/skills/cockpit-setup/SKILL.md',
+            ]))
             const compose = parseYaml(await readFile(join(root, 'compose.generated.yml'), 'utf8'))
             expect(compose.services['cockpit-browser-runner'].healthcheck.start_period).toBe('15s')
             expect(compose.services['cockpit-browser-runner']).toMatchObject({ mem_limit: '1024m', cpus: 0.75 })
@@ -444,7 +471,7 @@ native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.str
         await writeFile(join(root, policyPath), policyBytes)
         const loaded = await loadCockpitConfig(configPath)
         if (loaded.kind !== 'complete') throw new Error('native hook fixture configuration unavailable')
-        const currentCockpit = cockpitId({ name: loaded.result.config.cockpit.name, mainCheckoutPath: root })
+        const currentCockpit = publicationCockpitId({ name: loaded.result.config.cockpit.name })
         const ownership = encodeOwnershipManifest({ root, cockpitId: currentCockpit, configPath,
             generation: createHash('sha256').update('synthetic native hook generation').digest('hex'),
             sourceSha256: createHash('sha256').update(source).digest('hex'),
@@ -486,13 +513,13 @@ fi
             if (priorPath === undefined) delete process.env.PATH
             else process.env.PATH = priorPath
         }
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+            code: 'SURFACE_INPUT_INVALID', target: '.githooks/pre-push', message: expect.stringContaining('move this check to CI'),
+        })] })
         expect((await readFile(calls, 'utf8')).trim().split('\n')).toEqual([
             'rev-list --max-count=2 HEAD', ...Array(128).fill(`merge-base --is-ancestor ${parent} ${head}`),
         ])
         expect(await readFile(ownershipPath, 'utf8')).toBe(ownership.bytes)
         await expect(readFile(join(root, 'compose.generated.yml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-            code: 'SURFACE_INPUT_INVALID', target: '.githooks/pre-push', message: expect.stringContaining('move this check to CI'),
-        })] })
     }, 120_000)
 })
