@@ -266,7 +266,7 @@ describe('the public synthetic cockpit', () => {
         for (const example of ['synthetic', 'minimal', 'docs-only', 'compose-first', 'extended']) {
             const commands = inventory(readFileSync(join(repositoryRoot, 'examples', example, 'README.md'), 'utf8'))
             const cockpitExecutables = [...commands.executable, ...commands.humanOnly].flat()
-                .filter(token => token === 'cockpit' || token.endsWith('/cockpit'))
+                .filter(token => token === 'cockpit' || !token.startsWith('@') && token.endsWith('/cockpit'))
             expect(new Set(cockpitExecutables), example).toEqual(new Set(['./node_modules/.bin/cockpit']))
         }
     })
