@@ -668,7 +668,7 @@ function nativeMcp(target: SurfaceTarget, command: string, args: readonly string
 
 function renderSkill(template: string, target: SurfaceTarget, rows: readonly BrowserTransportRow[], runtime: BrowserRuntimeProjection): RenderedSurfaceFile {
     if (template.split('{{browser}}').length !== 2 || /{{|}}/.test(template.replace('{{browser}}', ''))
-        || !template.startsWith('---\nname: browser\n') || /^(?:allowed-tools|tools|disallowedTools):/m.test(template)) {
+        || !template.startsWith('---\nname: cockpit-browser\n') || /^(?:allowed-tools|tools|disallowedTools):/m.test(template)) {
         throw new TypeError('browser skill template must contain one browser marker and retain browser tools')
     }
     const auth = runtime.authentication.posture === 'bypassed'
@@ -685,7 +685,7 @@ function renderSkill(template: string, target: SurfaceTarget, rows: readonly Bro
         'Read the browser reference before sign-in, artifact cleanup, or a paired native probe. Current callable rows remain held for operator measurement.',
     ].join('\n\n')
     const prefix = target === 'claudecode' ? '.claude' : target === 'codexcli' ? '.agents' : '.opencode'
-    return file(target, `${prefix}/skills/browser/SKILL.md`, template.replace('{{browser}}', () => guidance))
+    return file(target, `${prefix}/skills/cockpit-browser/SKILL.md`, template.replace('{{browser}}', () => guidance))
 }
 
 function nativeProbe(row: BrowserTransportRow, files: readonly RenderedSurfaceFile[], wrappers: readonly Readonly<{ path: string; sha256: string }>[], runtime: BrowserRuntimeProjection, packageSha256: string | null, cockpitDirectory: string): BrowserNativeProbe {

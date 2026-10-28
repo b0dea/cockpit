@@ -64,7 +64,7 @@ directory that will hold the configuration, preview the bootstrap:
 cockpit init "$(pwd)" --target codexcli --json
 ```
 
-The preview writes nothing. It returns the files it would install (the bootstrap skill for that
+The preview writes nothing. It returns the files it would install (the cockpit-setup skill for that
 harness), a `previewSha256` digest and the next step. To accept, run the same command
 interactively in a terminal and type the digest it shows:
 

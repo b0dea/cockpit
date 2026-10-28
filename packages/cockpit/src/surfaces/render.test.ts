@@ -31,6 +31,7 @@ function input() {
         nativeGrants: { modelSha256: surfaceModelSha256(grants)!, fragments: [] },
         browser: null,
         browserReference: null,
+        skillReferences: [],
         browserRunner: null,
         testing: null,
         instructions: null,
@@ -52,6 +53,20 @@ describe('surface rendering', () => {
             servers: [{ name: 'playwright', enabled: true, sources: [] }],
         } } }
         expect(renderSurfaceSet(forged)).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
+    })
+
+    it('renders each skill reference beside its skill on every configured built-in harness and refuses a malformed one', () => {
+        const value = input()
+        const reference = { skill: 'cockpit-setup', path: 'references/test-data-and-personas.md', bytes: '# Personas\n<!-- cockpit:verified version=0.0.0 -->\n' }
+        const result = renderSurfaceSet({ ...value, skillReferences: [reference] })
+        expect(result).toMatchObject({ kind: 'complete' })
+        if (result.kind !== 'complete') return
+        const entry = result.entries.find(row => row.path === '.claude/skills/cockpit-setup/references/test-data-and-personas.md')
+        expect(entry).toMatchObject({ kind: 'file', ownership: 'whole-file', writer: 'cockpit' })
+        expect((entry as { bytes: string }).bytes).not.toContain('cockpit:verified')
+        for (const bad of [{ ...reference, path: '../escape.md' }, { ...reference, skill: 'Bad Skill' }, { ...reference, bytes: '' }]) {
+            expect(renderSurfaceSet({ ...value, skillReferences: [bad] })).toMatchObject({ kind: 'refusal', diagnostic: { code: 'SURFACE_INPUT_INVALID' } })
+        }
     })
 
     it('publishes the authenticated browser runner through the sole surface transaction', () => {
@@ -243,13 +258,13 @@ describe('surface rendering', () => {
         value.nativeMcp = { modelSha256: surfaceModelSha256(value.mcp.result)!, fragments: [
             { target: 'claudecode', path: '.mcp.json', baseSha256: digest(nativeBase), bytes: nativeFinal, sha256: digest(nativeFinal) } as never,
         ] }
-        const skill = '---\nname: browser\n---\nDrive the application.\n'
+        const skill = '---\nname: cockpit-browser\n---\nDrive the application.\n'
         const reference = '# Browser reference\n'
         const tierGuide = '# Testing tiers\n'
         const browserMcp = '{"mcpServers":{"playwright":{"command":"docker","args":["run"]}}}\n'
         const hookBytes = '#!/bin/sh\nexit 0\n'
         const browser = {
-            files: [file('claudecode', '.mcp.json', browserMcp), file('claudecode', '.claude/skills/browser/SKILL.md', skill)],
+            files: [file('claudecode', '.mcp.json', browserMcp), file('claudecode', '.claude/skills/cockpit-browser/SKILL.md', skill)],
             rows: [], probes: [], clients: [], graderBrowserAccess: 'retained',
             mcp: { kind: 'complete', result: { servers: [{ name: 'playwright', enabled: true, sources: [] }], wrappers: [], harnesses: [] }, diagnostics: [] },
         }
@@ -275,8 +290,8 @@ describe('surface rendering', () => {
         expect(result.entries.find(entry => entry.path === '.mcp.json')).toMatchObject({
             bytes: expect.stringContaining('"playwright"'),
         })
-        expect(result.entries.find(entry => entry.path === '.claude/skills/browser/SKILL.md')).toMatchObject({ bytes: skill })
-        expect(result.entries.find(entry => entry.path === '.claude/skills/browser/references/browser.md')).toMatchObject({ bytes: reference })
+        expect(result.entries.find(entry => entry.path === '.claude/skills/cockpit-browser/SKILL.md')).toMatchObject({ bytes: skill })
+        expect(result.entries.find(entry => entry.path === '.claude/skills/cockpit-browser/references/browser.md')).toMatchObject({ bytes: reference })
         expect(result.entries.find(entry => entry.path === 'CLAUDE.md')).toMatchObject({
             kind: 'shared-region', region: { bytes: expect.stringContaining(tierGuide.trimEnd()) },
         })

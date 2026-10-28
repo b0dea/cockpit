@@ -78,7 +78,7 @@ function bootstrapRecord(address: BootstrapStateAddress, revision = 0): Bootstra
             stage: 'draft-prepared', checkoutRoot: address.checkoutRoot, target: address.target,
             sources: [{ path: 'skills/collection.json', sha256: '1'.repeat(64) }],
             commandSha256: '2'.repeat(64), previewSha256: '3'.repeat(64),
-            published: [{ path: '.codex/skills/bootstrap/SKILL.md', sha256: '4'.repeat(64) }],
+            published: [{ path: '.codex/skills/cockpit-setup/SKILL.md', sha256: '4'.repeat(64) }],
             destination: 'cockpit.toml', artifactBytes,
             artifactSha256: createHash('sha256').update(artifactBytes).digest('hex'), nextCommand: 'cockpit init',
         },

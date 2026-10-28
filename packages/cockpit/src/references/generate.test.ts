@@ -39,7 +39,7 @@ async function shippedAssets() {
     return {
         guardTemplate: await readFile(`${surfaceRoot}/guards/bash-guard.sh`, 'utf8'),
         adapters: await Promise.all(['claude', 'codex', 'opencode'].map(async name => JSON.parse(await readFile(`${surfaceRoot}/guards/${name}.adapter.json`, 'utf8')))),
-        skillSources: (await Promise.all(['bootstrap', 'explain', 'fix'].map(async name => [
+        skillSources: (await Promise.all(['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].map(async name => [
             { path: `skills/${name}/SKILL.md`, bytes: await readFile(`${surfaceRoot}/skills/${name}.skill.md`, 'utf8') },
             { path: `skills/${name}/procedures/onboarding.md`, bytes: terminalBytes },
         ]))).flat(),
@@ -48,7 +48,7 @@ async function shippedAssets() {
         sourceAssets: await Promise.all([
             sourceAsset(`${surfaceRoot}/skills/collection.json`, 'skills/collection.json'),
             sourceAsset(`${surfaceRoot}/skills/procedures/onboarding.md`, 'skills/procedures/onboarding.md'),
-            ...['bootstrap', 'explain', 'fix'].flatMap(name => [
+            ...['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].flatMap(name => [
                 sourceAsset(`${surfaceRoot}/skills/${name}.skill.md`, `skills/${name}/SKILL.md`),
                 sourceAsset(`${surfaceRoot}/skills/procedures/onboarding.md`, `skills/${name}/procedures/onboarding.md`),
             ]),
@@ -61,7 +61,7 @@ beforeAll(async () => {
     const terminalBytes = await readFile(`${surfaceRoot}/procedures/onboarding.md`, 'utf8')
     adoptSkill = { template: await readFile('packages/cockpit/src/references/adopt-cockpit.skill.md', 'utf8'), procedure: terminalBytes }
     const collectionBytes = await readFile(`${surfaceRoot}/collection.json`, 'utf8')
-    const sources = (await Promise.all(['bootstrap', 'explain', 'fix'].map(async name => [
+    const sources = (await Promise.all(['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].map(async name => [
         { path: `skills/${name}/SKILL.md`, bytes: await readFile(`${surfaceRoot}/${name}.skill.md`, 'utf8') },
         { path: `skills/${name}/procedures/onboarding.md`, bytes: terminalBytes },
     ]))).flat()
@@ -151,7 +151,7 @@ describe('reference generation', () => {
             const name = entry.path.split('/')[1]
             expect(configuration).toContain(`| \`packages/cockpit/surfaces/skills/${name}.skill.md\` | lines | ${entry.cap} | \`packages/cockpit/surfaces/skills/procedures/onboarding.md\` |`)
         }
-        expect(configuration.match(/`packages\/cockpit\/surfaces\/skills\/procedures\/onboarding\.md`/g)).toHaveLength(7)
+        expect(configuration.match(/`packages\/cockpit\/surfaces\/skills\/procedures\/onboarding\.md`/g)).toHaveLength(4 + skills.entrypoints.length)
         expect(configuration).not.toMatch(/`skills\/(?:collection\.json|procedures\/onboarding\.md|(?:bootstrap|explain|fix)\/SKILL\.md)`/)
     })
 

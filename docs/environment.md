@@ -256,10 +256,10 @@ attempted, and not-applied operation IDs. Intent, an earlier success, and an una
 failed current read-only probe do not count as completion. Persona outputs are rendered only from
 the declared authenticated persona source.
 
-The shipped onboarding procedure includes a pull-based authenticated-testing starter. It keeps
+The shipped `cockpit-setup` skill carries a pull-based authenticated-testing reference (`references/test-data-and-personas.md`), loaded by `cockpit-setup` and by `cockpit-browser` before signed-in testing. It keeps
 stable synthetic persona identifiers and product-owned rows separate from identity-provider
 ownership, confirms roles and permissions, directs serial browser-state minting into an ignored
-mode-0600 auth root, and asks for both allowed and denied authorization behavior. Its Clerk recipe
+mode-0600 auth root, and asks for both allowed and denied authorization behavior. Its Clerk recipe, a separate reference read only when the lockfile shows Clerk,
 uses the consumer's current supported Clerk and Playwright APIs; it does not make cockpit an
 identity provider, create provider identities without separate authority, or turn an existing
 state file into proof of a live Clerk login. Provider writes and cleanup stay bounded to an
@@ -342,8 +342,9 @@ proves the roles work, not only that a sign-in succeeded.
 root (directory mode 0700, files 0600). Warm the application first, and wait for the provider's
 session to exist before saving the state. Mint again after any reseed or reset, because a reused
 session goes stale and fails in ways that look like product bugs. Name the files so that the reset
-patterns match them; a file outside those patterns survives a reset. The shipped onboarding
-procedure walks an agent through this, including a starter for one identity provider.
+patterns match them; a file outside those patterns survives a reset. The shipped
+`cockpit-setup` test-data reference walks an agent through this, including a starter for one identity
+provider that it reads only when the lockfile shows that provider.
 
 | Symptom | Likely cause |
 | --- | --- |

@@ -282,10 +282,11 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'libexec/rulesync-generator.NOTICE.md',
                 'libexec/validate-harness-evidence.d.mts',
                 'libexec/validate-harness-evidence.mjs',
-                'surfaces/skills/bootstrap.skill.md',
+                'surfaces/skills/cockpit-setup.skill.md',
                 'surfaces/skills/collection.json',
-                'surfaces/skills/explain.skill.md',
-                'surfaces/skills/fix.skill.md',
+                'surfaces/skills/cockpit-explain.skill.md',
+                'surfaces/skills/cockpit-fix.skill.md',
+                'surfaces/skills/cockpit-work.skill.md',
                 'surfaces/skills/procedures/onboarding.md',
             ]),
         )
@@ -682,7 +683,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
         expect(preview.status, preview.stdout + preview.stderr).toBe(0)
         const result = JSON.parse(preview.stdout).result
         expect(result).toMatchObject({ root, target, stage: 'surface-previewed' })
-        const prefix = target === 'claudecode' ? '.claude/skills/bootstrap/' : target === 'codexcli' ? '.agents/skills/bootstrap/' : '.opencode/skills/bootstrap/'
+        const prefix = target === 'claudecode' ? '.claude/skills/cockpit-setup/' : target === 'codexcli' ? '.agents/skills/cockpit-setup/' : '.opencode/skills/cockpit-setup/'
         expect(result.files.length).toBe(target === 'codexcli' ? 3 : 2)
         expect(result.files.every((file: { path: string }) => file.path.startsWith(prefix))).toBe(true)
         expect(existsSync(join(root, prefix))).toBe(false)
@@ -790,7 +791,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
     const missing = spawnSync(process.execPath, [launcher, 'init', '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })
     expect(missing.status).toBe(2)
     expect(existsSync(join(untouched, '.agents'))).toBe(false)
-    const asset = join(installed, 'surfaces/skills/bootstrap.skill.md'), bytes = readFileSync(asset)
+    const asset = join(installed, 'surfaces/skills/cockpit-setup.skill.md'), bytes = readFileSync(asset)
     try {
         writeFileSync(asset, 'broken adjacent asset')
         const broken = spawnSync(process.execPath, [launcher, 'init', untouched, '--target', 'codexcli', '--json'], { cwd: untouched, env, encoding: 'utf8' })

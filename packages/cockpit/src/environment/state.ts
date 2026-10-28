@@ -190,7 +190,8 @@ const BootstrapStateRecordSchema = z.object({
         stage: z.enum(bootstrapStages),
         checkoutRoot: z.string().min(1).max(4_096),
         target: z.enum(SURFACE_TARGETS),
-        sources: z.array(BootstrapDigestRowSchema).min(1).max(6),
+        // Entry point plus shared procedure for every shipped skill; a new shipped skill must not need a state bump.
+        sources: z.array(BootstrapDigestRowSchema).min(1).max(16),
         commandSha256: z.string().regex(digest),
         previewSha256: z.string().regex(digest),
         published: z.array(BootstrapDigestRowSchema).max(3),

@@ -831,10 +831,10 @@ describe('generated environment process contract', () => {
         const preview = captureIo()
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--dry-run'], preview.io, {
             sync: async () => ({ status: 0, diagnostics: [], result: {
-                action: 'sync', dryRun: true, changes: [{ operation: 'write', path: '.agents/skills/fix/SKILL.md' }],
+                action: 'sync', dryRun: true, changes: [{ operation: 'write', path: '.agents/skills/cockpit-fix/SKILL.md' }],
             } }),
         })).toBe(0)
-        expect(preview.output().stdout).toContain('write ".agents/skills/fix/SKILL.md"')
+        expect(preview.output().stdout).toContain('write ".agents/skills/cockpit-fix/SKILL.md"')
 
         const upgrade = captureIo()
         expect(await runCli(['upgrade', '--config', 'cockpit.toml'], upgrade.io, {
@@ -2208,13 +2208,13 @@ it('shows a human init preview without accepting or writing it', async () => {
     const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
         kind: 'pending' as const, status: 0 as const, artifact: null, destination: null, diagnostics: [],
         result: { stage: 'surface-previewed' as const, root: input.root, target: input.target,
-            previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/bootstrap/SKILL.md', sha256: 'b'.repeat(64) }], nextCommand: 'accept exact preview' },
+            previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: 'b'.repeat(64) }], nextCommand: 'accept exact preview' },
     }))
     const status = await runCli(['init', process.cwd(), '--target', 'codexcli'], {
         stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true },
     }, { init: application })
     expect(status).toBe(0)
-    expect(JSON.parse(stdout)).toMatchObject({ stage: 'surface-previewed', previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/bootstrap/SKILL.md' }] })
+    expect(JSON.parse(stdout)).toMatchObject({ stage: 'surface-previewed', previewSha256: 'a'.repeat(64), files: [{ path: '.agents/skills/cockpit-setup/SKILL.md' }] })
     expect(application).toHaveBeenCalledOnce()
     expect(application.mock.calls[0]![0].accepted).toBe(false)
 })

@@ -40,9 +40,24 @@ else — a criterion about a screen graded from a test result is ungraded.
 - **failed after execution** — the authenticated rerun executed and its observed result disagrees with the criterion.
 - **never ran** — the verification or required observation could not run; name what prevented it.
 
+An unreachable check is **never ran**: not "failed after execution" (nothing disagreed with the
+criterion) and never a pass (nothing supported it). Name what made it unreachable, such as a stack that
+was down or a command that could not start, so the engineer fixes the access and not the code.
+
 Return exactly one outcome per criterion. Uncertainty cannot pass. These criterion outcomes
 are separate from command run verdicts. Only the production verifier can admit supporting
 evidence to completion; your prose cannot write a completion sentinel.
+
+## Green for the wrong reason
+
+A passing run proves the assertions ran, not that they test the criterion. Before you accept a pass, look
+for these, and grade **appears passed but evidence is insufficient or suspicious** when you find one:
+
+- A `.skip`, `.only`, `xit`, or a commented-out step counted as covered. Search the test files in Authority.
+- An empty result set passing an assertion that is true of nothing, such as "every row is valid" over zero rows.
+- An assertion made on a mock of the unit under test, so the test checks the mock and not the code.
+- A criterion reworded to match what was built. Compare the criterion's digest and text with the accepted
+  contract, not with the engineer's summary.
 
 ## Capability boundary
 

@@ -35,8 +35,8 @@ function fixture() {
         result: Object.freeze({
             root,
             target: 'codexcli' as SurfaceTarget,
-            sources: Object.freeze([{ path: 'skills/bootstrap.skill.md', sha256: digest('1') }]),
-            files: Object.freeze([{ path: '.agents/skills/bootstrap/SKILL.md', sha256: digest('2') }]),
+            sources: Object.freeze([{ path: 'skills/cockpit-setup.skill.md', sha256: digest('1') }]),
+            files: Object.freeze([{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: digest('2') }]),
             previewSha256,
         }),
         authority: Object.freeze({ kind: 'selected-bootstrap-publication-authority' as const }),
@@ -445,7 +445,7 @@ describe('init application', () => {
                 },
             }
             const artifact = await runInitApplication(accepted, adapters)
-            expect(artifact.kind).toBe('artifact')
+            expect(artifact.kind, JSON.stringify(artifact)).toBe('artifact')
             f.setDestination({ kind: 'available', sha256: '010fb9b6053c7bfa4b9936cf8c372cc028feddd5bf4b848f65de048f198c1a3e' })
 
             const interrupted = await runInitApplication(accepted, adapters)
@@ -517,7 +517,7 @@ it('composes observed greenfield answers into a loadable configuration and actua
         } }, adapters)
     }
     const artifact = outcome
-    expect(artifact.kind).toBe('artifact')
+    expect(artifact.kind, JSON.stringify(artifact)).toBe('artifact')
     expect(await loadCockpitConfig(f.destination)).toMatchObject({ kind: 'refusal' })
     await writeFile(join(f.root, 'app/package.json'), JSON.stringify({ scripts: { start: 'node changed.mjs' } }))
     expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', status: 2,

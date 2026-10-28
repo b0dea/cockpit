@@ -243,7 +243,7 @@ describe('changed adjacent-owner test runner', () => {
     it('runs the surfaces tests when a shipped surface changes', () => {
         const fixture = withOwners({
             'packages/cockpit/surfaces/template.txt': 'before\n',
-            'packages/cockpit/surfaces/skills/fix.skill.md': 'before\n',
+            'packages/cockpit/surfaces/skills/cockpit-fix.skill.md': 'before\n',
             'packages/cockpit/src/surfaces/render.test.ts': 'render\n',
             'packages/cockpit/src/surfaces/nested/deep.test.ts': 'deep\n',
         })

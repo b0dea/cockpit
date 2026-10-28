@@ -66,7 +66,7 @@ import { expandRestrictions } from '../surfaces/restrictions.js'
 import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
-import { inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
+import { SETUP_SKILL, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import {
     nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, runPublicationPlan,
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
@@ -484,18 +484,25 @@ const RESTRICTION_ASSETS = Object.freeze([
 const EVALUATOR_ASSET = 'agents/evaluator.agent.md' as const
 const SKILL_ASSETS = Object.freeze([
     'skills/collection.json',
-    'skills/bootstrap.skill.md',
-    'skills/explain.skill.md',
-    'skills/fix.skill.md',
+    'skills/cockpit-setup.skill.md',
+    'skills/cockpit-explain.skill.md',
+    'skills/cockpit-fix.skill.md',
+    'skills/cockpit-work.skill.md',
     'skills/procedures/onboarding.md',
 ] as const)
+// Shipped beside the setup skill, outside the skill contract: the skill set admits only entry points and the
+// shared procedure, and these are pulled on demand like the browser reference.
+const REFERENCE_ASSETS = Object.freeze([
+    'references/test-data-and-personas.md',
+    'references/identity-provider-clerk.md',
+] as const)
 const WORK_ASSETS = Object.freeze([
-    'skills/browser.skill.md',
+    'skills/cockpit-browser.skill.md',
     'references/browser.md',
     'references/testing-tiers.md',
     'scripts/browser-runner.sh',
 ] as const)
-type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof WORK_ASSETS[number]
+type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof REFERENCE_ASSETS[number] | typeof WORK_ASSETS[number]
 interface GeneratedApplicationRecord {
     readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
     readonly inspection?: Readonly<{ kind: 'passed' }>
@@ -696,20 +703,24 @@ function selectedBootstrapInput(input: unknown): SelectedBootstrapSurfaceInput |
     return Object.freeze({ root: record.root, target: record.target as SurfaceTarget })
 }
 
+function shippedSkillNames(assets: ReadonlyMap<SurfaceAssetPath, Readonly<{ bytes: string }>>): readonly string[] | undefined {
+    const bytes = assets.get('skills/collection.json')?.bytes
+    if (bytes === undefined) return undefined
+    try {
+        const skills = (JSON.parse(bytes) as { skills?: unknown }).skills
+        return Array.isArray(skills) && skills.every(name => typeof name === 'string') ? skills as string[] : undefined
+    } catch { return undefined }
+}
+
 function selectedBootstrapSources(assets: ReadonlyMap<SurfaceAssetPath, Readonly<{ bytes: string }>>): readonly SurfaceSourceFile[] | undefined {
     const terminal = assets.get('skills/procedures/onboarding.md')?.bytes
-    const bootstrap = assets.get('skills/bootstrap.skill.md')?.bytes
-    const explain = assets.get('skills/explain.skill.md')?.bytes
-    const fix = assets.get('skills/fix.skill.md')?.bytes
-    if ([terminal, bootstrap, explain, fix].some(value => value === undefined)) return undefined
-    return Object.freeze([
-        Object.freeze({ path: 'skills/bootstrap/SKILL.md', bytes: bootstrap! }),
-        Object.freeze({ path: 'skills/bootstrap/procedures/onboarding.md', bytes: terminal! }),
-        Object.freeze({ path: 'skills/explain/SKILL.md', bytes: explain! }),
-        Object.freeze({ path: 'skills/explain/procedures/onboarding.md', bytes: terminal! }),
-        Object.freeze({ path: 'skills/fix/SKILL.md', bytes: fix! }),
-        Object.freeze({ path: 'skills/fix/procedures/onboarding.md', bytes: terminal! }),
-    ])
+    const names = shippedSkillNames(assets)
+    const entries = names?.map(name => [name, assets.get(`skills/${name}.skill.md` as SurfaceAssetPath)?.bytes] as const)
+    if (terminal === undefined || !entries || entries.some(([, bytes]) => bytes === undefined)) return undefined
+    return Object.freeze(entries.flatMap(([name, bytes]) => [
+        Object.freeze({ path: `skills/${name}/SKILL.md`, bytes: bytes! }),
+        Object.freeze({ path: `skills/${name}/procedures/onboarding.md`, bytes: terminal }),
+    ]))
 }
 
 async function selectedBootstrapAssets(
@@ -768,7 +779,7 @@ export async function prepareSelectedBootstrapSurface(
         collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
         terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'packaged bootstrap skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, captured.target, 'bootstrap')
+    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'selected bootstrap output set was refused', captured.target)
     const reads = await readAnchoredBatches(root, inspected.files.map(file => Object.freeze({
         path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
@@ -842,7 +853,7 @@ export async function resumeSelectedBootstrapSurface(
         collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
         terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
     if (inspection.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume skill set was refused', 'bootstrap')
-    const inspected = projectInspectedSkillOutputs(inspection, captured.target, 'bootstrap')
+    const inspected = projectInspectedSkillOutputs(inspection, captured.target, SETUP_SKILL)
     if (inspected.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume output projection was refused', captured.target)
     const sourceRows = Object.freeze(sources.map(source => Object.freeze({ path: source.path, sha256: sha256(source.bytes) })))
     const files = Object.freeze(inspected.files.map(file => Object.freeze({ path: file.path, sha256: file.sha256 })))
@@ -897,7 +908,7 @@ async function authenticatedBootstrapPriorSurfaces(
         collection: { path: collection.path, bytes: collection.bytes, sha256: collection.sha256 },
         terminal: { path: terminal.path, bytes: terminal.bytes, sha256: terminal.sha256 } })
     if (inspection.kind !== 'complete') return undefined
-    const inspected = projectInspectedSkillOutputs(inspection, record.target, 'bootstrap')
+    const inspected = projectInspectedSkillOutputs(inspection, record.target, SETUP_SKILL)
     if (inspected.kind !== 'complete') return undefined
     const published = inspected.files.map(file => ({ path: file.path, sha256: file.sha256 }))
     if (JSON.stringify(published) !== JSON.stringify(record.value.published)) return undefined
@@ -1886,7 +1897,7 @@ async function prepareSurfaces(
         return refuse(row.code, row.message, row.server)
     }
 
-    const assetPaths = [EVALUATOR_ASSET, ...SKILL_ASSETS, ...RESTRICTION_ASSETS, ...WORK_ASSETS]
+    const assetPaths = [EVALUATOR_ASSET, ...SKILL_ASSETS, ...REFERENCE_ASSETS, ...RESTRICTION_ASSETS, ...WORK_ASSETS]
     const assetReads = await readAnchoredBatches(SURFACE_ROOT, assetPaths.map(path => Object.freeze({
         path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
     })), prepared.node, adapters)
@@ -1949,7 +1960,7 @@ async function prepareSurfaces(
                 ? bindBrowserMcpDeclaration(playwright[0]!, browserConfiguration.endpoint!, runtime.connection.endpoint)
                 : playwright[0]!
             if (!browserMcp) throw new Error('browser MCP declaration does not contain exactly one configured endpoint argument')
-            const browserSkill = asset('skills/browser.skill.md')
+            const browserSkill = asset('skills/cockpit-browser.skill.md')
             browser = renderBrowserSurfaces({
                 runtime,
                 cockpitDirectory: prepared.root,
@@ -2041,14 +2052,15 @@ async function prepareSurfaces(
         return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
     }
     const procedure = asset('skills/procedures/onboarding.md').bytes
-    const shippedSkills = ['bootstrap', 'explain', 'fix'] as const
+    const shippedSkills = shippedSkillNames(new Map(assets.map(row => [row.path, row] as const)))
+    if (!shippedSkills) return refuse('SURFACE_INPUT_INVALID', 'the shipped skill collection could not be read', 'skills/collection.json')
     const merge = mergeSurfaceDeclarations([{
         name: 'evaluator', feature: 'subagents', source: EVALUATOR_ASSET,
         sources: [{ path: 'subagents/evaluator.md', bytes: asset(EVALUATOR_ASSET).bytes }],
     }, ...shippedSkills.map(name => ({
         name, feature: 'skills' as const, source: `skills/${name}.skill.md`,
         sources: [
-            { path: `skills/${name}/SKILL.md`, bytes: asset(`skills/${name}.skill.md`).bytes },
+            { path: `skills/${name}/SKILL.md`, bytes: asset(`skills/${name}.skill.md` as SurfaceAssetPath).bytes },
             { path: `skills/${name}/procedures/onboarding.md`, bytes: procedure },
         ],
     }))], config.surfaces.overlays)
@@ -2179,7 +2191,7 @@ async function prepareSurfaces(
     const nativeGrants = nativeFragmentSet(generated, projection.grants, nativePaths(grantTargets))
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const runnerAsset = asset('scripts/browser-runner.sh')
-    const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/browser/SKILL.md')) === true
+    const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) === true
     const instructions = renderConsumerInstructions({
         name: config.cockpit.name,
         configFile: relative(prepared.root, prepared.configPath),
@@ -2191,11 +2203,12 @@ async function prepareSurfaces(
             ...merge.surfaces.filter(surface => surface.feature === 'skills').flatMap(surface => surface.sources
                 .filter(source => /^skills\/[^/]+\/SKILL\.md$/.test(source.path))
                 .map(source => ({ name: source.path.split('/')[1]!, description: skillDescription(source.bytes) }))),
-            ...(browserSkillRendered ? [{ name: 'browser', description: skillDescription(asset('skills/browser.skill.md').bytes) }] : []),
+            ...(browserSkillRendered ? [{ name: 'cockpit-browser', description: skillDescription(asset('skills/cockpit-browser.skill.md').bytes) }] : []),
         ],
     })
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
+        skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SETUP_SKILL, path, bytes: asset(path).bytes })),
         browserRunner: browser && prepared.workEnvironment.browser && Object.hasOwn(prepared.workEnvironment.browser, 'endpoint')
             ? { path: runnerAsset.path, bytes: runnerAsset.bytes, sha256: runnerAsset.sha256 } : null,
         testing: Object.freeze({ tierGuide, nativeHooks }),

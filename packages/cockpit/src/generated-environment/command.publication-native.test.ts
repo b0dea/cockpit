@@ -255,13 +255,13 @@ native_hooks = { install = "inspect" }
                 })
                 expect(digest(authorities.evaluator.bytes)).toBe(authorities.evaluator.sha256)
                 expect(authorities.installedSkills.map(({ path }) => path)).toEqual(expect.arrayContaining([
-                    '.agents/skills/bootstrap/SKILL.md',
-                    ...(variant.remote ? ['.claude/skills/browser/SKILL.md'] : []),
-                    '.opencode/skills/fix/SKILL.md',
+                    '.agents/skills/cockpit-setup/SKILL.md',
+                    ...(variant.remote ? ['.claude/skills/cockpit-browser/SKILL.md'] : []),
+                    '.opencode/skills/cockpit-fix/SKILL.md',
                 ]))
                 expect(authorities.browser).toMatchObject({
                     mcp: { name: 'playwright', source: { path: 'browser.mcp.json', sha256: digest(await readFile(join(fixture.root, 'browser.mcp.json'))) } },
-                    skillTemplate: { path: 'skills/browser.skill.md' },
+                    skillTemplate: { path: 'skills/cockpit-browser.skill.md' },
                 })
                 if (variant.remote) {
                     const preparation = authorities.browser?.runner?.debugger
@@ -297,12 +297,12 @@ native_hooks = { install = "inspect" }
                     .replace(/^<!-- cockpit:verified version=\S+ -->\n\n/m, '')
                 expect(browserReference).not.toContain('cockpit:verified')
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
-                    const path = join(fixture.root, prefix, 'skills/browser/references/browser.md')
+                    const path = join(fixture.root, prefix, 'skills/cockpit-browser/references/browser.md')
                     if (variant.remote && (prefix !== '.agents' || variant.preapproved)) expect(await readFile(path, 'utf8')).toBe(browserReference)
                     else await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' })
                 }
-                if (variant.remote) expect(await readFile(join(fixture.root, '.claude/skills/browser/SKILL.md'), 'utf8')).toContain('name: browser')
-                else await expect(lstat(join(fixture.root, '.claude/skills/browser/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+                if (variant.remote) expect(await readFile(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'), 'utf8')).toContain('name: cockpit-browser')
+                else await expect(lstat(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
                 expect(await readFile(join(fixture.root, 'CLAUDE.md'), 'utf8')).toContain('`focused` (unit)')
                 expect(await readFile(join(fixture.root, 'AGENTS.md'), 'utf8')).toContain('`focused` (unit)')
                 await expect(lstat(join(fixture.root, '.githooks/pre-push'))).rejects.toMatchObject({ code: 'ENOENT' })

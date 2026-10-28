@@ -98,7 +98,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
             ...(runtime.connection.kind === 'remote' ? ['--endpoint', runtime.connection.endpoint] : [])], cwd: root, envNames: [], source: { kind: 'core', path: 'mcp.jsonc', sha256: digest('synthetic declaration') } },
         approved: true,
         testPackage: observeBrowserProjectPackage({ runtime, cockpitDirectory: root, artifactRoot: '.playwright-cli' }),
-        skillTemplate: await readFile('packages/cockpit/surfaces/skills/browser.skill.md', 'utf8'),
+        skillTemplate: await readFile('packages/cockpit/surfaces/skills/cockpit-browser.skill.md', 'utf8'),
     }
     fixtureStates.set(input, Object.freeze({ namespace: namespace.value, stackId: stack, ownerId: owner }))
     return input
@@ -302,6 +302,9 @@ describe('browser transport surfaces', () => {
         expect(skill).not.toContain('.browser/auth/shared.json')
         expect(skill).not.toMatch(/^allowed-tools:/m)
         expect(skill).not.toContain('{{')
+        expect(skill).toContain('name: cockpit-browser')
+        for (const step of ['Orient before driving', 'Choose your own coverage', 'cockpit browser-drive', 'Every finding carries evidence', 'Never edit code']) expect(skill).toContain(step)
+        expect(skill).toContain('../cockpit-setup/references/test-data-and-personas.md')
         const real = renderBrowserSurfaces(await fixture('real'))
         const realSkill = real.files.find(file => file.target === 'opencode' && file.path.endsWith('/SKILL.md'))!.bytes
         expect(realSkill).toContain('mode-600')

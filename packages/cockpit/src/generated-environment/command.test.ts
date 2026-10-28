@@ -241,15 +241,15 @@ describe('selected bootstrap target', () => {
         ['codexcli', 3],
         ['opencode', 2],
     ] as const)('publishes only the exact %s bootstrap set through one issued authority', async (target, count) => {
-        const root = await realpath(await mkdtemp(join(tmpdir(), `cockpit-bootstrap-${target}-`)))
+        const root = await realpath(await mkdtemp(join(tmpdir(), `cockpit-setup-${target}-`)))
         roots.push(root)
         const prepared = await prepareSelectedBootstrapSurface({ root, target })
         expect(prepared).toMatchObject({ kind: 'complete', result: { root, target } })
         if (prepared.kind !== 'complete') return
         expect(prepared.result.files).toHaveLength(count)
-        expect(prepared.result.sources).toHaveLength(6)
+        expect(prepared.result.sources).toHaveLength(8)
         if (target === 'codexcli') expect(prepared.result.files.map(row => row.path))
-            .toContain('.agents/skills/bootstrap/agents/openai.yaml')
+            .toContain('.agents/skills/cockpit-setup/agents/openai.yaml')
         expect(await applySelectedBootstrapSurface({ ...prepared.authority })).toMatchObject({ kind: 'refusal' })
         const applied = await applySelectedBootstrapSurface(prepared.authority)
         expect(applied).toMatchObject({ kind: 'complete', result: { root, target, files: prepared.result.files } })
@@ -265,7 +265,7 @@ describe('selected bootstrap target', () => {
     }, 120_000)
 
     it('refuses changed destination preimages and copied preparation data', async () => {
-        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-bootstrap-preimage-')))
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-preimage-')))
         roots.push(root)
         const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
         if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
@@ -284,7 +284,7 @@ describe('selected bootstrap target', () => {
         // The bootstrap skill is consumer output like the full render, so it carries no development markers.
         await expect(readFile(join(root, '.agents/skills/bootstrap/SKILL.md'), 'utf8')).resolves.not.toMatch(/cockpit:verified|SHIPPED SURFACE/)
 
-        const stateHome = await mkdtemp(join(tmpdir(), 'cockpit-bootstrap-state-'))
+        const stateHome = await mkdtemp(join(tmpdir(), 'cockpit-setup-state-'))
         roots.push(stateHome)
         const selected = await selectBootstrapStateRoot({ platform: 'linux', home: stateHome, checkoutRoot: root, target: 'codexcli' })
         if (selected.kind !== 'complete') throw new Error('bootstrap state selection was refused')

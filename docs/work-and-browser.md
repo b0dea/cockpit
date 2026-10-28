@@ -4,6 +4,8 @@
 
 ## Declare work and preserve its authority
 
+The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill drives the browser commands in [Browser evidence](#browser-evidence) and reports findings with evidence without editing code.
+
 <!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Work orders use the bounded executable document contract owned by [the work-order parser](../packages/cockpit/src/work-orders/contract.ts). Its frontmatter, source provenance, Authority paths, three to seven acceptance criteria, verification commands and ordered plan are validated together. Invalid or contradictory documents refuse before work starts.
 
 <!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The bounded descriptor links a task, issue, specification, decision or programme artifact and declares whether certification or a durable handoff is needed. Routing and current capacity are checked before any candidate is read or draft is written. A fix creates no work-order files. A work-order route reports that a candidate is needed; submit its contained path with `--candidate drafts/task.md` to validate and publish the draft and source audit. Existing orders can be inspected with `--work-order WO-001`.

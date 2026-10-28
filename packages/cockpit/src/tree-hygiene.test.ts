@@ -646,7 +646,7 @@ describe('the public repository boundary', () => {
     })
 
     it('shipped surfaces are templates, not copies of ours', () => {
-        for (const f of ['packages/cockpit/surfaces/skills/fix.skill.md', 'packages/cockpit/surfaces/agents/evaluator.agent.md']) {
+        for (const f of ['packages/cockpit/surfaces/skills/cockpit-fix.skill.md', 'packages/cockpit/surfaces/agents/evaluator.agent.md']) {
             const body = read(f)
             expect(body, `${f} must declare itself a shipped surface`).toMatch(/SHIPPED SURFACE/)
         }
@@ -655,7 +655,7 @@ describe('the public repository boundary', () => {
     it('a shipped surface never references this repository as the product', () => {
         // The failure this catches: copying repository-maintenance instructions into the shipped tree, so a
         // consumer's agent is told to run this codebase's test suite against their business.
-        for (const f of ['packages/cockpit/surfaces/skills/fix.skill.md', 'packages/cockpit/surfaces/agents/evaluator.agent.md']) {
+        for (const f of ['packages/cockpit/surfaces/skills/cockpit-fix.skill.md', 'packages/cockpit/surfaces/agents/evaluator.agent.md']) {
             const body = read(f)
             expect(body, f).not.toMatch(/\bnpm run typecheck\b|\bcockpit\.toml['"`]?\s+schema\b|packages\/cockpit\/src/)
         }

@@ -1,6 +1,6 @@
 ---
-name: explain
-description: "Use when a person needs a read-only explanation of an installed cockpit and its next commands."
+name: cockpit-explain
+description: "Use when someone asks what an installed cockpit does, why it refused or flagged something, or which command to run next, and nothing should change."
 targets: ["*"]
 cockpit:
   tools: [shell]

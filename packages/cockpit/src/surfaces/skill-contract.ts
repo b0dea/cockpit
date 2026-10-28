@@ -20,10 +20,13 @@ import {
     type SurfaceTarget,
 } from './contract.js'
 
+/** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
+export const SETUP_SKILL = 'cockpit-setup' as const
+
 export const mechanism = {
     id: 'skill-contract',
     module: 'packages/cockpit/src/surfaces/skill-contract.ts',
-    exports: ['inspectSkillSet', 'inspectRenderedSkillSet', 'isAdmittedSkillCollection',
+    exports: ['SETUP_SKILL', 'inspectSkillSet', 'inspectRenderedSkillSet', 'isAdmittedSkillCollection',
         'projectInspectedSkillOutputs', 'isInspectedBootstrapOutputs'],
 } as const
 
@@ -84,7 +87,7 @@ export type SkillContractResult =
 export type InspectedBootstrapOutputs = Readonly<{
     kind: 'complete'
     target: SurfaceTarget
-    skill: 'bootstrap'
+    skill: typeof SETUP_SKILL
     files: readonly RenderedSurfaceFile[]
 }>
 
@@ -179,7 +182,7 @@ function captureInput(input: unknown): CapturedInput | undefined {
         if (json.errors.length > 0 || json.warnings.length > 0) return undefined
     } catch { return undefined }
     if (!object(authority) || !exact(authority, ['skills', 'metric', 'caps', 'displacement'])
-        || !Array.isArray(authority.skills) || !sameStrings(authority.skills, ['bootstrap', 'explain', 'fix']) || authority.metric !== 'frontmatter_bytes'
+        || !Array.isArray(authority.skills) || !sameStrings(authority.skills, ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']) || authority.metric !== 'frontmatter_bytes'
         || authority.displacement !== captured.terminal.path || !object(authority.caps) || !exact(authority.caps, SURFACE_TARGETS)) return undefined
     const caps = authority.caps
     const shippedSkills = authority.skills
@@ -426,10 +429,10 @@ function inspectRendered(
 export function projectInspectedSkillOutputs(
     result: SkillContractResult,
     target: SurfaceTarget,
-    skill: 'bootstrap',
+    skill: typeof SETUP_SKILL,
 ): InspectedSkillOutputProjection {
     const expected = typeof result === 'object' && result !== null ? inspectedSkillResults.get(result) : undefined
-    if (!expected || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== 'bootstrap') {
+    if (!expected || result.kind !== 'complete' || !SURFACE_TARGETS.includes(target) || skill !== SETUP_SKILL) {
         return refusal('SKILL_PROJECTION_INVALID', 'skill output projection requires the exact issued inspection result and target')
     }
     const prefix = `${TARGET_PATH_PREFIX[target]}/${skill}/`

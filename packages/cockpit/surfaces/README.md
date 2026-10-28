@@ -24,3 +24,8 @@ inventory plus the meaning checked by the skill contract.
 Supporting files that need no harness-specific spelling stay byte-for-byte copies. The skill
 contract compares every rendered copy of [skills/procedures/onboarding.md](skills/procedures/onboarding.md) with this source
 for every harness.
+
+References under `references/` are pulled on demand. `cockpit-setup` carries the test-data
+and identity-provider references beside its entry point; they sit outside the skill contract because the
+contract admits only entry points and the shared procedure. `cockpit-browser` reads the test-data
+reference through its sibling skill instead of carrying a second copy.

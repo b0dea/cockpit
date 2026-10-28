@@ -89,7 +89,7 @@ write "AGENTS.md"
 write "CLAUDE.md"
 write "compose.generated.yml"
 write "opencode.jsonc"
-write ".agents/skills/bootstrap/SKILL.md"
+write ".agents/skills/cockpit-setup/SKILL.md"
 ...
 write ".claude/agents/evaluator.md"
 write ".claude/settings.json"

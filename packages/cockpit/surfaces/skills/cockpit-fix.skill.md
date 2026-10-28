@@ -1,6 +1,6 @@
 ---
-name: fix
-description: "Use when a named defect, failing route, wrong value, or stack trace needs a direct fix in an installed cockpit."
+name: cockpit-fix
+description: "Use when a named bug, failing test, wrong value or stack trace needs fixing in a repository of an installed cockpit, and no second person must certify the result."
 targets: ["*"]
 cockpit:
   tools: [shell]
@@ -13,7 +13,7 @@ cockpit:
   non-goals: [scaffolding a cockpit, creating programme ceremony, copying environment policy]
   procedure: procedures/onboarding.md
   review: { mechanical: cockpit-skill-contract, judgment: pending }
-  entry-point-lines: 12
+  entry-point-lines: 14
 claudecode:
   allowed-tools: [Bash]
 codexcli:
@@ -35,3 +35,5 @@ Route through `cockpit doctor`, `cockpit logs`, and `cockpit check` as the defec
 
 This is the direct-fix door. It changes only the repository that owns a reproduced defect.
 It does not scaffold a cockpit or copy the environment, tier, or proof decisions owned by the CLI.
+
+If a second person must certify this, use cockpit-work instead.

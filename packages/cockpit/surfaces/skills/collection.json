@@ -1,5 +1,5 @@
 {
-  "skills": ["bootstrap", "explain", "fix"],
+  "skills": ["cockpit-setup", "cockpit-explain", "cockpit-fix", "cockpit-work"],
   "metric": "frontmatter_bytes",
   "caps": { "claudecode": 8192, "codexcli": 8192, "opencode": 8192 },
   "displacement": "skills/procedures/onboarding.md"

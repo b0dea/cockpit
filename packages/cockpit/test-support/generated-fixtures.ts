@@ -89,7 +89,7 @@ export function createGeneratedCommandFixture() {
     }
 
     async function skillSurfaces(names: readonly string[]): Promise<string> {
-        const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/bootstrap.skill.md'), 'utf8')
+        const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
         const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/onboarding.md'), 'utf8')
         return names.map(name => `
     [[surfaces.overlays]]
@@ -97,7 +97,7 @@ export function createGeneratedCommandFixture() {
     feature = "skills"
     source = ${JSON.stringify(`surfaces/synthetic-${name}.json`)}
     sources = [
-      { path = ${JSON.stringify(`skills/${name}/SKILL.md`)}, bytes = ${JSON.stringify(entryPoint.replace('name: bootstrap', `name: ${name}`))} },
+      { path = ${JSON.stringify(`skills/${name}/SKILL.md`)}, bytes = ${JSON.stringify(entryPoint.replace('name: cockpit-setup', `name: ${name}`))} },
       { path = ${JSON.stringify(`skills/${name}/procedures/onboarding.md`)}, bytes = ${JSON.stringify(procedure)} },
     ]
     `).join('')

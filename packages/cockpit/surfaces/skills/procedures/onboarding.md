@@ -34,9 +34,18 @@ resume; changed bytes or ownership require repair. The command validates the con
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
 named gaps. Native discovery, a real interview and clean-machine proof require separate evidence.
 
+When init runs inside a product repository (a git checkout with a root package manifest), its
+`--json` preview carries `result.cockpitRoot`: a question, its options and a recommended answer.
+Relay that question to the human and write their answer under the `cockpit.root` key of the answers
+file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
+lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
+creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
+Explain the trade-off in a sentence or two from [Where the cockpit lives](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
+
 After accepted initialization, and only with explicit authorization to change product-owned fixtures
-or auth setup, follow **Authenticated testing** as a separate product change. Bootstrap does not
-discover provider identities or create browser state.
+or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
+it as a separate product change. Bootstrap does not discover provider identities or create browser
+state.
 
 For environment or secret adoption, follow **Secret handling** after sync has established its owned
 ignore boundary.
@@ -106,56 +115,41 @@ exit status and provenance only. Never copy raw resolved values, stdout or stder
 evidence. Varlock's credential proxy is preview software and same-user code is not confined here;
 report secure agent secret use as unavailable unless a separate measured sandbox proves it.
 
-## Authenticated testing
+## Add a repository
 
-When authentication affects product behavior, inspect the consumer's package manifests and locks,
-product models, fixture source, seed commands and probes, auth setup, ignore rules and authorization
-tests. Extend the existing owners. Resolve test-library versions from the consumer lock; never invent
-an authoritative version, provider setting, custom role or permission.
+Use this on an installed cockpit when a product gains another repository. The `sibling` command edits
+`cockpit.toml` so the new repository is declared once, with its purpose, instead of reached by path.
+Pick the form by where the repository is: `cockpit sibling add billing --config cockpit.toml --from ../billing`
+for a checkout already on disk, `--create` for a new one, `--remote <url>` to record where it publishes.
+Show the human the `--json` result before accepting, then run `cockpit sync --config cockpit.toml` and
+`cockpit check --config cockpit.toml --json`. Done when the check exits 0.
 
-Create or extend the product-owned persona source with stable synthetic persona IDs such as
-`auth-admin` and `auth-member`. Give each a stable external key, non-secret test identifier, expected
-product row, provider identity reference, confirmed role and permission expectations, and one
-permitted or denied product operation. Credentials, provider keys and browser state stay outside the
-fixture. The product-model seeder owns product rows; the existing provider adapter owns identity
-provider users, organizations and memberships. Bind their idempotent commands to the existing seeded
-operations and probes. When an adapter is genuinely absent, add a thin consumer-owned adapter behind
-that seed command, with stable-key adoption and a sweep restricted to the synthetic namespace.
-Existing product-fixture edit authority does not authorize provider mutation. Before provider writes,
-bind authority to one named development instance and the exact synthetic users, organization and
-memberships in scope. When the user has not already authorized that exact scope, preview the
-mutations and obtain approval. Otherwise stay within the recorded scope. Cleanup can remove only the
-same bounded synthetic provider resources; preserve unrelated identities and record the result.
+## After upgrading cockpit
 
-Mint browser state serially from a clean context under the declared ignored auth root. Create the
-root mode 0700 and each state file mode 0600, one state per persona, using the consumer's authenticated
-Playwright package. Verify the active synthetic identity, organization, role and application
-permission before saving state. Then run one permitted and one denied authorization behavior through
-the product surface. Reset the task's auth/browser artifacts through cockpit and read back their
-absence while preserving unowned state.
+An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
+applied silently.
 
-Use the Clerk starter only when the manifests, lock and application confirm Clerk plus
-`@clerk/testing` and `@playwright/test`. Confirm that the instance exposes each assigned role;
-`org:admin` and `org:member` are starter candidates, while custom roles, Role Sets and permissions
-come only from the instance and product authorization model. System permissions are not session
-claims. The consumer adapter creates or adopts the stable synthetic users and organization and uses
-direct memberships with confirmed roles; secrets cross only its existing secret-bearing command.
-In a serial project-based Playwright setup, call `clerkSetup()`. For each persona, navigate to an
-unprotected page that loads Clerk, call `clerk.signIn({ page, emailAddress })`, verify authorization,
-and write the declared state. `clerk.signIn` supplies its testing-token step; do not add a duplicate
-token helper around it.
+1. `npm update` moves the pinned `@b0dea/cockpit` dev dependency. Done when the lockfile shows the new version.
+2. Preview without writing: `cockpit upgrade --config cockpit.toml` (a read-only plan) or
+   `cockpit sync --dry-run --config cockpit.toml`.
+3. A human runs `cockpit sync --config cockpit.toml` in a terminal. The guard blocks an agent from
+   regenerating its own guard, so do not try to route around it; ask the human to run it.
+4. Review the diff. A hand edit to an owned file stops sync with a conflict (`SURFACE_STATE_CONFLICT`):
+   move that change into a `[surfaces].overlays` entry instead of editing the generated file. An upgrade that
+   changes something you overrode reports `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your
+   override before updating its recorded hash.
+5. Commit the lockfile and the regenerated files together.
+6. Read `CHANGELOG.md` between the old and new version for lines starting `Upgrade:`. Each names a step
+   that sync alone does not do. The convention is in `.changeset/README.md` in the cockpit repository.
 
-Report each evidence layer independently as PASS, FAIL or NOT_RUN: source inspection, synthetic
-provider boundary and live provider. Existing-state consumption proves only that cockpit can use
-those bytes; a synthetic provider boundary proves integration mechanics. Report `CLERK LIVE NOT_RUN`
-until an authorized masked-secret probe against the named development instance creates or adopts only
-the scoped identities, seeds twice, mints every state, checks both authorization outcomes, cleans only
-those scoped provider resources and records the cleanup receipt. Keep provider SDKs in the consumer,
-not cockpit.
-Current API references: [Clerk Playwright setup](https://clerk.com/docs/guides/development/testing/playwright/overview),
-[Clerk sign-in helper](https://clerk.com/docs/guides/development/testing/playwright/test-helpers),
-[Clerk roles and permissions](https://clerk.com/docs/guides/organizations/control-access/roles-and-permissions),
-and [Playwright authentication](https://playwright.dev/docs/auth).
+Done when `cockpit check --config cockpit.toml --json` exits 0 and every `Upgrade:` line has been done or
+reported to the human.
+
+## Diagnose
+
+Run `cockpit doctor --config cockpit.toml --json` first: it reports health and wiring without repairing
+anything. Follow the fix each diagnostic names. Use `cockpit preflight --config cockpit.toml --json` when
+the environment must pass the blocking gate, and **Explain** to turn the result into a plain account.
 
 ## Explain
 
@@ -220,3 +214,44 @@ Semantic applicability and these conversation steps are instructed, including sk
 routing. Contract validation, capacity admission, durable progress and completion checks belong to
 their CLI owners. Report any missing mechanical support as a gap; never describe an instruction as
 an enforced harness restriction.
+
+If a second person must certify this, use cockpit-work instead.
+
+## Work
+
+Experimental. This is the work-order loop for changes a second person must certify. Cockpit owns the
+contract and the independent grading, not the thinking: reuse the planning skills the harness already has.
+
+0. **Is this a work order?** Ask whether anyone besides you must certify the result, or whether the work
+   must survive a handoff or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
+   ceremony costs more than it proves. Then check there is room: `cockpit work-status --config cockpit.toml --json` lists open orders, and `workorders.wip_cap` (at most three, one per programme) bounds them. With no
+   room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
+1. **Intake.** Run the harness's installed brainstorming and planning skills, then compile their output into
+   the work-order schema with `cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
+   The contract needs three to seven acceptance criteria, each a Given/When/Then that two people could not
+   disagree about, an Authority list of exact files and a verification command per criterion. A human accepts it in a terminal with
+   `work-accept --interactive`; JSON and CI refuse, so an agent cannot accept its own work. Done when `work-status` reports it accepted.
+2. **Work test-first inside Authority.** Write the failing test for a criterion, then the code, touching only
+   files the Authority lists. If the work needs another file, stop and ask for a renewed contract
+   (`work-renew`) rather than editing outside it. Record progress with `cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json`.
+3. **Run the declared gate** with `cockpit test-run --config cockpit.toml --gate unit`. Only the complete
+   declared gate can PASS; a subset reports PARTIAL. Done when the gate reports PASS.
+4. **Before grading,** run the harness's own simplify pass and then its code-review pass, weighted towards
+   security when the change touches authentication, secrets, guards or reach to non-local hosts. Fix what
+   they find and re-run the affected proof. `cockpit work-review --config cockpit.toml --work-order WO-001` retains the findings.
+5. **Hand off to the evaluator subagent** through `cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
+   your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
+   criterion is one of the four in the evaluator's instructions; anything but "passed with current
+   supporting evidence" sends you back to step 2 for that criterion.
+6. **Two strikes.** After two failed attempts on one criterion, make a different move, for example a
+   root-cause diagnosis in a fresh context, before a third try. Read the count from work-order state, not
+   from memory: `cockpit work-status --config cockpit.toml --work-order WO-001 --json` returns `state.attempts`
+   (step, approach, `failures`, `rootCause`), and the attempt cap is `workorders.attempt_cap`. A missing
+   counter is not zero: if you cannot read it, say so and treat the step as unknown. Record the root cause
+   with `work-record` as above, then run `cockpit work-execute --config cockpit.toml --work-order WO-001 --approach second-try`, which refuses a
+   capped approach.
+7. **Park, sweep and unpark.** `cockpit work-sweep --config cockpit.toml` previews which untouched drafts
+   would be parked to free capacity; add `--apply` to park them. `cockpit work-reverse --config cockpit.toml --work-order WO-001`
+   restores a swept order. An order a human parked by hand is reversed by a human, not by the sweep.
+
+Report the outcome of each criterion with the evidence the evaluator quoted, and name any step you could not run.

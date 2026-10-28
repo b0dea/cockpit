@@ -69,6 +69,9 @@ export interface NativeFragmentSet {
     readonly fragments: readonly NativeSurfaceFragment[]
 }
 
+/** A reference file pulled on demand by one shipped skill; rendered beside that skill's entry point on every built-in harness. */
+export interface SkillReference { readonly skill: string; readonly path: string; readonly bytes: string }
+
 export interface SurfaceRenderInput {
     readonly configuredHarnesses: readonly string[]
     readonly merge: Extract<SurfaceMergeResult, { kind: 'complete' }>
@@ -80,6 +83,7 @@ export interface SurfaceRenderInput {
     readonly nativeGrants: NativeFragmentSet
     readonly browser: unknown | null
     readonly browserReference: string | null
+    readonly skillReferences: readonly SkillReference[]
     readonly testing: unknown | null
     readonly customHarnesses: readonly CustomHarnessValue[]
     readonly customReceipts: readonly CustomSurfaceReceipt[]
@@ -90,6 +94,9 @@ const SHA256 = /^[a-f0-9]{64}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 const MARKDOWN_PATHS = new Set(['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md'])
 const BUILT_INS = new Set<SurfaceTarget>(['claudecode', 'codexcli', 'opencode'])
+const SKILL_DIRECTORY: Readonly<Record<SurfaceTarget, string>> = { claudecode: '.claude/skills', codexcli: '.agents/skills', opencode: '.opencode/skills' }
+const SKILL_REFERENCE_PATH = /^references\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -296,7 +303,7 @@ function mergeBrowserMcp(path: string, base: string, browser: string): string | 
 
 export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     const captured = snapshotGeneratedJson(input)
-    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'browserRunner', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
+    const required = ['configuredHarnesses', 'merge', 'generated', 'projection', 'mcp', 'restrictions', 'instructions', 'nativeMcp', 'nativeGrants', 'browser', 'browserReference', 'skillReferences', 'browserRunner', 'testing', 'customHarnesses', 'customReceipts', 'sourceEvidence']
     if (!object(captured) || !exact(captured, required) || !Array.isArray(captured.configuredHarnesses)
         || !Array.isArray(captured.customHarnesses) || !Array.isArray(captured.sourceEvidence)
         || !object(captured.merge) || captured.merge.kind !== 'complete' || !Array.isArray(captured.merge.surfaces)
@@ -348,6 +355,13 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
             || Buffer.byteLength(captured.browserReference) === 0 || Buffer.byteLength(captured.browserReference) > 65_536)) {
         return refuse('SURFACE_INPUT_INVALID', 'browser projection and authenticated reference must be paired bounded inputs')
     }
+    const skillReferences = Array.isArray(captured.skillReferences) && captured.skillReferences.length <= 16
+        && captured.skillReferences.every(row => object(row) && exact(row, ['skill', 'path', 'bytes'])
+            && typeof row.skill === 'string' && SKILL_NAME.test(row.skill) && typeof row.path === 'string' && SKILL_REFERENCE_PATH.test(row.path)
+            && typeof row.bytes === 'string' && Buffer.byteLength(row.bytes) > 0 && Buffer.byteLength(row.bytes) <= 65_536)
+        && new Set(captured.skillReferences.map(row => JSON.stringify([(row as JsonSnapshotObject).skill, (row as JsonSnapshotObject).path]))).size === captured.skillReferences.length
+        ? captured.skillReferences as unknown as SkillReference[] : undefined
+    if (!skillReferences) return refuse('SURFACE_INPUT_INVALID', 'skill references must be unique bounded references/<name>.md files owned by a named skill')
     const browserRunner = captured.browserRunner === null ? null : validFile(captured.browserRunner)
         && captured.browserRunner.path === 'scripts/browser-runner.sh' ? captured.browserRunner : undefined
     if (browserRunner === undefined) return refuse('SURFACE_INPUT_INVALID', 'browser runner asset must be a bounded authenticated input')
@@ -447,6 +461,11 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     if (browserRunner) add(whole, '.cockpit/browser/runner.sh', {
         harnesses: [...configuredSet], scope: 'always', capability: 'instructed', bytes: browserRunner.bytes as string,
     })
+    for (const target of BUILT_INS) if (configuredSet.has(target)) for (const reference of skillReferences) {
+        add(whole, `${SKILL_DIRECTORY[target]}/${reference.skill}/${reference.path}`, {
+            harnesses: [target], scope: 'always', capability: 'instructed', bytes: stripDevelopmentMarkers(reference.bytes),
+        })
+    }
     for (const candidate of captured.generated.files) {
         if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
             || !configuredSet.has(candidate.target) || !validFileFields(candidate)) return refuse('SURFACE_INPUT_INVALID', 'generated surface output is malformed')
@@ -461,7 +480,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         const path = candidate.path as string
         const contribution = { harnesses: [candidate.target as string], scope: 'always' as const,
             capability: 'instructed' as const, bytes: stripDevelopmentMarkers(candidate.bytes as string) }
-        if (path.endsWith('/skills/browser/SKILL.md')) {
+        if (path.endsWith('/skills/cockpit-browser/SKILL.md')) {
             add(whole, path, contribution)
             add(whole, `${path.slice(0, -'SKILL.md'.length)}references/browser.md`, { ...contribution, bytes: stripDevelopmentMarkers(captured.browserReference as string) })
         } else if (['.mcp.json', '.codex/config.toml', 'opencode.jsonc'].includes(path)) {

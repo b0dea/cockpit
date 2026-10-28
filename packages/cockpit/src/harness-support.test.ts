@@ -968,7 +968,7 @@ function writeSelftestEvidence(
     capability: SelftestCapability,
     verdict: SelftestEvidenceRecord['verdict'],
     index: number,
-    skill = 'bootstrap',
+    skill = 'cockpit-setup',
     harness: BuiltinHarnessRef = { kind: 'builtin', target: 'codexcli', name: 'Codex' },
 ): TestBuiltinEvidenceRecord {
     const directory = `internal/probes/selftest-${index}`
@@ -1047,19 +1047,19 @@ function selftestFixture() {
         cells: records.map(({ harness, capability, sample }) => capability === 'skill-parity'
             ? { harness, capability, skill: sample!.skill }
             : { harness, capability }),
-        shippedSkills: ['bootstrap'],
+        shippedSkills: ['cockpit-setup'],
         reviewHarnesses: [
             { name: 'Claude Code', nativeDiagnostics: false },
             { name: 'Codex', nativeDiagnostics: true },
         ],
     }
     const skillReviews = expectation.reviewHarnesses.map(({ name }) => ({
-        skill: 'bootstrap', harness: name, status: 'human_needed', reviewedOn: null, evidenceRunId: null,
+        skill: 'cockpit-setup', harness: name, status: 'human_needed', reviewedOn: null, evidenceRunId: null,
         reviewers: [], checks: null, operatorAction: `Review bootstrap with ${name}`,
     }))
     const bundle = {
         schema: 'cockpit-harness-selftest/v1', generatedManifestSha256: SELFTEST_MANIFEST,
-        records, skillInventory: ['bootstrap'], skillReviews,
+        records, skillInventory: ['cockpit-setup'], skillReviews,
     }
     const options = { testOnlyNow: SELFTEST_NOW, testOnlyExecutableIdentities: SYNTHETIC_EXECUTABLE_IDENTITIES }
     return { root, expectation, bundle, options }
@@ -1475,7 +1475,7 @@ describe('versioned harness selftest evidence', () => {
             } & Omit<typeof fixture.bundle, 'records'>
             pendingSkill.records[2] = {
                 kind: 'human_needed', harness: pendingSkill.records[2].harness, capability: 'skill-parity',
-                skill: 'bootstrap', generatedManifestSha256: SELFTEST_MANIFEST,
+                skill: 'cockpit-setup', generatedManifestSha256: SELFTEST_MANIFEST,
                 observedAt: '2026-09-27T00:00:00.000Z', reason: 'isolation_unavailable',
                 operatorAction: 'Provide an isolated skill review workspace',
             }

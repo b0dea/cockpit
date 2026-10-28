@@ -176,15 +176,18 @@ describe('generated application authenticated read batching', () => {
         const surfaceAssets = new Set([
             'agents/evaluator.agent.md',
             'skills/collection.json',
-            'skills/bootstrap.skill.md',
-            'skills/explain.skill.md',
-            'skills/fix.skill.md',
+            'skills/cockpit-setup.skill.md',
+            'skills/cockpit-explain.skill.md',
+            'skills/cockpit-fix.skill.md',
+            'skills/cockpit-work.skill.md',
             'skills/procedures/onboarding.md',
+            'references/test-data-and-personas.md',
+            'references/identity-provider-clerk.md',
             'guards/bash-guard.sh',
             'guards/claude.adapter.json',
             'guards/codex.adapter.json',
             'guards/opencode.adapter.json',
-            'skills/browser.skill.md',
+            'skills/cockpit-browser.skill.md',
             'references/browser.md',
             'references/testing-tiers.md',
             'scripts/browser-runner.sh',
@@ -224,7 +227,7 @@ describe('generated application authenticated read batching', () => {
             'fixtures/personas.generated.ts',
         ])
         const surfacePaths = new Set(result.result.paths.filter(path => !environmentPaths.has(path)))
-        expect(surfacePaths.size).toBe(33)
+        expect(surfacePaths.size).toBe(46)
         // The application checks the ledger before surface observation; admission reads it again.
         const admissionBatchOffset = ownershipReadOffsets[1]
         expect(admissionBatchOffset).toBeDefined()

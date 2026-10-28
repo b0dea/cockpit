@@ -114,7 +114,7 @@ async function surfaceOverrideFixture() {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-surface-override-')))
     roots.push(root)
     const configPath = join(root, 'cockpit.toml')
-    const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/bootstrap.skill.md'), 'utf8')
+    const entryPoint = await readFile(resolve('packages/cockpit/surfaces/skills/cockpit-setup.skill.md'), 'utf8')
     const procedure = await readFile(resolve('packages/cockpit/surfaces/skills/procedures/onboarding.md'), 'utf8')
     const declaration = (await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8'))
         .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
@@ -134,8 +134,8 @@ feature = "skills"
 source = "surfaces/bootstrap-override.json"
 replaces = { name = "bootstrap", sha256 = "${'a'.repeat(64)}" }
 sources = [
-  { path = "skills/bootstrap/SKILL.md", bytes = ${JSON.stringify(entryPoint.replace('Bootstrap this cockpit', 'Bootstrap this synthetic cockpit'))} },
-  { path = "skills/bootstrap/procedures/onboarding.md", bytes = ${JSON.stringify(procedure)} },
+  { path = "skills/cockpit-setup/SKILL.md", bytes = ${JSON.stringify(entryPoint.replace('Bootstrap this cockpit', 'Bootstrap this synthetic cockpit'))} },
+  { path = "skills/cockpit-setup/procedures/onboarding.md", bytes = ${JSON.stringify(procedure)} },
 ]
 `)
     return { root, configPath }

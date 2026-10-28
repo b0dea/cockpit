@@ -69,7 +69,7 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
         mcp: { name: 'playwright', command: 'docker', args: ['run', '--rm', '-i', image, '--endpoint', runtime.connection.endpoint], cwd: root, envNames: [], source: { kind: 'core', path: 'mcp.jsonc', sha256: digest('synthetic declaration') } },
         approved: true,
         testPackage: { directory: 'node_modules/@playwright/test', manifest: { bytes: manifest, sha256: digest(manifest) }, cli: { path: 'cli.js', bytes: '/* synthetic pinned CLI */', sha256: digest('/* synthetic pinned CLI */') } },
-        skillTemplate: await readFile('packages/cockpit/surfaces/skills/browser.skill.md', 'utf8'),
+        skillTemplate: await readFile('packages/cockpit/surfaces/skills/cockpit-browser.skill.md', 'utf8'),
     }
 }
 

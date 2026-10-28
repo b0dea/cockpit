@@ -22,28 +22,30 @@ const referenceLedgerPath = '.cockpit/generated-reference-ownership.json'
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 async function bootstrapPublication() {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-bootstrap-publication-')))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-publication-')))
     roots.push(root)
     const assetRoot = new URL('../../surfaces/', import.meta.url)
     const assets = [
-        'skills/collection.json', 'skills/bootstrap.skill.md', 'skills/explain.skill.md',
-        'skills/fix.skill.md', 'skills/procedures/onboarding.md',
+        'skills/collection.json', 'skills/cockpit-setup.skill.md', 'skills/cockpit-explain.skill.md',
+        'skills/cockpit-fix.skill.md', 'skills/cockpit-work.skill.md', 'skills/procedures/onboarding.md',
     ] as const
     const bytes = new Map(await Promise.all(assets.map(async path => [path, await readFile(new URL(path, assetRoot), 'utf8')] as const)))
     const terminal = bytes.get('skills/procedures/onboarding.md')!
     const sources = [
-        ['skills/bootstrap/SKILL.md', bytes.get('skills/bootstrap.skill.md')!],
-        ['skills/bootstrap/procedures/onboarding.md', terminal],
-        ['skills/explain/SKILL.md', bytes.get('skills/explain.skill.md')!],
-        ['skills/explain/procedures/onboarding.md', terminal],
-        ['skills/fix/SKILL.md', bytes.get('skills/fix.skill.md')!],
-        ['skills/fix/procedures/onboarding.md', terminal],
+        ['skills/cockpit-setup/SKILL.md', bytes.get('skills/cockpit-setup.skill.md')!],
+        ['skills/cockpit-setup/procedures/onboarding.md', terminal],
+        ['skills/cockpit-explain/SKILL.md', bytes.get('skills/cockpit-explain.skill.md')!],
+        ['skills/cockpit-explain/procedures/onboarding.md', terminal],
+        ['skills/cockpit-fix/SKILL.md', bytes.get('skills/cockpit-fix.skill.md')!],
+        ['skills/cockpit-fix/procedures/onboarding.md', terminal],
+        ['skills/cockpit-work/SKILL.md', bytes.get('skills/cockpit-work.skill.md')!],
+        ['skills/cockpit-work/procedures/onboarding.md', terminal],
     ].map(([path, body]) => ({ path, bytes: body }))
     const collectionBytes = bytes.get('skills/collection.json')!
     const inspected = await inspectSkillSet({ sources, collection: { path: 'skills/collection.json', bytes: collectionBytes, sha256: digest(collectionBytes) },
         terminal: { path: 'skills/procedures/onboarding.md', bytes: terminal, sha256: digest(terminal) } })
     if (inspected.kind !== 'complete') throw new Error(JSON.stringify(inspected))
-    const projection = projectInspectedSkillOutputs(inspected, 'codexcli', 'bootstrap')
+    const projection = projectInspectedSkillOutputs(inspected, 'codexcli', 'cockpit-setup')
     if (projection.kind !== 'complete') throw new Error(JSON.stringify(projection))
     const desired = projection.files.map(file => ({ kind: 'file' as const, path: file.path, harnesses: ['codexcli'] as ['codexcli'],
         scope: 'always' as const, capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const,

@@ -85,7 +85,7 @@ generated configuration, not proof that a native harness loaded or enforced it.
 | Rules | instructed | instructed | instructed | Native instruction loading needs a paired probe. |
 | MCP | instructed | instructed | instructed | Approval controls generated enablement; native loading is unproven. |
 | Subagents | instructed | instructed | instructed | Codex read-only roles are instruction-only; native restrictions need evidence. |
-| Skills | instructed | instructed | instructed | Native bootstrap/explain/fix parity and required human reviews remain pending. |
+| Skills | instructed | instructed | instructed | Native parity of the cockpit-setup, cockpit-explain, cockpit-fix and cockpit-work skills and required human reviews remain pending. |
 | Hooks | instructed | instructed | instructed | Generated registration is `pending_evidence` until the exact candidate is probed. |
 | Permissions | instructed | instructed | instructed | Native acceptance and enforcement are not established by rendering. |
 

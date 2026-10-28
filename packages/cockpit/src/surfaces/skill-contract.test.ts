@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { runCli } from '../cli.js'
+import { commands } from '../command-table.js'
 
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { generateSurfaceBatch } from './generator-adapter.js'
@@ -20,7 +21,7 @@ function authenticated(source: { path: string; bytes: string }) {
 }
 
 async function shippedSources() {
-    const names = ['bootstrap', 'explain', 'fix']
+    const names = ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']
     const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
     return Promise.all(names.flatMap(name => [
         readFile(join(surfaceRoot, `${name}.skill.md`), 'utf8').then(bytes => ({ path: `skills/${name}/SKILL.md`, bytes })),
@@ -30,7 +31,7 @@ async function shippedSources() {
 
 function input(sources: readonly { path: string; bytes: string }[], standingCostCaps = generousCaps) {
     return { sources, collection: authenticated({ path: 'skills/collection.json', bytes: JSON.stringify({
-        skills: ['bootstrap', 'explain', 'fix'], metric: 'frontmatter_bytes', caps: standingCostCaps,
+        skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: standingCostCaps,
         displacement: terminal.path,
     }) }), terminal: authenticated(terminal) }
 }
@@ -39,7 +40,7 @@ function changeEntry(
     sources: readonly { path: string; bytes: string }[],
     transform: (bytes: string) => string,
 ) {
-    return sources.map(source => source.path === 'skills/bootstrap/SKILL.md'
+    return sources.map(source => source.path === 'skills/cockpit-setup/SKILL.md'
         ? { ...source, bytes: transform(source.bytes) }
         : source)
 }
@@ -47,17 +48,17 @@ function changeEntry(
 describe('shipped skill contract', () => {
     it('admits only the exact union of shipped skills and explicitly declared extensions', async () => {
         const shipped = await shippedSources()
-        const extension = shipped.filter(source => source.path.startsWith('skills/bootstrap/')).map(source => ({
-            path: source.path.replace('skills/bootstrap/', 'skills/inspect/'),
-            bytes: source.bytes.replace('name: bootstrap', 'name: inspect'),
+        const extension = shipped.filter(source => source.path.startsWith('skills/cockpit-setup/')).map(source => ({
+            path: source.path.replace('skills/cockpit-setup/', 'skills/inspect/'),
+            bytes: source.bytes.replace('name: cockpit-setup', 'name: inspect'),
         }))
         const captured = input([...shipped, ...extension])
         const admitted = await inspectSkillSet({ ...captured, declaredExtensions: ['inspect'] })
-        expect(admitted).toMatchObject({ kind: 'complete', skills: ['bootstrap', 'explain', 'fix', 'inspect'],
-            collection: { source: { sha256: captured.collection.sha256 }, skills: ['bootstrap', 'explain', 'fix'],
+        expect(admitted).toMatchObject({ kind: 'complete', skills: ['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work', 'inspect'],
+            collection: { source: { sha256: captured.collection.sha256 }, skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'],
                 metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path } })
         if (admitted.kind !== 'complete') throw new Error('Declared skill extension refused')
-        expect(admitted.files.filter(file => file.path.endsWith('/SKILL.md'))).toHaveLength(12)
+        expect(admitted.files.filter(file => file.path.endsWith('/SKILL.md'))).toHaveLength(15)
         const paths = captured.sources.map(source => source.path.slice('skills/'.length))
         const generated = await generateSurfaceBatch({ targets: SURFACE_TARGETS, features: ['skills'], sources: captured.sources,
             expectedOutputs: {
@@ -73,7 +74,7 @@ describe('shipped skill contract', () => {
         expect(await inspectRenderedSkillSet({ ...captured, generated })).toMatchObject({ kind: 'refusal' })
     })
 
-    it.each([null, 'inspect', ['inspect', 'inspect'], ['zeta', 'alpha'], ['bootstrap'], ['bad/name'],
+    it.each([null, 'inspect', ['inspect', 'inspect'], ['zeta', 'alpha'], ['cockpit-setup'], ['bad/name'],
         ['a'.repeat(129)], Array.from({ length: 257 }, (_, index) => `skill-${index}`)])(
         'refuses malformed extension declarations: %j', async declaredExtensions => {
             expect(await inspectSkillSet({ ...input(await shippedSources()), declaredExtensions })).toMatchObject({ kind: 'refusal' })
@@ -81,7 +82,7 @@ describe('shipped skill contract', () => {
     )
 
     it('refuses an undeclared source under a genuine admitted skill root', async () => {
-        const sources = [...await shippedSources(), { path: 'skills/bootstrap/extra.md', bytes: 'undeclared' }]
+        const sources = [...await shippedSources(), { path: 'skills/cockpit-setup/extra.md', bytes: 'undeclared' }]
         await expect(inspectSkillSet(input(sources))).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'SKILL_INPUT_INVALID' }], files: [],
         })
@@ -97,13 +98,13 @@ describe('shipped skill contract', () => {
 
     it.each([
         ['malformed', '{'],
-        ['extra key', JSON.stringify({ skills: ['bootstrap', 'explain', 'fix'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path, extra: true })],
-        ['wrong metric', JSON.stringify({ skills: ['bootstrap', 'explain', 'fix'], metric: 'bytes', caps: generousCaps, displacement: terminal.path })],
-        ['incomplete target', JSON.stringify({ skills: ['bootstrap', 'explain', 'fix'], metric: 'frontmatter_bytes', caps: { claudecode: 8192, codexcli: 8192 }, displacement: terminal.path })],
-        ['over ceiling', JSON.stringify({ skills: ['bootstrap', 'explain', 'fix'], metric: 'frontmatter_bytes', caps: { ...generousCaps, codexcli: 65537 }, displacement: terminal.path })],
-        ['wrong inventory', JSON.stringify({ skills: ['bootstrap', 'fix'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path })],
-        ['outside sink', JSON.stringify({ skills: ['bootstrap', 'explain', 'fix'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: '../onboarding.md' })],
-        ['duplicate key', '{"skills":["bootstrap","explain","fix"],"metric":"bytes","metric":"frontmatter_bytes","caps":{"claudecode":8192,"codexcli":8192,"opencode":8192},"displacement":"skills/procedures/onboarding.md"}'],
+        ['extra key', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path, extra: true })],
+        ['wrong metric', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'bytes', caps: generousCaps, displacement: terminal.path })],
+        ['incomplete target', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: { claudecode: 8192, codexcli: 8192 }, displacement: terminal.path })],
+        ['over ceiling', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: { ...generousCaps, codexcli: 65537 }, displacement: terminal.path })],
+        ['wrong inventory', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-fix'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path })],
+        ['outside sink', JSON.stringify({ skills: ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'], metric: 'frontmatter_bytes', caps: generousCaps, displacement: '../onboarding.md' })],
+        ['duplicate key', '{"skills":["cockpit-setup","cockpit-explain","cockpit-fix","cockpit-work"],"metric":"bytes","metric":"frontmatter_bytes","caps":{"claudecode":8192,"codexcli":8192,"opencode":8192},"displacement":"skills/procedures/onboarding.md"}'],
     ])('refuses collection declaration: %s', async (_label, bytes) => {
         const captured = input(await shippedSources())
         await expect(inspectSkillSet({ ...captured, collection: authenticated({ path: captured.collection.path, bytes }) }))
@@ -130,14 +131,14 @@ describe('shipped skill contract', () => {
         expect(result.collection).toMatchObject({ source: { path: 'skills/collection.json', sha256: authenticated({ path: 'skills/collection.json', bytes }).sha256 },
             metric: 'frontmatter_bytes', caps: generousCaps, displacement: terminal.path,
             terminal: { path: terminal.path, sha256: authenticated(terminal).sha256, loading: 'pull', budget: 'uncapped' } })
-        expect(result.collection.entrypoints).toEqual(['bootstrap', 'explain', 'fix'].map(name => ({
-            path: `skills/${name}/SKILL.md`, cap: name === 'explain' ? 11 : 12, metric: 'lines', displacement: terminal.path,
+        expect(result.collection.entrypoints).toEqual(['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].map(name => ({
+            path: `skills/${name}/SKILL.md`, cap: ({ 'cockpit-setup': 11, 'cockpit-explain': 11, 'cockpit-fix': 14, 'cockpit-work': 10 } as Record<string, number>)[name]!, metric: 'lines', displacement: terminal.path,
         })))
-        expect(SURFACE_TARGETS.map(target => result.files.filter(file => file.target === target).length)).toEqual([6, 9, 6])
+        expect(SURFACE_TARGETS.map(target => result.files.filter(file => file.target === target).length)).toEqual([8, 12, 8])
         expect(result.files.some(file => file.path.includes('collection'))).toBe(false)
-        for (const changed of [sources.filter(source => !source.path.includes('/fix/')),
-            sources.filter(source => source.path !== 'skills/bootstrap/procedures/onboarding.md'),
-            sources.map(source => source.path === 'skills/bootstrap/procedures/onboarding.md' ? { ...source, bytes: source.bytes + 'changed' } : source),
+        for (const changed of [sources.filter(source => !source.path.includes('/cockpit-fix/')),
+            sources.filter(source => source.path !== 'skills/cockpit-setup/procedures/onboarding.md'),
+            sources.map(source => source.path === 'skills/cockpit-setup/procedures/onboarding.md' ? { ...source, bytes: source.bytes + 'changed' } : source),
             changeEntry(sources, value => value.replace('procedure: procedures/onboarding.md', 'procedure: procedures/elsewhere.md'))]) {
             await expect(inspectSkillSet(input(changed))).resolves.toMatchObject({ kind: 'refusal' })
         }
@@ -145,10 +146,10 @@ describe('shipped skill contract', () => {
 
     it('refuses aliased frontmatter before converting YAML data', async () => {
         const sources = changeEntry(await shippedSources(), bytes => bytes.replace(
-            'name: bootstrap\n', 'name: &skill bootstrap\nalias: *skill\n',
+            'name: cockpit-setup\n', 'name: &skill cockpit-setup\nalias: *skill\n',
         ))
         await expect(inspectSkillSet(input(sources))).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'SKILL_FRONTMATTER_INVALID', target: 'skills/bootstrap/SKILL.md' }],
+            kind: 'refusal', diagnostics: [{ code: 'SKILL_FRONTMATTER_INVALID', target: 'skills/cockpit-setup/SKILL.md' }],
         })
     })
 
@@ -157,21 +158,21 @@ describe('shipped skill contract', () => {
 
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
-        expect(result.skills).toEqual(['bootstrap', 'explain', 'fix'])
+        expect(result.skills).toEqual(['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'])
         expect(result.costs.map(cost => [cost.target, cost.status])).toEqual(SURFACE_TARGETS.map(target => [target, 'within_cap']))
         for (const [target, path, tool] of [
-            ['claudecode', '.claude/skills/bootstrap/SKILL.md', 'Bash'],
-            ['codexcli', '.agents/skills/bootstrap/SKILL.md', 'shell'],
-            ['opencode', '.opencode/skills/bootstrap/SKILL.md', 'bash'],
+            ['claudecode', '.claude/skills/cockpit-setup/SKILL.md', 'Bash'],
+            ['codexcli', '.agents/skills/cockpit-setup/SKILL.md', 'shell'],
+            ['opencode', '.opencode/skills/cockpit-setup/SKILL.md', 'bash'],
         ] as const) {
             const rendered = result.files.find(file => file.target === target && file.path === path)
-            expect(rendered?.bytes).toContain('name: bootstrap')
+            expect(rendered?.bytes).toContain('name: cockpit-setup')
             expect(rendered?.bytes).toContain(`\`${tool}\``)
         }
         expect(result.files).toEqual(expect.arrayContaining([
-            expect.objectContaining({ target: 'codexcli', path: '.agents/skills/bootstrap/agents/openai.yaml' }),
-            expect.objectContaining({ target: 'claudecode', path: '.claude/skills/bootstrap/procedures/onboarding.md' }),
-            expect.objectContaining({ target: 'opencode', path: '.opencode/skills/bootstrap/procedures/onboarding.md' }),
+            expect.objectContaining({ target: 'codexcli', path: '.agents/skills/cockpit-setup/agents/openai.yaml' }),
+            expect.objectContaining({ target: 'claudecode', path: '.claude/skills/cockpit-setup/procedures/onboarding.md' }),
+            expect.objectContaining({ target: 'opencode', path: '.opencode/skills/cockpit-setup/procedures/onboarding.md' }),
         ]))
     }, 120_000)
 
@@ -180,15 +181,15 @@ describe('shipped skill contract', () => {
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
 
-        const projections = SURFACE_TARGETS.map(target => projectInspectedSkillOutputs(result, target, 'bootstrap'))
+        const projections = SURFACE_TARGETS.map(target => projectInspectedSkillOutputs(result, target, 'cockpit-setup'))
         expect(projections.map(projection => projection.kind === 'complete' ? projection.files.length : 0)).toEqual([2, 3, 2])
-        expect(projections[1]).toMatchObject({ kind: 'complete', target: 'codexcli', skill: 'bootstrap', files: [
-            { path: '.agents/skills/bootstrap/SKILL.md' },
-            { path: '.agents/skills/bootstrap/agents/openai.yaml' },
-            { path: '.agents/skills/bootstrap/procedures/onboarding.md' },
+        expect(projections[1]).toMatchObject({ kind: 'complete', target: 'codexcli', skill: 'cockpit-setup', files: [
+            { path: '.agents/skills/cockpit-setup/SKILL.md' },
+            { path: '.agents/skills/cockpit-setup/agents/openai.yaml' },
+            { path: '.agents/skills/cockpit-setup/procedures/onboarding.md' },
         ] })
-        expect(projectInspectedSkillOutputs({ ...result }, 'codexcli', 'bootstrap')).toMatchObject({ kind: 'refusal' })
-        expect(projectInspectedSkillOutputs(result, 'codexcli', 'explain' as 'bootstrap')).toMatchObject({ kind: 'refusal' })
+        expect(projectInspectedSkillOutputs({ ...result }, 'codexcli', 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
+        expect(projectInspectedSkillOutputs(result, 'codexcli', 'explain' as 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
     }, 120_000)
 
     it('ships intent routing, installed capability discovery and reviews before grading in every fix procedure', async () => {
@@ -196,7 +197,7 @@ describe('shipped skill contract', () => {
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') throw new Error('Shipped preparation workflow was refused')
         for (const target of SURFACE_TARGETS) {
-            const procedure = result.files.find(file => file.target === target && file.path.endsWith('/fix/procedures/onboarding.md'))
+            const procedure = result.files.find(file => file.target === target && file.path.endsWith('/cockpit-fix/procedures/onboarding.md'))
             expect(procedure, target).toBeDefined()
             const body = procedure!.bytes.replace(/\s+/g, ' ')
             const routing = body.indexOf('Before creating files, route the intent')
@@ -219,35 +220,38 @@ describe('shipped skill contract', () => {
 
     it('admits the complete shipped set, preserves procedure goldens, and measures each rendered installed manifest', async () => {
         const sources = await shippedSources()
-        const procedure = sources.find(source => source.path === 'skills/bootstrap/procedures/onboarding.md')?.bytes
+        const procedure = sources.find(source => source.path === 'skills/cockpit-setup/procedures/onboarding.md')?.bytes
         expect(procedure).toBeDefined()
 
         const result = await inspectSkillSet(input(sources))
 
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
-        expect(result.skills).toEqual(['bootstrap', 'explain', 'fix'])
+        expect(result.skills).toEqual(['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'])
         expect(result.costs).toHaveLength(3)
         expect(new Set(result.costs.map(cost => cost.value)).size).toBeGreaterThan(1)
         expect(result.costs.every(cost => cost.metric === 'frontmatter_bytes' && cost.value > 0 && cost.value <= cost.cap)).toBe(true)
         const renderedProcedures = result.files.filter(file => file.path.endsWith('/procedures/onboarding.md'))
-        expect(renderedProcedures).toHaveLength(SURFACE_TARGETS.length * 3)
+        expect(renderedProcedures).toHaveLength(SURFACE_TARGETS.length * 4)
         expect(renderedProcedures.every(file => file.bytes === procedure)).toBe(true)
         const body = procedure!.replace(/\s+/g, ' ')
-        expect(body.indexOf('## Authenticated testing')).toBeGreaterThan(body.indexOf('Show the exact preview before mutation'))
+        expect(body).not.toContain('## Authenticated testing')
         expect(body).toContain('After accepted initialization')
+        expect(body).toContain('references/test-data-and-personas.md')
         expect(body).toContain('Bootstrap does not discover provider identities or create browser state')
-        expect(body).toContain('stable synthetic persona IDs')
-        expect(body).toContain('product-model seeder owns product rows')
-        expect(body).toContain('Existing product-fixture edit authority does not authorize provider mutation')
-        expect(body).toContain('Clerk starter')
-        expect(body).toContain('clerkSetup()')
-        expect(body).toContain('clerk.signIn({ page, emailAddress })')
-        expect(body).toContain('mode 0600')
-        expect(body).toContain('one permitted and one denied authorization')
-        expect(body).toContain('CLERK LIVE NOT_RUN')
-        const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/explain/SKILL.md')
-        const fix = result.files.find(file => file.target === 'opencode' && file.path === '.opencode/skills/fix/SKILL.md')
+        expect(body).toContain('Relay that question to the human')
+        expect(body).toContain('INIT_COCKPIT_ROOT_REQUIRED')
+        expect(body).toContain('## After upgrading cockpit')
+        expect(body).toContain('OVERRIDDEN_CORE_CHANGED')
+        expect(body).toContain('lines starting `Upgrade:`')
+        expect(body).toContain('If a second person must certify this, use cockpit-work instead.')
+        expect(body).toContain('Is this a work order?')
+        expect(body).toContain('A missing counter is not zero')
+        const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-explain/SKILL.md')
+        const fix = result.files.find(file => file.target === 'opencode' && file.path === '.opencode/skills/cockpit-fix/SKILL.md')
+        const setup = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-setup/SKILL.md')
+        expect(setup?.bytes).toContain('references/test-data-and-personas.md')
+        expect(setup?.bytes).toContain('adopt-cockpit')
         expect(explain?.bytes).toContain('This skill changes nothing.')
         expect(fix?.bytes).toContain('direct-fix door')
         expect(fix?.bytes).toContain('does not scaffold a cockpit')
@@ -273,21 +277,21 @@ describe('shipped skill contract', () => {
 
         const result = await inspectRenderedSkillSet({ ...input(sources), generated })
 
-        expect(result).toMatchObject({ kind: 'complete', skills: ['bootstrap', 'explain', 'fix'] })
+        expect(result).toMatchObject({ kind: 'complete', skills: ['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'] })
         if (result.kind !== 'complete') return
         expect(result.files.some(file => file.path === 'CLAUDE.md')).toBe(true)
-        expect(result.files.filter(file => file.path.includes('/skills/'))).toHaveLength(21)
+        expect(result.files.filter(file => file.path.includes('/skills/'))).toHaveLength(28)
 
         const missingSidecar = { ...generated, files: generated.files.filter(file =>
-            file.path !== '.agents/skills/bootstrap/agents/openai.yaml') }
+            file.path !== '.agents/skills/cockpit-setup/agents/openai.yaml') }
         await expect(inspectRenderedSkillSet({ ...input(sources), generated: missingSidecar })).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVENTORY_INVALID', target: 'codexcli' }],
         })
     }, 120_000)
 
     it.each([
-        ['missing name', (bytes: string) => bytes.replace('name: bootstrap\n', '')],
-        ['duplicate name', (bytes: string) => bytes.replace('name: bootstrap\n', 'name: bootstrap\nname: duplicate\n')],
+        ['missing name', (bytes: string) => bytes.replace('name: cockpit-setup\n', '')],
+        ['duplicate name', (bytes: string) => bytes.replace('name: cockpit-setup\n', 'name: cockpit-setup\nname: duplicate\n')],
         ['missing tools', (bytes: string) => bytes.replace('  tools: [shell]\n', '')],
         ['missing tool equivalence', (bytes: string) => bytes.replace('    codexcli: [shell]\n', '    codexcli: []\n')],
         ['undeclared native tool', (bytes: string) => bytes.replace('  allowed-tools: [Bash]\n', '  allowed-tools: [Bash, Write]\n')],
@@ -300,12 +304,12 @@ describe('shipped skill contract', () => {
         ['copied registry logic', (bytes: string) => `${bytes}Parse the registry before continuing.\n`],
         ['copied policy table', (bytes: string) => `${bytes}| Tier | Verdict |\n| --- | --- |\n`],
         ['misspelled command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [innit,')],
-        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, document, sync, check, doctor, up, preflight]\n', '')],
+        ['absent command identifier', (bytes: string) => bytes.replace('  commands: [init, document, sync, check, doctor, up, preflight, upgrade, sibling]\n', '')],
         ['stale command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [bootstrap,')],
         ['unadmitted command identifier', (bytes: string) => bytes.replace('commands: [init,', 'commands: [publish,')],
         ['undeclared command', (bytes: string) => `${bytes}Run \`cockpit invent\`.\n`],
         ['misleading completion', (bytes: string) => `${bytes}Report complete without proof.\n`],
-        ['excess entry-point cap', (bytes: string) => bytes.replace('  entry-point-lines: 12\n', '  entry-point-lines: 1\n')],
+        ['excess entry-point cap', (bytes: string) => bytes.replace('  entry-point-lines: 11\n', '  entry-point-lines: 1\n')],
     ])('refuses hostile entry point: %s', async (_label, transform) => {
         const sources = await shippedSources()
         const result = await inspectSkillSet(input(changeEntry(sources, transform)))
@@ -337,6 +341,22 @@ describe('shipped skill contract', () => {
 })
 
 
+describe('shipped skill descriptions', () => {
+    it('lead with the trigger, carry the cockpit- prefix and stay inside the shared standing-cost budget with the browser skill', async () => {
+        const names = ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work', 'cockpit-browser']
+        let total = 0
+        for (const name of names) {
+            const bytes = await readFile(join(surfaceRoot, `${name}.skill.md`), 'utf8')
+            expect(bytes).toMatch(new RegExp(`^---\\nname: ${name}\\n`))
+            const description = /^description: "([^"]+)"$/m.exec(bytes)?.[1] ?? ''
+            expect(description.startsWith('Use when '), name).toBe(true)
+            total += Buffer.byteLength(description)
+        }
+        // Rendered frontmatter adds per-harness keys; the neutral descriptions alone must leave room for them.
+        expect(total).toBeLessThan(8192 / 4)
+    })
+})
+
 describe('shipped onboarding commands', () => {
     it('routes every onboarding command with its required source arguments', async () => {
         const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
@@ -349,8 +369,7 @@ describe('shipped onboarding commands', () => {
             const sink = { write: (text: string) => { output += text; return true } }
             const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256 }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [], nextCommand: 'accept exact preview' } } },
-                document: handler, sync: handler, check: handler, doctor: handler, up: handler, preflight: handler, logs: handler,
-                runtime: handler,
+                ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),
             })
             expect(status, `${argv.join(' ')}: ${output}`).toBe(0)
             expect(invoked, argv.join(' ')).toBe(true)

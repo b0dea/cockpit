@@ -170,7 +170,7 @@ async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 
         approved: true, testPackage: { directory: 'node_modules/@playwright/test', artifactRoot: artifactRelative,
             manifest: { bytes: manifest, sha256: digest(manifest) }, cli: { path: 'cli.js', bytes: '/* synthetic pinned CLI */', sha256: digest('/* synthetic pinned CLI */') },
             module: { path: 'index.js', bytes: moduleBytes, sha256: digest(moduleBytes) } },
-        skillTemplate: await readFile('packages/cockpit/surfaces/skills/browser.skill.md', 'utf8') })
+        skillTemplate: await readFile('packages/cockpit/surfaces/skills/cockpit-browser.skill.md', 'utf8') })
     const policy = issueBrowserRoutePolicy(runtime, { origin: 'http://app.local:4000', routes: [
         { name: 'home', path: '/' }, { name: 'settings', path: '/settings' }, { name: 'dashboard', path: '/dashboard' },
     ] })

@@ -30,7 +30,7 @@ No. The package is private at 0.0.0. Install it from source with
 
 No. `sync` always renders surfaces for every built-in harness, so whichever tool you open
 in the checkout finds its configuration. `init` takes one `--target` to choose which harness
-receives the bootstrap skill first. Custom harnesses can be declared under `[surfaces]`; see
+receives the cockpit-setup skill first. Custom harnesses can be declared under `[surfaces]`; see
 [Harness surfaces](harness-surfaces.md#capability-states).
 
 ## Are the guards actually enforced?

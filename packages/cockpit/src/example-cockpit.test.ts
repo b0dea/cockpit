@@ -187,7 +187,7 @@ describe('the public synthetic cockpit', () => {
 
         const stale = copyExample('stale')
         expect(run(stale, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json']).status).toBe(0)
-        const generated = join(stale, '.agents/skills/bootstrap/SKILL.md')
+        const generated = join(stale, '.agents/skills/cockpit-setup/SKILL.md')
         expect(existsSync(generated)).toBe(true)
         writeFileSync(generated, `${readFileSync(generated, 'utf8')}\nstale\n`)
         const staleResult = run(stale, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
@@ -239,7 +239,7 @@ describe('the public synthetic cockpit', () => {
         expect(guide).toContain('cockpit test-run --select <kind>:<value>')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
-        for (const skill of ['bootstrap', 'explain', 'fix']) expect(guide).toMatch(new RegExp(`- \`${skill}\`: Use when `))
+        for (const skill of ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']) expect(guide).toMatch(new RegExp(`- \`${skill}\`: Use when `))
         expect(guide.split('\n').length).toBeLessThanOrEqual(60)
         expectNoDevelopmentMarkers(root)
     })
@@ -304,7 +304,11 @@ describe('cockpits without a generated environment', () => {
             expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
             expect(result.stderr).toBe('')
         }
-        expect(existsSync(join(root, '.claude/skills/bootstrap/SKILL.md'))).toBe(true)
+        expect(existsSync(join(root, '.claude/skills/cockpit-setup/SKILL.md'))).toBe(true)
+        expect(existsSync(join(root, '.claude/skills/cockpit-work/SKILL.md'))).toBe(true)
+        for (const reference of ['test-data-and-personas.md', 'identity-provider-clerk.md']) {
+            expect(readFileSync(join(root, '.claude/skills/cockpit-setup/references', reference), 'utf8')).not.toContain('cockpit:verified')
+        }
         expect(existsSync(join(root, 'AGENTS.md'))).toBe(true)
         expect(existsSync(join(root, 'env'))).toBe(false)
         const guide = readFileSync(join(root, 'AGENTS.md'), 'utf8')
@@ -333,7 +337,8 @@ describe('cockpits without a generated environment', () => {
         })
         const ownership = JSON.parse(readFileSync(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8'))
         const owned = ownership.entries.map((entry: { path: string }) => entry.path)
-        expect(owned).toContain('.claude/skills/bootstrap/SKILL.md')
+        expect(owned).toContain('.claude/skills/cockpit-setup/SKILL.md')
+        expect(owned).toContain('.claude/skills/cockpit-setup/references/test-data-and-personas.md')
         expect(owned).toContain('.cockpit/guards/bash-guard.sh')
         // Beside the surfaces, cockpit owns only the override that labels the Compose services.
         expect(owned.filter((path: string) => !path.startsWith('.') && !/^(?:AGENTS|CLAUDE)\.md$|^opencode\.jsonc$/.test(path))).toEqual(['compose.cockpit.yml'])
