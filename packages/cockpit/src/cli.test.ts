@@ -2283,6 +2283,29 @@ describe('init command admission', () => {
         }] })
     })
 
+    it('refuses an answers file that is not valid UTF-8', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-init-answers-encoding-'))
+        scratch.push(directory)
+        const canonical = realpathSync(directory)
+        const answers = join(canonical, 'answers.toml')
+        writeFileSync(answers, Buffer.from([0xc3, 0x28]))
+
+        const result = spawnSync(process.execPath, ['--import', 'tsx', cli,
+            'init', canonical, '--target', 'codexcli', '--json',
+            '--accept-preview', 'a'.repeat(64), '--answers', answers], {
+            cwd: root,
+            encoding: 'utf8',
+            env: process.env,
+        })
+
+        expect(result.status).toBe(2)
+        expect(JSON.parse(result.stdout)).toMatchObject({ diagnostics: [{
+            code: 'CLI_USAGE_INVALID',
+            message: expect.stringContaining('is not valid UTF-8'),
+            target: '--answers',
+        }] })
+    })
+
     it('refuses missing, extra or duplicate root and target before dispatch', async () => {
         for (const args of [
             [], ['--target', 'codexcli'], ['.'], ['.', '.', '--target', 'codexcli'],

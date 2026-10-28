@@ -112,11 +112,13 @@ describe('inferred interview answers', () => {
     it('reports an unreadable input instead of dropping it', async () => {
         const root = estate({ '.github/workflows/ci.yml': 'jobs: [unclosed', 'api/real.txt': 'x' })
         symlinkSync(join(root, 'api/real.txt'), join(root, 'api/Dockerfile'))
+        writeFileSync(join(root, 'api/.env.example'), Buffer.from([0xc3, 0x28]))
         const { facts, skipped } = await deriveInferredFacts({ root, repositories: api })
         expect(facts).toEqual([])
         expect(skipped).toEqual(expect.arrayContaining([
             expect.objectContaining({ source: '.github/workflows/ci.yml', reason: expect.stringContaining('not valid YAML') }),
             expect.objectContaining({ source: 'api/Dockerfile', reason: 'is not a regular file' }),
+            expect.objectContaining({ source: 'api/.env.example', reason: 'is not valid UTF-8' }),
         ]))
     })
 })

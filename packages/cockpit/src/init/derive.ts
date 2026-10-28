@@ -97,7 +97,8 @@ async function readBounded(root: string, directory: string, name: string): Promi
         if (!sameDirectory(parent, await inspectDirectory(root, directory))) {
             return { kind: 'skipped', reason: 'directory changed while the file was read' }
         }
-        return { kind: 'text', text: read.bytes.toString('utf8') }
+        try { return { kind: 'text', text: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } }
+        catch { return { kind: 'skipped', reason: 'is not valid UTF-8' } }
     }
     catch (error) {
         const code = (error as NodeJS.ErrnoException).code

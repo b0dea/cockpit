@@ -770,7 +770,13 @@ async function decodeUnattendedInit(values: {
             const read = await readBoundedInput(path)
             if (read.kind === 'too-large' || read.bytes.byteLength > ANSWERS_FILE_BYTE_LIMIT) return usageOutcome('CLI_USAGE_INVALID',
                 `--answers file exceeds ${ANSWERS_FILE_BYTE_LIMIT} bytes; replace it with a plain TOML file within that limit and retry`, '--answers')
-            answers = parseToml(read.bytes.toString('utf8'))
+            let text: string
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) }
+            catch {
+                return usageOutcome('CLI_USAGE_INVALID',
+                    `--answers ${path} is not valid UTF-8; replace it with a plain UTF-8 TOML file and retry`, '--answers')
+            }
+            answers = parseToml(text)
         } catch (error) {
             return usageOutcome('CLI_USAGE_INVALID',
                 `--answers ${path} could not be read as one bounded regular TOML file (${error instanceof Error ? error.message : 'unknown error'}); replace it with a plain TOML file and retry`, '--answers')
