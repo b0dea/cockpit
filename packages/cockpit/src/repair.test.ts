@@ -8,6 +8,7 @@ import { applyGeneratedEnvironmentRepair, checkGeneratedEnvironment, prepareGene
 import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
+import { initializeTeamMetadata } from './team-metadata.js'
 
 const roots: string[] = []
 const firstInstant = '2026-10-22T12:00:00.000Z'
@@ -36,11 +37,16 @@ async function consumer() {
 describe('canonical mechanical repair', () => {
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {
         const { root, configPath } = await consumer()
+        expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })
         await writeFile(join(root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
         let stdout = ''
         const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } } as CliIo
         expect(await runCli(['check', '--config', configPath, '--json'], io, {}, { env: { CI: '1' } })).toBe(2)
-        const displayed = JSON.parse(stdout).result.repair
+        const envelope = JSON.parse(stdout)
+        expect(envelope.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
+            code: 'GENERATED_ARTIFACT_DRIFT', target: personaPath,
+        })]))
+        const displayed = envelope.result.repair
         expect(displayed.changes).toEqual(expect.arrayContaining([{ operation: 'write', path: personaPath }, { operation: 'write', path: ledgerPath }]))
         expect(displayed.fixes[0].argv).toEqual(['cockpit', 'sync', '--config', configPath])
         const admit = vi.spyOn(transaction, 'admitPublicationPlan')
