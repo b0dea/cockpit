@@ -10,12 +10,12 @@
     "kind": "hooks-json",
     "path": ".claude/settings.json",
     "event": "PreToolUse",
-    "matcher": "Bash|Edit|Write"
+    "matcher": "Bash|Edit|Write|NotebookEdit"
   },
   "payload": {
     "kind": "pre-tool-use",
     "bashTool": "Bash",
-    "editTools": ["Edit", "Write"]
+    "editTools": ["Edit", "Write", "NotebookEdit"]
   },
   "readonly": {
     "kind": "agent-frontmatter",

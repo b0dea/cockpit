@@ -23,7 +23,7 @@ export interface ParsedInvocation {
 }
 export type GuardParseResult = {
     readonly status: 'parsed'
-    readonly tool: 'Bash' | 'Edit' | 'Write' | 'apply_patch'
+    readonly tool: 'Bash' | 'Edit' | 'Write' | 'NotebookEdit' | 'apply_patch'
     readonly cwd: string
     readonly invocations: readonly ParsedInvocation[]
     readonly paths: readonly string[]
@@ -365,6 +365,13 @@ export function parseGuardInput(input: unknown): GuardParseResult {
                 || Object.entries(options).some(([key, valid]) => Object.hasOwn(fields, key) && !valid(fields[key]))) refuse('Malformed command payload.')
             if (tool === 'Bash') invocations = parseShell(fields.command, cwd)
             else ({ paths, removed } = patchPaths(fields.command))
+        } else if (tool === 'NotebookEdit') {
+            if (!keys(fields, ['notebook_path', 'new_source'], ['cell_id', 'cell_type', 'edit_mode'])
+                || !text(fields.notebook_path) || !posix.isAbsolute(fields.notebook_path)
+                || Object.values(fields).some(value => !text(value))
+                || fields.cell_type !== undefined && !['code', 'markdown'].includes(String(fields.cell_type))
+                || fields.edit_mode !== undefined && !['replace', 'insert', 'delete'].includes(String(fields.edit_mode))) refuse('Malformed notebook payload.')
+            paths = [path(fields.notebook_path)]
         } else if (tool === 'Edit' || tool === 'Write') {
             if (!keys(fields, ['file_path'], tool === 'Edit' ? ['old_string', 'new_string', 'replace_all'] : ['content'])
                 || !text(fields.file_path)) refuse('Malformed file payload.')

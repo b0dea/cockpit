@@ -61,6 +61,14 @@ agent until a human restores it. Editing the configuration in place stays permit
 takes effect only after a human runs `sync`. Writing anywhere under a `.git` directory is also a hard
 denial, because Git configuration chooses programs that read-only Git commands run.
 
+The Claude Code registration includes `NotebookEdit`: notebook cell changes use the same protected
+path checks as text edits, so notebook tooling cannot write a control or environment instance.
+For a configuration in a repository subdirectory, those controls belong to the configuration's
+directory. Start Codex in that directory: its generated hook resolves the guard from the canonical
+session directory rather than from an enclosing Git repository. Native enforcement still requires
+the paired probes in the
+[capability matrix](capability-matrix.md); generating a hook alone does not establish it.
+
 Pushes to declared protected branches are hard denials. This includes explicit protected
 destinations and `git push --all` or `git push --mirror` when protected branches are declared. Missing or unresolved
 destinations, including ambiguous source-only revisions, symbolic aliases, and wildcards, require

@@ -308,7 +308,7 @@ describe('restriction expansion', () => {
         const { CLAUDE_PROJECT_DIR: _unset, ...ambient } = process.env
         for (const [name, cwd, env] of [
             ['claudecode', join(directory, 'nested'), { ...ambient, CLAUDE_PROJECT_DIR: directory }],
-            ['codexcli', join(directory, 'nested'), ambient],
+            ['codexcli', directory, ambient],
         ] as const) {
             const allowed = runs(name, cwd, env, 'env/service.env.example')
             expect(allowed.status, allowed.stderr).toBe(0)
@@ -322,8 +322,23 @@ describe('restriction expansion', () => {
             status: 2, stdout: '', stderr: expect.stringContaining('through CLAUDE_PROJECT_DIR'),
         })
         expect(runs('codexcli', tmpdir(), ambient, 'env/service.env.example')).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining('through the Git top level'),
+            status: 2, stdout: '', stderr: expect.stringContaining('through the canonical Codex session directory'),
         })
+    })
+
+    it('runs the generated Codex hook from a cockpit directory inside a larger Git repository', async () => {
+        const directory = await isolatedProjectRoot('cockpit-hook-subdirectory-')
+        const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
+        rmSync(join(directory, '.git'), { recursive: true, force: true })
+        expect(spawnSync('git', ['init', '--quiet', dirname(directory)]).status).toBe(0)
+        const command = (JSON.parse(target(result, 'codexcli').files[0]!.bytes) as {
+            hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
+        }).hooks.PreToolUse[0]!.hooks[0]!.command
+        const run = (file: string) => spawnSync('/bin/sh', ['-c', command], {
+            cwd: directory, env: process.env, input: JSON.stringify({ ...edit(join(directory, file)), cwd: directory }), encoding: 'utf8',
+        })
+        expect(run('env/service.env.example')).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        expect(run('env/service.env')).toMatchObject({ status: 0, stdout: expect.stringContaining('permissionDecision'), stderr: '' })
     })
 
     it('refuses every call with the fix command while the machine-local identity is missing', async () => {
@@ -333,6 +348,20 @@ describe('restriction expansion', () => {
         expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({
             status: 2, stdout: '', stderr: expect.stringContaining(`Fix: run \`cockpit sync --config ${directory}/cockpit.toml\` in a terminal`),
         })
+    })
+
+    it('keeps a literal configuration filename as one argument in the guard recovery command', async () => {
+        const configFile = "cock'pit$(printf injected); config.toml"
+        const result = complete(expandRestrictions(await input({ configFile })))
+        const context = renderedContexts.get(result)
+        if (!context) throw new Error('guard fixture was not published')
+        rmSync(join(context.root, '.cockpit/local/guard-identity'))
+        const refused = runGuard(result, edit('env/service.env.example'))
+        const command = /Fix: run `([^`]+)`/.exec(refused.stderr)?.[1]
+        expect(command).toBeDefined()
+        const captured = spawnSync('/bin/bash', ['-c', `cockpit() { printf '<%s>\n' "$@"; }; ${command}`], { encoding: 'utf8' })
+        expect(captured).toMatchObject({ status: 0, stderr: '', stdout:
+            `<sync>\n<--config>\n<${join(context.root, configFile)}>\n` })
     })
 
     it('turns every guard failure other than the blocking exit into a blocking exit', async () => {
@@ -371,7 +400,7 @@ describe('restriction expansion', () => {
             path: '.opencode/agents/evaluator.md', bytes: 'permission:\n  edit: deny\n',
         })
         expect(target(result, 'claudecode').files[0]).toMatchObject({ path: '.claude/settings.json' })
-        expect(target(result, 'claudecode').files[0]!.bytes).toContain('Bash|Edit|Write')
+        expect(target(result, 'claudecode').files[0]!.bytes).toContain('Bash|Edit|Write|NotebookEdit')
         expect(target(result, 'codexcli').files[0]).toMatchObject({ path: '.codex/hooks.json' })
         expect(target(result, 'codexcli').files[0]!.bytes).toContain('Bash|Edit|Write|apply_patch')
         expect(target(result, 'opencode').files[0]).toMatchObject({ path: '.opencode/plugin/cockpit-guards.js' })

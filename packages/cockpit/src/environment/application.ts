@@ -294,13 +294,17 @@ export interface GuardEvaluationApplicationResult {
 // step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
 // could loosen its guard.
 type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string; readonly thenSync: boolean }
+function shellArgument(value: string): string {
+    return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`
+}
+function shellCommand(argv: readonly string[]): string { return argv.map(shellArgument).join(' ') }
 function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
-    const sync = `\`cockpit sync --config ${identity.configPath}\` in a terminal, outside the agent`
+    const sync = `\`${shellCommand(['cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : fix.thenSync
             // A restored file is a new file, so its identity must be authenticated again.
-            ? `a human must restore it with \`git -C ${identity.root} restore ${fix.path}\` (it is committed) and then run ${sync}`
-            : `a human must restore it with \`git -C ${identity.root} restore ${fix.path}\` (it is committed), or run ${sync}`
+            ? `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', fix.path])}\` (it is committed) and then run ${sync}`
+            : `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', fix.path])}\` (it is committed), or run ${sync}`
     return `${what}; ${why}, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: ${action}.`
 }
 
@@ -624,8 +628,9 @@ export async function prepareGuardEvaluationPolicy(
                 identities.set(path, before)
                 return path
             }
-            const canonicalRoot = directory(checkout.currentCheckoutPath)
-            siblingsRoot = directory(resolve(checkout.mainCheckoutPath, config.cockpit.siblings_root))
+            const canonicalRoot = directory(dirname(loaded.source.path))
+            const mainConfigRoot = resolve(checkout.mainCheckoutPath, relative(checkout.currentCheckoutPath, canonicalRoot))
+            siblingsRoot = directory(resolve(mainConfigRoot, config.cockpit.siblings_root))
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
             for (const sibling of config.sibling) {
@@ -642,7 +647,7 @@ export async function prepareGuardEvaluationPolicy(
             if (allowedRoots.size > 256 || instances.length > 256) throw new Error('guard policy exceeds restriction root or instance bounds')
             for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
             // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
-            const configPath = join(canonicalRoot, basename(loaded.source.path))
+            const configPath = loaded.source.path
             protect(canonicalRoot, configPath, 'file', 'configuration')
             for (const [path, before] of identities) {
                 const after = lstatSync(path)

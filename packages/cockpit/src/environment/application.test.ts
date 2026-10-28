@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, renameSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -287,6 +287,29 @@ describe('pending guard policy construction', () => {
             loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout, resolveGit: async () => ({ state: 'unavailable', reason: 'synthetic missing Git' }),
         })).toMatchObject({ decision: { decision: 'unavailable', reason: expect.any(String) }, diagnostics: [expect.objectContaining({ severity: 'error' })] })
     })
+
+    it('keeps a literal configuration path as one argument in application recovery guidance', async () => {
+        const base = mkdtempSync(join(tmpdir(), 'cockpit-guard-guidance-'))
+        scratch.push(base)
+        const createdRoot = join(base, "cock'pit$(printf injected); root")
+        mkdirSync(createdRoot)
+        const root = realpathSync(createdRoot)
+        const configPath = join(root, 'cockpit.toml')
+        const digest = '0'.repeat(64)
+        const identity = {
+            root, rootDevice: '0', rootInode: '0', configPath, configSha256: digest,
+            configDevice: '0', configInode: '0', node: process.execPath, nodeSha256: digest,
+            nodeFingerprint: 'synthetic', module: join(base, 'other-cli.js'), moduleSha256: digest,
+        }
+        const result = await runGuardEvaluationApplication({ identity, guardRoot: root, payload: {}, harness: 'claudecode', cwd: root }, {
+            loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'unavailable', reason: 'not reached' }),
+        })
+        const command = /run `([^`]+)` in a terminal/.exec(result.decision.reason)?.[1]
+        expect(command, result.decision.reason).toBeDefined()
+        const captured = spawnSync('/bin/bash', ['-c', `cockpit() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
+        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<sync>\n<--config>\n<${configPath}>\n` })
+    })
     async function observedPolicy(declared = true, tuple?: string[]) {
         const { configPath } = fixture()
         const root = realpathSync(dirname(configPath))
@@ -351,6 +374,16 @@ describe('pending guard policy construction', () => {
             resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
         return { root, configPath, request, adapters }
     }
+
+    it('guards native notebook edits against the same authenticated control paths as text edits', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        for (const [file, decision] of [['app/analysis.ipynb', 'allow'], ['.cockpit/local/analysis.ipynb', 'deny']] as const) {
+            const payload = { hook_event_name: 'PreToolUse', tool_name: 'NotebookEdit', cwd: root,
+                tool_input: { notebook_path: join(root, file), new_source: 'print(1)' } }
+            expect(await runGuardEvaluationApplication({ ...request, payload }, adapters))
+                .toMatchObject({ decision: { decision } })
+        }
+    }, 120_000)
 
     it.each([
         ['app/.env.example', 'allow'],
@@ -629,6 +662,31 @@ describe('pending guard policy construction', () => {
     it('keeps absent vendor declarations empty despite local sinks and environment values', async () => {
         const { input } = await observedPolicy(false)
         expect(await prepareGuardEvaluationPolicy(input)).toMatchObject({ kind: 'complete', result: { policy: { vendorHosts: [], hostedDatabaseHosts: ['db.example.test'] } } })
+    })
+
+    it('binds guard controls to the configuration directory inside a repository', async () => {
+        const { root, configPath } = await observedPolicy()
+        const cockpitRoot = join(root, 'control')
+        mkdirSync(cockpitRoot)
+        const nestedConfig = join(cockpitRoot, 'cockpit.toml')
+        renameSync(configPath, nestedConfig)
+        const loaded = await loadCockpitConfig(nestedConfig)
+        if (loaded.kind !== 'complete') throw new Error('nested configuration did not load')
+        const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: loaded.result.config.cockpit.name,
+            observedAt: new Date().toISOString(), env: {}, gitExecutable })
+        const result = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
+        expect(result.kind, JSON.stringify(result)).toBe('complete')
+        if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
+        const policy = result.result.policy
+        expect(policy.canonicalRoot).toBe(cockpitRoot)
+        expect(policy.configPath).toBe(nestedConfig)
+        expect(policy.protectedIdentities.map(row => row.path)).toEqual(expect.arrayContaining([
+            nestedConfig, ...GUARD_ROOT_PROTECTIONS.map(row => join(cockpitRoot, row.path)),
+        ]))
+        const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
+        expect(evaluateGuard(parseGuardInput(shellPayload(`rm ${nestedConfig}`, root)), policy, inspect).decision).toBe('deny')
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'NotebookEdit', cwd: cockpitRoot,
+            tool_input: { notebook_path: join(cockpitRoot, '.cockpit/local/analysis.ipynb'), new_source: 'print(1)' } }), policy, inspect).decision).toBe('deny')
     })
 
     function commandAuthority(root: string, configPath: string) {

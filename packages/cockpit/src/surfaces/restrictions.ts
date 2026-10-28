@@ -289,9 +289,9 @@ function unavailableAdapter(value: JsonSnapshotObject): UnavailableRestrictionAd
 function nativeShapeMatches(adapter: NativeRestrictionAdapter): boolean {
     if (adapter.target === 'claudecode') return adapter.promptTier
         && adapter.registration.kind === 'hooks-json' && adapter.registration.path === '.claude/settings.json'
-        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write'
+        && adapter.registration.event === 'PreToolUse' && adapter.registration.matcher === 'Bash|Edit|Write|NotebookEdit'
         && adapter.payload.kind === 'pre-tool-use' && adapter.payload.bashTool === 'Bash'
-        && JSON.stringify(adapter.payload.editTools) === JSON.stringify(['Edit', 'Write'])
+        && JSON.stringify(adapter.payload.editTools) === JSON.stringify(['Edit', 'Write', 'NotebookEdit'])
         && adapter.readonly.kind === 'agent-frontmatter' && adapter.readonly.pathPattern === '.claude/agents/{agent}.md'
         && adapter.readonly.bytes === 'disallowedTools: Edit, Write, NotebookEdit\n'
     if (adapter.target === 'codexcli') return !adapter.promptTier
@@ -398,10 +398,10 @@ function shellLiteral(value: string): string {
 
 // Registrations are committed, so each finds the cockpit checkout at run time through the
 // mechanism its harness documents: Claude Code exports the project directory to hooks, and Codex runs
-// hooks in the session working directory and recommends resolving repository files from the Git root.
+// hooks in the session working directory. The Git root can be above a cockpit rooted in a subdirectory.
 const HOOK_ROOT = Object.freeze({
     claudecode: { expression: '${CLAUDE_PROJECT_DIR:-}', source: 'CLAUDE_PROJECT_DIR' },
-    codexcli: { expression: '$(git rev-parse --show-toplevel 2>/dev/null)', source: 'the Git top level of the session directory' },
+    codexcli: { expression: '$(pwd -P 2>/dev/null)', source: 'the canonical Codex session directory' },
 } as const)
 
 function hooksBytes(target: keyof typeof HOOK_ROOT, matcher: string, guardPath: string, askIsDeny: boolean): string {

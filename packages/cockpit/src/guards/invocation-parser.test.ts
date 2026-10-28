@@ -95,6 +95,17 @@ describe('guard invocation capture', () => {
         }
     })
 
+    it('projects notebook edits onto their exact file path and refuses malformed native fields', () => {
+        const payload = { hook_event_name: 'PreToolUse', tool_name: 'NotebookEdit', cwd: '/workspace/project',
+            tool_input: { notebook_path: '/workspace/project/analysis.ipynb', new_source: 'print(1)', cell_id: 'cell', cell_type: 'code', edit_mode: 'replace' } }
+        expect(parseGuardInput(payload)).toMatchObject({ status: 'parsed', tool: 'NotebookEdit',
+            paths: ['/workspace/project/analysis.ipynb'], removed: [], invocations: [] })
+        for (const changed of [{ notebook_path: '../elsewhere.ipynb' }, { new_source: 1 },
+            { cell_type: 'raw' }, { edit_mode: 'execute' }, { cell_id: {} }, { unexpected: 'field' }]) {
+            expect(parseGuardInput({ ...payload, tool_input: { ...payload.tool_input, ...changed } }).status).toBe('unavailable')
+        }
+    })
+
     it('treats non-ASCII whitespace as literal shell word content', () => {
         expect(parseGuardInput(shellPayload('printf a\u00a0b'))).toMatchObject({ status: 'parsed', invocations: [{ argv: ['a\u00a0b'] }] })
     })
