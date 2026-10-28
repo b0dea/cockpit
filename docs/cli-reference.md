@@ -2,7 +2,7 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Commands and flags derive from the implementing command table.
+This generated reference is for users looking up an exact command, flag, exit code or diagnostic. Commands and flags derive from the implementing command table.
 
 ## cockpit init
 

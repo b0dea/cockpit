@@ -2,7 +2,7 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.
+This generated matrix is for users checking what each harness can enforce, instruct or cannot provide. Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.
 
 Source manifest: `3652dd1f447a5360469a3463bdea21dc66e3ee2c7b13ff3f85effc46fa1d78e3`.
 

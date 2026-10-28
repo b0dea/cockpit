@@ -2,7 +2,7 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-The command table supplies this list.
+This generated index is for users choosing the command that owns their next operation. The command table supplies this list.
 
 - `cockpit init`: Preview or accept one explicit bootstrap target in an existing checkout.
 - `cockpit document`: Describe an existing cockpit as attributed cockpit.toml content.
