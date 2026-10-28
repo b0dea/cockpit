@@ -666,9 +666,13 @@ it('resumes and normalizes an authenticated source install during installed init
     interruptedLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
     writeFileSync(join(root, 'package-lock.json'), `${JSON.stringify(interruptedLock, null, 2)}\n`)
     const launcher = join(root, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
-    const run = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
-        cwd: root, env, encoding: 'utf8', timeout: 30_000,
-    })
+    const run = (...args: string[]) => {
+        const result = spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
+            cwd: root, env, encoding: 'utf8', timeout: 30_000,
+        })
+        expect(result.error, JSON.stringify({ signal: result.signal, stdout: result.stdout, stderr: result.stderr })).toBeUndefined()
+        return result
+    }
     const first = run()
     expect(first.status, first.stdout + first.stderr).toBe(0)
     const preview = JSON.parse(first.stdout).result
@@ -895,7 +899,8 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
     mkdirSync(product, { recursive: true })
     mkdirSync(home)
     execFileSync('git', ['init', '--quiet', product])
-    const manifest = `${JSON.stringify({ name: 'synthetic-store', version: '0.0.0', scripts: { test: 'node test.mjs' } })}\n`
+    const productManifest = { name: 'synthetic-store', version: '0.0.0', scripts: { test: 'node test.mjs' } }
+    const manifest = `${JSON.stringify(productManifest)}\n`
     writeFileSync(join(product, 'package.json'), manifest)
     const root = rootChoice === 'dedicated' ? `${product}-cockpit` : product
     const answers = join(parent, 'answers.toml')
@@ -919,7 +924,18 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
     expect(completed.status, completed.stdout + completed.stderr).toBe(0)
     expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'environment-verified' })
     expect(statSync(join(root, '.git')).isDirectory()).toBe(true)
-    expect(readFileSync(join(product, 'package.json'), 'utf8')).toBe(manifest)
+    const completedManifest = readFileSync(join(product, 'package.json'), 'utf8')
+    if (rootChoice === 'dedicated') expect(completedManifest).toBe(manifest)
+    else expect(JSON.parse(completedManifest)).toEqual({
+        ...productManifest,
+        scripts: {
+            ...productManifest.scripts,
+            'cockpit:setup': 'cockpit setup --config cockpit.toml',
+            'cockpit:sync': 'cockpit sync --config cockpit.toml',
+            'cockpit:check': 'cockpit check --config cockpit.toml',
+        },
+        devDependencies: { '@b0dea/cockpit': '0.0.0' },
+    })
     expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain(`dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`)
     const check = spawnSync(process.execPath, [launcher, 'check', '--config', join(root, 'cockpit.toml'), '--json'],
         { cwd: root, env, encoding: 'utf8' })
