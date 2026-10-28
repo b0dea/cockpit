@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { InstallPolicy, Sibling } from '../schema.js'
@@ -81,7 +82,7 @@ describe('install policy resolution', () => {
         const capturePath = join(directory, 'captured-input.json')
         const fixture = (name: string) => readFile(new URL(`../../surfaces/guards/${name}`, import.meta.url), 'utf8')
         const expansion = expandRestrictions({
-            canonicalProjectRoot: directory, guardPath,
+            canonicalProjectRoot: directory, guardPath, configFile: 'cockpit.toml',
             guardTemplate: await fixture('bash-guard.sh'), instances: [],
             policy: { hosted_db_hosts: ['db.example.test'], protected_branches: ['main'],
                 ask_is_deny_on: ['codex'], readonly: { kind: 'agent', name: 'evaluator' } },
@@ -106,7 +107,10 @@ describe('install policy resolution', () => {
                 let nativeInput: Buffer | undefined
                 let execution
                 if (row.target === 'opencode') {
-                    const pluginUrl = `data:text/javascript;base64,${Buffer.from(registration.bytes).toString('base64')}`
+                    const pluginPath = join(directory, registration.path)
+                    await mkdir(dirname(pluginPath), { recursive: true })
+                    await writeFile(pluginPath, registration.bytes)
+                    const pluginUrl = pathToFileURL(pluginPath).href
                     const runner = `const { CockpitRestrictions } = await import(${JSON.stringify(pluginUrl)}); const hooks = await CockpitRestrictions(); await hooks['tool.execute.before']({ tool: 'bash', sessionID: 'synthetic-session', callID: 'synthetic-call' }, { args: JSON.parse(process.argv[1]) });`
                     execution = spawnSync(process.execPath, ['--input-type=module', '--eval', runner, JSON.stringify({ command: rendered.command })], {
                         cwd: directory, env: { ...process.env, COCKPIT_TEST_CAPTURE: capturePath }, encoding: 'utf8',
@@ -118,8 +122,12 @@ describe('install policy resolution', () => {
                         tool_name: 'Bash', tool_use_id: 'synthetic-call', tool_input: { command: rendered.command },
                     }, null, row.target === 'claudecode' ? 2 : undefined) + '\n')
                     const registrationCommand = JSON.parse(registration.bytes).hooks.PreToolUse[0].hooks[0].command
+                    const { CLAUDE_PROJECT_DIR: _ambientProjectRoot, ...environment } = process.env
                     execution = spawnSync('/bin/sh', ['-c', registrationCommand], {
-                        cwd: directory, input: nativeInput, env: { ...process.env, COCKPIT_TEST_CAPTURE: capturePath }, encoding: 'utf8',
+                        cwd: directory, input: nativeInput,
+                        env: { ...environment, COCKPIT_TEST_CAPTURE: capturePath,
+                            ...(row.target === 'claudecode' ? { CLAUDE_PROJECT_DIR: directory } : {}) },
+                        encoding: 'utf8',
                     })
                 }
                 expect(execution.error).toBeUndefined()
