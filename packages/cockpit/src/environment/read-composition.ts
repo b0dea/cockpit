@@ -27,6 +27,7 @@ import {
     type RuntimeServiceEvidence,
     type RuntimeTopologyEvidence,
     type RuntimeMeasurementProbeAuthority,
+    type RuntimeAdapterAuthority,
 } from './runtime.js'
 import { resolveDockerExecutable } from './executable.js'
 import {
@@ -95,6 +96,7 @@ interface LifecycleRecordValue extends LifecycleProgress {
 
 interface StableReadContext {
     readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
+    readonly ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>
     readonly configuration: ConsumedLoadedConfig
     readonly namespace: StateNamespace
     readonly cockpitId: string
@@ -357,15 +359,12 @@ export function createReadCommandAdapters(
         const references = generated ? [generated.compose_file] : configuration.config.environment.compose_files
         const composeFiles = await composeArtifacts(checkoutRoot, references)
         if (!composeFiles) throw new TypeError('compose artifacts are unavailable')
-        let ports: PortLeaseProjection | undefined
-        if (generated) {
-            const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
-                holderId: context.holderId, checkoutId: context.checkoutId, config: context.ports })
-            if (retained.kind !== 'complete') throw new TypeError('retained port authority is unavailable')
-            const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: context.entrypointDerivatives })
-            ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
-            if (!ports) throw new TypeError('retained port projection is unavailable')
-        }
+        const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
+            holderId: context.holderId, checkoutId: context.checkoutId, config: context.ports })
+        if (retained.kind !== 'complete') throw new TypeError('retained port authority is unavailable')
+        const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: context.entrypointDerivatives })
+        const ports: PortLeaseProjection | undefined = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
+        if (!ports) throw new TypeError('retained port projection is unavailable')
         const readiness = await lifecycle.withRuntimeReadiness(context, async (value) => value, ports)
         if (!readiness) throw new TypeError('authenticated runtime topology is unavailable')
         const generatedApplication = generated ? await lifecycle.withGeneratedRuntime(context, readiness,
@@ -395,8 +394,17 @@ export function createReadCommandAdapters(
         if (!confirmedComposeFiles || JSON.stringify(confirmedComposeFiles) !== JSON.stringify(composeFiles)) {
             throw new TypeError('compose artifacts changed during runtime observation')
         }
+        const ownComposeAuthority = generated ? undefined : Object.freeze({
+            ownComposeFiles: true as const,
+            portLeaseProjection: ports,
+            siblingDirectories: Object.freeze(Object.fromEntries(configuration.config.sibling.map((sibling) => [
+                sibling.var,
+                resolve(checkoutRoot, configuration.config.cockpit.siblings_root, sibling.dir),
+            ]))),
+        })
         return Object.freeze({
             ...(generatedComposeAuthority ? { generatedComposeAuthority } : {}),
+            ...(ownComposeAuthority ? { ownComposeAuthority } : {}),
             configuration,
             namespace: context.namespace,
             cockpitId: context.cockpitId,
@@ -426,6 +434,7 @@ export function createReadCommandAdapters(
         }
         return Object.freeze({
             ...(context.generatedComposeAuthority ? { generatedComposeAuthority: context.generatedComposeAuthority } : {}),
+            ...(context.ownComposeAuthority ? { ownComposeAuthority: context.ownComposeAuthority } : {}),
             request: Object.freeze({
                 runtime: 'docker-compose' as const,
                 executable: context.executable.value,

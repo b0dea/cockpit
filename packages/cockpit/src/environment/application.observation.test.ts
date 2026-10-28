@@ -969,7 +969,7 @@ describe('observation application runners', () => {
         expect(observe).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', service: 'api' })
         expect(applicationOwners.logs.planLogs).toHaveBeenCalledWith(expect.objectContaining({
             service: 'api', since: '5m', tail: 25, follow: true,
-        }), undefined)
+        }), undefined, undefined)
         expect(result).toMatchObject({ kind: 'complete', result: { json: true, records } })
     })
 

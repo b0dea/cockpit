@@ -145,6 +145,7 @@ import {
     createRuntimeStopObservationPlan,
     createRuntimeStopPlan,
     type RuntimeLifecycleProjection,
+    type RuntimeAdapterAuthority,
     type RuntimeServiceEvidence,
     type RuntimeServiceFailureEvidence,
     type RuntimeServiceHealthPlan,
@@ -4003,6 +4004,7 @@ export type LogRequestBase = Omit<LogRequest, 'since' | 'tail' | 'follow'>
 
 export interface LogObservation {
     readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
+    readonly ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>
     readonly request: LogRequestBase
     readonly restart?: RestartWindow
 }
@@ -4689,13 +4691,17 @@ export async function runLogs(
         return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log observation is unavailable for service ${service}`)
     }
     if (signal?.aborted) return logsCancelled(json)
-    const observed = ownDataValues(observation, ['request'], ['restart', 'generatedComposeAuthority'])
+    const observed = ownDataValues(observation, ['request'], ['restart', 'generatedComposeAuthority', 'ownComposeAuthority'])
     const request = ownDataValues(observed?.request, logRequestBaseKeys, ['restartBatches'])
     if (!request || request.service !== service) {
         return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log observation does not match service ${service}`)
     }
     const resolvedRequest = Object.freeze({ ...request, since, tail, follow }) as unknown as LogRequest
-    const plan = planLogs(resolvedRequest, observed?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined)
+    const plan = planLogs(
+        resolvedRequest,
+        observed?.generatedComposeAuthority as GeneratedComposeArtifactAuthority | undefined,
+        observed?.ownComposeAuthority as Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }> | undefined,
+    )
     if (plan.kind !== 'planned') return logsRefusal(plan.code, plan.reason)
     let collected: Awaited<ReturnType<typeof collectLogs>>
     try {

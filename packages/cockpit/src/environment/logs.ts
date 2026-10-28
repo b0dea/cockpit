@@ -3,10 +3,11 @@ import { isAbsolute, normalize } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
-import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, type ComposeArtifact, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
+import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
+import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
 
 export const mechanism = { id: 'runtime-logs', module: 'packages/cockpit/src/environment/logs.ts', exports: ['planLogs', 'collectLogs', 'planFailureLogs', 'admitFailureLogs'] } as const
 
@@ -109,7 +110,11 @@ function localDockerSelection(name: string, value: string): boolean {
         : name === 'DOCKER_CONTEXT' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
 }
 
-export function planLogs(rawInput: LogRequest, generatedComposeAuthority?: GeneratedComposeArtifactAuthority): LogPlan {
+export function planLogs(
+    rawInput: LogRequest,
+    generatedComposeAuthority?: GeneratedComposeArtifactAuthority,
+    ownComposeAuthority?: Extract<RuntimeAdapterAuthority, { ownComposeFiles: true }>,
+): LogPlan {
     const input = logRequest(snapshotJson(rawInput))
     if (input === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request must be readable JSON data' }
     if (input.runtime !== 'docker-compose') return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime does not expose a measured log adapter' }
@@ -125,12 +130,31 @@ export function planLogs(rawInput: LogRequest, generatedComposeAuthority?: Gener
             || name.startsWith('DOCKER_') && !localDockerSelection(name, value))) {
         return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request must be resolved and bounded' }
     }
+    if (generatedComposeAuthority !== undefined && ownComposeAuthority !== undefined) {
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'log request has conflicting compose authority' }
+    }
+    let suppliedPortProjection: PortLeaseProjection | undefined
+    try {
+        const descriptor = ownComposeAuthority === undefined
+            ? undefined : Object.getOwnPropertyDescriptor(ownComposeAuthority, 'portLeaseProjection')
+        if (descriptor && !('value' in descriptor)) {
+            return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'compose-first log port authority is malformed' }
+        }
+        suppliedPortProjection = descriptor?.value as PortLeaseProjection | undefined
+    } catch {
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'compose-first log port authority is malformed' }
+    }
+    const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
+    if (suppliedPortProjection !== undefined && portProjection === undefined) {
+        return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: 'compose-first log port authority is malformed' }
+    }
+    const projectedPorts = portProjection ? Object.values(portProjection.lease.ports) : []
     const composeBoundary = createRuntimeAdapter({
         runtime: { name: 'docker', version: input.runtimeVersion, executableSha256: input.executable.sha256 },
         composeVersion: input.composeVersion, executable: input.executable, operation: 'validate', cwd: input.cwd,
-        composeFiles: input.composeFiles, projectName: input.projectName, env: input.env, ports: [],
+        composeFiles: input.composeFiles, projectName: input.projectName, env: input.env, ports: projectedPorts,
         labels: generatedComposeAuthority ? { configSha256: input.configSha256 } : {}, timeoutMs: input.timeoutMs,
-    }, generatedComposeAuthority ? { generatedComposeAuthority } : undefined)
+    }, generatedComposeAuthority ? { generatedComposeAuthority } : ownComposeAuthority)
     if (composeBoundary.kind === 'refusal') return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, reason: composeBoundary.diagnostics[0].message }
     const argv = [input.executable.canonicalPath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', String(input.tail), ...(input.follow ? ['--follow'] : []), input.containerId] as [string, ...string[]]
     const step: ExecutionStep = Object.freeze({

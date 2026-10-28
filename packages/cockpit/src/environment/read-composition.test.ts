@@ -75,7 +75,7 @@ vi.mock('../config/load.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('../config/load.js')>(),
     loadCockpitConfig: vi.fn(async () => ({ kind: 'complete', result: {
         source: { ...source, sha256: controls.configSha256 ?? source.sha256 },
-        config: { environment: controls.generated
+        config: { cockpit: { siblings_root: '.' }, sibling: [{ var: 'APP_DIR', dir: 'app' }], environment: controls.generated
             ? { generated: controls.generated }
             : { compose_files: ['compose.yml'] } },
     } })),
@@ -433,6 +433,23 @@ describe('production read command composition', () => {
         controls.lifecycleHolderId = undefined
         controls.generatedReplayGeneration = sha('7')
         await expect(adapters.logs.observe({ configPath: source.path, service: 'api' })).rejects.toThrow('generated lifecycle replay authority changed')
+    })
+
+    it('transfers retained port and sibling authority through compose-first logs', async () => {
+        controls.generatedComposeSource = 'services:\n  api:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n'
+        const adapters = createReadCommandAdapters({
+            configPath: source.path,
+            env: { PATH: '/synthetic' },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, vi.fn(async () => ({ kind: 'complete' })) as never)
+
+        const observation = await adapters.logs.observe({ configPath: source.path, service: 'api' })
+        expect(observation.ownComposeAuthority).toMatchObject({
+            ownComposeFiles: true,
+            portLeaseProjection: { lease: { ports: { APP_HOST_PORT: 4100 } } },
+            siblingDirectories: { APP_DIR: '/synthetic/app' },
+        })
     })
 
     it('derives the log authority from configuration, topology, and persisted lifecycle state', async () => {
