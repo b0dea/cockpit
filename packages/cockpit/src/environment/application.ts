@@ -294,17 +294,13 @@ export interface GuardEvaluationApplicationResult {
 // step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
 // could loosen its guard.
 type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string; readonly thenSync: boolean }
-function shellArgument(value: string): string {
-    return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`
-}
-function shellCommand(argv: readonly string[]): string { return argv.map(shellArgument).join(' ') }
 function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
-    const sync = `\`${shellCommand(['cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
+    const sync = `\`${formatShellCommand(['cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : fix.thenSync
             // A restored file is a new file, so its identity must be authenticated again.
-            ? `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed) and then run ${sync}`
-            : `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
+            ? `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed) and then run ${sync}`
+            : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
     return `${what}; ${why}, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: ${action}.`
 }
 
