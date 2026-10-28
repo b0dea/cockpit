@@ -121,7 +121,11 @@ else process.exit(7)
     const topologyOutcome = await executeProbe(topologyPlan.step)
     const topology = admitRuntimeTopology({ plan: topologyPlan, outcome: topologyOutcome })
     if (topology.kind !== 'complete') throw new Error(`${topology.reason}: ${JSON.stringify(topologyOutcome)}`)
-    const publicEnv: Readonly<Record<string, string>> = effectivePort === undefined ? {} : { APP_HOST_PORT: String(effectivePort) }
+    const publicEnv: Readonly<Record<string, string>> = {
+        ...(effectivePort === undefined ? {} : { APP_HOST_PORT: String(effectivePort) }),
+        COCKPIT_OWNER_ID: cockpitId,
+        COCKPIT_STACK_ID: stackId,
+    }
     const observationRuntime = { root, executable, composeFiles: [{ path: compose, sha256: composeSha256 }], projectName: 'synthetic', publicEnv, stdoutLimitBytes: 4_096, stderrLimitBytes: 1_024, hostExecutables: { [process.execPath]: nodeExecutable } }
     const authority = projectGeneratedRuntimeAuthority({
         rendered: result, topology: topology.topology,
@@ -151,7 +155,7 @@ describe('generated environment rendering', () => {
             expect(projectGeneratedRuntimeAuthority({
                 rendered: result,
                 topology: good.topology,
-                runtime: { ...good.runtime, publicEnv: { APP_HOST_PORT: '4200' } },
+                runtime: { ...good.runtime, publicEnv: { ...good.runtime.publicEnv, APP_HOST_PORT: '4200' } },
             })).toBeUndefined()
             const goodExecution = createGeneratedObservationExecution({ authority: good.authority, observation })
             if (goodExecution.kind !== 'planned') throw new Error(goodExecution.reason)
@@ -309,7 +313,8 @@ describe('generated environment rendering', () => {
             const native = spawnSync('docker', ['compose', '-f', composePath, '--profile', 'application', 'config', '--format', 'json'], {
                 cwd: root,
                 ...nativeOptions,
-                env: { PATH: process.env.PATH ?? '/usr/bin:/bin', MESSAGES_TOKEN: 'x\" ]; printf injected; #' },
+                env: { PATH: process.env.PATH ?? '/usr/bin:/bin', MESSAGES_TOKEN: 'x\" ]; printf injected; #',
+                    COCKPIT_OWNER_ID: cockpitId, COCKPIT_STACK_ID: stackId },
             })
             if (native.error) {
                 expect({ kind: 'unavailable', reason: (native.error as NodeJS.ErrnoException).code ?? 'native Compose did not return' }).toMatchObject({ kind: 'unavailable' })

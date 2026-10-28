@@ -275,7 +275,7 @@ describe('external dependency boundary', () => {
         const runtime = await authoritativeHarness(root, [declaration])
         const fragments = externalDependencyTemplateFragments(declaration)
         const planned = planExternalDependency({ authority: runtime.generatedAuthority, declaration, fragments, runtime, observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
-        expect(planned.kind, JSON.stringify(planned)).toBe('complete')
+        expect(planned.kind).toBe('complete')
         expect(planned).toMatchObject({ dependency: { id: 'mailer', posture: 'stubbed', measurement: 'pending' } })
         if (planned.kind !== 'complete') return
 
@@ -393,7 +393,7 @@ describe('external dependency boundary', () => {
         const root = workspace()
         const declaration = protocolVendor('fail')
         const planned = planExternalDependency({ declaration, fragments: externalDependencyTemplateFragments(declaration), runtime: harness(root), observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
-        expect(planned.kind).toBe('complete')
+        expect(planned.kind, JSON.stringify(planned)).toBe('complete')
         if (planned.kind !== 'complete') return
         await expect(verifyExternalDependency(planned, { execute: executeProbe })).resolves.toMatchObject({ kind: 'refusal', failedRole: 'callback-controls' })
     })
@@ -465,14 +465,16 @@ describe('external dependency boundary', () => {
         const fragments = externalDependencyTemplateFragments(declaration)
         expect(fragments).toMatchObject({ kind: 'complete', nonempty: [{ variable: 'MAILER_TOKEN', value: 'cockpit:absent:mailer' }] })
         expect(JSON.stringify(fragments)).not.toContain('ALLOW_SYNTHETIC_BACKEND')
-        const runtime = await authoritativeHarness(root)
+        const runtime = await authoritativeHarness(root, [declaration])
         expect(planExternalDependency({
             declaration, fragments,
-            runtime: { ...runtime, serviceAuthority: { topology: runtime.serviceAuthority.topology, evidence: { ...runtime.serviceAuthority.evidence } as never } },
+            runtime: { ...runtime, publicEnv: { PATH: runtime.publicEnv.PATH! },
+                serviceAuthority: { topology: runtime.serviceAuthority.topology, evidence: { ...runtime.serviceAuthority.evidence } as never } },
             observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }],
         })).toMatchObject({ kind: 'unmeasured', code: 'EXTERNAL_DEPENDENCY_EXECUTION_UNAVAILABLE' })
-        const planned = planExternalDependency({ declaration, fragments, runtime, observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
-        expect(planned.kind).toBe('complete')
+        const planned = planExternalDependency({ authority: runtime.generatedAuthority, declaration, fragments, runtime,
+            observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
+        expect(planned.kind, JSON.stringify(planned)).toBe('complete')
         if (planned.kind !== 'complete') return
         const egress = planned.steps.find(({ role }) => role === 'egress')
         expect(egress?.step.argv).toContain('ALLOW_SYNTHETIC_BACKEND=1')
@@ -486,9 +488,11 @@ describe('external dependency boundary', () => {
         const declaration = {
             ...vendor(), egress_guard: { flag: 'ALLOW_SYNTHETIC_BACKEND', enabled_value: '1', local_service: 'app' },
         }
-        const runtime = await authoritativeHarness(root)
-        const planned = planExternalDependency({ declaration, fragments: externalDependencyTemplateFragments(declaration), runtime, observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
-        expect(planned.kind).toBe('complete')
+        const runtime = await authoritativeHarness(root, [declaration])
+        const planned = planExternalDependency({ authority: runtime.generatedAuthority, declaration,
+            fragments: externalDependencyTemplateFragments(declaration), runtime,
+            observedAt: new Date().toISOString(), presentShadowFiles: [{ sibling: 'web', instance: '.env' }] })
+        expect(planned.kind, JSON.stringify(planned)).toBe('complete')
         if (planned.kind !== 'complete') return
         writeFileSync(join(root, '.backend-stopped'), '')
         await expect(verifyExternalDependency(planned, { execute: executeProbe })).resolves.toMatchObject({
@@ -498,7 +502,7 @@ describe('external dependency boundary', () => {
 
     it('requires a guarded egress probe to run in its authenticated local service', async () => {
         const root = workspace()
-        const runtime = await authoritativeHarness(root)
+        const runtime = harness(root)
         const guarded = {
             ...vendor(), egress_guard: { flag: 'ALLOW_SYNTHETIC_BACKEND', enabled_value: '1', local_service: 'app' },
         }

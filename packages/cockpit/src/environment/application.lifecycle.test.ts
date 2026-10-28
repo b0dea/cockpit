@@ -208,6 +208,7 @@ import {
     type SetupCommandAdapters,
     type LifecycleRunContextInput,
     type LifecycleRunContext,
+    type UpCommandAdapters,
     type SetupRunContextInput,
     type SetupRunContext,
     type HealthObservationSource,
@@ -265,6 +266,27 @@ function stubColdStart(stackId: StackId, measuredMillis = 1_250, limitMillis = 3
         expectation: { kind: 'maximum', value: limitMillis }, applicability: { state: 'required', posture: 'environment' },
         freshness: { state: 'current' }, remedy: 'restore the declared cold-start budget',
     } as never)
+}
+
+function unavailableRuntimeUpAdapters(
+    context: LifecycleRunContext,
+    withRuntimeReadiness: UpCommandAdapters['withRuntimeReadiness'],
+): Pick<UpCommandAdapters, 'withLifecycleStage' | 'withAcquiredPorts' | 'withRuntimeReadiness'> {
+    const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({}) })
+    return {
+        withLifecycleStage: async (_context, use) => use({} as never),
+        withAcquiredPorts: async (_context, use) => use({
+            retainOnFailure: vi.fn(),
+            leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 1, lease },
+            projection: {
+                lease,
+                ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 1,
+                    holderCount: 1, holderIds: [context.holderId] },
+                entrypoints: [],
+            },
+        } as never),
+        withRuntimeReadiness,
+    }
 }
 
 describe('lifecycle application contracts', () => {
@@ -453,7 +475,7 @@ describe('lifecycle application contracts', () => {
         const { context } = await lifecycleContextFixture()
         await runUp({ configPath: context.configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async () => undefined,
+            ...unavailableRuntimeUpAdapters(context, async () => undefined),
         } as never)
         for (let index = 0; index < 2; index += 1) {
             const consumed = await withLifecycleConfiguration(context, async (configuration) => {
@@ -531,18 +553,21 @@ describe('lifecycle application contracts', () => {
         expect(issued.kind).toBe('complete')
         if (issued.kind !== 'complete') throw new Error('lifecycle context was not issued')
         const load = async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: issued.result })
-        const unavailableReadiness = async () => undefined
+        const unavailableReadiness: UpCommandAdapters['withRuntimeReadiness'] = async () => undefined
 
         const copied = await runUp(
             { configPath: fresh.result.source.path },
-            { load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { ...issued.result } }), withRuntimeReadiness: unavailableReadiness } as never,
+            { load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { ...issued.result } }),
+                ...unavailableRuntimeUpAdapters(issued.result, unavailableReadiness) } as never,
         )
         const swapped = await runSleep(
             { configPath: join(resolve(fresh.result.source.path, '..'), 'other.toml') },
             { load } as never,
         )
-        const first = await runUp({ configPath: fresh.result.source.path }, { load, withRuntimeReadiness: unavailableReadiness } as never)
-        const replay = await runUp({ configPath: fresh.result.source.path }, { load, withRuntimeReadiness: unavailableReadiness } as never)
+        const first = await runUp({ configPath: fresh.result.source.path }, { load,
+            ...unavailableRuntimeUpAdapters(issued.result, unavailableReadiness) } as never)
+        const replay = await runUp({ configPath: fresh.result.source.path }, { load,
+            ...unavailableRuntimeUpAdapters(issued.result, unavailableReadiness) } as never)
 
         expect(copied).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         expect(swapped).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
@@ -558,7 +583,7 @@ describe('lifecycle application contracts', () => {
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             execute,
-            withRuntimeReadiness,
+            ...unavailableRuntimeUpAdapters(context, withRuntimeReadiness),
         } as never)
 
         expect(withRuntimeReadiness).toHaveBeenCalledOnce()
