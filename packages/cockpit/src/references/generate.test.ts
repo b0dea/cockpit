@@ -151,7 +151,7 @@ describe('reference generation', () => {
             const name = entry.path.split('/')[1]
             expect(configuration).toContain(`| \`packages/cockpit/surfaces/skills/${name}.skill.md\` | lines | ${entry.cap} | \`packages/cockpit/surfaces/skills/procedures/onboarding.md\` |`)
         }
-        expect(configuration.match(/`packages\/cockpit\/surfaces\/skills\/procedures\/onboarding\.md`/g)).toHaveLength(4 + skills.entrypoints.length)
+        expect(configuration.match(/`packages\/cockpit\/surfaces\/skills\/procedures\/onboarding\.md`/g)).toHaveLength(1 + Object.keys(skills.caps).length + skills.entrypoints.length)
         expect(configuration).not.toMatch(/`skills\/(?:collection\.json|procedures\/onboarding\.md|(?:bootstrap|explain|fix)\/SKILL\.md)`/)
     })
 
@@ -201,7 +201,7 @@ describe('reference generation', () => {
         expect(matrix).toContain('pending_evidence')
         expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
         expect(matrix).toContain('| grokcli | instruction-loading | n/a | unavailable | not_applicable | rulesync-rules: no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
-        expect(matrix).toContain('| cursor | skill-parity | bootstrap | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
+        expect(matrix).toContain('| cursor | skill-parity | cockpit-setup | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
         expect(matrix).not.toContain('| enforced |')
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')
