@@ -542,6 +542,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             return
         }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
+        inspectPath({ path, cwd, operation: 'remove' })
         const evidence = resolvedEvidence({ path, cwd, operation: 'remove' })
         if (!evidence) return
         const { below, covers } = evidenceFacts(evidence)
@@ -623,9 +624,10 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             return { paths: transfer.writes, reads: [], uncertain: transfer.uncertain }
         })() : visibleWrites(invocation)
         if (writes) {
+            const writeCwd = git?.verb === 'mv' ? git.cwd : invocation.cwd
             for (const path of writes.paths) {
                 pathCount++
-                inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
+                inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
             }
             if (writes.reads?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: writes.reads, trees: [], listings: [] })) {
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))

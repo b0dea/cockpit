@@ -7,4 +7,5 @@
 Keep registry-derived harness execution controls, guard registrations and executable control
 directories protected when commands delete, rename, move or directly overwrite them, even when a
 declared command rule would otherwise allow the invocation. Apply protected-read checks to bounded
-writer sources, and fail closed on unsupported archive command shapes.
+writer sources, fail closed on unsupported archive command shapes, enforce instance and secret
+boundaries on removals, and resolve Git move destinations from Git's requested working directory.

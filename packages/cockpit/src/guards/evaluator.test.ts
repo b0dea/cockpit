@@ -569,6 +569,8 @@ describe('cockpit structure protection', () => {
     const removal = 'Refusing to delete, rename or truncate cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
     const controlRemoval = 'Refusing mutation of the guard, its hook registration or its ownership manifest.'
     const protectedRead = 'Refusing to read a declared environment instance or secrets directory into the agent context.'
+    const instanceMutation = 'Refusing mutation or staging of a declared environment instance.'
+    const secretMutation = 'Refusing mutation or staging below a secrets directory.'
     const patch = (body: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: root,
         tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` } }), policy(), inspect)
 
@@ -632,6 +634,17 @@ describe('cockpit structure protection', () => {
         configured.declaredAllows.push({ argv: ['cp'], reason: 'Repository file writing is declared safe.' })
         expect(evaluateGuard(parseGuardInput(shellPayload('cp --parents src/file archive')), configured, inspect)).toEqual({
             decision: 'unavailable', reason: 'Unsupported visible writer option.',
+        })
+    })
+
+    it('resolves git mv destinations from the git execution directory', () => {
+        const configured = policy()
+        configured.declaredAllows.push({ argv: ['git'], reason: 'Repository moves are declared safe.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C .codex mv -f ../README.md hooks.json')), configured, inspect)).toEqual({
+            decision: 'deny', reason: controlRemoval,
+        })
+        expect(evaluateGuard(parseGuardInput(shellPayload('git -C docs mv old.md new.md')), configured, inspect)).toEqual({
+            decision: 'allow', reason: 'Repository moves are declared safe.',
         })
     })
 
@@ -737,6 +750,50 @@ describe('cockpit structure protection', () => {
         for (const command of ['rm notes/registration.json', 'rm -rf notes/codex-copy', 'rm notes/plugin/control.js']) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), linked, facts), command).toEqual({ decision: 'deny', reason: controlRemoval })
         }
+    })
+
+    it('denies every removal route for instances and secrets before declared command grants', () => {
+        const configured = policy()
+        configured.declaredAllows.push(
+            { argv: ['rm'], reason: 'Repository cleanup is declared safe.' },
+            { argv: ['mv'], reason: 'Repository moves are declared safe.' },
+        )
+        for (const command of ['rm config/active.instance', 'mv config/active.instance copy.txt']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'deny', reason: instanceMutation,
+            })
+        }
+        for (const command of ['rm env/.secrets/project/token', 'mv env/.secrets/project/token copy.txt']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'deny', reason: secretMutation,
+            })
+        }
+        expect(patch('*** Delete File: config/active.instance')).toEqual({ decision: 'deny', reason: instanceMutation })
+        expect(patch('*** Delete File: env/.secrets/project/token')).toEqual({ decision: 'deny', reason: secretMutation })
+        for (const command of ['rm notes/temporary.txt', 'mv notes/old.txt notes/new.txt']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect).decision, command).toBe('allow')
+        }
+
+        const secretRoot = `${root}/env/.secrets`
+        const linked = policy()
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], {
+            [instance]: { identity: '7:8', ancestors: ['7:1'] },
+            [secretRoot]: { identity: '7:9', ancestors: ['7:1'] },
+        })
+        linked.declaredAllows.push(
+            { argv: ['rm'], reason: 'Repository cleanup is declared safe.' },
+            { argv: ['mv'], reason: 'Repository moves are declared safe.' },
+        )
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            const aliases: IdentityFacts = {
+                [`${root}/notes/active.alias`]: { identity: '7:8', ancestors: [] },
+                [`${root}/notes/token.alias`]: { identity: null, ancestors: ['7:9'] },
+            }
+            return { status: 'resolved', path: resolved, symlink: false, ...(aliases[resolved] ?? { identity: null, ancestors: [] }) }
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('rm notes/active.alias')), linked, facts)).toEqual({ decision: 'deny', reason: instanceMutation })
+        expect(evaluateGuard(parseGuardInput(shellPayload('mv notes/token.alias copy.txt')), linked, facts)).toEqual({ decision: 'deny', reason: secretMutation })
     })
 
     it('keeps editing the configuration and removing ordinary files outside the boundary', () => {

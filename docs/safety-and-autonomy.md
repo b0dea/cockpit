@@ -48,7 +48,8 @@ not remove these protections or promote pending evidence.
 ## Hard controls and prompts
 
 The [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) denies mutation or staging of a
-declared environment instance. Staging a containing directory can include that instance and is
+declared environment instance, and mutation below a secrets directory. This includes command and
+patch removals as well as writes. Staging a containing directory can include an instance and is
 also denied. Executable use of a declared hosted database or vendor host is denied at hostname
 boundaries. Matching examines executable, argument, and environment-assignment-value roles;
 redirects, heredocs, comments, and definitions do not count as executable host use.
