@@ -629,8 +629,7 @@ export async function prepareGuardEvaluationPolicy(
                 return path
             }
             const canonicalRoot = directory(dirname(loaded.source.path))
-            const mainConfigRoot = resolve(checkout.mainCheckoutPath, relative(checkout.currentCheckoutPath, canonicalRoot))
-            siblingsRoot = directory(resolve(mainConfigRoot, config.cockpit.siblings_root))
+            siblingsRoot = directory(resolve(checkout.mainCheckoutPath, config.cockpit.siblings_root))
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
             for (const sibling of config.sibling) {

@@ -696,6 +696,9 @@ describe('pending guard policy construction', () => {
         mkdirSync(cockpitRoot)
         const nestedConfig = join(cockpitRoot, 'cockpit.toml')
         renameSync(configPath, nestedConfig)
+        const declaration = CockpitConfig.parse(parse(readFileSync(nestedConfig, 'utf8')))
+        declaration.cockpit.siblings_root = '.'
+        writeFileSync(nestedConfig, stringify(declaration))
         const loaded = await loadCockpitConfig(nestedConfig)
         if (loaded.kind !== 'complete') throw new Error('nested configuration did not load')
         const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: loaded.result.config.cockpit.name,
@@ -706,6 +709,7 @@ describe('pending guard policy construction', () => {
         const policy = result.result.policy
         expect(policy.canonicalRoot).toBe(cockpitRoot)
         expect(policy.configPath).toBe(nestedConfig)
+        expect(policy.allowedRoots).toEqual([cockpitRoot, join(root, 'app')])
         expect(policy.protectedIdentities.map(row => row.path)).toEqual(expect.arrayContaining([
             nestedConfig, ...GUARD_ROOT_PROTECTIONS.map(row => join(cockpitRoot, row.path)),
         ]))
