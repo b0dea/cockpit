@@ -33,7 +33,7 @@ const RUNTIME_DEPENDENCY_LICENSES = {
 type Attempt<T> = Readonly<{ kind: 'complete'; value: T }> | Readonly<{ kind: 'failure'; error: unknown }>
 let packedAttempt: Attempt<NpmPackArtifact> | undefined
 let installedPackageAttempt: Attempt<string> | undefined
-const packScratch = mkdtempSync(join(tmpdir(), 'cockpit-pack-test-'))
+const packScratch = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-pack-test-')))
 const packedGitBin = join(packScratch, 'untrusted-bin')
 const packedGitCanonical = join(packScratch, 'multicall-tool')
 const systemGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
@@ -679,7 +679,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
             })}\n`)
         }
         const preview = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
-        expect(preview.status, preview.stderr).toBe(0)
+        expect(preview.status, preview.stdout + preview.stderr).toBe(0)
         const result = JSON.parse(preview.stdout).result
         expect(result).toMatchObject({ root, target, stage: 'surface-previewed' })
         const prefix = target === 'claudecode' ? '.claude/skills/bootstrap/' : target === 'codexcli' ? '.agents/skills/bootstrap/' : '.opencode/skills/bootstrap/'
@@ -821,15 +821,15 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
     ].join('\n'))
     const env = { ...npmEnvironment(), HOME: home, XDG_STATE_HOME: join(home, 'state') }
     const run = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', product, '--target', 'codexcli',
-        '--answers', answers, ...extra, '--json'], { cwd: product, env, encoding: 'utf8' })
+        ...extra, '--json'], { cwd: product, env, encoding: 'utf8' })
     const preview = run()
     expect(preview.status, preview.stdout + preview.stderr).toBe(0)
     const shown = JSON.parse(preview.stdout).result
-    const pending = run('--accept-preview', shown.previewSha256)
+    const pending = run('--accept-preview', shown.previewSha256, '--answers', answers)
     expect(pending.status, pending.stdout + pending.stderr).toBe(0)
     const defaults = JSON.parse(pending.stdout).result.question
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
-    const completed = run('--accept-preview', shown.previewSha256, '--accept-defaults', defaults.expectedSha256)
+    const completed = run('--accept-preview', shown.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
     expect(completed.status, completed.stdout + completed.stderr).toBe(0)
     expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'environment-verified' })
     expect(statSync(join(root, '.git')).isDirectory()).toBe(true)
