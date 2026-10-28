@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import { acquireClaim } from '../environment/claims.js'
-import { checkoutId, cockpitId, holderId, stackId } from '../environment/identity.js'
+import { checkoutId, cockpitId, holderId, publicationCockpitId, stackId } from '../environment/identity.js'
 import { selectStateRoot, transactState } from '../environment/state.js'
 import { writeGuardLocalIdentity } from '../guards/local-identity.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
@@ -43,7 +43,7 @@ async function consumer() {
         capability: 'instructed' as const, writer: 'cockpit' as const, schemaVersion: 1 as const, ownership: 'shared-region' as const,
         regionId: 'synthetic', region: { format: 'markdown-delimited' as const, begin: '<!-- synthetic:begin -->', end: '<!-- synthetic:end -->', bytes: 'owned\n', sha256: digest('owned\n') } }
     const sharedBytes = 'foreign\n' + shared.region.begin + '\nowned\n' + shared.region.end + '\nretained\n'
-    const manifestInput = { root, cockpitId: cockpit, configPath, generation: digest('generation'), sourceSha256: digest(source),
+    const manifestInput = { root, cockpitId: publicationCockpitId({ name: 'generated-environment' }), configPath, generation: digest('generation'), sourceSha256: digest(source),
         personaSource: { path: 'fixtures/personas.json', sha256: digest('[]') }, owned: [{ path: ownedPath, sha256: digest('owned') }], surfaces: [shared] }
     const ledger = encodeOwnershipManifest(manifestInput)
     await mkdir(join(root, dirname(ownedPath)), { recursive: true })

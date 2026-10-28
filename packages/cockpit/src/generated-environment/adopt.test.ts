@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { loadCockpitConfig } from '../config/load.js'
-import { checkoutId, cockpitId, holderId, stackId } from '../environment/identity.js'
+import { checkoutId, cockpitId, holderId, publicationCockpitId, stackId } from '../environment/identity.js'
 import { selectStateRoot } from '../environment/state.js'
+import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { runSyncAdoption } from './adopt.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
@@ -38,6 +39,23 @@ async function adopt(configPath: string) {
 }
 
 describe('sync --adopt', () => {
+    it('refuses to adopt its own published settings after synchronization without changing them', async () => {
+        const { root, configPath } = await surfaceConsumer('adopt-published')
+        const synced = await syncGeneratedEnvironment({ configPath })
+        expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+        const paths = [configPath, join(root, '.claude/settings.json'), join(root, '.cockpit/generated-environment-ownership.json')]
+        const before = await Promise.all(paths.map(path => readFile(path)))
+
+        const refused = await runSyncAdoption({ configPath, adopt: ['.claude/settings.json'] }, request => syncGeneratedEnvironment(request))
+
+        expect(refused).toMatchObject({ status: 2, result: null, diagnostics: [expect.objectContaining({
+            code: 'SURFACE_ADOPTION_REFUSED', target: '.claude/settings.json',
+            message: expect.stringContaining("cockpit's own published output"),
+        })] })
+        expect(await Promise.all(paths.map(path => readFile(path)))).toEqual(before)
+        await expect(readFile(join(root, 'cockpit/adopted/.claude/settings.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
     it('names the adopt command when a team settings file is in the way', async () => {
         const { configPath } = await teamConsumer('adopt-conflict')
         const refused = await syncGeneratedEnvironment({ configPath })
@@ -76,6 +94,13 @@ describe('sync --adopt', () => {
     it('restores the team file byte for byte on uninstall', async () => {
         const { root, configPath } = await teamConsumer('adopt-uninstall')
         await adopt(configPath)
+        const ledgerPath = '.cockpit/generated-environment-ownership.json'
+        const manifest = parseOwnershipManifest(await readFile(join(root, ledgerPath), 'utf8'), {
+            root, configPath, cockpitId: publicationCockpitId({ name: 'generated-environment' }),
+        })
+        if (manifest.kind !== 'complete') throw new Error('synthetic published ownership unavailable')
+        const foreignPath = '.cursor/skills/cockpit-setup/foreign.txt'
+        await writeFile(join(root, foreignPath), 'retained\n')
         const home = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-adopt-state-')))
         homes.push(home)
         const cockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
@@ -87,6 +112,12 @@ describe('sync --adopt', () => {
             namespace: selected.value, ownerId: holderId({ stackId: stack, checkoutId: checkout, sessionId: 'synthetic-adoption' }),
         }, { authorizeStaleRemoval: async request => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest }) })
         expect(removed, JSON.stringify(removed)).toMatchObject({ kind: 'complete' })
+        if (removed.kind !== 'complete') return
+        expect(removed.committedPaths.slice().sort()).toEqual([...manifest.manifest.entries.map(entry => entry.path), ledgerPath].sort())
+        for (const entry of manifest.manifest.entries) if (entry.kind !== 'shared-region' && entry.path !== '.claude/settings.json') {
+            await expect(lstat(join(root, entry.path))).rejects.toMatchObject({ code: 'ENOENT' })
+        }
         expect(await readFile(join(root, '.claude/settings.json'), 'utf8')).toBe(TEAM_SETTINGS)
+        expect(await readFile(join(root, foreignPath), 'utf8')).toBe('retained\n')
     })
 })

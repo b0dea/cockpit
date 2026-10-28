@@ -17,7 +17,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { ENVIRONMENT_CODES } from '../environment/contract.js'
-import { cockpitId } from '../environment/identity.js'
+import { publicationCockpitId } from '../environment/identity.js'
 import { CockpitConfig, SurfaceAdoption } from '../schema.js'
 import { adoptedCopyPath, inspectAdoptedSettings } from '../surfaces/adoption.js'
 import { ADOPTABLE_SURFACE_PATHS, SURFACE_FILE_MAX_BYTES, type AdoptableSurfacePath } from '../surfaces/contract.js'
@@ -124,7 +124,7 @@ async function ownedPaths(root: string, configPath: string, name: string): Promi
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
         throw error
     }
-    const manifest = parseOwnershipManifest(bytes, { root, cockpitId: cockpitId({ name, mainCheckoutPath: root }), configPath })
+    const manifest = parseOwnershipManifest(bytes, { root, cockpitId: publicationCockpitId({ name }), configPath })
     if (manifest.kind !== 'complete') return refused('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is unreadable, so whether a file is cockpit\'s own cannot be decided', OWNERSHIP_PATH)
     return new Set(manifest.manifest.entries.map(entry => entry.path))
 }

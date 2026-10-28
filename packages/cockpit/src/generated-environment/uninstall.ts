@@ -8,10 +8,11 @@ import type { Diagnostic } from '../diagnostics.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { readActiveStackInventory } from '../environment/claims.js'
 import { ENVIRONMENT_CODES, snapshotGeneratedJson, type HolderId } from '../environment/contract.js'
-import { checkoutId, cockpitId, stackId } from '../environment/identity.js'
+import { checkoutId, cockpitId, publicationCockpitId, stackId } from '../environment/identity.js'
 import { abortStateTransaction, snapshotStateNamespace, transactState, type StateNamespace } from '../environment/state.js'
 import { observeGuardLocalRemoval, removeObservedGuardLocal } from '../guards/local-identity.js'
 import { SURFACE_FILE_MAX_BYTES } from '../surfaces/contract.js'
+import { SURFACE_PUBLICATION_ANCHORS } from '../surfaces/harness-registry.js'
 import { classifyGeneratedPaths, parseOwnershipManifest, projectGeneratedPathFacts, removeSharedOwnership, type OwnershipManifest } from '../surfaces/ownership.js'
 import { observeSiblingGuides } from '../surfaces/projection.js'
 import { admitPublicationPlan, expectedState, nodeAuthority, readAnchoredBatches, readAnchoredFile, runPublicationPlan,
@@ -96,14 +97,14 @@ async function remove(
         if (!node) return abortStateTransaction(refuse('GENERATED_EXECUTABLE_UNAVAILABLE', 'the current Node executable could not be authenticated', process.execPath))
         const ledger = await readAnchoredFile(root, OWNERSHIP_PATH, MAX_OWNERSHIP_BYTES, node, adapters)
         if (ledger.kind !== 'complete') return abortStateTransaction(refuse(ledger.kind === 'missing' ? 'GENERATED_OWNERSHIP_MISSING' : 'GENERATED_OWNERSHIP_INVALID', 'removal requires readable durable ownership metadata', OWNERSHIP_PATH))
+        const authority = { root, cockpitId: publicationCockpitId({ name: loaded.result.config.cockpit.name }), configPath: loaded.result.source.path }
         let manifest
-        try { manifest = parseOwnershipManifest(new TextDecoder('utf-8', { fatal: true }).decode(ledger.bytes), { root, cockpitId: cockpit, configPath: loaded.result.source.path }) } catch {
+        try { manifest = parseOwnershipManifest(new TextDecoder('utf-8', { fatal: true }).decode(ledger.bytes), authority) } catch {
             return abortStateTransaction(refuse('GENERATED_OWNERSHIP_INVALID', 'generated ownership bytes cannot be decoded', OWNERSHIP_PATH))
         }
         if (manifest.kind === 'unsupported') return abortStateTransaction(refuse('GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED', `generated ownership format ${manifest.format} is not supported`, OWNERSHIP_PATH))
         if (manifest.kind !== 'complete') return abortStateTransaction(refuse('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is malformed or unsafe', OWNERSHIP_PATH))
         const owned = manifest.manifest
-        const authority = { root, cockpitId: cockpit, configPath: loaded.result.source.path }
         const local = mode === 'uninstall' ? await observeGuardLocalRemoval(root, loaded.result.source.path, loaded.result.source.sha256) : { kind: 'absent' as const }
         if (local.kind === 'refusal') return abortStateTransaction(refuse('GENERATED_LOCAL_STATE_CONFLICT', local.message, '.cockpit/local'))
         const mutations: PublicationMutation[] = []
@@ -143,11 +144,15 @@ async function remove(
                 if (read.kind === 'complete' || classified.paths[index]?.state !== 'unchanged') return abortStateTransaction(refuse('GENERATED_STALE_ARTIFACT_DRIFT', 'uninstall requires exact unchanged manifest leaves', entry.path))
                 const expected = expectedState(read)
                 if (!expected) return abortStateTransaction(refuse('GENERATED_STALE_ARTIFACT_DRIFT', 'owned target identity is unknown', entry.path))
+                // Compact authenticated surface leaves without widening their exact removal authority.
+                const compactAnchor = 'harnesses' in entry ? SURFACE_PUBLICATION_ANCHORS.find(anchor => entry.path.startsWith(`${anchor}/`)) : undefined
                 if (entry.kind === 'shared-region' && read.kind === 'file') {
                     const postimage = removeSharedOwnership(new TextDecoder('utf-8', { fatal: true }).decode(read.bytes), entry, owned)
                     if (postimage.kind !== 'complete') return abortStateTransaction(refuse(postimage.diagnostic.code, postimage.diagnostic.message, entry.path))
-                    mutations.push({ path: entry.path, phase: 'stale', operation: 'write-file', expected, bytes: postimage.bytes, sha256: createHash('sha256').update(postimage.bytes).digest('hex') })
-                } else mutations.push({ path: entry.path, phase: 'stale', operation: entry.kind === 'symlink' ? 'remove-symlink' : 'remove-file', expected })
+                    mutations.push({ path: entry.path, phase: 'stale', operation: 'write-file', expected, bytes: postimage.bytes, sha256: createHash('sha256').update(postimage.bytes).digest('hex'),
+                        ...(compactAnchor ? { compactAnchor } : {}) })
+                } else mutations.push({ path: entry.path, phase: 'stale', operation: entry.kind === 'symlink' ? 'remove-symlink' : 'remove-file', expected,
+                    ...(compactAnchor ? { compactAnchor } : {}) })
             }
         }
         const publication = await admitPublicationPlan({ authority, generation: owned.generation, sourceSha256: loaded.result.source.sha256,
