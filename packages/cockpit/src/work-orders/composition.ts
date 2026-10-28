@@ -482,7 +482,7 @@ async function executable(directories: readonly string[], name: string): Promise
             if (resolved.state !== 'available') continue
             const canonical = resolved.value.canonicalPath
             const stat = lstatSync(canonical)
-            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_EXECUTABLE_BYTES
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_EXECUTABLE_BYTES
                 || (stat.mode & 0o111) === 0 || realpathSync(canonical) !== canonical) continue
             return Object.freeze({ path: canonical, sha256: resolved.value.sha256, bytes: stat.size })
         } catch { continue }

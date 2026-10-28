@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -100,6 +100,21 @@ it('rejects malformed and null Git object identities in refs and worktrees', asy
 })
 
 describe('configured durable work application composition', () => {
+    it('reports status when Git has another hard link', async () => {
+        const fixture = await configuredFixture({ hardlinkedGit: true })
+        const git = await lstat(join(fixture.root, 'tools/git'))
+        if (!fixture.hardlinkedGitAlias) throw new Error('hardlinked Git fixture alias is unavailable')
+        const hardlink = await lstat(fixture.hardlinkedGitAlias)
+        expect({ dev: git.dev, ino: git.ino, nlink: git.nlink }).toEqual({ dev: hardlink.dev, ino: hardlink.ino, nlink: 2 })
+
+        const status = await runWorkApplication({ operation: 'work-status' }, fixture.composition)
+        expect(status, JSON.stringify(status)).toMatchObject({ kind: 'complete' })
+        const selected = await runWorkApplication({ operation: 'work-status', workOrderId: 'WO-001' }, fixture.composition)
+        expect(selected, JSON.stringify(selected)).toMatchObject({
+            kind: 'complete', value: { orders: [{ id: 'WO-001' }] },
+        })
+    })
+
     it('admits the configured root as a canonical sibling repository', async () => {
         const fixture = await configuredFixture({ rootSibling: true })
         await expect(runWorkApplication({ operation: 'work-status' }, fixture.composition)).resolves.toMatchObject({ kind: 'complete' })

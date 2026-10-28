@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
@@ -50,7 +50,7 @@ process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: mode ==
 `
 
 export function createWorkCompositionFixtureSupport(roots: string[]) {
-async function configuredFixture(options: Readonly<{ rootSibling?: boolean; externalSibling?: boolean; authority?: readonly string[] }> = {}) {
+async function configuredFixture(options: Readonly<{ rootSibling?: boolean; externalSibling?: boolean; authority?: readonly string[]; hardlinkedGit?: boolean }> = {}) {
     const fixtureRoot = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-work-application-'))); roots.push(fixtureRoot)
     const root = options.externalSibling ? join(fixtureRoot, 'cockpit') : fixtureRoot
     if (options.externalSibling) await mkdir(root)
@@ -195,11 +195,17 @@ const result = spawnSync('/usr/bin/git', argv, { stdio: 'inherit' }); process.ex
     }
     const synced = await syncGeneratedEnvironment({ configPath })
     if (synced.kind !== 'complete') throw new Error(`generated fixture sync refused: ${JSON.stringify(synced.diagnostics)}`)
+    let hardlinkedGitAlias: string | undefined
+    if (options.hardlinkedGit) {
+        const aliases = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-work-tool-links-'))); roots.push(aliases)
+        hardlinkedGitAlias = join(aliases, 'git')
+        await link(join(tools, 'git'), hardlinkedGitAlias)
+    }
     await writeFile(join(applicationRoot, '.env.example'), 'SYNTHETIC=true\n')
     const environment = Object.freeze({ ...process.env, PATH: `${tools}${delimiter}${process.env.PATH ?? ''}` })
     const configured = await createConfiguredWorkApplicationComposition({ configPath, env: environment })
     if (configured.kind !== 'complete') throw new Error(configured.reason)
-    return { root, applicationRoot, configPath, environment, composition: configured.composition, secondBytes }
+    return { root, applicationRoot, configPath, environment, composition: configured.composition, secondBytes, hardlinkedGitAlias }
 }
 
 return { configuredFixture }
