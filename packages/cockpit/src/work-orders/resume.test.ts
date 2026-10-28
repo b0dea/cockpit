@@ -14,7 +14,7 @@ function executionFixture(text = workOrderFixture({ status: 'active' })) {
     const parsed = parseWorkOrder(Buffer.from(text))
     assert(parsed.ok)
     const contract = parsed.value
-    const repositories = [{ path: 'product', revision: 'a'.repeat(40) }]
+    const repositories = [{ path: 'product', revision: 'a'.repeat(40), worktreeDigest: 'b'.repeat(64) }]
     const writer = { actor: 'executor', at: '2026-01-03T00:00:00.000Z' }
     const created = createWorkOrderState(contract, { writer, repositories, steps: contract.plan.map((_, index) => ({ command: contract.verification[index].argv, requires: index ? [1] : [] })) })
     assert(created.kind === 'complete')
@@ -61,11 +61,11 @@ describe('consumer resume decisions', () => {
         }, writer, store)
         const orders = [{ contract, state: await store.read() }]
         expect(resumeWorkOrder({ orders, repositories }, defaultPolicy)).toMatchObject({ kind: 'ready', step: 2, replay: false })
-        const stale = resumeWorkOrder({ orders, repositories: [{ path: 'product', revision: 'b'.repeat(40) }] }, defaultPolicy)
+        const stale = resumeWorkOrder({ orders, repositories: [{ path: 'product', revision: 'b'.repeat(40), worktreeDigest: 'c'.repeat(64) }] }, defaultPolicy)
         expect(stale).toMatchObject({ kind: 'ready', step: 1, replay: true, layers: { local: [{ freshness: 'stale' }], runtime: [], deployment: [] } })
         assert(stale.kind === 'ready')
         expect(stale.drift).toEqual([{ path: 'product', expected: 'a'.repeat(40), actual: 'b'.repeat(40),
-            expectedWorktreeDigest: null, actualWorktreeDigest: null }])
+            expectedWorktreeDigest: 'b'.repeat(64), actualWorktreeDigest: 'c'.repeat(64) }])
     })
 
     it('stops for a human gap or repeated failure without emitting an executable next command', async () => {
@@ -95,7 +95,7 @@ describe('consumer resume decisions', () => {
         const parsed = parseWorkOrder(Buffer.from(workOrderFixture({ status: 'active' }).replace('["npm","test","--","cache-1"]', JSON.stringify(['node', "a'b; $(echo unsafe)"]))))
         if (!parsed.ok) throw new Error('fixture invalid')
         const contract = parsed.value
-        const repositories = [{ path: 'product', revision: 'a'.repeat(40) }]
+        const repositories = [{ path: 'product', revision: 'a'.repeat(40), worktreeDigest: 'b'.repeat(64) }]
         const created = createWorkOrderState(contract, { writer: { actor: 'executor', at: '2026-01-03T00:00:00.000Z' }, repositories, steps: contract.plan.map((_, index) => ({ command: contract.verification[index].argv, requires: [] })) })
         if (created.kind !== 'complete') throw new Error('state invalid')
         expect(resumeWorkOrder({ orders: [{ contract, state: encodeWorkOrderState(contract, created.value) }], repositories }, defaultPolicy)).toMatchObject({ kind: 'ready', command: "'node' 'a'\\''b; $(echo unsafe)'" })

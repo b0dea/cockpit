@@ -1043,6 +1043,16 @@ describe('active stack inventory', () => {
         await expect(readActiveStackInventory(state)).resolves.toEqual({ kind: 'complete', value: [] })
     })
 
+    it('reads only the current coordination store', async () => {
+        const state = await namespace()
+        for (const address of [state.paths.claim(stackId), state.paths.lease(stackId)]) {
+            await mkdir(dirname(address.path), { recursive: true })
+            await writeFile(address.path, 'superseded bytes')
+        }
+
+        await expect(readActiveStackInventory(state)).resolves.toEqual({ kind: 'complete', value: [] })
+    })
+
     it('refuses when the coordination directory disappears after inspection starts', async () => {
         const state = await namespace()
         const directory = dirname(state.paths.coordination(stackId).path)

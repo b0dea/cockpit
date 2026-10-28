@@ -46,11 +46,17 @@ describe('durable work-order progress', () => {
         const proof = { contractDigest: contract.digest, repositories }
         expect(workOrderProofIsCurrent(proof, contract, repositories)).toBe(true)
         expect(workOrderProofIsCurrent(proof, contract, [{ ...repositories[0]!, worktreeDigest: 'c'.repeat(64) }])).toBe(false)
-        expect(workOrderProofIsCurrent({ contractDigest: contract.digest,
-            repositories: [{ path: 'product', revision: 'a'.repeat(40) }] }, contract, repositories)).toBe(false)
-        expect(workOrderProofIsCurrent({ contractDigest: contract.digest,
-            repositories: [{ path: 'product', revision: 'a'.repeat(40) }] }, contract,
-        [{ path: 'product', revision: 'a'.repeat(40) }])).toBe(true)
+    })
+
+    it('refuses execution state without current worktree or reconciliation evidence', () => {
+        const { contract, state } = executionFixture()
+        expect(validateWorkOrderRepositories([{ path: 'product', revision: 'a'.repeat(40) }])).toBeUndefined()
+        expect(readWorkOrderState(contract, Buffer.from(JSON.stringify({ ...state,
+            repositories: state.repositories.map(({ worktreeDigest: _, ...repository }) => repository),
+        })))).toMatchObject({ kind: 'refusal', code: 'WO_STATE_INVALID', message: expect.stringContaining('repositories.0.worktreeDigest') })
+        const { reconciliations: _, ...withoutReconciliations } = state
+        expect(readWorkOrderState(contract, Buffer.from(JSON.stringify(withoutReconciliations))))
+            .toMatchObject({ kind: 'refusal', code: 'WO_STATE_INVALID', message: expect.stringContaining('reconciliations') })
     })
 
     it('round trips a bounded execution contract without process-local capabilities', () => {
@@ -225,7 +231,7 @@ describe('durable work-order progress', () => {
         const { contract, state, writer, repositories } = executionFixture()
         const oversized: WorkOrderExecutionState = { ...state, evidence: Array.from({ length: 64 }, (_, i) => ({ layer: 'local', reference: `${i}${'x'.repeat(4_000)}`, contractDigest: contract.digest, repositories, writer })) }
         expect(() => encodeWorkOrderState(contract, oversized)).toThrow('WO_STATE_INVALID')
-        const input = { writer, repositories: Array.from({ length: 64 }, (_, i) => ({ path: `product-${i}/${'x'.repeat(4_080)}`, revision: 'a'.repeat(40) })), steps: state.steps }
+        const input = { writer, repositories: Array.from({ length: 64 }, (_, i) => ({ path: `product-${i}/${'x'.repeat(4_080)}`, revision: 'a'.repeat(40), worktreeDigest: 'b'.repeat(64) })), steps: state.steps }
         expect(Buffer.byteLength(JSON.stringify(input))).toBeGreaterThan(262_144)
         expect(createWorkOrderState(contract, input)).toMatchObject({ kind: 'refusal', code: 'WO_STATE_INVALID' })
     })

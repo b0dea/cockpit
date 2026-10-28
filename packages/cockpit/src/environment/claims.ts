@@ -895,27 +895,6 @@ export async function readActiveStackInventory(
     const ownedNamespace = snapshotStateNamespace(namespace)
     if (!ownedNamespace) return refuse(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state namespace is malformed', 'state namespace')
     namespace = ownedNamespace
-    for (const legacy of [namespace.paths.claim(`stack:${'0'.repeat(64)}` as StackId), namespace.paths.lease(`stack:${'0'.repeat(64)}` as StackId)]) {
-        const directory = dirname(legacy.path)
-        let inspected = false
-        try {
-            const status = await lstat(directory)
-            inspected = true
-            if (!status.isDirectory() || status.isSymbolicLink()) {
-                return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'legacy coordination authority must be removed before observation', directory)
-            }
-            const handle = await opendir(directory)
-            const first = await handle.read()
-            await handle.close()
-            if (first !== null) {
-                return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'legacy coordination authority must be removed before observation', directory)
-            }
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || inspected) {
-                return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'legacy coordination authority could not be inspected', directory)
-            }
-        }
-    }
     const directory = dirname(namespace.paths.coordination(`stack:${'0'.repeat(64)}` as StackId).path)
     let inspected = false
     try {

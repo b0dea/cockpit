@@ -21,7 +21,7 @@ it('resumes from durable consumer bytes alone while keeping every evidence layer
         const parsed = parseWorkOrder(Buffer.from(text))
         assert(parsed.ok)
         const contract = parsed.value
-        const repositories = [{ path: 'product', revision: 'a'.repeat(40) }]
+        const repositories = [{ path: 'product', revision: 'a'.repeat(40), worktreeDigest: 'b'.repeat(64) }]
         const writer = { actor: 'executor', at: '2026-01-03T00:00:00.000Z' }
         const created = createWorkOrderState(contract, { writer, repositories, steps: contract.plan.map((_, index) => ({ command: contract.verification[index].argv, requires: index ? [1] : [] })) })
         assert(created.kind === 'complete')

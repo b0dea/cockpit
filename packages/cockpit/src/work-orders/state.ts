@@ -18,7 +18,7 @@ const timestamp = z.string().refine((value) => {
 const Writer = z.object({ actor: text.max(256), at: timestamp }).strict()
 const path = z.string().max(4_096).regex(/^[A-Za-z0-9._/-]+$/).refine((value) => value.split('/').every((part) => part !== '' && part !== '.' && part !== '..'))
 const Repository = z.object({ path, revision: z.string().regex(/^(?=[a-f0-9]*[1-9a-f])(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
-    worktreeDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict()
+    worktreeDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 const Repositories = z.array(Repository).min(1).max(WORK_ORDER_STATE_LIMITS.repositories)
 const Command = z.array(text).min(1).max(WORK_ORDER_LIMITS.arguments).refine((value) => Buffer.byteLength(JSON.stringify(value)) <= WORK_ORDER_LIMITS.commandBytes)
 const Layer = z.enum(['source', 'local', 'ci', 'runtime', 'deployment'])
@@ -43,7 +43,7 @@ const State = z.object({
     evidence: z.array(Binding.extend({ writer: Writer }).strict()).max(WORK_ORDER_STATE_LIMITS.records),
     decisions: z.array(z.object({ decision: Decision, writer: Writer }).strict()).max(WORK_ORDER_LIMITS.decisions),
     reservation: Reservation.optional(),
-    reconciliations: z.array(z.object({ reservation: Reservation, reason: text, writer: Writer }).strict()).max(WORK_ORDER_STATE_LIMITS.records).default([]),
+    reconciliations: z.array(z.object({ reservation: Reservation, reason: text, writer: Writer }).strict()).max(WORK_ORDER_STATE_LIMITS.records),
 }).strict()
 
 export type WorkOrderWriter = z.infer<typeof Writer>

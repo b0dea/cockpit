@@ -33,7 +33,7 @@ function harness(attemptCap = 2) {
     expect(isCurrentWorkOrderAcceptance(acceptedDraft, parsed.value)).toBe(false)
     expect(isCurrentWorkOrderAcceptance(activated.accepted, activated.accepted.contract)).toBe(true)
     expect(Buffer.from(activated.bytes).toString()).toBe(source.replace('status: draft', 'status: active'))
-    const repositories = [{ path: 'product', revision: 'a'.repeat(40) }]
+    const repositories = [{ path: 'product', revision: 'a'.repeat(40), worktreeDigest: 'b'.repeat(64) }]
     let currentRepositories = repositories
     const state = createWorkOrderState(activated.accepted.contract, {
         writer: { actor: 'fixture-executor', at: new Date(now).toISOString() }, repositories,
@@ -172,13 +172,13 @@ describe('accepted execution boundary', () => {
                 repositories: initial.status.repositories, command: h.accepted.contract.verification[0].argv },
         }, initial.writer, h.dependencies.store)
         assert(checked.kind === 'complete')
-        h.repositories([{ path: 'product', revision: 'b'.repeat(40) }])
+        h.repositories([{ path: 'product', revision: 'b'.repeat(40), worktreeDigest: 'c'.repeat(64) }])
 
         expect(await executeWorkOrderStep(h.input(), h.dependencies)).toEqual({ kind: 'complete', step: 1, replay: true })
         expect(await executeWorkOrderStep(h.input(), h.dependencies)).toEqual({ kind: 'complete', step: 2, replay: false })
         const current = readWorkOrderState(h.accepted.contract, h.bytes())
         assert(current.kind === 'complete')
-        expect(current.value.steps[0].checked?.repositories).toEqual([{ path: 'product', revision: 'b'.repeat(40) }])
+        expect(current.value.steps[0].checked?.repositories).toEqual([{ path: 'product', revision: 'b'.repeat(40), worktreeDigest: 'c'.repeat(64) }])
     })
 
     it('records failed approaches and stops after the bounded repeated-failure limit', async () => {
