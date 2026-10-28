@@ -2288,7 +2288,7 @@ describe('init command admission', () => {
         scratch.push(directory)
         const canonical = realpathSync(directory)
         const answers = join(canonical, 'answers.toml')
-        writeFileSync(answers, Buffer.from([0xc3, 0x28]))
+        writeFileSync(answers, Buffer.concat([Buffer.from('label = "'), Buffer.from([0xc3, 0x28]), Buffer.from('"\n')]))
 
         const result = spawnSync(process.execPath, ['--import', 'tsx', cli,
             'init', canonical, '--target', 'codexcli', '--json',
