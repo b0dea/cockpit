@@ -107,10 +107,12 @@ cockpit own several repositories neutrally. It grows from one repository to many
 - **Inside an existing product repository** (a Git checkout with a package manifest), `init`
   asks first where the cockpit lives, under the answers key `cockpit.root`, and never picks for
   you: `--accept-preview` and `--accept-defaults` refuse with `INIT_COCKPIT_ROOT_REQUIRED` until
-  it is answered. `"dedicated"`, the recommendation, creates `../<repo>-cockpit`, the one
-  directory `init` writes outside the folder it ran in, and declares the repository as its first
-  sibling. `"in-repo"` makes the product repository the cockpit root: it then carries the cockpit
-  files, and the cockpit cannot neutrally own several repositories.
+  it is answered. `"dedicated"`, the recommendation, creates `../<repo>-cockpit`, initialises it
+  as a local Git repository, and declares the product repository as its first sibling. Git
+  identity lets setup and lifecycle checks authenticate the new cockpit before they run. This is
+  the one directory `init` writes outside the folder it ran in. `"in-repo"` makes the product
+  repository the cockpit root: it then carries the cockpit files, and the cockpit cannot
+  neutrally own several repositories.
 - **To move an in-repo cockpit out later**, run `cockpit init` again from the product repository
   with `cockpit.root = "dedicated"`, which builds the dedicated cockpit beside it. Then delete
   from the product repository every path listed in `.cockpit/generated-environment-ownership.json`,

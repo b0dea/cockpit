@@ -50,7 +50,7 @@ import { createHealthCommandAdapters } from './environment/health-composition.js
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
-import { runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
+import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
 import {
     issueSetupRunContext,
     setupEnvironment,
@@ -713,8 +713,8 @@ function optionCount(args: readonly string[], name: string): number {
 
 const ANSWERS_FILE_BYTE_LIMIT = 262_144
 
-/** The one write init makes outside its root: the dedicated folder named in the previewed answer, never its parents. */
-async function createDedicatedCockpitRoot(path: string): Promise<void> {
+/** The only path init creates outside its root: the previewed dedicated repository, never its parents. */
+async function createDedicatedCockpitRoot(path: string, env: Readonly<Record<string, string | undefined>>): Promise<void> {
     try { await mkdir(path, { mode: 0o755 }) }
     catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
@@ -723,6 +723,8 @@ async function createDedicatedCockpitRoot(path: string): Promise<void> {
     if (!status.isDirectory() || status.isSymbolicLink() || await realpath(path) !== path) {
         throw new Error(`${path} exists and is not a plain directory`)
     }
+    const initialised = await initializeLocalGitRepository({ path, env }, { execute: executeProbe })
+    if (initialised.kind === 'refusal') throw new Error(initialised.reason)
 }
 
 /** Reads the consent digests and answers file of an unattended init; absent flags mean a terminal run. */
@@ -1081,7 +1083,8 @@ async function invokeHandler(
     request: HandlerRequest,
     handlers: Partial<CommandHandlers>,
     operators: OperatorHandlers,
-    options: { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined },
+    options: { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined;
+        readonly env: Readonly<Record<string, string | undefined>> },
     io: CliIo,
 ): Promise<CommandOutcome> {
     const unavailable = (): CommandOutcome => usageOutcome(
@@ -1120,7 +1123,7 @@ async function invokeHandler(
             try { return await prompt.question('Type the exact bootstrap preview digest to accept: ') } finally { prompt.close() }
         },
         writeArtifact: (destination, artifact) => writeFile(destination, artifact, { flag: 'wx', mode: 0o600 }),
-        createCockpitRoot: createDedicatedCockpitRoot,
+        createCockpitRoot: path => createDedicatedCockpitRoot(path, options.env),
         chooseCockpitRoot: async question => {
             if (!io.stdin) return undefined
             io.stderr.write(`${JSON.stringify(question)}\n`)
@@ -1411,6 +1414,7 @@ export async function runCli(
                         interactive: parsed.values.interactive === true,
                         json: parsed.values.json === true,
                         ci: (runtime.env ?? process.env).CI,
+                        env: runtime.env ?? process.env,
                     }, io)
                 } catch (error) {
                     outcome = usageOutcome(

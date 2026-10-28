@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -2061,6 +2061,49 @@ it('dispatches comparison operations only after common metadata admission and em
 
 
 describe('init command admission', () => {
+    it('initialises a dedicated cockpit root as a Git repository before continuing init', async () => {
+        const product = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-init-product-')))
+        const dedicated = `${product}-cockpit`
+        const answers = join(product, 'answers.toml')
+        const previewSha256 = 'a'.repeat(64)
+        writeFileSync(answers, '[cockpit]\nroot = "dedicated"\n')
+        const application = vi.fn(async (input: import('./environment/init-application.js').InitApplicationInput) => ({
+            kind: input.accepted ? 'complete' as const : 'pending' as const,
+            status: 0 as const,
+            artifact: null,
+            destination: null,
+            diagnostics: [],
+            result: {
+                stage: input.accepted ? 'environment-verified' as const : 'surface-previewed' as const,
+                root: input.root,
+                target: input.target,
+                previewSha256,
+                files: [],
+                nextCommand: input.accepted ? 'bootstrap complete' : 'accept exact preview',
+                ...(input.cockpitRoot === undefined ? { cockpitRoot: {
+                    field: 'cockpit.root' as const,
+                    why: 'the product repository must stay separate from cockpit control files',
+                    recommended: 'dedicated' as const,
+                    options: [{ answer: 'dedicated' as const, root: dedicated, creates: [dedicated],
+                        siblingsRoot: '..', firstSibling: product, tradeOff: 'keeps control files separate' }],
+                } } : {}),
+            },
+        }))
+        try {
+            const status = await runCli(['init', product, '--target', 'codexcli', '--json',
+                '--accept-preview', previewSha256, '--answers', answers], {
+                stdout: { write: () => true }, stderr: { write: () => true },
+            }, { init: application }, { env: { PATH: process.env.PATH } })
+
+            expect(status).toBe(0)
+            expect(application).toHaveBeenCalledTimes(3)
+            expect(statSync(join(dedicated, '.git')).isDirectory()).toBe(true)
+        } finally {
+            rmSync(dedicated, { recursive: true, force: true })
+            rmSync(product, { recursive: true, force: true })
+        }
+    })
+
     it('binds one explicit root and target and keeps JSON preview read-only', async () => {
         for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {
             let stdout = ''

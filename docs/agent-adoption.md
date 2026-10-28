@@ -171,8 +171,9 @@ cockpit.root = "dedicated"   # or "in-repo"
 An option with `unavailable` set cannot be taken here, for example a repository directory name
 that is not a valid sibling slug; it says why and what to do instead.
 
-With `"dedicated"`, the next run creates the folder listed in that option's `creates`, and every later
-step runs there with the repository as its first sibling (`dir` is the repository's name,
+With `"dedicated"`, the next run creates the folder listed in that option's `creates`, initialises
+it as a local Git repository, and runs every later step there with the product repository as its
+first sibling (`dir` is the product repository's name,
 `siblings_root = ".."`). Keep running the same command from the product repository with the same
 answers file, not from the new folder, which `init` would treat as a fresh empty cockpit;
 `result.root` shows the cockpit root, and the `sync`, `check` and `sibling add`

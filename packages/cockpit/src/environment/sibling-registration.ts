@@ -24,7 +24,7 @@ import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 export const mechanism = {
     id: 'sibling-registration',
     module: 'packages/cockpit/src/environment/sibling-registration.ts',
-    exports: ['runSiblingAdd', 'runSiblingRemove'],
+    exports: ['initializeLocalGitRepository', 'runSiblingAdd', 'runSiblingRemove'],
 } as const
 
 export interface SiblingAddInput {
@@ -105,6 +105,23 @@ async function runGit(dependencies: SiblingDependencies, step: ExecutionStep): P
         return { kind: 'failed', exitCode: outcome.execution.exitCode, detail: `${outcome.code}${stderr ? `: ${stderr.split('\n', 1)[0]!.slice(0, 256)}` : ''}` }
     }
     return { kind: 'complete', text: decode(outcome.stdout) }
+}
+
+export type GitRepositoryInitializationOutcome = Readonly<{ kind: 'complete' }>
+    | Readonly<{ kind: 'refusal'; reason: string }>
+
+/** Initialises one local repository through the authenticated process seam used by sibling creation. */
+export async function initializeLocalGitRepository(
+    input: Readonly<{ path: string; env: Readonly<Record<string, string | undefined>> }>,
+    dependencies: SiblingDependencies,
+): Promise<GitRepositoryInitializationOutcome> {
+    const git = await resolveGitExecutable({ PATH: input.env.PATH ?? '' })
+    if (git.state !== 'available') return { kind: 'refusal', reason: git.reason }
+    const initialised = await runGit(dependencies, gitStep(git.value, dirname(input.path),
+        { PATH: input.env.PATH ?? '' }, 'repository:init', ['init', input.path]))
+    return initialised.kind === 'complete'
+        ? { kind: 'complete' }
+        : { kind: 'refusal', reason: `git init failed (${initialised.detail})` }
 }
 
 /** `FOO-bar` becomes `FOO_BAR_DIR`; a slug that cannot start a variable name must be given one with --var. */

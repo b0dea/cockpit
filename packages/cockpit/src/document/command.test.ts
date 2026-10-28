@@ -1040,8 +1040,11 @@ describe('operator-confirmed document completion', () => {
         const product = realpathSync(temporaryPath('store').replace(/store$/, '')) + '/store'
         mkdirSync(join(product, 'src'), { recursive: true })
         writeFileSync(join(product, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.mjs' } }))
+        mkdirSync(join(product, 'plugin'))
+        writeFileSync(join(product, 'plugin', 'package.json'), JSON.stringify({ scripts: { dev: 'node plugin.mjs' } }))
         expect(await classifyEstateObservation({ root: product }, { observe: observePublicEstate }))
-            .toMatchObject({ kind: 'complete', result: { classification: 'no-runnable-product', runnable: [] } })
+            .toMatchObject({ kind: 'complete', result: { classification: 'one-sibling',
+                runnable: [{ slug: 'plugin', path: 'plugin', disposition: 'confirmed' }] } })
         const estate = { root: product, rootIsRepository: true as const }
         const observed = await classifyEstateObservation(estate, { observe: observePublicEstate })
         expect(observed).toMatchObject({ kind: 'complete', result: { classification: 'one-sibling',

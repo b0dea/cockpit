@@ -248,7 +248,7 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
     if (!captured) throw new TypeError('public estate observation requires one canonical absolute root and optionally named repositories')
     const root = await realpath(captured.root)
     if (root !== captured.root) throw new TypeError('public estate root is linked or non-canonical')
-    const entries = await estateDirectories(root, captured.repositories)
+    const entries = captured.rootIsRepository ? [] : await estateDirectories(root, captured.repositories)
     const repositories: EstateRepositoryObservation[] = []
     if (captured.rootIsRepository) {
         const slug = basename(root)
@@ -369,7 +369,7 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
 
 async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], scope: ObservationScope): Promise<boolean> {
     try {
-        const candidates = [...(scope.rootIsRepository ? [{ name: '.' }] : []), ...await estateDirectories(root, scope.repositories)]
+        const candidates = scope.rootIsRepository ? [{ name: '.' }] : await estateDirectories(root, scope.repositories)
         for (const directory of candidates) {
             const manifests: string[] = []
             for (const manifest of PUBLIC_MANIFESTS) {

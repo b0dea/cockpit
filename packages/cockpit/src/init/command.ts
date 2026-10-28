@@ -41,7 +41,7 @@ export interface InitCommandIo {
     readonly writeArtifact: (destination: string, artifact: string) => Promise<void>
     readonly answerQuestion?: (question: NonNullable<NonNullable<InitApplicationOutcome['result']>['question']>) => Promise<string | undefined>
     readonly chooseCockpitRoot?: (question: CockpitRootQuestion) => Promise<string | undefined>
-    /** Creates one directory beside the product repository, or accepts it when it is already a plain directory; it never creates parents. */
+    /** Creates and initialises one repository beside the product, or initialises its existing plain directory; it never creates parents. */
     readonly createCockpitRoot?: (path: string) => Promise<void>
 }
 
