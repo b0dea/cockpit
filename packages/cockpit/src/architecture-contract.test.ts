@@ -2344,6 +2344,7 @@ const GENERATED_COMPOSE_AUTHORITY_TYPE = 'GeneratedComposeArtifactAuthority'
 const GENERATED_COMPOSE_PROJECTION = 'projectGeneratedComposeArtifactAuthority'
 const GENERATED_RENDER_AUTHENTICATOR = 'authenticateGeneratedRender'
 const GENERATED_COMPOSE_AUTHENTICATOR = 'authenticateGeneratedComposeArtifact'
+const GENERATED_COMPOSE_RUNTIME_IDENTITY = 'projectGeneratedComposeRuntimeIdentity'
 
 function generatedComposeAuthorityViolations(sources: Sources): string[] {
     const code = 'ARCH048_GENERATED_COMPOSE_AUTHORITY'
@@ -2361,6 +2362,11 @@ function generatedComposeAuthorityViolations(sources: Sources): string[] {
         [GENERATED_COMPOSE_PROJECTION, new Set([stack, ...tests])],
         [GENERATED_RENDER_AUTHENTICATOR, new Set([stack, ...tests])],
         [GENERATED_COMPOSE_AUTHENTICATOR, new Set([
+            'packages/cockpit/src/environment/runtime.ts',
+            'packages/cockpit/src/environment/runtime.test.ts',
+            ...tests,
+        ])],
+        [GENERATED_COMPOSE_RUNTIME_IDENTITY, new Set([
             'packages/cockpit/src/environment/runtime.ts',
             'packages/cockpit/src/environment/runtime.test.ts',
             ...tests,
@@ -4106,20 +4112,22 @@ describe('product architecture contract', () => {
             export function authenticateGeneratedRender() {}
             export function projectGeneratedComposeArtifactAuthority() {}
             export function authenticateGeneratedComposeArtifact() {}
+            export function projectGeneratedComposeRuntimeIdentity() {}
             export function renderGeneratedEnvironment() {}
         `
         const allowed = new Map([
             ['packages/cockpit/src/environment/generated-render.ts', authority],
             ['packages/cockpit/src/environment/generated-stack.ts', "import { authenticateGeneratedRender, projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment, type GeneratedEnvironmentResult } from './generated-render.js'; authenticateGeneratedRender(); projectGeneratedComposeArtifactAuthority(); export { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-render.js'; export type { GeneratedComposeArtifactAuthority, GeneratedEnvironmentResult } from './generated-render.js'"],
             ['packages/cockpit/src/environment/generated-compose-authority.ts', "export type { GeneratedComposeArtifactAuthority } from './generated-render.js'"],
-            ['packages/cockpit/src/environment/runtime.ts', "import { authenticateGeneratedComposeArtifact, type GeneratedComposeArtifactAuthority } from './generated-render.js'; authenticateGeneratedComposeArtifact()"],
-            ['packages/cockpit/src/environment/generated-compose-authority.test.ts', "import { projectGeneratedComposeArtifactAuthority, authenticateGeneratedComposeArtifact } from './generated-render.js'; projectGeneratedComposeArtifactAuthority(); authenticateGeneratedComposeArtifact()"],
+            ['packages/cockpit/src/environment/runtime.ts', "import { authenticateGeneratedComposeArtifact, projectGeneratedComposeRuntimeIdentity, type GeneratedComposeArtifactAuthority } from './generated-render.js'; authenticateGeneratedComposeArtifact(); projectGeneratedComposeRuntimeIdentity()"],
+            ['packages/cockpit/src/environment/generated-compose-authority.test.ts', "import { projectGeneratedComposeArtifactAuthority, authenticateGeneratedComposeArtifact, projectGeneratedComposeRuntimeIdentity } from './generated-render.js'; projectGeneratedComposeArtifactAuthority(); authenticateGeneratedComposeArtifact(); projectGeneratedComposeRuntimeIdentity()"],
         ])
         expect(generatedComposeAuthorityViolations(allowed)).toEqual([])
 
         for (const [path, source] of [
             ['packages/cockpit/src/environment/rogue.ts', "import { projectGeneratedComposeArtifactAuthority } from './generated-render.js'; projectGeneratedComposeArtifactAuthority()"],
             ['packages/cockpit/src/environment/rogue.test.ts', "import { authenticateGeneratedComposeArtifact } from './generated-render.js'; authenticateGeneratedComposeArtifact()"],
+            ['packages/cockpit/src/environment/rogue.test.ts', "import { projectGeneratedComposeRuntimeIdentity } from './generated-render.js'; projectGeneratedComposeRuntimeIdentity()"],
             ['packages/cockpit/src/environment/rogue.ts', "import { authenticateGeneratedRender } from './generated-render.js'; authenticateGeneratedRender()"],
             ['packages/cockpit/src/environment/generated-stack.ts', "export { authenticateGeneratedRender } from './generated-render.js'"],
             ['packages/cockpit/src/environment/rogue.ts', "export { projectGeneratedComposeArtifactAuthority } from './generated-render.js'"],
