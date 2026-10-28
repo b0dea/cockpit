@@ -282,6 +282,18 @@ function completeBatch() {
     } as const
 }
 
+function nextHarnessRulesBatch(expected: Readonly<Record<'cursor' | 'grokcli', readonly string[]>> = {
+    cursor: ['.cursor/rules/base.mdc'],
+    grokcli: ['AGENTS.md'],
+} as const) {
+    return {
+        targets: ['cursor', 'grokcli'],
+        features: ['rules'],
+        sources: sources.filter(source => source.path.startsWith('rules/')),
+        expectedOutputs: expected,
+    } as const
+}
+
 function claudePluginBundle() {
     return {
         format: 'claudecode-plugin',
@@ -350,6 +362,25 @@ it('renders one deterministic complete batch through the authenticated generator
     expect(first.files.every(Object.isFrozen)).toBe(true)
     expect(first.warnings).toEqual([])
     expect(Object.isFrozen(first.warnings)).toBe(true)
+})
+
+it('compiles Cursor and Grok Build rules while rejecting a mismatched output control', async () => {
+    const generated = await generateSurfaceBatch(nextHarnessRulesBatch())
+
+    expect(generated.kind, JSON.stringify(generated)).toBe('complete')
+    if (generated.kind !== 'complete') return
+    expect(generated.files.map(({ target, path }) => `${target}:${path}`)).toEqual([
+        'cursor:.cursor/rules/base.mdc',
+        'grokcli:AGENTS.md',
+    ])
+
+    const broken = await generateSurfaceBatch(nextHarnessRulesBatch({
+        cursor: ['AGENTS.md'],
+        grokcli: ['AGENTS.md'],
+    }))
+    expect(broken).toMatchObject({ kind: 'refusal', diagnostics: [
+        expect.objectContaining({ code: 'SURFACE_OUTPUT_COVERAGE', target: 'cursor' }),
+    ] })
 })
 
 it('runs the two estate passes concurrently and settles both readers before cleanup', async () => {

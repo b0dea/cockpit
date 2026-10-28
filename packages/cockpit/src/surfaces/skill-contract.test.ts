@@ -13,7 +13,9 @@ import { generateSurfaceBatch } from './generator-adapter.js'
 import { inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs } from './skill-contract.js'
 
 const surfaceRoot = join(dirname(fileURLToPath(import.meta.url)), '../../surfaces/skills')
-const generousCaps: Record<SurfaceTarget, number> = { claudecode: 8_192, codexcli: 8_192, opencode: 8_192 }
+const generousCaps: Record<SurfaceTarget, number> = {
+    claudecode: 8_192, codexcli: 8_192, opencode: 8_192, cursor: 8_192, grokcli: 8_192,
+}
 const terminal = { path: 'skills/procedures/onboarding.md', bytes: await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8') }
 
 function authenticated(source: { path: string; bytes: string }) {
@@ -62,7 +64,7 @@ describe('shipped skill contract', () => {
         if (admitted.kind !== 'complete') throw new Error('Declared skill extension refused')
         expect(admitted.collection.entrypoints).toContainEqual(expect.objectContaining({
             path: 'skills/inspect/SKILL.md', displacement: 'skills/inspect/procedures/inspect.md' }))
-        expect(admitted.files.filter(file => file.path.endsWith('/SKILL.md'))).toHaveLength(15)
+        expect(admitted.files.filter(file => file.path.endsWith('/SKILL.md'))).toHaveLength(25)
         const paths = captured.sources.map(source => source.path.slice('skills/'.length))
         const generated = await generateSurfaceBatch({ targets: SURFACE_TARGETS, features: ['skills'], sources: captured.sources,
             expectedOutputs: {
@@ -70,6 +72,8 @@ describe('shipped skill contract', () => {
                 codexcli: paths.flatMap(path => [`.agents/skills/${path}`,
                     ...(path.endsWith('/SKILL.md') ? [`.agents/skills/${path.slice(0, -'SKILL.md'.length)}agents/openai.yaml`] : [])]),
                 opencode: paths.map(path => `.opencode/skills/${path}`),
+                cursor: paths.map(path => `.cursor/skills/${path}`),
+                grokcli: paths.map(path => `.grok/skills/${path}`),
             } })
         expect(await inspectRenderedSkillSet({ ...captured, declaredExtensions: ['inspect'], generated }))
             .toMatchObject({ kind: 'complete', skills: admitted.skills })
@@ -144,7 +148,7 @@ describe('shipped skill contract', () => {
         expect(result.collection.entrypoints).toEqual(['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work'].map(name => ({
             path: `skills/${name}/SKILL.md`, cap: ({ 'cockpit-setup': 11, 'cockpit-explain': 11, 'cockpit-fix': 14, 'cockpit-work': 10 } as Record<string, number>)[name]!, metric: 'lines', displacement: terminal.path,
         })))
-        expect(SURFACE_TARGETS.map(target => result.files.filter(file => file.target === target).length)).toEqual([8, 12, 8])
+        expect(SURFACE_TARGETS.map(target => result.files.filter(file => file.target === target).length)).toEqual([8, 12, 8, 8, 8])
         expect(result.files.some(file => file.path.includes('collection'))).toBe(false)
         for (const changed of [sources.filter(source => !source.path.includes('/cockpit-fix/')),
             sources.filter(source => source.path !== 'skills/cockpit-setup/procedures/onboarding.md'),
@@ -192,7 +196,7 @@ describe('shipped skill contract', () => {
         if (result.kind !== 'complete') return
 
         const projections = SURFACE_TARGETS.map(target => projectInspectedSkillOutputs(result, target, 'cockpit-setup'))
-        expect(projections.map(projection => projection.kind === 'complete' ? projection.files.length : 0)).toEqual([2, 3, 2])
+        expect(projections.map(projection => projection.kind === 'complete' ? projection.files.length : 0)).toEqual([2, 3, 2, 2, 2])
         expect(projections.flatMap(projection => projection.kind === 'complete' ? projection.files : [])
             .every(file => !file.bytes.includes('cockpit:verified'))).toBe(true)
         expect(projections[1]).toMatchObject({ kind: 'complete', target: 'codexcli', skill: 'cockpit-setup', files: [
@@ -240,7 +244,7 @@ describe('shipped skill contract', () => {
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
         expect(result.skills).toEqual(['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'])
-        expect(result.costs).toHaveLength(3)
+        expect(result.costs).toHaveLength(SURFACE_TARGETS.length)
         expect(new Set(result.costs.map(cost => cost.value)).size).toBeGreaterThan(1)
         expect(result.costs.every(cost => cost.metric === 'frontmatter_bytes' && cost.value > 0 && cost.value <= cost.cap)).toBe(true)
         const renderedProcedures = result.files.filter(file => file.path.endsWith('/procedures/onboarding.md'))
@@ -299,6 +303,8 @@ describe('shipped skill contract', () => {
                 codexcli: ['AGENTS.md', ...skillPaths.flatMap(path => [`.agents/skills/${path}`,
                     ...(path.endsWith('/SKILL.md') ? [`.agents/skills/${path.slice(0, -'SKILL.md'.length)}agents/openai.yaml`] : [])])],
                 opencode: ['AGENTS.md', ...skillPaths.map(path => `.opencode/skills/${path}`)],
+                cursor: ['.cursor/rules/shared.mdc', ...skillPaths.map(path => `.cursor/skills/${path}`)],
+                grokcli: ['AGENTS.md', ...skillPaths.map(path => `.grok/skills/${path}`)],
             },
         })
         expect(generated.kind, JSON.stringify(generated)).toBe('complete')
@@ -309,7 +315,7 @@ describe('shipped skill contract', () => {
         expect(result).toMatchObject({ kind: 'complete', skills: ['cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'] })
         if (result.kind !== 'complete') return
         expect(result.files.some(file => file.path === 'CLAUDE.md')).toBe(true)
-        expect(result.files.filter(file => file.path.includes('/skills/'))).toHaveLength(28)
+        expect(result.files.filter(file => file.path.includes('/skills/'))).toHaveLength(44)
 
         const missingSidecar = { ...generated, files: generated.files.filter(file =>
             file.path !== '.agents/skills/cockpit-setup/agents/openai.yaml') }

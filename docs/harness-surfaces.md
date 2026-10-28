@@ -2,8 +2,8 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page explains what `cockpit sync` writes for Claude Code, Codex CLI and OpenCode, how
-product-specific additions enter, and how each feature's enforcement is measured. It is for
+This page explains what `cockpit sync` writes for Claude Code, Codex CLI, OpenCode, Cursor, and
+Grok Build, how product-specific additions enter, and how each feature's enforcement is measured. It is for
 people reviewing generated agent configuration and for integrators extending it.
 
 ## Publish and verify
@@ -62,9 +62,10 @@ Each feature is represented as `enforced`, `instructed`, or `unavailable`:
 - `instructed` emits guidance or a harness setting whose enforcement has not been established.
 - `unavailable` emits no pretend control and records why the harness cannot provide it.
 
-Built-in harness output covers rules, MCP servers, subagents, skills, hooks, and permissions.
-Native spellings differ, so the generated files may differ while the declared policy and
-capability state remain shared. A custom harness must declare exactly one row for every feature.
+Built-in generation covers rules, MCP servers, subagents, skills, and hooks. Permissions and the
+shared guard are generated only for targets with an admitted adapter. Native spellings differ,
+and generated output does not promote an unmeasured native capability. A custom harness must
+declare exactly one row for every feature.
 Each non-unavailable row names a measured date, output spelling, deliberately broken control,
 and bounded module export. Custom modules must be self-contained: cockpit imports the exact
 authenticated module bytes, and relative dependency imports are refused. The worker may write
@@ -79,17 +80,18 @@ specific artifact; native enforcement still needs a separate paired probe.
 
 ### Built-in capability matrix
 
-The current renderer labels all six built-in feature families `instructed`. This describes
-generated configuration, not proof that a native harness loaded or enforced it.
+The renderer publishes Rulesync output for all built-in targets. Native capability stays
+`unavailable` for Cursor and Grok Build until an authenticated candidate and deliberately broken
+control have been measured.
 
-| Feature | Claude Code | Codex | OpenCode | Current evidence boundary |
-|---|---|---|---|---|
-| Rules | instructed | instructed | instructed | Native instruction loading needs a paired probe. |
-| MCP | instructed | instructed | instructed | Approval controls generated enablement; native loading is unproven. |
-| Subagents | instructed | instructed | instructed | Codex read-only roles are instruction-only; native restrictions need evidence. |
-| Skills | instructed | instructed | instructed | Native parity of the cockpit-setup, cockpit-explain, cockpit-fix and cockpit-work skills and required human reviews remain pending. |
-| Hooks | instructed | instructed | instructed | Generated registration is `pending_evidence` until the exact candidate is probed. |
-| Permissions | instructed | instructed | instructed | Native acceptance and enforcement are not established by rendering. |
+| Feature | Claude Code | Codex | OpenCode | Cursor | Grok Build | Current evidence boundary |
+|---|---|---|---|---|---|---|
+| Rules | instructed | instructed | instructed | unavailable | unavailable | Native instruction loading needs a paired probe. |
+| MCP | instructed | instructed | instructed | unavailable | unavailable | Approval controls generated enablement; native loading is unproven. |
+| Subagents | instructed | instructed | instructed | unavailable | unavailable | Native role behavior needs evidence. |
+| Skills | instructed | instructed | instructed | unavailable | unavailable | Native parity and required human reviews remain pending only for admitted candidates. |
+| Hooks | instructed | instructed | instructed | unavailable | unavailable | Generated hook files do not establish that the harness invokes them. |
+| Permissions | instructed | instructed | instructed | unavailable | unavailable | No permission or shared-guard surface is emitted without an admitted adapter. |
 
 The checked-in guard adapters (the
 [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),

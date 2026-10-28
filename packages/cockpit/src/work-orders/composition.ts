@@ -14,6 +14,7 @@ import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { browserRuntimeExecutionReady, type BrowserRuntimeProjection } from '../browser/runtime.js'
 import { observeBrowserProjectPackage, renderBrowserSurfaces, type BrowserProjectClient } from '../browser/surfaces.js'
+import { isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { decodeLifecycleRecord } from '../environment/application.js'
 import type { EnvironmentSnapshot, RuntimeEvidence } from '../environment/evidence.js'
 import { resolveExecutablePath } from '../environment/executable.js'
@@ -2221,7 +2222,8 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             const skillBytes = browserAuthority.skillTemplate.bytes
             if (digest(skillBytes) !== browserAuthority.skillTemplate.sha256) throw new Error('browser skill template authority is malformed')
             const rendered = renderBrowserSurfaces({ runtime, cockpitDirectory: config.cockpitRoot,
-                harnesses: config.browser.harnesses, mcp, approved: true,
+                harnesses: config.browser.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
+                    ? [Object.freeze({ target: row.target, version: row.version })] : []), mcp, approved: true,
                 testPackage: observeBrowserProjectPackage({ runtime, cockpitDirectory: config.cockpitRoot,
                     artifactRoot: runtime.generatedHostPaths[2]! }), skillTemplate: skillBytes })
             const client = [...rendered.clients].sort((left, right) => left.target.localeCompare(right.target))[0]

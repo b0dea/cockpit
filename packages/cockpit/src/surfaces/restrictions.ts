@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { isAbsolute, posix } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
+import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
 import { GUARD_HANDLER_ARGV } from '../guards/harness-adapter.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from '../guards/host.js'
 
@@ -34,7 +34,7 @@ export interface RestrictionPolicy {
 
 interface NativeRestrictionAdapter {
     readonly format: 'cockpit-restriction-adapter/v1'
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly mechanism: 'native'
     readonly promptTier: boolean
     readonly measuredOn: string
@@ -61,7 +61,7 @@ interface NativeRestrictionAdapter {
 
 interface UnavailableRestrictionAdapter {
     readonly format: 'cockpit-restriction-adapter/v1'
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly mechanism: 'unavailable'
     readonly measuredOn: string
     readonly measuredVersion: null
@@ -103,7 +103,7 @@ export interface RestrictionReadonlyOutput {
 }
 
 export interface RestrictionTargetOutput {
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly capability: 'instructed' | 'unavailable'
     readonly evidenceStatus: 'pending_evidence' | 'not_applicable'
     readonly measuredOn: string
@@ -114,7 +114,7 @@ export interface RestrictionTargetOutput {
 }
 
 export interface ShippedRestrictionCapability {
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly capability: 'instructed' | 'unavailable'
     readonly evidenceStatus: 'pending_evidence' | 'not_applicable'
     readonly measuredOn: string
@@ -160,12 +160,12 @@ const NATIVE_PROVENANCE = Object.freeze({
     claudecode: 'paired native PreToolUse payload and decision probe',
     codexcli: 'paired native PreToolUse payload, apply_patch and ask-decision probe',
     opencode: 'paired native tool.execute.before payload, apply_patch and thrown-refusal probe',
-} satisfies Record<SurfaceTarget, string>)
+} satisfies Record<GuardSurfaceTarget, string>)
 const MEASURED = Object.freeze({
     claudecode: { date: '2026-08-25', version: '2.1.220' },
     codexcli: { date: '2026-08-24', version: '0.149.0' },
     opencode: { date: '2026-08-24', version: '1.18.15' },
-} satisfies Record<SurfaceTarget, { readonly date: string; readonly version: string }>)
+} satisfies Record<GuardSurfaceTarget, { readonly date: string; readonly version: string }>)
 
 function object(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -278,7 +278,7 @@ function measuredFields(value: JsonSnapshotObject): boolean {
 function unavailableAdapter(value: JsonSnapshotObject): UnavailableRestrictionAdapter | undefined {
     if (!exactKeys(value, ['format', 'target', 'mechanism', 'measuredOn', 'measuredVersion', 'provenance', 'reason'])
         || value.format !== FORMAT || value.mechanism !== 'unavailable' || value.measuredVersion !== null
-        || typeof value.target !== 'string' || !SURFACE_TARGETS.includes(value.target as SurfaceTarget)
+        || typeof value.target !== 'string' || !GUARD_SURFACE_TARGETS.includes(value.target as GuardSurfaceTarget)
         || typeof value.measuredOn !== 'string' || !DATE.test(value.measuredOn)
         || typeof value.provenance !== 'string' || !safeScalar(value.provenance, 200)
         || /credential|secret|token|password|private[ _-]?key/i.test(value.provenance)
@@ -312,7 +312,7 @@ function nativeShapeMatches(adapter: NativeRestrictionAdapter): boolean {
 function nativeAdapter(value: JsonSnapshotObject): NativeRestrictionAdapter | undefined {
     if (!exactKeys(value, ['format', 'target', 'mechanism', 'promptTier', 'measuredOn', 'measuredVersion', 'provenance', 'registration', 'payload', 'readonly'])
         || value.format !== FORMAT || value.mechanism !== 'native' || typeof value.promptTier !== 'boolean'
-        || typeof value.target !== 'string' || !SURFACE_TARGETS.includes(value.target as SurfaceTarget) || !measuredFields(value)
+        || typeof value.target !== 'string' || !GUARD_SURFACE_TARGETS.includes(value.target as GuardSurfaceTarget) || !measuredFields(value)
         || !object(value.registration) || !exactKeys(value.registration, ['kind', 'path', 'event', 'matcher'])
         || typeof value.registration.kind !== 'string' || typeof value.registration.path !== 'string'
         || typeof value.registration.event !== 'string' || typeof value.registration.matcher !== 'string'
@@ -336,7 +336,7 @@ function captureAdapter(input: unknown): RestrictionAdapter | undefined {
 
 const issuedShippedRestrictionCapabilities = new WeakSet<object>()
 const shippedRestrictionBindings = new WeakMap<object, Readonly<{
-    adapters: ReadonlyMap<SurfaceTarget, RestrictionAdapter>
+    adapters: ReadonlyMap<GuardSurfaceTarget, RestrictionAdapter>
 }>>()
 
 function validGuardTemplate(value: string): boolean {
@@ -354,7 +354,7 @@ export function inspectShippedRestrictionCapabilities(input: unknown): ShippedRe
     if (!validGuardTemplate(value.guardTemplate)) {
         return refusal('RESTRICTION_TEMPLATE_INVALID', 'guard template must contain every transport identity marker exactly once')
     }
-    const adapters = new Map<SurfaceTarget, RestrictionAdapter>()
+    const adapters = new Map<GuardSurfaceTarget, RestrictionAdapter>()
     for (const candidate of value.adapters) {
         const adapter = captureAdapter(candidate)
         if (!adapter || adapters.has(adapter.target)) {
@@ -362,10 +362,10 @@ export function inspectShippedRestrictionCapabilities(input: unknown): ShippedRe
         }
         adapters.set(adapter.target, adapter)
     }
-    const missing = SURFACE_TARGETS.find(target => !adapters.has(target))
+    const missing = GUARD_SURFACE_TARGETS.find(target => !adapters.has(target))
     if (missing) return refusal('RESTRICTION_EVENT_UNADAPTED', `restriction event has no adapter for ${missing}`)
 
-    const targets = SURFACE_TARGETS.map((target): ShippedRestrictionCapability => {
+    const targets = GUARD_SURFACE_TARGETS.map((target): ShippedRestrictionCapability => {
         const adapter = adapters.get(target)!
         const row = Object.freeze({
             target,
@@ -495,7 +495,7 @@ export function expandRestrictions(input: unknown): RestrictionExpansionResult {
         return refusal('RESTRICTION_TEMPLATE_INVALID', 'guard template must contain every transport identity marker exactly once')
     }
 
-    const targets = SURFACE_TARGETS.map((target): RestrictionTargetOutput => {
+    const targets = GUARD_SURFACE_TARGETS.map((target): RestrictionTargetOutput => {
         const adapter = binding.adapters.get(target)!
         const capability = capabilities.targets.find(row => row.target === target)!
         if (adapter.mechanism === 'unavailable') return {
@@ -527,7 +527,7 @@ function validFile(value: JsonSnapshot | undefined): value is JsonSnapshotObject
 export function validateGuardRegistration(input: unknown) {
     const value = snapshotJson(input)
     if (!object(value) || !exactKeys(value, ['target', 'handler', 'cwd', 'argv', 'registration'])
-        || typeof value.target !== 'string' || !SURFACE_TARGETS.includes(value.target as SurfaceTarget)
+        || typeof value.target !== 'string' || !GUARD_SURFACE_TARGETS.includes(value.target as GuardSurfaceTarget)
         || typeof value.handler !== 'string' || !canonicalRoot(value.handler)
         || typeof value.cwd !== 'string' || !canonicalRoot(value.cwd)
         || !Array.isArray(value.argv) || JSON.stringify(value.argv) !== JSON.stringify([...GUARD_HANDLER_ARGV, '--harness', value.target])
@@ -539,7 +539,7 @@ export function validateGuardRegistration(input: unknown) {
         return refusal('RESTRICTION_ADAPTER_INVALID', 'staged registration requires exact handler argv and bounded confined output bytes')
     }
     const paths = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }
-    if (value.registration.path !== paths[value.target as SurfaceTarget]) {
+    if (value.registration.path !== paths[value.target as GuardSurfaceTarget]) {
         return refusal('RESTRICTION_ADAPTER_INVALID', 'staged registration path does not match its harness')
     }
     return frozen({ kind: 'complete' as const, target: value.target, handler: value.handler, cwd: value.cwd, argv: value.argv,
@@ -558,18 +558,18 @@ function validReadonly(value: JsonSnapshot | undefined): boolean {
 function validExpansion(value: unknown): RestrictionExpansionComplete | undefined {
     const captured = snapshotJson(value)
     if (!object(captured) || !exactKeys(captured, ['kind', 'sharedGuard', 'targets']) || captured.kind !== 'complete'
-        || !validFile(captured.sharedGuard) || !Array.isArray(captured.targets) || captured.targets.length !== SURFACE_TARGETS.length) return undefined
-    const seen = new Set<SurfaceTarget>()
+        || !validFile(captured.sharedGuard) || !Array.isArray(captured.targets) || captured.targets.length !== GUARD_SURFACE_TARGETS.length) return undefined
+    const seen = new Set<GuardSurfaceTarget>()
     for (const row of captured.targets) {
         if (!object(row) || !exactKeys(row, ['target', 'capability', 'evidenceStatus', 'measuredOn', 'measuredVersion', 'provenance', 'files', 'readonly'])
-            || typeof row.target !== 'string' || !SURFACE_TARGETS.includes(row.target as SurfaceTarget) || seen.has(row.target as SurfaceTarget)
+            || typeof row.target !== 'string' || !GUARD_SURFACE_TARGETS.includes(row.target as GuardSurfaceTarget) || seen.has(row.target as GuardSurfaceTarget)
             || typeof row.measuredOn !== 'string' || !DATE.test(row.measuredOn)
             || row.measuredVersion !== null && (typeof row.measuredVersion !== 'string' || !VERSION.test(row.measuredVersion))
             || typeof row.provenance !== 'string' || !Array.isArray(row.files) || !row.files.every(validFile) || !validReadonly(row.readonly)
             || row.capability === 'unavailable' && (row.evidenceStatus !== 'not_applicable' || row.files.length !== 0)
             || row.capability === 'instructed' && (row.evidenceStatus !== 'pending_evidence' || row.files.length !== 1)
             || row.capability !== 'unavailable' && row.capability !== 'instructed') return undefined
-        seen.add(row.target as SurfaceTarget)
+        seen.add(row.target as GuardSurfaceTarget)
     }
     const result = captured as unknown as RestrictionExpansionComplete
     return outputWithinLimits(result) ? result : undefined
@@ -580,8 +580,8 @@ export function compareRestrictionOutputs(expectedInput: unknown, actualInput: u
     const actual = validExpansion(actualInput)
     if (!expected || !actual) return refusal('RESTRICTION_INPUT_INVALID', 'restriction comparison requires two bounded complete expansions')
     const actualTargets = new Map(actual.targets.map((row) => [row.target, row]))
-    const staleTargets: SurfaceTarget[] = []
-    const currentTargets: SurfaceTarget[] = []
+    const staleTargets: GuardSurfaceTarget[] = []
+    const currentTargets: GuardSurfaceTarget[] = []
     for (const row of expected.targets) {
         const actualRow = actualTargets.get(row.target)
         if (JSON.stringify(row) === JSON.stringify(actualRow)) currentTargets.push(row.target)

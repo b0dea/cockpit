@@ -12,12 +12,14 @@ function input() {
     const grants: unknown[] = []
     const guard = { path: '.cockpit/guards/bash-guard.sh', bytes: '# guard\n', sha256: digest('# guard\n') }
     return {
-        configuredHarnesses: ['claudecode', 'codexcli', 'opencode'],
+        configuredHarnesses: ['claudecode', 'codexcli', 'cursor', 'grokcli', 'opencode'],
         merge: { kind: 'complete', surfaces: [], overrides: [], findings: [] },
         generated: { kind: 'complete', status: 0, diagnostics: [], mechanism: { package: 'rulesync', version: '40.2.0', role: 'spelling' }, files: [
             file('codexcli', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'AGENTS.md', 'base instructions\n'),
             file('opencode', 'opencode.jsonc', '{"$schema":"schema.json","instructions":[]}\n'),
+            file('cursor', '.cursor/rules/base.mdc', 'base instructions\n'),
+            file('grokcli', 'AGENTS.md', 'base instructions\n'),
         ] },
         projection: { kind: 'complete', links: [], native: [
             { target: 'codexcli', path: 'AGENTS.md', spelling: 'Read ./peer.md before editing peer.', capability: 'instructed' },
@@ -138,7 +140,7 @@ describe('surface rendering', () => {
         if (result.kind !== 'complete') return
         const agents = result.entries.find(entry => entry.path === 'AGENTS.md')
         expect(agents).toMatchObject({
-            kind: 'shared-region', harnesses: ['codexcli', 'opencode'],
+            kind: 'shared-region', harnesses: ['codexcli', 'grokcli', 'opencode'],
             region: { bytes: 'base instructions\nRead ./peer.md before editing peer.\n' },
         })
         expect(result.entries.find(entry => entry.path === 'opencode.jsonc')).toMatchObject({

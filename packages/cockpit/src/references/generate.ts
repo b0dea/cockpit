@@ -16,6 +16,7 @@ import {
 import { configurationDefaults, mechanism as schemaMechanism } from '../schema.js'
 import { renderCockpitSchema } from '../schema-json.js'
 import { SURFACE_TARGETS } from '../surfaces/contract.js'
+import { harnessFact } from '../surfaces/harness-registry.js'
 import { surfaceSelftestExpectation } from '../surfaces/selftest.js'
 import { inspectSkillSet, isAdmittedSkillCollection, type AdmittedSkillCollection } from '../surfaces/skill-contract.js'
 import { shippedInstructionCapabilities, type StandingCost } from '../surfaces/projection.js'
@@ -118,6 +119,11 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
         const cells: CapabilityCell[] = []
         for (const row of restrictions.targets) cells.push(Object.freeze({ target: row.target, capability: 'guard-firing', skill: 'n/a',
             state: row.capability, evidence: row.evidenceStatus, provenance: row.provenance, measuredOn: row.measuredOn, measuredVersion: row.measuredVersion }))
+        for (const target of SURFACE_TARGETS) {
+            const native = harnessFact(target).native
+            if (native.state === 'unavailable') cells.push(Object.freeze({ target, capability: 'guard-firing', skill: 'n/a',
+                state: native.state, evidence: 'not_applicable', provenance: native.reason, measuredOn: native.measuredOn, measuredVersion: null }))
+        }
         const instructions = shippedInstructionCapabilities()
         if (instructions.length !== SURFACE_TARGETS.length || new Set(instructions.map(row => row.target)).size !== SURFACE_TARGETS.length
             || SURFACE_TARGETS.some(target => !instructions.some(row => row.target === target))) return refusal('shipped instruction capabilities do not cover the fixed targets')
@@ -126,8 +132,12 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
         for (const target of SURFACE_TARGETS) for (const skill of skills.skills) {
             const file = skills.files.find(row => row.target === target && row.path.endsWith(`/${skill}/SKILL.md`))
             if (!file) return refusal(`shipped skill output is missing for ${target}:${skill}`, 'surfaces/skills')
-            cells.push(Object.freeze({ target, capability: 'skill-parity', skill, state: 'instructed', evidence: 'human_needed',
-                provenance: `inspectSkillSet rendered ${file.path}; SHA-256 ${file.sha256}; operator parity judgment pending`, measuredOn: 'unmeasured', measuredVersion: null }))
+            const native = harnessFact(target).native
+            cells.push(native.state === 'unavailable'
+                ? Object.freeze({ target, capability: 'skill-parity', skill, state: native.state, evidence: 'not_applicable',
+                    provenance: native.reason, measuredOn: native.measuredOn, measuredVersion: null })
+                : Object.freeze({ target, capability: 'skill-parity', skill, state: 'instructed', evidence: 'human_needed',
+                    provenance: `inspectSkillSet rendered ${file.path}; SHA-256 ${file.sha256}; operator parity judgment pending`, measuredOn: 'unmeasured', measuredVersion: null }))
         }
         const projection = Object.freeze({ kind: 'committed-capabilities' as const })
         committedAuthority.set(projection, Object.freeze({ skills: skills.collection, cells: Object.freeze(cells), sourceAssets: captured.sourceAssets,

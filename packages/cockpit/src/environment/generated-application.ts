@@ -31,6 +31,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { deriveRegistry, type DerivedRegistry } from '../registry-derivation.js'
 import { SURFACE_FEATURES, SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../surfaces/contract.js'
+import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { mergeAdoptedSurface } from '../surfaces/adoption.js'
 import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from '../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations, type ActiveSurfaceOverride, type SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -1401,10 +1402,14 @@ function expectedSurfaceOutputs(
     const names = (prefix: string, suffix: string) => sources.filter(source => source.path.startsWith(prefix))
         .map(source => source.path.slice(prefix.length, suffix.length === 0 ? undefined : -suffix.length))
     const skills = sources.filter(source => source.path.startsWith('skills/')).map(source => source.path.slice('skills/'.length))
-    const rows: Record<SurfaceTarget, string[]> = { claudecode: [], codexcli: [], opencode: [] }
-    if (has('rules')) rows.claudecode.push('CLAUDE.md'), rows.codexcli.push('AGENTS.md'), rows.opencode.push('AGENTS.md')
-    if (has('mcp')) rows.claudecode.push('.mcp.json'), rows.codexcli.push('.codex/config.toml'), rows.opencode.push('opencode.jsonc')
+    const rows = Object.fromEntries(SURFACE_TARGETS.map(target => [target, []])) as unknown as Record<SurfaceTarget, string[]>
+    if (has('rules')) for (const target of SURFACE_TARGETS) {
+        const root = harnessFact(target).outputs.instruction
+        rows[target].push(target === 'cursor' ? `${root}/base.mdc` : root)
+    }
+    if (has('mcp')) for (const target of SURFACE_TARGETS) rows[target].push(harnessFact(target).outputs.mcp)
     if (has('hooks')) rows.claudecode.push('.claude/settings.json'), rows.codexcli.push('.codex/hooks.json'), rows.opencode.push('.opencode/plugins/rulesync-hooks.js')
+    if (has('hooks')) rows.cursor.push('.cursor/hooks.json'), rows.grokcli.push('.grok/hooks/rulesync.json')
     if (has('permissions')) {
         rows.claudecode.push('.claude/settings.json')
         rows.codexcli.push('.codex/config.toml', '.codex/rules/rulesync.rules')
@@ -1414,6 +1419,8 @@ function expectedSurfaceOutputs(
         rows.claudecode.push(`.claude/agents/${name}.md`)
         rows.codexcli.push(`.codex/agents/${name}.toml`)
         rows.opencode.push(`.opencode/agents/${name}.md`)
+        rows.cursor.push(`.cursor/agents/${name}.md`)
+        rows.grokcli.push(`.grok/agents/${name}.md`)
     }
     if (has('skills')) for (const path of skills) {
         rows.claudecode.push(`.claude/skills/${path}`)
@@ -1423,6 +1430,8 @@ function expectedSurfaceOutputs(
             rows.codexcli.push(`.agents/skills/${path.slice(0, -'SKILL.md'.length)}agents/openai.yaml`)
         }
         rows.opencode.push(`.opencode/skills/${path}`)
+        rows.cursor.push(`.cursor/skills/${path}`)
+        rows.grokcli.push(`.grok/skills/${path}`)
     }
     return Object.freeze(Object.fromEntries(SURFACE_TARGETS.map(target => [target, Object.freeze([...new Set(rows[target])].sort(compareCodeUnits))]))) as Readonly<Record<SurfaceTarget, readonly string[]>>
 }
@@ -1544,9 +1553,13 @@ function nativeFragmentSet(
     return Object.freeze({ modelSha256, fragments: Object.freeze(fragments as NonNullable<typeof fragments[number]>[]) })
 }
 
-function nativePaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
-    const paths = { claudecode: '.claude/settings.json', codexcli: '.codex/config.toml', opencode: 'opencode.jsonc' }
-    return Object.freeze(Object.fromEntries(targets.map(target => [target, paths[target]])))
+function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
+    return Object.freeze(Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.mcp])))
+}
+
+function nativeGrantPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
+    const paths: Partial<Record<SurfaceTarget, string>> = { claudecode: '.claude/settings.json', codexcli: '.codex/config.toml', opencode: 'opencode.jsonc' }
+    return Object.freeze(Object.fromEntries(targets.flatMap(target => paths[target] ? [[target, paths[target]]] : [])))
 }
 
 const CUSTOM_SURFACE_WORKER = String.raw`
@@ -1855,7 +1868,7 @@ async function prepareSurfaces(
         guideCapLines: config.cockpit.guide_cap,
         siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...projectionGuides(row)] })),
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),
-        directoryGrants: selected.flatMap(row => SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
+        directoryGrants: selected.flatMap(row => GUARD_SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
         guideObservations: observedGuides.observations,
         existingEntries: [],
         priorOwnedLinks: priorOwned.filter((row): row is Extract<SurfacePriorOwnedEntry, { kind: 'symlink' }> => row.kind === 'symlink')
@@ -1963,7 +1976,8 @@ async function prepareSurfaces(
             browser = renderBrowserSurfaces({
                 runtime,
                 cockpitDirectory: prepared.root,
-                harnesses: browserConfiguration.harnesses,
+                harnesses: browserConfiguration.harnesses.flatMap(row => isGuardSurfaceTarget(row.target)
+                    ? [Object.freeze({ target: row.target, version: row.version })] : []),
                 mcp: browserMcp,
                 approved: true,
                 testPackage: null,
@@ -2186,8 +2200,8 @@ async function prepareSurfaces(
     }
     const mcpTargets = mcp.result.servers.length === 0 ? [] : mcp.result.harnesses.map(row => row.target)
     const grantTargets = [...new Set(projection.grants.map(row => row.target))]
-    const nativeMcp = nativeFragmentSet(generated, mcp.result, nativePaths(mcpTargets))
-    const nativeGrants = nativeFragmentSet(generated, projection.grants, nativePaths(grantTargets))
+    const nativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
+    const nativeGrants = nativeFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets))
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const runnerAsset = asset('scripts/browser-runner.sh')
     const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) === true

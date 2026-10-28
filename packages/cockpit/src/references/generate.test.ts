@@ -71,7 +71,7 @@ beforeAll(async () => {
     if (result.kind !== 'complete') throw new Error(`skill authority failed: ${JSON.stringify(result)}`)
     skills = result.collection
     const payload = { schema: 'cockpit-generated-surface-selftest/v1' as const, configuredHarnesses: ['claudecode', 'codexcli', 'opencode'],
-        declarations: [], custom: [], entries: result.files.map(file => ({ kind: 'file' as const, path: file.path, bytes: file.bytes, sha256: file.sha256,
+        declarations: [], custom: [], entries: result.files.filter(file => ['claudecode', 'codexcli', 'opencode'].includes(file.target)).map(file => ({ kind: 'file' as const, path: file.path, bytes: file.bytes, sha256: file.sha256,
             harnesses: [file.target] as readonly [typeof file.target], scope: 'always' as const, capability: 'instructed' as const, ownership: 'whole-file' as const,
             writer: 'cockpit' as const, schemaVersion: 1 as const })) }
     const ownership = classifySurfaceOwnership({ configuredHarnesses: payload.configuredHarnesses,
@@ -199,6 +199,9 @@ describe('reference generation', () => {
         const matrix = rendered.files.find(file => file.path === 'docs/capability-matrix.md')!.bytes
         expect(matrix).toContain('human_needed')
         expect(matrix).toContain('pending_evidence')
+        expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
+        expect(matrix).toContain('| grokcli | instruction-loading | n/a | unavailable | not_applicable | rulesync-rules: no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
+        expect(matrix).toContain('| cursor | skill-parity | bootstrap | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
         expect(matrix).not.toContain('| enforced |')
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')

@@ -5,6 +5,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { CustomHarness, type CustomHarness as CustomHarnessValue } from '../schema.js'
 import type { SurfaceFeature, SurfaceTarget } from './contract.js'
+import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './harness-registry.js'
 import type { SurfaceGenerationOutcome, SurfaceGenerationWarning } from './generator-adapter.js'
 import type { SurfaceMergeResult } from './merge.js'
 import type { McpCollectionOutcome } from './mcp.js'
@@ -93,8 +94,8 @@ export interface SurfaceRenderInput {
 const SHA256 = /^[a-f0-9]{64}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 const MARKDOWN_PATHS = new Set(['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md'])
-const BUILT_INS = new Set<SurfaceTarget>(['claudecode', 'codexcli', 'opencode'])
-const SKILL_DIRECTORY: Readonly<Record<SurfaceTarget, string>> = { claudecode: '.claude/skills', codexcli: '.agents/skills', opencode: '.opencode/skills' }
+const BUILT_INS = new Set<SurfaceTarget>(SURFACE_TARGETS)
+const NATIVE_BUILT_INS = new Set<SurfaceTarget>(GUARD_SURFACE_TARGETS)
 const SKILL_REFERENCE_PATH = /^references\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
@@ -393,15 +394,15 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     if (testing && (!tierGuide || !nativeHooks)) return refuse('SURFACE_INPUT_INVALID', 'testing projection must retain its validated objects')
     if (tierGuide && (typeof tierGuide.bytes !== 'string' || typeof tierGuide.lines !== 'number' || !Number.isSafeInteger(tierGuide.lines) || tierGuide.lines < 1
         || tierGuide.lines !== (tierGuide.bytes as string).trimEnd().split('\n').length
-        || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== BUILT_INS.size
+        || !Array.isArray(tierGuide.costs) || tierGuide.costs.length !== NATIVE_BUILT_INS.size
         || tierGuide.costs.some(cost => !object(cost) || !exact(cost, ['target', 'status', 'metric', 'value', 'conditionalValue', 'cap', 'measuredOn', 'provenance', 'scopeSemantics'])
-            || typeof cost.target !== 'string' || !BUILT_INS.has(cost.target as SurfaceTarget) || cost.status !== 'within_cap'
+            || typeof cost.target !== 'string' || !NATIVE_BUILT_INS.has(cost.target as SurfaceTarget) || cost.status !== 'within_cap'
             || cost.metric !== 'lines' || typeof cost.value !== 'number' || !Number.isSafeInteger(cost.value) || cost.value < 0
             || typeof cost.conditionalValue !== 'number' || !Number.isSafeInteger(cost.conditionalValue) || cost.conditionalValue < 0
             || typeof cost.cap !== 'number' || !Number.isSafeInteger(cost.cap) || cost.cap < cost.value || typeof cost.measuredOn !== 'string' || !DATE.test(cost.measuredOn)
             || typeof cost.provenance !== 'string' || cost.provenance.length === 0
             || cost.scopeSemantics !== 'conditional' && cost.scopeSemantics !== 'full')
-        || new Set(tierGuide.costs.map(cost => object(cost) ? cost.target : undefined)).size !== BUILT_INS.size)) {
+        || new Set(tierGuide.costs.map(cost => object(cost) ? cost.target : undefined)).size !== NATIVE_BUILT_INS.size)) {
         return refuse('SURFACE_INPUT_INVALID', 'testing tier guide lost its bounded load-cost proof')
     }
 
@@ -474,7 +475,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
     }
     if (browser && Array.isArray(browser.files)) for (const candidate of browser.files) {
         if (!object(candidate) || !exact(candidate, ['target', 'path', 'bytes', 'sha256']) || typeof candidate.target !== 'string'
-            || !BUILT_INS.has(candidate.target as SurfaceTarget) || !configuredSet.has(candidate.target) || !validFileFields(candidate)) {
+            || !NATIVE_BUILT_INS.has(candidate.target as SurfaceTarget) || !configuredSet.has(candidate.target) || !validFileFields(candidate)) {
             return refuse('SURFACE_INPUT_INVALID', 'browser surface output is malformed')
         }
         const path = candidate.path as string

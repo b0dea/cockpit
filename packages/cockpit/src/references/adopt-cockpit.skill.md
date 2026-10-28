@@ -44,9 +44,9 @@ npm ci --ignore-scripts && npm run build
 npm link --workspace @b0dea/cockpit
 ```
 
-Your harness target is the tool you run in: `claudecode` (Claude Code), `codexcli` (Codex CLI) or
-`opencode` (OpenCode). If your tool isn't one of the built-ins, cockpit's AGENTS.md still gives it
-the instructions; guards and permissions are not enforced there
+Your harness target is the tool you run in: `claudecode` (Claude Code), `codexcli` (Codex CLI),
+`opencode` (OpenCode), `cursor` (Cursor), or `grokcli` (Grok Build). If your tool isn't one of the
+built-ins, cockpit's AGENTS.md still gives it the instructions; guards and permissions are not enforced there
 (<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>).
 
 Read flags from `cockpit <command> --help`. Pass `--json` and read `result`, `diagnostics[].code`

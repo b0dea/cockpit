@@ -59,7 +59,7 @@ it('captures one exact complete batch as immutable caller-independent data', () 
     expect(captured?.expectedOutputs.claudecode?.[0]).toBe('CLAUDE.md')
 
     expectTypeOf(captured).toEqualTypeOf<SurfaceBatch | undefined>()
-    expectTypeOf<SurfaceTarget>().toEqualTypeOf<'claudecode' | 'codexcli' | 'opencode'>()
+    expectTypeOf<SurfaceTarget>().toEqualTypeOf<'claudecode' | 'codexcli' | 'opencode' | 'cursor' | 'grokcli'>()
     expectTypeOf<SurfaceFeature>().toEqualTypeOf<'rules' | 'mcp' | 'subagents' | 'skills' | 'hooks' | 'permissions'>()
     expectTypeOf<SurfaceSourceFile>().toMatchTypeOf<Readonly<{ path: string; bytes: string }>>()
 })

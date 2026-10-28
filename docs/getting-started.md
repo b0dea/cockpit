@@ -76,8 +76,8 @@ explains the default, the new-product case and why a product repository is not t
 
 ## Bootstrap a new product
 
-Pick the agent harness you will use first: `claudecode`, `codexcli` or `opencode`. From the
-directory that will hold the configuration, preview the bootstrap:
+Pick the agent harness you will use first: `claudecode`, `codexcli`, `opencode`, `cursor`, or
+`grokcli`. From the directory that will hold the configuration, preview the bootstrap:
 
 ```sh
 npx cockpit init "$(pwd)" --target codexcli --json

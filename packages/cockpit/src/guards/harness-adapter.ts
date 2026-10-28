@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import type { SurfaceTarget } from '../surfaces/contract.js'
+import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import type { GuardDecision } from './evaluator.js'
 import { GUARD_INPUT_LIMITS } from './invocation-parser.js'
 
@@ -11,7 +11,7 @@ export const mechanism = {
 
 export const GUARD_HANDLER_ARGV = Object.freeze(['guard-evaluate'] as const)
 export interface NativeGuardOutput {
-    readonly target: SurfaceTarget | null
+    readonly target: GuardSurfaceTarget | null
     readonly capability: 'instructed'
     readonly decision: GuardDecision['decision']
     readonly exitCode: 0 | 2
@@ -20,10 +20,10 @@ export interface NativeGuardOutput {
 }
 export interface GuardTransportPlan {
     readonly kind: 'complete'
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly executable: string
     readonly cwd: string
-    readonly argv: readonly ['guard-evaluate', '--harness', SurfaceTarget]
+    readonly argv: readonly ['guard-evaluate', '--harness', GuardSurfaceTarget]
     readonly stdin: string
     readonly timeoutMs: 20000
     readonly stdoutBytes: 65536
@@ -31,8 +31,7 @@ export interface GuardTransportPlan {
 }
 export interface GuardTransportRefusal { readonly kind: 'refusal'; readonly code: 'GUARD_TRANSPORT_INVALID'; readonly message: string }
 const plans = new WeakSet<object>()
-const targets = ['claudecode', 'codexcli', 'opencode'] as const
-function target(value: unknown): value is SurfaceTarget { return typeof value === 'string' && targets.some((item) => item === value) }
+function target(value: unknown): value is GuardSurfaceTarget { return typeof value === 'string' && GUARD_SURFACE_TARGETS.some((item) => item === value) }
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject { return value !== null && typeof value === 'object' && !Array.isArray(value) }
 function keys(value: JsonSnapshotObject, fields: readonly string[]): boolean { return Object.keys(value).length === fields.length && fields.every((field) => Object.hasOwn(value, field)) }
 function text(value: unknown, limit: number): value is string { return typeof value === 'string' && Buffer.byteLength(value) <= limit && !/[\uD800-\uDFFF]/u.test(value) }

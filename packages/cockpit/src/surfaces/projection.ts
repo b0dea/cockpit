@@ -3,7 +3,8 @@ import { lstat, open, readlink, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
+import type { SurfaceTarget } from './contract.js'
+import { GUARD_SURFACE_TARGETS as SURFACE_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
 
 export const mechanism = {
     id: 'sibling-projection',
@@ -115,10 +116,10 @@ export interface NativeProjection {
 
 export interface ShippedInstructionCapability {
     readonly target: SurfaceTarget
-    readonly mechanism: NativeProjection['mechanism']
-    readonly capability: NativeProjection['capability']
-    readonly evidence: NativeProjection['evidence']
-    readonly characterizedOn: NativeProjection['characterizedOn']
+    readonly mechanism: NativeProjection['mechanism'] | 'rulesync-rules'
+    readonly capability: NativeProjection['capability'] | 'unavailable'
+    readonly evidence: NativeProjection['evidence'] | 'not_applicable'
+    readonly characterizedOn: string
     readonly provenance: string
 }
 
@@ -713,6 +714,14 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
         target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'pending_evidence',
         characterizedOn: '2026-09-26', provenance: 'source instructions-list loading measurement',
     }),
+    Object.freeze({
+        target: 'cursor', mechanism: 'rulesync-rules', capability: 'unavailable', evidence: 'not_applicable',
+        characterizedOn: '2026-10-28', provenance: 'no authenticated native candidate and broken-control probe is committed',
+    }),
+    Object.freeze({
+        target: 'grokcli', mechanism: 'rulesync-rules', capability: 'unavailable', evidence: 'not_applicable',
+        characterizedOn: '2026-10-28', provenance: 'no authenticated native candidate and broken-control probe is committed',
+    }),
 ] as const satisfies readonly ShippedInstructionCapability[])
 const issuedInstructionCapabilities = new WeakSet<object>()
 
@@ -723,11 +732,14 @@ export function shippedInstructionCapabilities(): readonly ShippedInstructionCap
     return rows
 }
 
-function nativeProjection(targetName: SurfaceTarget, link: ProjectionLink, slug: string): NativeProjection {
+function nativeProjection(targetName: GuardSurfaceTarget, link: ProjectionLink, slug: string): NativeProjection {
     const capabilities = shippedInstructionCapabilities()
     const fact = issuedInstructionCapabilities.has(capabilities)
         ? capabilities.find(row => row.target === targetName) : undefined
-    if (!fact || !issuedInstructionCapabilities.has(fact)) throw new Error(`instruction capability is unavailable for ${targetName}`)
+    if (!fact || !issuedInstructionCapabilities.has(fact) || fact.capability !== 'instructed'
+        || fact.evidence !== 'pending_evidence' || fact.mechanism === 'rulesync-rules' || fact.characterizedOn !== '2026-09-26') {
+        throw new Error(`instruction capability is unavailable for ${targetName}`)
+    }
     if (targetName === 'claudecode') return {
         target: targetName,
         path: 'CLAUDE.local.md',
@@ -848,12 +860,14 @@ export function planSiblingProjection(input: unknown): ProjectionPlanResult {
     }
 
     links.sort((left, right) => left.path.localeCompare(right.path))
-    grants.sort((left, right) => left.slug.localeCompare(right.slug) || SURFACE_TARGETS.indexOf(left.target) - SURFACE_TARGETS.indexOf(right.target))
+    grants.sort((left, right) => left.slug.localeCompare(right.slug)
+        || SURFACE_TARGETS.indexOf(left.target as GuardSurfaceTarget) - SURFACE_TARGETS.indexOf(right.target as GuardSurfaceTarget))
     const projectedEntries = links.length * (SURFACE_TARGETS.length + 2) + grants.length
         + captured.priorOwnedLinks.length + SURFACE_TARGETS.length
     if (projectedEntries > PROJECTION_RESULT_ENTRY_LIMIT) return PLANNER_RESULT_BOUNDS
     const native = links.flatMap(link => SURFACE_TARGETS.map(harness => nativeProjection(harness, link, link.sibling)))
-        .sort((left, right) => SURFACE_TARGETS.indexOf(left.target) - SURFACE_TARGETS.indexOf(right.target) || left.linkPath.localeCompare(right.linkPath))
+        .sort((left, right) => SURFACE_TARGETS.indexOf(left.target as GuardSurfaceTarget)
+            - SURFACE_TARGETS.indexOf(right.target as GuardSurfaceTarget) || left.linkPath.localeCompare(right.linkPath))
 
     const current = new Map(captured.existingEntries.map(entry => [entry.path, entry]))
     const comparisons: ProjectionComparison[] = links.map(link => {

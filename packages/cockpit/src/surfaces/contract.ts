@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
+
+export { SURFACE_TARGETS, type SurfaceTarget } from './harness-registry.js'
 
 export const mechanism = {
     id: 'surface-contract',
@@ -12,7 +15,6 @@ export const mechanism = {
     ],
 } as const
 
-export const SURFACE_TARGETS = Object.freeze(['claudecode', 'codexcli', 'opencode'] as const)
 export const SURFACE_FEATURES = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 export const SURFACE_BUNDLE_FORMATS = Object.freeze(['claudecode-plugin'] as const)
 export const SURFACE_FILE_MAX_BYTES = 65_536
@@ -24,7 +26,6 @@ export type AdoptableSurfacePath = typeof ADOPTABLE_SURFACE_PATHS[number]
 export const ADOPTED_SURFACE_ROOT = 'cockpit/adopted'
 export const SURFACE_OUTPUT_MAX_BYTES = 4_194_304
 export const SURFACE_OUTPUT_MAX_FILES = 256
-export type SurfaceTarget = typeof SURFACE_TARGETS[number]
 export type SurfaceFeature = typeof SURFACE_FEATURES[number]
 export type SurfaceBundleFormat = typeof SURFACE_BUNDLE_FORMATS[number]
 

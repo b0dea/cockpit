@@ -44,7 +44,7 @@ import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
-import type { SurfaceTarget } from '../surfaces/contract.js'
+import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import type { FixContext } from '../fix-catalogue.js'
 import { completeGuardTransport, planGuardTransport, type NativeGuardOutput } from '../guards/harness-adapter.js'
 import {
@@ -243,7 +243,7 @@ export interface GuardEvaluationApplicationInput {
     /** The checkout the invoked guard script resolved from its own location. */
     readonly guardRoot: string
     readonly payload: unknown
-    readonly harness: SurfaceTarget
+    readonly harness: GuardSurfaceTarget
     readonly cwd: string
     readonly transport?: boolean
     readonly askIsDeny?: boolean
@@ -321,8 +321,8 @@ export async function runGuardEvaluationApplication(
             || data.transport !== undefined && typeof data.transport !== 'boolean'
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
-            || !['claudecode', 'codexcli', 'opencode'].includes(String(data.harness))) return unavailable('Guard request is malformed.')
-        const harness = data.harness as SurfaceTarget
+            || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
+        const harness = data.harness
         const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootDevice', 'rootInode', 'configPath', 'configSha256', 'configDevice', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
         if (!captured
             || !Object.values(captured).every(value => typeof value === 'string')

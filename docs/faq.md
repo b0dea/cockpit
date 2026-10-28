@@ -35,10 +35,10 @@ receives the cockpit-setup skill first. Custom harnesses can be declared under `
 
 ## Are the guards actually enforced?
 
-cockpit generates the hooks and permissions and wires one shared guard into each harness. Whether
-a given harness version honours them is measured, not assumed, and today every built-in feature
-is reported as *instructed*. The [capability matrix](capability-matrix.md) shows each cell and
-when it was last measured; `cockpit selftest` measures your installed versions.
+cockpit wires its shared guard only into targets with a measured adapter. Generated Cursor and
+Grok Build configuration does not claim native loading or guard enforcement. The
+[capability matrix](capability-matrix.md) shows each cell and when it was last measured;
+`cockpit selftest` measures supported installed candidates.
 
 ## Does cockpit change my product code?
 

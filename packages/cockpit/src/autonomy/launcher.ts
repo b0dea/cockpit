@@ -5,7 +5,7 @@ import type { GuardInvocationProfile, GuardProjectCommand } from '../guards/eval
 import { GUARD_INPUT_LIMITS } from '../guards/invocation-parser.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
-import type { SurfaceTarget } from '../surfaces/contract.js'
+import type { GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 
 export const mechanism = {
     id: 'autonomy-launch-representation', module: 'packages/cockpit/src/autonomy/launcher.ts',
@@ -13,7 +13,7 @@ export const mechanism = {
 } as const
 
 export interface ResolvedAutonomyGrants {
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly nativeReads: readonly string[]
     readonly cockpitInvocations: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
@@ -21,7 +21,7 @@ export interface ResolvedAutonomyGrants {
 }
 export interface AutonomyLaunchPlan {
     readonly kind: 'complete'
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly mode: 'ordinary' | 'escalated'
     readonly capability: 'instructed'
     readonly guardRequired: true
@@ -64,7 +64,7 @@ export function issueResolvedAutonomyGrants(input: unknown): ResolvedAutonomyGra
     if (!record(value) || !keys(value, ['target', 'nativeReads', 'cockpitInvocations', 'projectCommands', 'guardRegistration'])
         || typeof value.target !== 'string' || !Object.hasOwn(readSpellings, value.target)
         || !Array.isArray(value.nativeReads) || new Set(value.nativeReads).size !== value.nativeReads.length
-        || !value.nativeReads.every((read) => typeof read === 'string' && (readSpellings[value.target as SurfaceTarget] as readonly string[]).includes(read))
+        || !value.nativeReads.every((read) => typeof read === 'string' && (readSpellings[value.target as GuardSurfaceTarget] as readonly string[]).includes(read))
         || !Array.isArray(value.cockpitInvocations) || !Array.isArray(value.projectCommands)
         || value.cockpitInvocations.length + value.projectCommands.length > GUARD_INPUT_LIMITS.invocations
         || !value.cockpitInvocations.every((item) => command(item, false)) || !value.projectCommands.every((item) => command(item, true))

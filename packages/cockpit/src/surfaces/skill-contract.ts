@@ -19,6 +19,7 @@ import {
     type SurfaceSourceFile,
     type SurfaceTarget,
 } from './contract.js'
+import { GUARD_SURFACE_TARGETS, harnessFact, type GuardSurfaceTarget } from './harness-registry.js'
 
 /** The skill `cockpit init` installs first; init and the reference renderer both address it by this name. */
 export const SHIPPED_SETUP_SKILL = 'cockpit-setup' as const
@@ -133,11 +134,9 @@ const INLINE_FENCE = /^\s*```/m
 const COPIED_DECISION_LOGIC = /(?:\bparse\w*\s+(?:the\s+)?(?:registry|cockpit\.toml)|\bTOML\.parse\b|^\s*\[[a-z][a-z0-9_.-]*\]\s*$|\|\s*(?:tier|mount|data mode|verdict)\s*\|)/im
 const MISLEADING_COMPLETION = /\b(?:report|declare|claim)\w*\s+(?:the\s+)?(?:work\s+)?(?:complete|successful|green)\s+without\b/i
 const ALLOWED_COMMANDS: ReadonlySet<string> = new Set(commands.map(command => command.name))
-const TARGET_PATH_PREFIX: Readonly<Record<SurfaceTarget, string>> = Object.freeze({
-    claudecode: '.claude/skills',
-    codexcli: '.agents/skills',
-    opencode: '.opencode/skills',
-})
+const TARGET_PATH_PREFIX: Readonly<Record<SurfaceTarget, string>> = Object.freeze(Object.fromEntries(
+    SURFACE_TARGETS.map(target => [target, harnessFact(target).outputs.skills]),
+)) as Readonly<Record<SurfaceTarget, string>>
 
 function exact(value: JsonSnapshotObject, expected: readonly string[]): boolean {
     const actual = Object.keys(value).sort()
@@ -234,8 +233,8 @@ function parseEntryPoint(bytes: string): { frontmatter: JsonSnapshotObject; body
     return { frontmatter, body: bytes.slice(end + 5).trim(), rawFrontmatter }
 }
 
-function targetEquivalences(value: JsonSnapshot | undefined): Readonly<Record<SurfaceTarget, readonly string[]>> | undefined {
-    if (!object(value) || !exact(value, SURFACE_TARGETS)) return undefined
+function targetEquivalences(value: JsonSnapshot | undefined): Readonly<Record<GuardSurfaceTarget, readonly string[]>> | undefined {
+    if (!object(value) || !exact(value, GUARD_SURFACE_TARGETS)) return undefined
     const claudecode = strings(value.claudecode)
     const codexcli = strings(value.codexcli)
     const opencode = strings(value.opencode)
@@ -248,7 +247,7 @@ function sameStrings(value: JsonSnapshot | undefined, expected: readonly string[
         && value.every((item, index) => item === expected[index])
 }
 
-function targetToolsMatch(frontmatter: JsonSnapshotObject, equivalences: Readonly<Record<SurfaceTarget, readonly string[]>>): boolean {
+function targetToolsMatch(frontmatter: JsonSnapshotObject, equivalences: Readonly<Record<GuardSurfaceTarget, readonly string[]>>): boolean {
     const claude = frontmatter.claudecode
     const opencode = frontmatter.opencode
     const codex = frontmatter.codexcli
@@ -312,7 +311,7 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
     if (invoked.some(command => !declaredCommands.includes(command) || !ALLOWED_COMMANDS.has(command))) {
         return refusal('SKILL_COMMAND_UNDECLARED', 'skill invokes an undeclared cockpit command', source.path)
     }
-    for (const target of SURFACE_TARGETS) {
+    for (const target of GUARD_SURFACE_TARGETS) {
         if (!equivalences[target].every(tool => body.includes(`\`${tool}\``))) {
             return refusal('SKILL_TOOL_EQUIVALENCE_MISSING', `skill entry point omits the ${target} tool equivalence`, source.path)
         }
@@ -321,7 +320,7 @@ function declaration(source: SurfaceSourceFile): SkillDeclaration | SkillContrac
 }
 
 function expectedOutputs(skills: readonly SkillDeclaration[], sources: readonly SurfaceSourceFile[]): Record<SurfaceTarget, readonly string[]> {
-    const paths: Record<SurfaceTarget, readonly string[]> = { claudecode: [], codexcli: [], opencode: [] }
+    const paths = Object.fromEntries(SURFACE_TARGETS.map(target => [target, []])) as unknown as Record<SurfaceTarget, readonly string[]>
     for (const target of SURFACE_TARGETS) paths[target] = sources.flatMap(source => {
         const match = /^skills\/([^/]+)\/(.+)$/.exec(source.path)
         if (!match || !skills.some(skill => skill.name === match[1])) return []
@@ -423,11 +422,9 @@ function inspectRendered(
         collection,
         files,
     })
-    inspectedSkillResults.set(result, Object.freeze({
-        claudecode: Object.freeze([...expected.claudecode].sort()),
-        codexcli: Object.freeze([...expected.codexcli].sort()),
-        opencode: Object.freeze([...expected.opencode].sort()),
-    }))
+    inspectedSkillResults.set(result, Object.freeze(Object.fromEntries(SURFACE_TARGETS.map(target => [
+        target, Object.freeze([...expected[target]].sort()),
+    ]))) as Readonly<Record<SurfaceTarget, readonly string[]>>)
     return result
 }
 

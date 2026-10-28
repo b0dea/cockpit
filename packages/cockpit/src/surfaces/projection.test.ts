@@ -160,6 +160,8 @@ describe('live sibling projection planner', () => {
             { target: 'claudecode', mechanism: 'claude-relative-import', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-09-26', provenance: 'source setup projection header and in-tree relative import measurement' },
             { target: 'codexcli', mechanism: 'codex-root-instruction', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-09-26', provenance: 'Codex reads root AGENTS.md; native file-import syntax remains unavailable' },
             { target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'pending_evidence', characterizedOn: '2026-09-26', provenance: 'source instructions-list loading measurement' },
+            { target: 'cursor', mechanism: 'rulesync-rules', capability: 'unavailable', evidence: 'not_applicable', characterizedOn: '2026-10-28', provenance: 'no authenticated native candidate and broken-control probe is committed' },
+            { target: 'grokcli', mechanism: 'rulesync-rules', capability: 'unavailable', evidence: 'not_applicable', characterizedOn: '2026-10-28', provenance: 'no authenticated native candidate and broken-control probe is committed' },
         ])
         expect(Object.isFrozen(capabilities)).toBe(true)
         expect(capabilities.every(Object.isFrozen)).toBe(true)
@@ -167,7 +169,7 @@ describe('live sibling projection planner', () => {
         const result = planSiblingProjection(await validInput())
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
-        for (const capability of capabilities) {
+        for (const capability of capabilities.filter(row => row.capability === 'instructed')) {
             const native = result.native.find(row => row.target === capability.target)!
             expect(native).toMatchObject({
                 mechanism: capability.mechanism,

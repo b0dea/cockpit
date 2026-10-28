@@ -20,6 +20,7 @@ import {
     type SurfaceFeature,
     type SurfaceTarget,
 } from './contract.js'
+import { harnessFact } from './harness-registry.js'
 
 export const mechanism = {
     id: 'surface-generator-adapter',
@@ -154,6 +155,7 @@ interface EstateJob {
     readonly target: SurfaceTarget
     readonly generatorTarget: GeneratorTarget
     readonly batch: SurfaceBatch
+    readonly features: readonly SurfaceFeature[]
     readonly expected: readonly string[]
 }
 
@@ -933,7 +935,7 @@ async function runEstatePass(
             inputRoot: job.inputRoot,
             outputRoot: job.outputRoot,
             identity: job.outputIdentity,
-            features: job.batch.features,
+            features: job.features,
             warningSourceSha256: (() => {
                 const source = job.batch.sources.find(item => item.path === 'permissions.jsonc')
                 return source ? sha256(source.bytes) : null
@@ -965,11 +967,12 @@ async function runEstatePass(
             continue
         }
         const bytes = await readPrivateReceipt(job.generatorReceipt, summary)
-        const receipt = bytes ? parseWorkerReceipt(bytes, job.generatorTarget, job.batch.features) : undefined
+        const receipt = bytes ? parseWorkerReceipt(bytes, job.generatorTarget, job.features) : undefined
         if (!receipt) {
             generatedFailures.set(job.id, diagnostic('SURFACE_WORKER_OUTPUT', 'surface generator returned an invalid job receipt', 'worker-output', job.generatorTarget))
         } else if (receipt.features.some(feature => feature.count < 1 || feature.paths.length < 1)) {
-            generatedFailures.set(job.id, diagnostic('SURFACE_FEATURE_COVERAGE', 'surface generator did not cover every requested feature', 'coverage', job.generatorTarget))
+            const missing = receipt.features.filter(feature => feature.count < 1 || feature.paths.length < 1).map(feature => feature.feature).join(', ')
+            generatedFailures.set(job.id, diagnostic('SURFACE_FEATURE_COVERAGE', `surface generator did not cover requested features: ${missing}`, 'coverage', job.generatorTarget))
         } else if (!samePaths(receipt.reportedPaths, job.expected) || !samePaths(receipt.actualFiles.map(file => file.path), job.expected)) {
             generatedFailures.set(job.id, diagnostic('SURFACE_OUTPUT_COVERAGE', 'surface generator output did not exactly match the expected path set', 'coverage', job.generatorTarget))
         } else generatedReceipts.set(job.id, receipt)
@@ -1089,8 +1092,9 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             id: `batch-${target}`,
             kind: 'batch' as const,
             target,
-            generatorTarget: target,
+            generatorTarget: harnessFact(target).rulesyncTarget,
             batch,
+            features: batch.features.filter(feature => harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)),
             expected: batch.expectedOutputs[target] ?? EMPTY_FILES,
         })) : [],
         ...bundleRequest && bundleBatch ? [Object.freeze({
@@ -1099,6 +1103,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             target: 'claudecode' as const,
             generatorTarget: bundleRequest.format,
             batch: bundleBatch,
+            features: bundleBatch.features,
             expected: bundleRequest.expectedOutputs,
         })] : [],
     ]

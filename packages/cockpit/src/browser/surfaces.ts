@@ -9,7 +9,8 @@ import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome }
 import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock, readState, transactState, withStateScopedLock,
     type StateNamespace, type StateRecord } from '../environment/state.js'
 import { GeneratedHostPath } from '../schema.js'
-import { SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceTarget } from '../surfaces/contract.js'
+import type { RenderedSurfaceFile } from '../surfaces/contract.js'
+import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { collectMcpDeclarations, type McpDeclaration } from '../surfaces/mcp.js'
 import { assertBrowserArtifactRegistration, assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
 
@@ -31,7 +32,7 @@ export type BrowserTestPackage = Readonly<{
 export interface BrowserSurfaceInput {
     readonly runtime: BrowserRuntimeProjection
     readonly cockpitDirectory: string
-    readonly harnesses: readonly { readonly target: SurfaceTarget; readonly version: string }[]
+    readonly harnesses: readonly { readonly target: GuardSurfaceTarget; readonly version: string }[]
     readonly mcp: McpDeclaration
     readonly approved: boolean
     readonly testPackage: BrowserTestPackage | null
@@ -39,7 +40,7 @@ export interface BrowserSurfaceInput {
 }
 
 export interface BrowserTransportRow {
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly version: string
     readonly transport: 'mcp' | 'cli'
     readonly measuredOn: string
@@ -54,7 +55,7 @@ export interface BrowserTransportRow {
 
 export interface BrowserProjectClient {
     readonly package: '@playwright/test'
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly version: string
     readonly cwd: string
     readonly artifactRoot: string
@@ -83,7 +84,7 @@ export interface BrowserProjectOperationAdmissionInput {
 }
 
 export interface BrowserNativeProbe {
-    readonly target: SurfaceTarget
+    readonly target: GuardSurfaceTarget
     readonly transport: 'mcp' | 'cli'
     readonly version: string
     readonly status: 'human_needed'
@@ -153,7 +154,7 @@ const ProjectOperation = z.object({
 const Input = z.object({
     runtime: z.unknown(),
     cockpitDirectory: z.string().max(4096).refine(path => isAbsolute(path) && path !== '/' && resolve(path) === path && !/[\\\x00-\x1f\x7f]/.test(path)),
-    harnesses: z.array(z.object({ target: z.enum(SURFACE_TARGETS), version: Version }).strict()).min(1).max(3)
+    harnesses: z.array(z.object({ target: z.enum(GUARD_SURFACE_TARGETS), version: Version }).strict()).min(1).max(GUARD_SURFACE_TARGETS.length)
         .refine(rows => new Set(rows.map(row => row.target)).size === rows.length),
     mcp: z.unknown(), approved: z.boolean(), testPackage: Package.nullable(), skillTemplate: z.string().max(16_384),
 }).strict()
@@ -384,7 +385,7 @@ export function observeBrowserProjectPackage(input: Readonly<{
         module: Object.freeze({ path: relative(packageRoot, moduleAbsolute), bytes: moduleBytes, sha256: digest(moduleBytes) }) })
 }
 
-function file(target: SurfaceTarget, path: string, bytes: string): RenderedSurfaceFile {
+function file(target: GuardSurfaceTarget, path: string, bytes: string): RenderedSurfaceFile {
     return Object.freeze({ target, path, bytes, sha256: digest(bytes) })
 }
 
@@ -660,13 +661,13 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
         : 'Serialized browser authentication could not authenticate the canonical coordination state') + detail })
 }
 
-function nativeMcp(target: SurfaceTarget, command: string, args: readonly string[]): RenderedSurfaceFile {
+function nativeMcp(target: GuardSurfaceTarget, command: string, args: readonly string[]): RenderedSurfaceFile {
     if (target === 'claudecode') return file(target, '.mcp.json', JSON.stringify({ mcpServers: { playwright: { command, args } } }, null, 2) + '\n')
     if (target === 'opencode') return file(target, 'opencode.jsonc', JSON.stringify({ mcp: { playwright: { type: 'local', command: [command, ...args], enabled: true } } }, null, 2) + '\n')
     return file(target, '.codex/config.toml', `[mcp_servers.playwright]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\nenabled = true\ndefault_tools_approval_mode = "approve"\n`)
 }
 
-function renderSkill(template: string, target: SurfaceTarget, rows: readonly BrowserTransportRow[], runtime: BrowserRuntimeProjection): RenderedSurfaceFile {
+function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonly BrowserTransportRow[], runtime: BrowserRuntimeProjection): RenderedSurfaceFile {
     if (template.split('{{browser}}').length !== 2 || /{{|}}/.test(template.replace('{{browser}}', ''))
         || !template.startsWith('---\nname: cockpit-browser\n') || /^(?:allowed-tools|tools|disallowedTools):/m.test(template)) {
         throw new TypeError('browser skill template must contain one browser marker and retain browser tools')
@@ -811,7 +812,7 @@ const HarnessLaunch = z.union([
 const Paths = z.array(GeneratedHostPath).min(1).max(1024).refine(paths => new Set(paths).size === paths.length)
 const Receipt = z.object({
     schema: z.literal('cockpit-browser-native-receipt/v1'), subjectSha256: Sha256,
-    target: z.enum(SURFACE_TARGETS), transport: z.enum(['mcp', 'cli']), version: Version, observedAt: Timestamp,
+    target: z.enum(GUARD_SURFACE_TARGETS), transport: z.enum(['mcp', 'cli']), version: Version, observedAt: Timestamp,
     executable: Executable, harnessVersion: CommandObservation,
     transportIdentity: z.unknown(),
     transportVersion: CommandObservation.nullable(), transportHelp: z.array(CommandObservation).length(2).nullable(),

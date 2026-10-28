@@ -12,6 +12,7 @@ import { commands, internalCommands, isWorkHandler, resolveOrdinaryInvocation, t
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
+import { isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
 import type { FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderJsonResponse } from './diagnostics.js'
 import { classifyEstateObservation, documentCommand, documentObservedCommand, observeCockpitRoot, observePublicEstate, type DocumentCommandInput } from './document/command.js'
@@ -834,7 +835,7 @@ async function decodeRequest(
         const target = parsed.values.target, registry = parsed.values.registry
         if (!root || extraRoots.length || !SURFACE_TARGETS.some(value => value === target)
             || registry !== undefined && (typeof registry !== 'string' || registry.length === 0)) {
-            return usageOutcome('CLI_USAGE_INVALID', 'init requires one explicit root and --target claudecode|codexcli|opencode')
+            return usageOutcome('CLI_USAGE_INVALID', `init requires one explicit root and --target ${SURFACE_TARGETS.join('|')}`)
         }
         const absoluteRoot = resolve(root)
         try {
@@ -1246,12 +1247,12 @@ export async function runCli(
         return exitCode
     }
     if (internal) {
-        let harness: SurfaceTarget | undefined
+        let harness: GuardSurfaceTarget | undefined
         let response: Awaited<ReturnType<typeof runGuardEvaluationApplication>>
         try {
             if (commandArgs.length !== 2 || commandArgs[0] !== '--harness'
-                || !['claudecode', 'codexcli', 'opencode'].includes(commandArgs[1]!)) throw new Error('Invalid private guard arguments.')
-            harness = commandArgs[1] as SurfaceTarget
+                || !isGuardSurfaceTarget(commandArgs[1])) throw new Error('Invalid private guard arguments.')
+            harness = commandArgs[1]
             if (!io.stdin) throw new Error('Guard input stream is missing.')
             const chunks: Buffer[] = []
             let bytes = 0

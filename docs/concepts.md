@@ -12,8 +12,9 @@ Everyday terms, in plain language.
 
 ### Agent harness
 
-The AI coding tool an agent runs in. cockpit supports three, named by their target names:
-`claudecode` (Claude Code), `codexcli` (Codex CLI) and `opencode` (OpenCode).
+The AI coding tool an agent runs in. cockpit ships targets for `claudecode` (Claude Code),
+`codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor), and `grokcli` (Grok Build).
+Native loading and enforcement support varies by target and stays unavailable until measured.
 
 ### Sibling repository
 
