@@ -774,7 +774,10 @@ it('runs installed init for each isolated target and refuses missing roots or br
     const teamLock = JSON.parse(readFileSync(join(headless, 'package-lock.json'), 'utf8'))
     teamLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
     writeFileSync(join(headless, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
-    execFileSync(process.execPath, [launcher, 'sync', '--config', join(headless, 'cockpit.toml'), '--json'], { cwd: headless, env, stdio: 'ignore' })
+    const preparedTeam = spawnSync(process.execPath, [launcher, 'sync', '--config', join(headless, 'cockpit.toml'), '--json'], {
+        cwd: headless, env, encoding: 'utf8', timeout: 30_000,
+    })
+    expect(preparedTeam.status, preparedTeam.stdout + preparedTeam.stderr).toBe(0)
     execFileSync('git', ['init', '--quiet', headless])
     execFileSync('git', ['-C', headless, 'add', '.'])
     execFileSync('git', ['-C', headless, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.test',
