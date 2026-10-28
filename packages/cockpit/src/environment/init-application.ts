@@ -140,7 +140,8 @@ export interface InitApplicationAdapters {
     /** Says whether root is a product repository, which makes init ask where the cockpit lives. */
     readonly observeRoot?: (input: Readonly<{ root: string }>) => Promise<'product-repository' | 'cockpit-root'>
     /** Proposes answers from files the repositories already carry; every value comes back as inferred. */
-    readonly infer?: (input: Readonly<{ root: string; repositories: readonly Readonly<{ slug: string; path: string }>[] }>)
+    readonly infer?: (input: Readonly<{ root: string; configurationRoot?: string;
+        repositories: readonly Readonly<{ slug: string; path: string }>[] }>)
         => Promise<Readonly<{
             facts: readonly Readonly<{ fields: readonly string[]; target: string; value: unknown;
                 provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }> }>[]
@@ -296,7 +297,7 @@ async function interviewPlan(
 ): Promise<InterviewPlan> {
     const planned = plannedGreenfieldQuestions({ root: input.root, classification: classification.classification, gaps: classification.gaps })
     const observedRoot = estateInput(input).root
-    const inference = await adapters.infer?.({ root: observedRoot,
+    const inference = await adapters.infer?.({ root: observedRoot, configurationRoot: input.root,
         repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(observedRoot, resolve(observedRoot, row.path)) || '.' })) })
     return Object.freeze({
         answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),

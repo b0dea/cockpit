@@ -40,7 +40,10 @@ export interface InferenceResult {
 }
 
 export interface InferenceInput {
+    /** Files must stay under this observed authority root. */
     readonly root: string
+    /** Paths surfaced for confirmation are relative to the cockpit that will store them. */
+    readonly configurationRoot?: string
     readonly repositories: readonly Readonly<{ slug: string; path: string }>[]
 }
 
@@ -190,12 +193,19 @@ function workflowServices(document: unknown): Array<{ job: string; name: string;
 export async function deriveInferredFacts(input: InferenceInput): Promise<InferenceResult> {
     const facts: InferredFact[] = []
     const skipped: SkippedInference[] = []
+    const configurationRoot = input.configurationRoot ?? input.root
     // A repository at "." is the cockpit root itself (an in-repo cockpit), so the root is read once, as that repository.
-    const ownRoot = input.repositories.find(repository => repository.path === '.')
-    const directories = [{ slug: ownRoot?.slug, path: '' },
+    const ownRoot = configurationRoot === input.root ? input.repositories.find(repository => repository.path === '.') : undefined
+    const configurationDirectory = pathRelative(input.root, configurationRoot)
+    const directories = [{ slug: ownRoot?.slug, path: configurationDirectory },
         ...input.repositories.filter(repository => repository !== ownRoot)
             .map(repository => ({ slug: repository.slug as string | undefined, path: repository.path }))]
-    const relative = (directory: string, name: string) => directory === '' ? name : `${directory}/${name}`
+    const relative = (directory: string, name = '') => {
+        const source = pathRelative(configurationRoot, resolve(input.root, directory, name))
+        return (source === '' ? '.' : source).split(sep).join('/')
+    }
+    const authorityRelative = (directory: string, name: string) =>
+        pathRelative(input.root, resolve(input.root, directory, name)) || '.'
     const read = async (directory: string, name: string): Promise<string | undefined> => {
         const source = relative(directory, name)
         const result = await readBounded(input.root, directory, name)
@@ -234,17 +244,17 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                 templates = (await readdir(templateDirectory.path)).filter(name => ENV_TEMPLATE.test(name)).sort()
                 if (!sameDirectory(templateDirectory, await inspectDirectory(input.root, directory.path))) {
                     templates = []
-                    skipped.push({ source: directory.path === '' ? '.' : directory.path, reason: 'directory changed while it was listed' })
+                    skipped.push({ source: relative(directory.path), reason: 'directory changed while it was listed' })
                 }
             } catch (error) {
-                skipped.push({ source: directory.path === '' ? '.' : directory.path,
+                skipped.push({ source: relative(directory.path),
                     reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
             }
         } else if (templateDirectory.kind === 'skipped') {
-            skipped.push({ source: directory.path === '' ? '.' : directory.path, reason: templateDirectory.reason })
+            skipped.push({ source: relative(directory.path), reason: templateDirectory.reason })
         }
         if (templates.length > MAX_ENV_TEMPLATES) {
-            skipped.push({ source: directory.path === '' ? '.' : directory.path,
+            skipped.push({ source: relative(directory.path),
                 reason: `holds more than ${MAX_ENV_TEMPLATES} env template files; only the first ${MAX_ENV_TEMPLATES} were read` })
             templates = templates.slice(0, MAX_ENV_TEMPLATES)
         }
@@ -273,7 +283,8 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             if (parseYamlText(source, text) !== undefined) composeFiles.push(source)
             break
         }
-        const workflowDirectory = relative(directory.path, '.github/workflows')
+        const workflowDirectory = authorityRelative(directory.path, '.github/workflows')
+        const workflowSource = relative(directory.path, '.github/workflows')
         let entries: string[] = []
         const workflow = await inspectDirectory(input.root, workflowDirectory)
         if (workflow.kind === 'complete') {
@@ -281,20 +292,20 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                 entries = (await readdir(workflow.path)).filter(name => /\.ya?ml$/.test(name)).sort()
                 if (!sameDirectory(workflow, await inspectDirectory(input.root, workflowDirectory))) {
                     entries = []
-                    skipped.push({ source: workflowDirectory, reason: 'directory changed while it was listed' })
+                    skipped.push({ source: workflowSource, reason: 'directory changed while it was listed' })
                 }
             } catch (error) {
-                skipped.push({ source: workflowDirectory, reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
+                skipped.push({ source: workflowSource, reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
             }
         } else if (workflow.kind === 'skipped') {
-            skipped.push({ source: workflowDirectory, reason: workflow.reason })
+            skipped.push({ source: workflowSource, reason: workflow.reason })
         }
         if (entries.length > MAX_WORKFLOWS) {
-            skipped.push({ source: workflowDirectory, reason: `holds more than ${MAX_WORKFLOWS} workflows; only the first ${MAX_WORKFLOWS} were read` })
+            skipped.push({ source: workflowSource, reason: `holds more than ${MAX_WORKFLOWS} workflows; only the first ${MAX_WORKFLOWS} were read` })
             entries = entries.slice(0, MAX_WORKFLOWS)
         }
         for (const entry of entries) {
-            const source = `${workflowDirectory}/${entry}`
+            const source = relative(workflowDirectory, entry)
             const text = await read(workflowDirectory, entry)
             if (text === undefined) continue
             for (const service of workflowServices(parseYamlText(source, text))) {
@@ -313,7 +324,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     // or allowing a cockpit with no repositories that every sibling consumer would have to special-case.
     // mount "none" because the agent already works in the root: mounting or projecting it would
     // point the cockpit's own guides at themselves. The purpose is the human's to state.
-    const rootName = basename(input.root)
+    const rootName = basename(configurationRoot)
     if ((input.repositories.length === 0 || ownRoot?.slug === rootName) && SIBLING_SLUG.test(rootName)) facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
         value: { slug: rootName, dir: '.', mount: 'none', acquire: 'none', var: `${rootName.toUpperCase().replaceAll('-', '_')}_DIR` },
         provenance: { kind: 'inferred', source: '.', reason: ownRoot

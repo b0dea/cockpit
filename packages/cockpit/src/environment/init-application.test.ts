@@ -235,6 +235,11 @@ describe('init application', () => {
     it('infers dedicated-cockpit answers from the observed product estate', async () => {
         const f = fixture()
         await writeFile(join(f.root, 'Dockerfile'), 'FROM node:22\nEXPOSE 3000\nCMD ["node", "server.mjs"]\n')
+        await writeFile(join(f.root, 'compose.yml'), 'services:\n  api:\n    build: .\n')
+        mkdirSync(join(f.root, '.github/workflows'), { recursive: true })
+        await writeFile(join(f.root, '.github/workflows/ci.yml'), 'jobs: [unclosed')
+        await writeFile(resolve(f.root, '..', 'Dockerfile'), 'FROM marker.invalid/unrelated\nEXPOSE 9000\n')
+        await writeFile(resolve(f.root, '..', 'compose.yml'), 'services:\n  unrelated:\n    image: marker.invalid/unrelated\n')
         const dedicated = resolve(f.root, '..', 'checkout-cockpit')
         mkdirSync(dedicated)
         const classified = estate(resolve(f.root, '..'), 'one-sibling')
@@ -255,17 +260,23 @@ describe('init application', () => {
             cockpitRoot: { kind: 'dedicated', firstSibling: f.root } }, adapters)
 
         expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'pending', result: { interview: {
+            inferenceSkipped: [expect.objectContaining({ source: '../checkout/.github/workflows/ci.yml',
+                reason: expect.stringContaining('not valid YAML') })],
             outstanding: expect.arrayContaining([
                 expect.objectContaining({ field: 'ports.bases', inferred: [expect.objectContaining({
                     target: 'checkout.container_ports', value: [3000],
-                    provenance: expect.objectContaining({ source: 'checkout/Dockerfile' }),
+                    provenance: expect.objectContaining({ source: '../checkout/Dockerfile' }),
                 })] }),
                 expect.objectContaining({ field: 'environment.generated', inferred: expect.arrayContaining([
+                    expect.objectContaining({ target: 'environment.compose_files', value: ['../checkout/compose.yml'],
+                        provenance: expect.objectContaining({ source: '../checkout/compose.yml' }) }),
                     expect.objectContaining({ target: 'checkout.command', value: ['node', 'server.mjs'],
-                        provenance: expect.objectContaining({ source: 'checkout/Dockerfile' }) }),
+                        provenance: expect.objectContaining({ source: '../checkout/Dockerfile' }) }),
                 ]) }),
             ]),
         } } })
+        expect(JSON.stringify(outcome)).not.toContain('marker.invalid/unrelated')
+        expect(JSON.stringify(outcome)).not.toContain('9000')
     })
 
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
