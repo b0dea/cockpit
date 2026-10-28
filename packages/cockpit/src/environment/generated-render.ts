@@ -450,9 +450,11 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
     if (!safeGeneratedPath(declaration.compose_file) || !safeGeneratedPath(declaration.decisions.path)) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'generated output path is invalid' })
     }
-    if (declaration.services.some(({ build, sibling }) => build !== undefined
-        && (typeof safeInput.siblingDirectories[sibling] !== 'string' || !safeSiblingBuildDirectory(safeInput.siblingDirectories[sibling]!)))) {
-        return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'a built service names a sibling without a valid relative checkout directory' })
+    const invalidBuild = declaration.services.find(({ build, sibling }) => build !== undefined
+        && (typeof safeInput.siblingDirectories[sibling] !== 'string' || !safeSiblingBuildDirectory(safeInput.siblingDirectories[sibling]!)))
+    if (invalidBuild) {
+        return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID',
+            reason: `built service ${invalidBuild.id} names sibling ${invalidBuild.sibling} without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run cockpit sync` })
     }
     const compose = renderCompose(declaration, safeInput)
     const secretsTemplates = renderSecretsTemplates(declaration, safeInput.siblingDirectories)

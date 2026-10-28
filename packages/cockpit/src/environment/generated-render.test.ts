@@ -63,8 +63,13 @@ describe('generated browser runner rendering', () => {
         for (const directory of ['/outside/api', 'api/../../outside', '../api/../outside', 'C:\\outside', 'C:/outside', 'api\\nested', 'api\u0000suffix']) {
             expect(renderGeneratedEnvironment({ ...input, siblingDirectories: { api: directory } })).toMatchObject({
                 kind: 'refusal', code: 'GENERATED_INPUT_INVALID',
+                reason: 'built service api names sibling api without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run cockpit sync',
             })
         }
+        expect(renderGeneratedEnvironment({ ...input, siblingDirectories: {} })).toMatchObject({
+            kind: 'refusal', code: 'GENERATED_INPUT_INVALID',
+            reason: 'built service api names sibling api without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run cockpit sync',
+        })
         expect(renderGeneratedEnvironment({ ...input, declaration: { ...declaration, compose_file: '../outside.yml' },
             siblingDirectories: { api: '../api' } })).toMatchObject({ kind: 'refusal', code: 'GENERATED_DECLARATION_INVALID' })
     })
