@@ -1,13 +1,8 @@
-import { createHash } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load.js'
 import {
-    beginOperatorReset,
     issueDestructiveRunContext,
-    runDown,
-    runSleep,
-    runUp,
     type DestructiveObservation,
     type DestructiveObservationRefusal,
     type DestructiveReclaimObservation,
@@ -19,12 +14,9 @@ import {
 import { ENVIRONMENT_CODES, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
 import { readActiveStackInventory } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDockerExecutable, resolveExecutable, resolvePathRemovalExecutable,
-    type ExecutableResolution, type ResolvedExecutable } from './executable.js'
-import { createGitObservationStep } from './git-observation.js'
+import { resolveDockerExecutable, resolvePathRemovalExecutable } from './executable.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import {
-    compensateAcquiredPortHolder,
     deriveEntrypoints,
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
@@ -51,7 +43,7 @@ import type { RuntimeMeasurementProbeAuthority } from './runtime.js'
 export const mechanism = {
     id: 'destructive-adapter-composition',
     module: 'packages/cockpit/src/environment/destructive-composition.ts',
-    exports: ['consumeComparisonPostState', 'createDestructiveCommandAdapters', 'withBoundedComparisonLifecycle'],
+    exports: ['createDestructiveCommandAdapters'],
 } as const
 
 export interface DestructiveCompositionInput {
@@ -96,50 +88,6 @@ function boundedExecutor(execute: Executor, concurrency: number): Executor {
 type CapturedCompositionInput = Omit<DestructiveCompositionInput, 'env'> & {
     readonly env: Readonly<Record<string, string>>
 }
-
-export interface BoundedComparisonLifecycle {
-    readonly stack: LifecycleRunContext['stackId']
-    readonly checkout: Readonly<{ id: LifecycleRunContext['checkoutId']; root: string }>
-    readonly entrypoints: readonly Readonly<{ name: string; value: string }>[]
-    resolveExecutable(name: string): Promise<ExecutableResolution>
-    execute(step: ExecutionStep): Promise<ExecuteProbeOutcome>
-    up(): ReturnType<typeof runUp>
-    down(): ReturnType<typeof runDown>
-    beginReset(): ReturnType<typeof beginOperatorReset>
-    observePostState(implementation: 'legacy' | 'cockpit', command: string): Promise<ComparisonPostStateProjection | undefined>
-    observeReleasedGit(executable: ResolvedExecutable): Promise<Readonly<{
-        step: ExecutionStep
-        outcome: ExecuteProbeOutcome
-    }> | undefined>
-    retainInspection(): void
-}
-
-declare const comparisonPostStateBrand: unique symbol
-export type ComparisonPostStateProjection = Readonly<{ readonly [comparisonPostStateBrand]: true }>
-type ComparisonPostStateRecord = Readonly<{
-    stackId: LifecycleRunContext['stackId']
-    checkoutId: LifecycleRunContext['checkoutId']
-    implementation: 'legacy' | 'cockpit'
-    command: string
-    sha256: string
-}>
-const comparisonPostStates = new WeakMap<object, ComparisonPostStateRecord>()
-
-export function consumeComparisonPostState(
-    projection: ComparisonPostStateProjection | undefined,
-    expected: Omit<ComparisonPostStateRecord, 'sha256'>,
-): string | undefined {
-    if (!projection || typeof projection !== 'object') return undefined
-    const record = comparisonPostStates.get(projection)
-    comparisonPostStates.delete(projection)
-    return record?.stackId === expected.stackId && record.checkoutId === expected.checkoutId
-        && record.implementation === expected.implementation && record.command === expected.command
-        ? record.sha256 : undefined
-}
-
-export type BoundedComparisonLifecycleResult<T> =
-    | Readonly<{ kind: 'complete'; result: T }>
-    | Readonly<{ kind: 'refusal'; reason: string }>
 
 function captureInput(value: DestructiveCompositionInput): CapturedCompositionInput | undefined {
     try {
@@ -513,180 +461,4 @@ export function createDestructiveCommandAdapters(
         },
         execute,
     })
-}
-
-export async function withBoundedComparisonLifecycle<T>(
-    rawInput: DestructiveCompositionInput,
-    execute: Executor,
-    use: (lifecycle: BoundedComparisonLifecycle) => Promise<T>,
-): Promise<BoundedComparisonLifecycleResult<T>> {
-    const input = captureInput(rawInput)
-    if (!input || typeof execute !== 'function' || typeof use !== 'function') {
-        return Object.freeze({ kind: 'refusal', reason: 'bounded comparison authority is unavailable' })
-    }
-    const lifecycleInput = Object.freeze({
-        configPath: input.configPath,
-        env: Object.freeze(input.env.DOCKER_HOST === undefined ? { ...input.env, DOCKER_CONTEXT: input.dockerContext } : input.env),
-        sessionId: input.sessionId,
-        timeoutMs: input.timeoutMs,
-        ...(input.activeProfiles === undefined ? {} : { activeProfiles: input.activeProfiles }),
-        ...(input.runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority: input.runtimeMeasurementProbeAuthority }),
-    })
-    const lifecycle = createLifecycleCommandAdapters(lifecycleInput, execute)
-    const loaded = await lifecycle.load(Object.freeze({ configPath: input.configPath }))
-    if (loaded.kind !== 'complete') return Object.freeze({ kind: 'refusal', reason: 'comparison lifecycle could not be loaded' })
-    const context = loaded.result
-    const canonicalInput = Object.freeze({
-        configPath: input.configPath, env: input.env, sessionId: input.sessionId, timeoutMs: input.timeoutMs,
-        dockerContext: input.dockerContext,
-        ...(input.activeProfiles === undefined ? {} : { activeProfiles: input.activeProfiles }),
-        ...(input.runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority: input.runtimeMeasurementProbeAuthority }),
-    })
-    const destructive = createDestructiveCommandAdapters(canonicalInput, execute)
-    const result = await lifecycle.withAcquiredPorts(context, async acquired => {
-        if (acquired.leaseResult.kind !== 'complete' || acquired.leaseResult.change !== 'acquired') {
-            return Object.freeze({ kind: 'refusal' as const, reason: 'comparison requires one fresh acquired port holder' })
-        }
-        const acquiredLease = acquired.leaseResult
-        let closureRan = false
-        let downRan = false
-        let downSucceeded = false
-        let retainInspection = false
-        const exactInventory = async (released: boolean) => {
-            const inventory = await readActiveStackInventory(context.namespace)
-            if (inventory.kind !== 'complete') return undefined
-            const matches = inventory.value.filter(({ stackId }) => stackId === context.stackId)
-            if (released) return matches.length === 0 ? inventory : undefined
-            const record = matches.length === 1 ? matches[0]!.record : undefined
-            if (!record || record.holders.length !== 1
-                || record.holders[0]!.holderId !== context.holderId
-                || record.holders[0]!.checkoutId !== context.checkoutId
-                || !record.lease || record.lease.released
-                || JSON.stringify(record.lease.ports) !== JSON.stringify(acquiredLease.lease.ports)) return undefined
-            return inventory
-        }
-        const stillBound = async () => {
-            const retained = await observeRetainedPortFamily({
-                namespace: context.namespace, stackId: context.stackId, holderId: context.holderId,
-                checkoutId: context.checkoutId, config: context.ports,
-            })
-            return retained.kind === 'complete' && await exactInventory(false) !== undefined
-                && JSON.stringify(retained.lease.ports) === JSON.stringify(acquiredLease.lease.ports)
-        }
-        const exactlyReleased = async () => {
-            return await exactInventory(true) !== undefined
-        }
-        const observePostState = async (implementation: 'legacy' | 'cockpit', command: string) => {
-            if (!/^[a-z][a-z0-9-]{0,63}$/.test(command)) return undefined
-            const loadedConfig = await loadCockpitConfig(input.configPath)
-            if (loadedConfig.kind !== 'complete') return undefined
-            const configuration = consumeLoadedConfigProjection(loadedConfig.result)
-            if (!configuration || !sameSource(context.source, configuration.source)) return undefined
-            const inventory = await exactInventory(implementation === 'cockpit' && command === 'down')
-            if (!inventory) return undefined
-            const snapshot = Object.freeze({
-                config: configuration.source,
-                stackId: context.stackId,
-                checkoutId: context.checkoutId,
-                entrypoints: Object.freeze(acquired.projection.entrypoints.map(({ name, value }) => Object.freeze({ name, value }))),
-            })
-            const projection = Object.freeze({}) as ComparisonPostStateProjection
-            comparisonPostStates.set(projection, Object.freeze({
-                stackId: context.stackId, checkoutId: context.checkoutId, implementation, command,
-                sha256: createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'),
-            }))
-            return projection
-        }
-        const bound = Object.freeze({
-            stack: context.stackId,
-            checkout: Object.freeze({ id: context.checkoutId, root: dirname(input.configPath) }),
-            entrypoints: Object.freeze(acquired.projection.entrypoints.map(({ name, value }) => Object.freeze({ name, value }))),
-            resolveExecutable: (name: string) => resolveExecutable(name, input.env),
-            execute: async (step: ExecutionStep) => {
-                closureRan = true
-                const outcome = await execute(step)
-                if (!await stillBound()) throw new Error('comparison holder changed during execution')
-                return outcome
-            },
-            up: async () => {
-                closureRan = true
-                const outcome = await runUp(Object.freeze({ configPath: input.configPath }), lifecycle)
-                if (!await stillBound()) throw new Error('comparison holder changed during bring-up')
-                return outcome
-            },
-            down: async () => {
-                closureRan = true; downRan = true
-                const outcome = await runDown(Object.freeze({ configPath: input.configPath }), destructive)
-                downSucceeded = outcome.kind === 'complete' && await exactlyReleased()
-                return outcome
-            },
-            beginReset: async () => {
-                closureRan = true
-                const session = await beginOperatorReset(Object.freeze({ configPath: input.configPath }), destructive)
-                if (!('preview' in session)) return session
-                return Object.freeze({
-                    preview: session.preview,
-                    decide: async (decision: 'approve' | 'decline') => {
-                        const outcome = await session.decide(decision)
-                        if (outcome.kind === 'complete' && !await stillBound()) {
-                            throw new Error('comparison holder changed during reset')
-                        }
-                        return outcome
-                    },
-                })
-            },
-            observePostState,
-            observeReleasedGit: async (executable: ResolvedExecutable) => {
-                if (!downSucceeded || !await exactlyReleased()) return undefined
-                const step = createGitObservationStep({ executable, checkoutRoot: dirname(input.configPath), env: Object.freeze({}),
-                    timeoutMs: Math.min(input.timeoutMs, 30_000), stackId: context.stackId,
-                    source: 'comparison-subject', checkoutId: context.checkoutId })
-                if (!step) return undefined
-                const outcome = await execute(step)
-                return await exactlyReleased() ? Object.freeze({ step, outcome }) : undefined
-            },
-            retainInspection: () => { retainInspection = true },
-        }) satisfies BoundedComparisonLifecycle
-        acquired.retainOnFailure()
-        try {
-            const value = await use(bound)
-            if (retainInspection) {
-                const cleanup = await runSleep(Object.freeze({ configPath: input.configPath }), lifecycle)
-                if (cleanup.kind !== 'complete') {
-                    const callbackReason = value !== null && typeof value === 'object' && 'reason' in value
-                        && typeof value.reason === 'string' && value.reason.length <= 512 ? ` after ${value.reason}` : ''
-                    return Object.freeze({ kind: 'refusal' as const, reason: `comparison lifecycle cleanup failed${callbackReason}` })
-                }
-            } else if (closureRan && !downRan) {
-                const cleanup = await bound.down()
-                if (cleanup.kind !== 'complete') {
-                    const callbackReason = value !== null && typeof value === 'object' && 'reason' in value
-                        && typeof value.reason === 'string' && value.reason.length <= 512 ? ` after ${value.reason}` : ''
-                    return Object.freeze({ kind: 'refusal' as const, reason: `comparison lifecycle cleanup failed${callbackReason}` })
-                }
-            }
-            if (downRan && !downSucceeded) return Object.freeze({ kind: 'refusal' as const, reason: 'comparison lifecycle cleanup failed' })
-            if (!closureRan && !retainInspection) {
-                const compensated = await compensateAcquiredPortHolder({
-                    namespace: context.namespace,
-                    leaseResult: acquiredLease,
-                    now: new Date().toISOString(),
-                })
-                if (compensated.kind !== 'complete') return Object.freeze({ kind: 'refusal' as const, reason: 'unused comparison lease compensation failed' })
-            }
-            return Object.freeze({ kind: 'complete' as const, result: value })
-        } catch (error) {
-            const cleanup = retainInspection ? await runSleep(Object.freeze({ configPath: input.configPath }), lifecycle)
-                : !closureRan ? await compensateAcquiredPortHolder({
-                namespace: context.namespace, leaseResult: acquiredLease, now: new Date().toISOString(),
-            })
-                : !downRan ? await bound.down() : undefined
-            const cleanupFailed = cleanup !== undefined && cleanup.kind !== 'complete' || downRan && !downSucceeded
-            const detail = error instanceof Error && error.message.length > 0 && error.message.length <= 512
-                ? `: ${error.message}` : ''
-            return Object.freeze({ kind: 'refusal' as const,
-                reason: cleanupFailed ? `comparison callback failed${detail}; lifecycle cleanup failed` : `comparison callback failed${detail}` })
-        }
-    })
-    return result ?? Object.freeze({ kind: 'refusal', reason: 'comparison port acquisition is unavailable' })
 }

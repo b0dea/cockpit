@@ -6,12 +6,10 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { runDown, runReset } from './application.js'
-import * as application from './application.js'
-import * as claims from './claims.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import * as lifecycleComposition from './lifecycle-composition.js'
 import * as ports from './ports.js'
-import { consumeComparisonPostState, createDestructiveCommandAdapters, withBoundedComparisonLifecycle } from './destructive-composition.js'
+import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { consumeRuntimeLifecycleProjection } from './runtime.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 
@@ -24,116 +22,6 @@ afterEach(async () => {
 })
 
 describe('destructive command composition', () => {
-    it('refuses an unavailable bounded comparison authority without invoking the runner', async () => {
-        const use = vi.fn()
-        await expect(withBoundedComparisonLifecycle({
-            configPath: '', env: {}, sessionId: 'comparison', timeoutMs: 5_000, dockerContext: 'default',
-        }, vi.fn() as never, use)).resolves.toMatchObject({ kind: 'refusal' })
-        expect(use).not.toHaveBeenCalled()
-    })
-
-    it('uses canonical sleep when the runner retains an uncertain legacy checkout', async () => {
-        const raw = {
-            configPath: '/tmp/comparison/cockpit.toml', env: { PATH: '/usr/bin:/bin' },
-            sessionId: 'comparison', timeoutMs: 5_000, dockerContext: 'default',
-        }
-        const context = Object.freeze({
-            configPath: raw.configPath, source: Object.freeze({ path: raw.configPath, byteLength: 1, sha256: 'a'.repeat(64) }),
-            namespace: Object.freeze({}), cockpitId: 'cockpit', checkoutId: 'checkout', stackId: 'stack', holderId: 'holder',
-            ports: Object.freeze({}), entrypointDerivatives: Object.freeze([]),
-        })
-        const lifecycle = Object.freeze({
-            load: vi.fn(async () => {
-                raw.env.PATH = '/mutated-after-capture'
-                return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })
-            }),
-            withAcquiredPorts: vi.fn(async (_context, use) => use(Object.freeze({
-                leaseResult: Object.freeze({ kind: 'complete', change: 'acquired', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }) }),
-                projection: Object.freeze({ entrypoints: Object.freeze([]) }),
-                retainOnFailure: vi.fn(),
-            }))),
-        })
-        const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters').mockReturnValue(lifecycle as never)
-        const release = vi.spyOn(ports, 'releasePortFamily')
-        const sleep = vi.spyOn(application, 'runSleep').mockResolvedValue(Object.freeze({
-            kind: 'complete', status: 0, diagnostics: Object.freeze([]),
-            result: Object.freeze({ stackId: 'stack', change: 'stopped' }),
-        }) as never)
-        const result = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => {
-            bounded.retainInspection()
-            return 'retained'
-        })
-        expect(result).toEqual({ kind: 'complete', result: 'retained' })
-        expect(sleep).toHaveBeenCalledWith({ configPath: raw.configPath }, lifecycle)
-        expect(release).not.toHaveBeenCalled()
-        expect(lifecycleFactory).toHaveBeenCalledTimes(2)
-        expect(lifecycleFactory.mock.calls.map(call => call[0].env.PATH)).toEqual(['/usr/bin:/bin', '/usr/bin:/bin'])
-
-        const callbackFailure = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => {
-            bounded.retainInspection()
-            throw new Error('synthetic comparison callback')
-        })
-        expect(callbackFailure).toEqual({
-            kind: 'refusal', reason: 'comparison callback failed: synthetic comparison callback',
-        })
-
-        sleep.mockResolvedValueOnce(Object.freeze({
-            kind: 'refusal', status: 2, diagnostics: Object.freeze([]), result: null,
-        }) as never)
-        const cleanupFailure = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => {
-            bounded.retainInspection()
-            return { reason: 'original comparison failure' }
-        })
-        expect(cleanupFailure).toEqual({
-            kind: 'refusal', reason: 'comparison lifecycle cleanup failed after original comparison failure',
-        })
-    })
-
-    it('refuses a co-holder introduced during execution or left behind after down', async () => {
-        const raw = {
-            configPath: '/tmp/comparison/cockpit.toml', env: { PATH: '/usr/bin:/bin' },
-            sessionId: 'comparison', timeoutMs: 5_000, dockerContext: 'default',
-        }
-        const context = Object.freeze({
-            configPath: raw.configPath, source: Object.freeze({ path: raw.configPath, byteLength: 1, sha256: 'a'.repeat(64) }),
-            namespace: Object.freeze({}), cockpitId: 'cockpit', checkoutId: 'checkout', stackId: 'stack', holderId: 'holder',
-            ports: Object.freeze({}), entrypointDerivatives: Object.freeze([]),
-        })
-        vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters').mockReturnValue(Object.freeze({
-            load: vi.fn(async () => Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })),
-            withAcquiredPorts: vi.fn(async (_context, use) => use(Object.freeze({
-                leaseResult: Object.freeze({ kind: 'complete', change: 'acquired', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }) }),
-                projection: Object.freeze({ entrypoints: Object.freeze([]) }),
-                retainOnFailure: vi.fn(),
-            }))),
-        }) as never)
-        vi.spyOn(ports, 'observeRetainedPortFamily').mockResolvedValue(Object.freeze({
-            kind: 'complete', lease: Object.freeze({ ports: Object.freeze({ api: 43123 }) }),
-        }) as never)
-        const holder = Object.freeze({ holderId: 'holder', checkoutId: 'checkout' })
-        const other = Object.freeze({ holderId: 'other', checkoutId: 'other-checkout' })
-        const record = (holders: readonly Readonly<{ holderId: string; checkoutId: string }>[]) => Object.freeze({
-            holders, lease: Object.freeze({ ports: Object.freeze({ api: 43123 }), released: false }),
-        })
-        const inventory = vi.spyOn(claims, 'readActiveStackInventory')
-            .mockResolvedValue(Object.freeze({ kind: 'complete', value: Object.freeze([
-                Object.freeze({ stackId: 'stack', record: record([holder, other]) }),
-            ]) }) as never)
-        vi.spyOn(application, 'runUp').mockResolvedValue(Object.freeze({
-            kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: Object.freeze({ stackId: 'stack', change: 'started', entrypoints: Object.freeze([]) }),
-        }) as never)
-        const added = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => bounded.up())
-        expect(added).toMatchObject({ kind: 'refusal', reason: expect.stringContaining('callback failed') })
-
-        inventory.mockResolvedValue(Object.freeze({ kind: 'complete', value: Object.freeze([
-            Object.freeze({ stackId: 'stack', record: record([other]) }),
-        ]) }) as never)
-        vi.spyOn(application, 'runDown').mockResolvedValue(Object.freeze({
-            kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: Object.freeze({ stackId: 'stack', change: 'removed' }),
-        }) as never)
-        const residual = await withBoundedComparisonLifecycle(raw, vi.fn() as never, async bounded => bounded.down())
-        expect(residual).toMatchObject({ kind: 'refusal', reason: 'comparison lifecycle cleanup failed' })
-    })
     it('forwards the opaque controlled-runtime authority and selected profiles to the lifecycle owner', () => {
         const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
         const profiles = ['runtime_probe']
@@ -424,39 +312,5 @@ describe('destructive command composition', () => {
             now: new Date().toISOString(),
         })
         expect(released.kind).toBe('complete')
-        await rm(join(root, 'runtime-up'), { force: true })
-        const bounded = await withBoundedComparisonLifecycle(input, executeProbe, async lifecycleOwner => {
-            const git = await lifecycleOwner.resolveExecutable('git')
-            if (git.state !== 'available') throw new Error(git.reason)
-            expect(await lifecycleOwner.observeReleasedGit(git.value)).toBeUndefined()
-            const up = await lifecycleOwner.up()
-            if (up.kind !== 'complete') throw new Error(JSON.stringify(up))
-            const reset = await lifecycleOwner.beginReset()
-            if (!('preview' in reset)) throw new Error(JSON.stringify(reset))
-            const resetOutcome = await reset.decide('approve')
-            if (resetOutcome.kind !== 'complete') throw new Error(JSON.stringify(resetOutcome))
-            const resetProjection = await lifecycleOwner.observePostState('cockpit', 'reset')
-            expect(consumeComparisonPostState(resetProjection, {
-                stackId: lifecycleOwner.stack, checkoutId: lifecycleOwner.checkout.id,
-                implementation: 'cockpit', command: 'reset',
-            })).toMatch(/^[a-f0-9]{64}$/)
-            const down = await lifecycleOwner.down()
-            if (down.kind !== 'complete') throw new Error(JSON.stringify(down))
-            expect(await lifecycleOwner.observeReleasedGit(git.value)).toMatchObject({
-                step: { id: 'git-health' }, outcome: { kind: 'complete' },
-            })
-            const downProjection = await lifecycleOwner.observePostState('cockpit', 'down')
-            expect(consumeComparisonPostState(downProjection, {
-                stackId: lifecycleOwner.stack, checkoutId: lifecycleOwner.checkout.id,
-                implementation: 'cockpit', command: 'down',
-            })).toMatch(/^[a-f0-9]{64}$/)
-            return 'complete'
-        })
-        expect(bounded).toEqual({ kind: 'complete', result: 'complete' })
-
-        const afterRelease = createDestructiveCommandAdapters(input, executeProbe)
-        await expect(afterRelease.load({ configPath })).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
-        })
     })
 })

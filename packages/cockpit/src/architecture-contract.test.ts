@@ -449,18 +449,7 @@ function executionBoundaryViolations(
                     && ts.isExternalModuleReference(statement.moduleReference)
                     && executorSpecifier(statement.moduleReference.expression))).length
             const runtimeReferenceCount = executorReferences.length - typeOnlyReferences
-            const comparisonProbeImports = file.statements.filter((statement): statement is ts.ImportDeclaration =>
-                ts.isImportDeclaration(statement) && executorSpecifier(statement.moduleSpecifier)
-                && !statement.importClause?.isTypeOnly && !statement.importClause?.name && !!statement.importClause?.namedBindings
-                && ts.isNamedImports(statement.importClause.namedBindings)
-                && statement.importClause.namedBindings.elements.filter(binding => !binding.isTypeOnly).length === 1
-                && (statement.importClause.namedBindings.elements.find(binding => !binding.isTypeOnly)?.propertyName
-                    ?? statement.importClause.namedBindings.elements.find(binding => !binding.isTypeOnly)?.name)?.text === 'executeProbe')
-            const acceptedComparisonProbeOwner = canonical === 'packages/cockpit/src/comparison/command.ts'
-                && runtimeReferenceCount === 1 && comparisonProbeImports.length === 1
-                && analysis.declarations.some(row => row.id === 'comparison-command'
-                    && row.declaredBy === path && row.module === canonical && row.exports.includes('comparisonCommand'))
-            if (runtimeReferenceCount > 0 && !acceptedComparisonProbeOwner) violations.add('ARCH026_EXECUTE_PLAN_CALLER')
+            if (runtimeReferenceCount > 0) violations.add('ARCH026_EXECUTE_PLAN_CALLER')
         }
         const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
         const releaseMetadataCalls = new Set<ts.CallExpression>()
@@ -898,10 +887,6 @@ function executionBoundaryViolations(
                     && analysis.declarations.some(row => row.id === 'lifecycle-adapter-composition'
                         && row.declaredBy === path && row.module === canonical
                         && row.exports.includes('createLifecycleCommandAdapters')))
-                && !(canonical === 'packages/cockpit/src/environment/destructive-composition.ts'
-                    && analysis.declarations.some(row => row.id === 'destructive-adapter-composition'
-                        && row.declaredBy === path && row.module === canonical
-                        && row.exports.includes('withBoundedComparisonLifecycle')))
             ) violations.add('ARCH024_COMPENSATION_EXECUTION_HOME')
         } else if (executorPolicy) {
             violations.add('ARCH025_EXECUTOR_POLICY')
