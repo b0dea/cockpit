@@ -75,6 +75,7 @@ describe('public surface publication transaction', () => {
                 .replace(`/* cockpit:owner:${ownerId}:start */`, '')
                 .replace(`/* cockpit:owner:${ownerId}:end */`, '')) as {
                 mcp: Record<string, { enabled: boolean }>
+                permission: { external_directory: Record<string, 'allow'> }
             }
             expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect(settings.enabledMcpjsonServers).toEqual(['approved-server'])
@@ -82,6 +83,10 @@ describe('public surface publication transaction', () => {
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(Object.fromEntries(Object.entries(openCode.mcp).map(([name, server]) => [name, server.enabled]))).toEqual({
                 'approved-server': true, 'unapproved-server': false,
+            })
+            expect(openCode.permission.external_directory).toEqual({
+                [`${join(fixture.root, 'app')}/**`]: 'allow',
+                [`${outside}/**`]: 'allow',
             })
             expect(cursorGrant).toContain(outside)
             expect(cursorGrant).toContain('Read')

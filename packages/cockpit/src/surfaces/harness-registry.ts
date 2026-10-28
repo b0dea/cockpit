@@ -16,6 +16,7 @@ const unavailableNative = Object.freeze({
     reason: 'no authenticated native candidate and broken-control probe is committed',
 })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
+const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
 export const HARNESS_REGISTRY = Object.freeze([
     Object.freeze({
@@ -31,8 +32,8 @@ export const HARNESS_REGISTRY = Object.freeze([
         guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
-        target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencode',
-        rulesyncFeatures: completeRulesyncFeatures,
+        target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
+        rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
         guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
     }),

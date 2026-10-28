@@ -20,7 +20,7 @@ import {
     type SurfaceFeature,
     type SurfaceTarget,
 } from './contract.js'
-import { harnessFact } from './harness-registry.js'
+import { harnessFact, type HarnessRegistryRow } from './harness-registry.js'
 
 export const mechanism = {
     id: 'surface-generator-adapter',
@@ -95,7 +95,7 @@ export type SurfaceEstateGenerationOutcome =
     }>
     | Exclude<SurfaceGenerationOutcome, { kind: 'complete' }>
 
-type GeneratorTarget = SurfaceTarget | SurfaceBundleFormat
+type GeneratorTarget = HarnessRegistryRow['rulesyncTarget'] | SurfaceBundleFormat
 
 interface NodeAuthority {
     readonly path: string

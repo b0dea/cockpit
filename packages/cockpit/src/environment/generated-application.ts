@@ -1431,19 +1431,25 @@ function expectedSurfaceOutputs(
     sources: readonly SurfaceSourceFile[],
 ): Readonly<Record<SurfaceTarget, readonly string[]>> {
     const has = (feature: SurfaceFeature) => features.includes(feature)
+    const hasFor = (target: SurfaceTarget, feature: SurfaceFeature) => has(feature)
+        && harnessFact(target).rulesyncFeatures.some(candidate => candidate === feature)
     const names = (prefix: string, suffix: string) => sources.filter(source => source.path.startsWith(prefix))
         .map(source => source.path.slice(prefix.length, suffix.length === 0 ? undefined : -suffix.length))
     const skills = sources.filter(source => source.path.startsWith('skills/')).map(source => source.path.slice('skills/'.length))
     const rows = Object.fromEntries(SURFACE_TARGETS.map(target => [target, []])) as unknown as Record<SurfaceTarget, string[]>
     if (has('rules')) for (const target of SURFACE_TARGETS) {
+        if (!hasFor(target, 'rules')) continue
         const root = harnessFact(target).outputs.instruction
         if (target === 'cursor') rows[target].push(...names('rules/', '.md').map(name => `${root}/${name}.mdc`))
         else rows[target].push(root)
     }
-    if (has('mcp')) for (const target of SURFACE_TARGETS) rows[target].push(harnessFact(target).outputs.mcp)
+    if (has('mcp')) for (const target of SURFACE_TARGETS) {
+        if (hasFor(target, 'mcp')) rows[target].push(harnessFact(target).outputs.mcp)
+    }
     if (has('hooks')) rows.claudecode.push('.claude/settings.json'), rows.codexcli.push('.codex/hooks.json'), rows.opencode.push('.opencode/plugins/rulesync-hooks.js')
     if (has('hooks')) rows.cursor.push('.cursor/hooks.json'), rows.grokcli.push('.grok/hooks/rulesync.json')
     if (has('permissions')) for (const target of SURFACE_TARGETS) {
+        if (!hasFor(target, 'permissions')) continue
         const permissionSource = sources.find(source => source.path === 'permissions.jsonc')
         const grokRules = (() => {
             if (!permissionSource) return false
@@ -1604,6 +1610,48 @@ function nativeFragmentSet(
     })
     if (fragments.some(fragment => fragment === undefined)) return undefined
     return Object.freeze({ modelSha256, fragments: Object.freeze(fragments as NonNullable<typeof fragments[number]>[]) })
+}
+
+function nativeGrantFragmentSet(
+    generated: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>,
+    grants: readonly Readonly<{ target: SurfaceTarget; path: string }>[],
+    paths: Readonly<Partial<Record<SurfaceTarget, string>>>,
+): NativeFragmentSet | undefined {
+    const modelSha256 = surfaceModelSha256(grants)
+    if (!modelSha256) return undefined
+    const fragments = Object.entries(paths).map(([target, path]) => {
+        const row = generated.files.find(candidate => candidate.target === target && candidate.path === path)
+        if (target !== 'opencode') {
+            return row ? Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row.sha256, bytes: row.bytes, sha256: row.sha256 }) : undefined
+        }
+        let base: Record<string, unknown> = {}
+        if (row) {
+            try {
+                const parsed = ownRecord(JSON.parse(row.bytes))
+                if (!parsed) return undefined
+                base = parsed
+            } catch { return undefined }
+            if (Object.hasOwn(base, 'permission')) return undefined
+        }
+        const externalDirectory = Object.fromEntries([...new Set(grants.filter(grant => grant.target === target)
+            .map(grant => `${grant.path}/**`))].sort(compareCodeUnits).map(grantPath => [grantPath, 'allow']))
+        const bytes = `${JSON.stringify({ ...base, permission: { external_directory: externalDirectory } }, null, 2)}\n`
+        return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
+    })
+    if (fragments.some(fragment => fragment === undefined)) return undefined
+    return Object.freeze({ modelSha256, fragments: Object.freeze(fragments as NonNullable<typeof fragments[number]>[]) })
+}
+
+function bindOpenCodeGrantToMcp(
+    mcp: NativeFragmentSet,
+    grants: NativeFragmentSet,
+): NativeFragmentSet | undefined {
+    const grant = grants.fragments.find(fragment => fragment.target === 'opencode' && fragment.path === 'opencode.jsonc')
+    const base = mcp.fragments.find(fragment => fragment.target === 'opencode' && fragment.path === 'opencode.jsonc')
+    if (!grant || !base) return mcp
+    if (grant.baseSha256 !== base.sha256) return undefined
+    return Object.freeze({ ...mcp, fragments: Object.freeze(mcp.fragments.map(fragment => fragment === base
+        ? Object.freeze({ ...fragment, bytes: grant.bytes, sha256: grant.sha256 }) : fragment)) })
 }
 
 function nativeMcpPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<Record<SurfaceTarget, string>>> {
@@ -2252,8 +2300,9 @@ async function prepareSurfaces(
     }
     const mcpTargets = mcp.result.servers.length === 0 ? [] : mcp.result.harnesses.map(row => row.target)
     const grantTargets = [...new Set(projection.grants.map(row => row.target))]
-    const nativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
-    const nativeGrants = nativeFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets))
+    const generatedNativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
+    const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets))
+    const nativeMcp = generatedNativeMcp && nativeGrants ? bindOpenCodeGrantToMcp(generatedNativeMcp, nativeGrants) : undefined
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const runnerAsset = asset('scripts/browser-runner.sh')
     const browserSkillRendered = browser?.files.some(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) === true
