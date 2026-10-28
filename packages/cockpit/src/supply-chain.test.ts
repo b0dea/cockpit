@@ -92,7 +92,7 @@ describe('the supply-chain readiness detector', () => {
         const result = inspect(repositoryRoot, PACK_FILES)
         expect(result.diagnostics).toEqual([])
         expect(result.operatorGaps).toEqual([
-            'package-scope-owner', 'trusted-publisher', 'artifact-attachment', 'superseded-minor-deprecation',
+            'package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation',
         ])
     })
 
@@ -133,6 +133,26 @@ describe('the supply-chain readiness detector', () => {
             ['a release job without provenance', '.github/workflows/release.yml', (text: string) => text.replace("NPM_CONFIG_PROVENANCE: 'true'", "NPM_CONFIG_PROVENANCE: 'false'"), 'RELEASE_PROVENANCE_MISSING'],
             ['a release job without the OIDC token scope', '.github/workflows/release.yml', (text: string) => text.replace(/ +id-token: write[^\n]*\n/, ''), 'RELEASE_PROVENANCE_MISSING'],
             ['a release workflow with no release job', '.github/workflows/release.yml', (text: string) => text.replace('  release:\n', '  other:\n'), 'RELEASE_JOB_MISSING'],
+            ['a release job using a legacy ignored publish input', '.github/workflows/release.yml',
+                (text: string) => text.replace('publish-script:', 'publish:'), 'RELEASE_STAMP_MISSING'],
+            ['a release job that never attaches authenticated release evidence', '.github/workflows/release.yml',
+                (text: string) => text.replace('gh release upload "$tag" release-evidence.json release-evidence.json.sha256', 'echo evidence-not-uploaded'),
+                'RELEASE_EVIDENCE_MISSING'],
+            ['release evidence before a confirmed publication', '.github/workflows/release.yml',
+                (text: string) => text.replace("if: steps.changesets.outputs.published == 'true'", 'if: always()'),
+                'RELEASE_EVIDENCE_MISSING'],
+            ['release evidence from a legacy missing action output', '.github/workflows/release.yml',
+                (text: string) => text.replace('outputs.published-packages', 'outputs.publishedPackages'),
+                'RELEASE_EVIDENCE_MISSING'],
+            ['release evidence for an unverified package set', '.github/workflows/release.yml',
+                (text: string) => text.replace('published.length !== 1', 'published.length < 1'),
+                'RELEASE_EVIDENCE_MISSING'],
+            ['release evidence without registry integrity', '.github/workflows/release.yml',
+                (text: string) => text.replace('dist.integrity --json', 'dist.tarball --json'),
+                'RELEASE_EVIDENCE_MISSING'],
+            ['release evidence without exact tag readback', '.github/workflows/release.yml',
+                (text: string) => text.replace('gh release view "$tag"', 'gh release view --latest'),
+                'RELEASE_EVIDENCE_MISSING'],
             ['an update entry without a cooldown', '.github/dependabot.yml', (text: string) => text.replace('    cooldown:\n      default-days: 7\n', ''), 'DEPENDABOT_COOLDOWN_MISSING'],
             ['a cooldown shorter than seven days', '.github/dependabot.yml', (text: string) => text.replace('default-days: 7', 'default-days: 6'), 'DEPENDABOT_COOLDOWN_MISSING'],
         ])('refuses %s', (_name, path, update, code) => {
@@ -183,7 +203,7 @@ describe('the supply-chain readiness detector', () => {
             writeWorkflow(root, 'other', publisher([
                 '      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51',
                 '        with:',
-                '          publish: node ship.mjs',
+                '          publish-script: node ship.mjs',
             ]))
             expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
         })

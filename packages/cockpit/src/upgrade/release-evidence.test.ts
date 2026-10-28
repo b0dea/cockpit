@@ -1,14 +1,20 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { mkdtemp, open, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { upgradeCommand } from './command.js'
-import { createReleaseEvidenceDiscovery, type AuthenticatedCurrentOverrideProjection } from './release-evidence.js'
+import {
+    assembleReleaseEvidence,
+    createReleaseEvidenceDiscovery,
+    createReleaseRecord,
+    type AuthenticatedCurrentOverrideProjection,
+} from './release-evidence.js'
 
 const roots: string[] = []
 const sha = (character: string): string => character.repeat(64)
@@ -55,6 +61,98 @@ afterEach(async () => {
 })
 
 describe('authenticated release evidence discovery', () => {
+    it('ships an offline adapter that writes a record and its digest without replacing output', async () => {
+        const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')) as { name: string; version: string }
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-release-adapter-'))
+        roots.push(root)
+        const output = join(root, 'release-evidence.json')
+        const script = fileURLToPath(new URL('../../libexec/release-evidence.mjs', import.meta.url))
+        const args = ['record', '--package', manifest.name, '--version', manifest.version,
+            '--integrity', `sha512-${createHash('sha512').update('published').digest('base64')}`, '--output', output]
+
+        const first = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
+        expect(first.status, first.stderr).toBe(0)
+        expect(first.stdout).toBe('')
+        const bytes = await readFile(output, 'utf8')
+        expect(await readFile(`${output}.sha256`, 'utf8')).toBe(`${digest(bytes)}  release-evidence.json\n`)
+
+        const repeated = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
+        expect(repeated.status).toBe(2)
+        expect(repeated.stderr).toContain('could not be written')
+        expect(await readFile(output, 'utf8')).toBe(bytes)
+
+        const conflictedOutput = join(root, 'conflicted.json')
+        await writeFile(`${conflictedOutput}.sha256`, 'reviewed digest\n')
+        const conflicted = spawnSync(process.execPath, [script, ...args.slice(0, -1), conflictedOutput], { encoding: 'utf8' })
+        expect(conflicted.status).toBe(2)
+        await expect(readFile(conflictedOutput, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(`${conflictedOutput}.sha256`, 'utf8')).toBe('reviewed digest\n')
+    })
+
+    it('assembles independently authenticated release records into evidence the existing discovery accepts', async () => {
+        const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')) as { name: string; version: string }
+        const current = await createReleaseRecord({
+            package: manifest.name,
+            version: manifest.version,
+            integrity: `sha512-${createHash('sha512').update('current').digest('base64')}`,
+        })
+        expect(current).toMatchObject({ kind: 'complete' })
+        if (current.kind !== 'complete') return
+        expect(JSON.parse(current.bytes)).toMatchObject({
+            schema: 'cockpit-upgrade-release-record/v1',
+            release: {
+                package: manifest.name,
+                version: manifest.version,
+                originals: expect.arrayContaining([
+                    expect.objectContaining({ name: 'evaluator', feature: 'subagents' }),
+                    expect.objectContaining({ name: 'cockpit-setup', feature: 'skills' }),
+                ]),
+            },
+        })
+
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-release-records-'))
+        roots.push(root)
+        const currentPath = join(root, 'current.json')
+        const candidatePath = join(root, 'candidate.json')
+        const evidencePath = join(root, 'release-evidence.json')
+        await writeFile(currentPath, current.bytes)
+        const candidateValue = JSON.parse(current.bytes)
+        candidateValue.release.version = '0.0.1'
+        candidateValue.release.integrity = `sha512-${createHash('sha512').update('candidate').digest('base64')}`
+        const candidateBytes = `${JSON.stringify(candidateValue)}\n`
+        await writeFile(candidatePath, candidateBytes)
+
+        const assembled = await assembleReleaseEvidence({
+            currentPath,
+            currentSha256: digest(current.bytes),
+            candidatePath,
+            candidateSha256: digest(candidateBytes),
+        })
+        expect(assembled).toMatchObject({ kind: 'complete' })
+        if (assembled.kind !== 'complete') return
+        await writeFile(evidencePath, assembled.bytes)
+        const discover = createReleaseEvidenceDiscovery({
+            configPath: 'cockpit.toml', evidencePath,
+            expectedSha256: digest(assembled.bytes),
+            projection: { activeOverrides: [] },
+            installed: { package: manifest.name, version: manifest.version,
+                integrity: `sha512-${createHash('sha512').update('current').digest('base64')}` },
+        })
+        await expect(discover({ configPath: 'cockpit.toml' })).resolves.toMatchObject({
+            kind: 'complete',
+            current: { package: manifest.name, version: manifest.version },
+            candidate: { package: manifest.name, version: '0.0.1' },
+        })
+
+        await writeFile(candidatePath, `${candidateBytes} `)
+        await expect(assembleReleaseEvidence({
+            currentPath,
+            currentSha256: digest(current.bytes),
+            candidatePath,
+            candidateSha256: digest(candidateBytes),
+        })).resolves.toEqual({ kind: 'refusal', reason: 'candidate release record could not be authenticated' })
+    })
+
     it('reports only candidate changes to every authenticated active override', async () => {
         const { path, bytes } = await fixture()
         const discover = createReleaseEvidenceDiscovery({

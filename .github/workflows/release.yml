@@ -39,11 +39,45 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
       - run: npm ci --ignore-scripts
-      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      - id: changesets
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          publish: bash .github/scripts/release-publish.sh
-          title: Version Packages
-          commit: Version Packages
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          publish-script: bash .github/scripts/release-publish.sh
+          pr-title: Version Packages
+          commit-message: Version Packages
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+      - name: attach authenticated release evidence
+        if: steps.changesets.outputs.published == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
+        run: |
+          IFS=$'\t' read -r package_name version < <(node -e '
+            const published = JSON.parse(process.env.PUBLISHED_PACKAGES)
+            if (!Array.isArray(published) || published.length !== 1
+                || published[0]?.name !== "@b0dea/cockpit"
+                || typeof published[0]?.version !== "string") process.exit(2)
+            process.stdout.write(`${published[0].name}\t${published[0].version}\n`)
+          ')
+          integrity="$(npm view "${package_name}@${version}" dist.integrity --json | node -e '
+            let bytes = ""
+            process.stdin.setEncoding("utf8")
+            process.stdin.on("data", chunk => { bytes += chunk })
+            process.stdin.on("end", () => {
+              const value = JSON.parse(bytes)
+              if (typeof value !== "string") process.exit(2)
+              process.stdout.write(value)
+            })
+          ')"
+          node packages/cockpit/libexec/release-evidence.mjs record \
+            --package "$package_name" --version "$version" --integrity "$integrity" \
+            --output release-evidence.json
+          tag="${package_name}@${version}"
+          observed_tag="$(gh release view "$tag" --json tagName --jq .tagName)"
+          if [[ "$observed_tag" != "$tag" ]]; then
+            echo "::error::expected release tag '$tag', observed '$observed_tag'" >&2
+            exit 1
+          fi
+          gh release upload "$tag" release-evidence.json release-evidence.json.sha256

@@ -36,6 +36,12 @@ import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, SURFACE_PUBLI
 import { mergeAdoptedSurface } from '../surfaces/adoption.js'
 import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from '../surfaces/generator-adapter.js'
 import { mergeSurfaceDeclarations, type ActiveSurfaceOverride, type SurfaceUpgradeFinding } from '../surfaces/merge.js'
+import {
+    CORE_EVALUATOR_ASSET as EVALUATOR_ASSET,
+    CORE_SKILL_ASSETS as SKILL_ASSETS,
+    coreSurfaceDeclarations,
+    shippedSkillNames,
+} from '../surfaces/core-declarations.js'
 import { collectMcpDeclarations, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration } from '../surfaces/mcp.js'
 import {
     renderSharedPostimage,
@@ -512,15 +518,6 @@ const RESTRICTION_ASSETS = Object.freeze([
     'guards/codex.adapter.json',
     'guards/opencode.adapter.json',
 ] as const)
-const EVALUATOR_ASSET = 'agents/evaluator.agent.md' as const
-const SKILL_ASSETS = Object.freeze([
-    'skills/collection.json',
-    'skills/cockpit-setup.skill.md',
-    'skills/cockpit-explain.skill.md',
-    'skills/cockpit-fix.skill.md',
-    'skills/cockpit-work.skill.md',
-    'skills/procedures/onboarding.md',
-] as const)
 // Shipped beside the setup skill, outside the skill contract: the skill set admits only entry points and the
 // shared procedure, and these are pulled on demand like the browser reference.
 const REFERENCE_ASSETS = Object.freeze([
@@ -732,15 +729,6 @@ function selectedBootstrapInput(input: unknown): SelectedBootstrapSurfaceInput |
         || !isAbsolute(record.root) || resolve(record.root) !== record.root
         || !SURFACE_TARGETS.includes(record.target as SurfaceTarget)) return undefined
     return Object.freeze({ root: record.root, target: record.target as SurfaceTarget })
-}
-
-function shippedSkillNames(assets: ReadonlyMap<SurfaceAssetPath, Readonly<{ bytes: string }>>): readonly string[] | undefined {
-    const bytes = assets.get('skills/collection.json')?.bytes
-    if (bytes === undefined) return undefined
-    try {
-        const skills = (JSON.parse(bytes) as { skills?: unknown }).skills
-        return Array.isArray(skills) && skills.every(name => typeof name === 'string') ? skills as string[] : undefined
-    } catch { return undefined }
 }
 
 function selectedBootstrapSources(assets: ReadonlyMap<SurfaceAssetPath, Readonly<{ bytes: string }>>): readonly SurfaceSourceFile[] | undefined {
@@ -2190,19 +2178,11 @@ async function prepareSurfaces(
     if (testingConfiguration?.nativeHookInstall === 'explicit-native' && nativeHooks.kind !== 'complete') {
         return refuse('SURFACE_INPUT_INVALID', nativeHooks.reason, '.githooks/pre-push')
     }
-    const procedure = asset('skills/procedures/onboarding.md').bytes
-    const shippedSkills = shippedSkillNames(new Map(assets.map(row => [row.path, row] as const)))
-    if (!shippedSkills) return refuse('SURFACE_INPUT_INVALID', 'the shipped skill collection could not be read', 'skills/collection.json')
-    const merge = mergeSurfaceDeclarations([{
-        name: 'evaluator', feature: 'subagents', source: EVALUATOR_ASSET,
-        sources: [{ path: 'subagents/evaluator.md', bytes: asset(EVALUATOR_ASSET).bytes }],
-    }, ...shippedSkills.map(name => ({
-        name, feature: 'skills' as const, source: `skills/${name}.skill.md`,
-        sources: [
-            { path: `skills/${name}/SKILL.md`, bytes: asset(`skills/${name}.skill.md` as SurfaceAssetPath).bytes },
-            { path: `skills/${name}/procedures/onboarding.md`, bytes: procedure },
-        ],
-    }))], config.surfaces.overlays)
+    const coreAssets = new Map(assets.map(row => [row.path, row] as const))
+    const shippedSkills = shippedSkillNames(coreAssets)
+    const coreDeclarations = coreSurfaceDeclarations(coreAssets)
+    if (!shippedSkills || !coreDeclarations) return refuse('SURFACE_INPUT_INVALID', 'the shipped core surface declarations could not be read', 'skills/collection.json')
+    const merge = mergeSurfaceDeclarations(coreDeclarations, config.surfaces.overlays)
     if (merge.kind !== 'complete') return refuse(merge.code, merge.message, 'surfaces')
     const mergedSources = merge.surfaces.flatMap(surface => surface.sources).map(source => ({
         path: source.path,

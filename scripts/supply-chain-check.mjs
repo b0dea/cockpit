@@ -43,7 +43,7 @@ const REVIEWED_EXECUTABLE_LOCK_NODES = Object.freeze([
 // Only gates no file in this repository can prove. The source-revision stamp, provenance
 // and dependency cooldown are checked by `releaseDiagnostics` and are not listed here.
 const OPERATOR_GAPS = Object.freeze([
-    'package-scope-owner', 'trusted-publisher', 'artifact-attachment', 'superseded-minor-deprecation',
+    'package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation',
 ])
 const MINIMUM_COOLDOWN_DAYS = 7
 const STATIC_PACKAGE_FILES = Object.freeze([
@@ -331,12 +331,14 @@ function workflowDiagnostics(root, rootManifest) {
                 }
                 if (typeof step.uses === 'string') inspectAction(step.uses, path)
                 if (typeof step.run === 'string' && /npm run lint:supply-chain(?:\s|$)/.test(step.run)) invokesDetector = true
-                // `with.publish` and `with.version` are command lines the release action runs,
-                // so they are scanned like `run`. A repository script named by any of them is
+                // Changesets action command inputs are scanned like `run`. Legacy input names
+                // remain included here so an ignored but dangerous-looking command cannot hide.
+                // A repository script named by any of them is
                 // scanned too: moving a publish command into a script must not hide it.
-                const commands = [step.run, step.with?.publish, step.with?.version].filter(value => typeof value === 'string')
+                const commands = [step.run, step.with?.['publish-script'], step.with?.['version-script'], step.with?.publish, step.with?.version]
+                    .filter(value => typeof value === 'string')
                 if (!publishes) {
-                    if (typeof step.with?.publish === 'string') {
+                    if (typeof step.with?.['publish-script'] === 'string' || typeof step.with?.publish === 'string') {
                         add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release job may run a publish command')
                     }
                     for (const command of commands) {
@@ -395,7 +397,8 @@ function releaseDiagnostics(root) {
     }
     if (record(job)) {
         const steps = Array.isArray(job.steps) ? job.steps.filter(record) : []
-        const commands = steps.flatMap(step => [step.run, step.with?.publish, step.with?.version].filter(value => typeof value === 'string'))
+        const commands = steps.flatMap(step => [step.run, step.with?.['publish-script'], step.with?.['version-script']]
+            .filter(value => typeof value === 'string'))
         const bodies = [...commands]
         for (const script of new Set(commands.flatMap(command => command.match(/\.github\/scripts\/[A-Za-z0-9_./-]+/g) ?? []))) {
             try {
@@ -412,6 +415,18 @@ function releaseDiagnostics(root) {
         const provenance = envs.some(env => String(env.NPM_CONFIG_PROVENANCE) === 'true') || bodies.some(body => /--provenance\b/.test(body))
         if (!provenance || job.permissions?.['id-token'] !== 'write') {
             diagnostics.push(diagnostic('RELEASE_PROVENANCE_MISSING', '.github/workflows/release.yml', 'the release job must publish with provenance (NPM_CONFIG_PROVENANCE or --provenance) and hold id-token: write'))
+        }
+        const evidence = steps.find(step => step.name === 'attach authenticated release evidence')
+        const evidenceBody = typeof evidence?.run === 'string' ? evidence.run : ''
+        if (evidence?.if !== "steps.changesets.outputs.published == 'true'"
+            || evidence?.env?.PUBLISHED_PACKAGES !== '${{ steps.changesets.outputs.published-packages }}'
+            || !evidenceBody.includes('published.length !== 1')
+            || !evidenceBody.includes('published[0]?.name !== "@b0dea/cockpit"')
+            || !evidenceBody.includes('npm view "${package_name}@${version}" dist.integrity --json')
+            || !evidenceBody.includes('packages/cockpit/libexec/release-evidence.mjs record')
+            || !evidenceBody.includes('gh release view "$tag"')
+            || !evidenceBody.includes('gh release upload "$tag" release-evidence.json release-evidence.json.sha256')) {
+            diagnostics.push(diagnostic('RELEASE_EVIDENCE_MISSING', '.github/workflows/release.yml', 'the exact published cockpit package must attach its authenticated release record and digest to the matching GitHub release'))
         }
     }
     const dependabot = readYaml('.github/dependabot.yml')

@@ -47,9 +47,32 @@ not a substitute.
 Before publishing generated changes:
 
 ```sh
+CURRENT_VERSION="$(node -p "require('./node_modules/@b0dea/cockpit/package.json').version")"
+TARGET_VERSION="1.2.3"
+mkdir -p .cockpit/releases/current .cockpit/releases/candidate
+gh release download "@b0dea/cockpit@${CURRENT_VERSION}" \
+  --pattern release-evidence.json.sha256 \
+  --dir .cockpit/releases/current
+gh release download "@b0dea/cockpit@${TARGET_VERSION}" \
+  --pattern release-evidence.json.sha256 \
+  --dir .cockpit/releases/candidate
+cat .cockpit/releases/current/release-evidence.json.sha256
+cat .cockpit/releases/candidate/release-evidence.json.sha256
+CURRENT_RECORD_SHA256="REVIEWED_CURRENT_RECORD_SHA256"
+CANDIDATE_RECORD_SHA256="REVIEWED_CANDIDATE_RECORD_SHA256"
+gh release download "@b0dea/cockpit@${CURRENT_VERSION}" \
+  --pattern release-evidence.json --dir .cockpit/releases/current
+gh release download "@b0dea/cockpit@${TARGET_VERSION}" \
+  --pattern release-evidence.json --dir .cockpit/releases/candidate
+node ./node_modules/@b0dea/cockpit/libexec/release-evidence.mjs assemble \
+  --current .cockpit/releases/current/release-evidence.json \
+  --current-sha256 "$CURRENT_RECORD_SHA256" \
+  --candidate .cockpit/releases/candidate/release-evidence.json \
+  --candidate-sha256 "$CANDIDATE_RECORD_SHA256" \
+  --output .cockpit/releases/release-evidence-pair.json
 ./node_modules/.bin/cockpit upgrade --config ./cockpit.toml \
-  --release-evidence ./release-evidence.json \
-  --release-evidence-sha256 EXPECTED_SHA256
+  --release-evidence .cockpit/releases/release-evidence-pair.json \
+  --release-evidence-sha256 "$(awk 'NR == 1 { print $1 }' .cockpit/releases/release-evidence-pair.json.sha256)"
 ./node_modules/.bin/cockpit sync --config ./cockpit.toml --dry-run
 ./node_modules/.bin/cockpit sync --config ./cockpit.toml
 ./node_modules/.bin/cockpit preflight --config ./cockpit.toml
@@ -64,3 +87,16 @@ refuse without waiting for a writer. The [release-evidence owner](../packages/co
 defines the current input bound. Release integrity values must contain canonical base64 SHA-256, SHA-384, or SHA-512 digests with
 the matching byte length. Hexadecimal digests and truncated placeholders are refused even when
 the surrounding evidence file has the expected hash.
+
+Every GitHub release attaches one `release-evidence.json` record and its SHA-256 file. The record
+names that exact npm package version and registry integrity and hashes the core surface
+declarations with the same constructor used during `sync`. Download the installed and candidate
+records from their exact tags, review both SHA-256 files, then run the shipped offline assembler
+as shown above. The assembler refuses changed bytes, linked or special-file inputs, mismatched
+packages, invalid records, and an existing output instead of replacing it. Its paired output is
+the only file accepted by `upgrade`; a per-release record alone is not upgrade authority.
+
+The first public release truthfully carries only its own record because no published predecessor
+exists. It never fabricates a `current` release. Once a later release exists, combine any installed
+release record with the chosen candidate record, so skipping intermediate versions does not weaken
+the comparison.
