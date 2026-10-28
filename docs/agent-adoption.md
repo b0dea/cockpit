@@ -246,9 +246,12 @@ Run from the directory that holds the repositories. Each step stops for the huma
    ```
 
    The run stops at the first field still unanswered, or at `configuration.defaults`. There,
-   `result.question.expectedSha256` is the defaults digest, and the `DOCUMENT_DEFAULT` and
-   `DOCUMENT_INFERRED` diagnostics list every value the human has not stated.
-4. **Accept the defaults** after the human has read that list:
+   `result.question.document` is an incomplete review draft. Its provenance comments show
+   every inferred and default value with its target and reason, and
+   `result.question.expectedSha256` is the digest covering those values. The human output and
+   interactive question show the same document. It is not written to `cockpit.toml` before
+   acceptance; the `DOCUMENT_DEFAULT` and `DOCUMENT_INFERRED` diagnostics supply the reasons.
+4. **Accept the defaults** after the human has read those attributed values:
 
    ```sh
    ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json

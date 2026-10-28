@@ -140,8 +140,11 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
    it was read from.
 2. Write the answers as TOML, keyed by field, and show them to the human together with the digest.
 3. Rerun with `--accept-preview <previewSha256>` and `--answers <file>`. The run stops at the
-   first field still unanswered, or at `configuration.defaults`, whose surfaced values are in the
-   diagnostics and whose digest is in `question.expectedSha256`.
+   first field still unanswered, or at `configuration.defaults`. There, `result.question.document`
+   is an incomplete review draft whose provenance comments list each inferred or default value,
+   its target and reason; `result.question.expectedSha256` is the digest covering those values.
+   Read the document before asking the human to accept that digest. The human output and the
+   interactive question show the same document; it is not written to `cockpit.toml`.
 4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one
    is refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 
@@ -180,6 +183,7 @@ vendor_endpoint_hosts = []
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
 | `ports.bases` | the host-published base port map; `{}` means none |
 | `environment.install_policies` | the dependency install protocols; `[]` for none |
+| `environment.test_data` | a table with exactly the boolean keys `seeded_data` and `signed_in_users`; `{ seeded_data = false, signed_in_users = false }` states neither is needed, while true keeps the corresponding product-owned work visible |
 | `environment.generated` | the generated environment to render |
 | `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
 | `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |

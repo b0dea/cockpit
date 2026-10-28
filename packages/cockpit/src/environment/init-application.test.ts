@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
 import { deriveInferredFacts } from '../init/derive.js'
+import { runCli } from '../cli.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { selectBootstrapStateRoot } from './state.js'
@@ -572,12 +573,17 @@ it('composes observed greenfield answers into a loadable configuration and actua
         sibling: unknown; ports: { bases: unknown }; environment: { install_policies: unknown; generated: unknown }
     }
     const synchronizeInputs: boolean[] = []
+    let defaultsDocument: string | undefined
     const adapters: InitApplicationAdapters = {
         ...f.adapters,
         prepareBootstrap: prepareSelectedBootstrapSurface,
         resumeBootstrap: resumeSelectedBootstrapSurface,
         applyBootstrap: applySelectedBootstrapSurface,
-        document: documentObservedCommand,
+        document: async input => {
+            const outcome = await documentObservedCommand(input)
+            if (outcome.question?.field === 'configuration.defaults') defaultsDocument = outcome.artifact ?? undefined
+            return outcome
+        },
         classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
         observeDestination: async ({ path }) => {
             if (!existsSync(path)) return { kind: 'absent' }
@@ -601,6 +607,34 @@ it('composes observed greenfield answers into a loadable configuration and actua
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
         expect(count).toBeLessThan(8)
         const question = outcome.result.question
+        if (question.field === 'configuration.defaults') {
+            expect(defaultsDocument).toContain('# [default] ')
+            expect(defaultsDocument).toContain('# [inferred] ')
+            expect(outcome).toMatchObject({ artifact: null, destination: null,
+                result: { question: { document: defaultsDocument } } })
+            expect(existsSync(f.destination)).toBe(false)
+            for (const json of [true, false]) {
+                let stdout = ''
+                expect(await runCli(['init', f.root, '--target', 'codexcli', ...(json ? ['--json'] : [])], {
+                    stdout: { write: value => { stdout += value; return true } },
+                    stderr: { write: () => true },
+                }, { init: () => runInitApplication(greenfieldInput, adapters) })).toBe(0)
+                if (json) expect(JSON.parse(stdout).result.question.document).toBe(defaultsDocument)
+                else {
+                    for (const line of defaultsDocument!.split('\n').filter(line => line.startsWith('# [default]') || line.startsWith('# [inferred]'))) {
+                        expect(stdout).toContain(line)
+                    }
+                }
+            }
+            expect(existsSync(f.destination)).toBe(false)
+            expect(await runInitApplication({ ...accepted, greenfieldAnswer: {
+                questionId: question.id, bytes: JSON.stringify({ confirmed: true, sha256: digest('0') }),
+                provenance: 'operator-confirmed',
+            } }, adapters)).toMatchObject({ kind: 'refusal', status: 2,
+                diagnostics: expect.arrayContaining([{ severity: 'error', code: 'DOCUMENT_DEFAULT_CONFIRMATION_INVALID',
+                    message: expect.any(String), target: 'configuration.defaults' }]) })
+            expect(existsSync(f.destination)).toBe(false)
+        }
         const value = question.field === 'sibling' ? sourceConfig.sibling
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies

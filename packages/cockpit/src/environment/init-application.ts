@@ -155,6 +155,8 @@ export interface GreenfieldQuestion {
     readonly source: string
     readonly why: string
     readonly expectedSha256?: string
+    /** Owner-rendered draft with the exact attributed values covered by the confirmation digest. */
+    readonly document?: string
 }
 
 type IssuedEstateClassificationResult = EstateClassificationResult & Readonly<{
@@ -560,6 +562,8 @@ export async function runInitApplication(
         }
         const question = documented.question
         if (question) {
+            const surfacedQuestion = question.field === 'configuration.defaults'
+                ? { ...question, document: documented.artifact } : question
             const expected = state?.questions[state.answers.length]
             if (!proposed && expected && JSON.stringify(expected) !== JSON.stringify(question)) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration question changed after it was persisted', address.path)
@@ -569,7 +573,7 @@ export async function runInitApplication(
                 const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
                 return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
                     result: result('surface-published', projection, undefined,
-                        { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
+                        { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
                             ...(appliedReset ? { resetAnswer: appliedReset } : {}) }) }
             }
             const questions = [...(state?.questions ?? []),
@@ -582,7 +586,7 @@ export async function runInitApplication(
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
             return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
                 result: result('surface-published', projection, undefined,
-                    { question, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
+                    { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
         }
         if (documented.kind !== 'complete') return ownerRefusal(documented, current.value.stage, projection)
         if (documented.destination !== destination || Buffer.byteLength(documented.artifact, 'utf8') > DRAFT_BYTE_LIMIT) {
