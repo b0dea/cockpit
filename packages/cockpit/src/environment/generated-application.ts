@@ -1560,7 +1560,9 @@ function nativeSources(mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
         }]))
         const targets = Object.fromEntries(mcp.result.harnesses.flatMap(row => {
             const removed = mcp.result.servers.filter(server => !row.servers.some(transport => transport.name === server.name))
-            return removed.length ? [[row.target, { mcpServers: Object.fromEntries(removed.map(server => [server.name, null])) }]] : []
+            return removed.length ? [[harnessFact(row.target).rulesyncTarget, {
+                mcpServers: Object.fromEntries(removed.map(server => [server.name, null])),
+            }]] : []
         }))
         sources.push(Object.freeze({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` }))
     }

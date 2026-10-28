@@ -113,9 +113,9 @@ describe('public surface publication transaction', () => {
         })
 
         it.each([
-            { name: 'preapproved remote', remote: true, preapproved: true, serialized: false },
-            { name: 'remote without preapproval', remote: true, preapproved: false, serialized: true },
-            { name: 'local fallback', remote: false, preapproved: true, serialized: false },
+            { name: 'preapproved remote', remote: true, preapproved: true, serialized: false, openCode: true },
+            { name: 'remote without preapproval', remote: true, preapproved: false, serialized: true, openCode: false },
+            { name: 'local fallback', remote: false, preapproved: true, serialized: false, openCode: true },
         ])('publishes source-bound browser and testing surfaces through the canonical transaction ($name)', async variant => {
             const fixture = await surfaceConsumer('browser-testing')
             const lockBytes = JSON.stringify({ lockfileVersion: 3, packages: {
@@ -157,7 +157,7 @@ approved = ["playwright"]
 
 [browser]
 engine = "${variant.remote ? 'firefox' : 'chromium'}"
-harnesses = [{ target = "claudecode", version = "2.1.220" }, { target = "codexcli", version = "0.149.0" }, { target = "opencode", version = "1.18.15" }]
+harnesses = [{ target = "claudecode", version = "2.1.220" }, { target = "codexcli", version = "0.149.0" }${variant.openCode ? ', { target = "opencode", version = "1.18.15" }' : ''}]
 images = { runner = { architectures = ["arm64"], reference = ${JSON.stringify(runnerImage)}, driver_version = "1.2.3" }, mcp = { reference = ${JSON.stringify(mcpImage)}, driver_version = "1.2.3" } }
 runner_health_measurement = { duration_seconds = 15, provenance = { source = "synthetic-browser.toml", observed_on = "2026-10-24", kind = "measured", reason = "Synthetic browser readiness measurement" } }
 project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(digest(manifestBytes))}, lockfile = "app/package-lock.json", sha256 = ${JSON.stringify(projectSha256)}, driver_version = "1.2.3" }
@@ -292,8 +292,11 @@ native_hooks = { install = "inspect" }
                     const ownership = JSON.parse(await readFile(join(fixture.root, '.cockpit/generated-environment-ownership.json'), 'utf8')) as {
                         entries: { path: string; harnesses: string[] }[]
                     }
-                    expect(ownership.entries.find(row => row.path === wrapper)?.harnesses).toEqual(variant.preapproved
-                        ? ['claudecode', 'codexcli', 'opencode'] : ['claudecode', 'opencode'])
+                    expect(ownership.entries.find(row => row.path === wrapper)?.harnesses).toEqual([
+                        'claudecode',
+                        ...(variant.preapproved ? ['codexcli'] : []),
+                        ...(variant.openCode ? ['opencode'] : []),
+                    ])
                 }
                 expect(authorities.testing.registry).toMatchObject({ kind: 'bound', gates: [{ id: 'focused' }] })
                 const mcp = JSON.parse(await readFile(join(fixture.root, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> }
@@ -304,14 +307,15 @@ native_hooks = { install = "inspect" }
                 }
                 expect(Object.keys(codex.mcp_servers).sort()).toEqual(variant.remote && variant.preapproved
                     ? ['playwright', 'unrelated'] : ['unrelated'])
-                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.remote)
+                expect(/"playwright"\s*:/.test(await readFile(join(fixture.root, 'opencode.jsonc'), 'utf8'))).toBe(variant.remote && variant.openCode)
                 // The shipped reference carries a docs-verification marker that is stripped from consumer output.
                 const browserReference = (await readFile(resolve('packages/cockpit/surfaces/references/browser.md'), 'utf8'))
                     .replace(/^<!-- cockpit:verified version=\S+ -->\n\n/m, '')
                 expect(browserReference).not.toContain('cockpit:verified')
                 for (const prefix of ['.claude', '.agents', '.opencode']) {
                     const path = join(fixture.root, prefix, 'skills/cockpit-browser/references/browser.md')
-                    if (variant.remote && (prefix !== '.agents' || variant.preapproved)) expect(await readFile(path, 'utf8')).toBe(browserReference)
+                    if (variant.remote && (prefix === '.claude' || prefix === '.agents' && variant.preapproved
+                        || prefix === '.opencode' && variant.openCode)) expect(await readFile(path, 'utf8')).toBe(browserReference)
                     else await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' })
                 }
                 if (variant.remote) expect(await readFile(join(fixture.root, '.claude/skills/cockpit-browser/SKILL.md'), 'utf8')).toContain('name: cockpit-browser')
