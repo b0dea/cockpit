@@ -261,7 +261,8 @@ describe('init operator command', () => {
 
             const ambiguous = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true, unattended: { previewSha256: digest, answers: {
-                    sibling: [], ports: { bases: {} }, environment: { install_policies: [], generated: {}, compose_files: ['compose.yml'] } } } },
+                    sibling: [], ports: { bases: {} }, environment: { install_policies: [],
+                        test_data: { seeded_data: false, signed_in_users: false }, generated: {}, compose_files: ['compose.yml'] } } } },
                 noTerminal, walk([]).application)
             expect(ambiguous).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_AMBIGUOUS' }] })
         })
