@@ -158,6 +158,7 @@ export function diagnosticInventory(root, candidate) {
 
 export function diagnosticInventoryFromSources(paths, sources) {
     const owners = new Map()
+    const emissions = new Map()
     const remedies = new Map()
     const parsedSources = new Map(paths.map((path) => {
         const bytes = sources.get(path)
@@ -226,20 +227,34 @@ export function diagnosticInventoryFromSources(paths, sources) {
             directCommandOwners.set(name, direct)
         }
     }
-    const addCode = (code, path) => {
+    const addCode = (code, path, emitted = true) => {
         if (!owners.has(code)) owners.set(code, new Set())
+        if (!emissions.has(code)) emissions.set(code, new Set())
         if (!remedies.has(code)) remedies.set(code, new Set())
         owners.get(code).add(path)
+        if (emitted) emissions.get(code).add(path)
     }
     const environmentContract = sources.get('packages/cockpit/src/environment/contract.ts')
+    const environmentCodes = environmentContract === undefined
+        ? new Map()
+        : new Map(Object.entries(environmentDiagnosticRegistry(environmentContract)))
     if (environmentContract !== undefined) {
-        for (const code of Object.values(environmentDiagnosticRegistry(environmentContract))) {
-            addCode(code, 'packages/cockpit/src/environment/contract.ts')
+        for (const code of environmentCodes.values()) {
+            addCode(code, 'packages/cockpit/src/environment/contract.ts', false)
         }
     }
     for (const path of paths) {
         const source = parsedSources.get(path)
         if (!source) throw new Error(`${path}: authenticated TypeScript source is unavailable`)
+        const environmentCodeBindings = new Set(path === 'packages/cockpit/src/environment/contract.ts' ? ['ENVIRONMENT_CODES'] : [])
+        for (const statement of source.statements) {
+            if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
+                || resolveSourceImport(path, statement.moduleSpecifier.text) !== 'packages/cockpit/src/environment/contract.ts') continue
+            const named = statement.importClause?.namedBindings
+            if (named && ts.isNamedImports(named)) for (const element of named.elements) {
+                if ((element.propertyName ?? element.name).text === 'ENVIRONMENT_CODES') environmentCodeBindings.add(element.name.text)
+            }
+        }
         const exportedCodeArrays = new Map()
         const unwrapExpression = (node) => {
             let current = node
@@ -394,6 +409,10 @@ export function diagnosticInventoryFromSources(paths, sources) {
             const value = unwrapExpression(expression)
             if (ts.isStringLiteral(value)) {
                 if (uppercaseDiagnostic(value.text)) addCode(value.text, path)
+            } else if (ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)
+                && environmentCodeBindings.has(value.expression.text)) {
+                const code = environmentCodes.get(value.name.text)
+                if (code) addCode(code, path)
             } else if (ts.isConditionalExpression(value)) {
                 collectDiagnosticExpression(value.whenTrue)
                 collectDiagnosticExpression(value.whenFalse)
@@ -442,7 +461,7 @@ export function diagnosticInventoryFromSources(paths, sources) {
         }
         return [name, captured]
     }))
-    return { items: [...owners.keys()].sort().map((code) => `diagnostic:${code}`), owners, remedies, commandOwners }
+    return { items: [...owners.keys()].sort().map((code) => `diagnostic:${code}`), owners, emissions, remedies, commandOwners }
 }
 
 function referenceRefusal(code, message, target = 'references') {

@@ -184,16 +184,20 @@ function renderAdoptSkill(sources: AdoptSkillSources): string {
 
 function inventoryCodes(inventory: DiagnosticInventory): readonly string[] | undefined {
     if (!inventory || !Array.isArray(inventory.items) || !(inventory.owners instanceof Map)
-        || !(inventory.commandOwners instanceof Map) || [...inventory.commandOwners].some(([handler, owners]) =>
+        || !(inventory.emissions instanceof Map) || !(inventory.commandOwners instanceof Map)
+        || [...inventory.commandOwners].some(([handler, owners]) =>
             typeof handler !== 'string' || !(owners instanceof Set) || owners.size === 0
             || [...owners].some(path => typeof path !== 'string' || !/^packages\/cockpit\/src\/[A-Za-z0-9_./-]+\.ts$/.test(path)))) return undefined
     const remedies = inventory.remedies
     const codes = inventory.items.map(item => item.startsWith('diagnostic:') ? item.slice('diagnostic:'.length) : '')
     if (codes.length === 0 || new Set(codes).size !== codes.length || codes.some(name => !/^[A-Z][A-Z0-9_]+$/.test(name))
-        || inventory.owners.size !== codes.length || !(remedies instanceof Map) || remedies.size !== codes.length || codes.some(name => {
+        || inventory.owners.size !== codes.length || inventory.emissions.size !== codes.length
+        || !(remedies instanceof Map) || remedies.size !== codes.length || codes.some(name => {
             const owners = inventory.owners.get(name)
+            const emissions = inventory.emissions.get(name)
             const fixes = remedies.get(name)
             return !(owners instanceof Set) || owners.size === 0 || [...owners].some(path => typeof path !== 'string' || !/^packages\/cockpit\/src\/[A-Za-z0-9_./-]+\.ts$/.test(path))
+                || !(emissions instanceof Set) || [...emissions].some(path => typeof path !== 'string' || !owners.has(path))
                 || !(fixes instanceof Set) || [...fixes].some(fix => typeof fix !== 'string' || fix.length === 0 || /[\r\n]/.test(fix))
         })) return undefined
     return [...codes].sort()
@@ -261,7 +265,7 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             + commands.map(command => {
             const commandOwners = input.diagnostics.commandOwners.get(command.handler)
             const ownedDiagnostics = commandOwners
-                ? codes.filter(name => [...input.diagnostics.owners.get(name)!].some(owner => commandOwners.has(owner)))
+                ? codes.filter(name => [...input.diagnostics.emissions.get(name)!].some(owner => commandOwners.has(owner)))
                 : []
             const configuration = command.ordinary.availability === 'available' ? command.ordinary.configuration : 'unavailable'
             const configurationOwners = configuration === 'resolved' ? `${code(configMechanism.module)}, ${code(schemaMechanism.module)}` : 'none'

@@ -3,6 +3,7 @@ import type ts from 'typescript'
 export interface DiagnosticInventory {
     items: string[]
     owners: Map<string, Set<string>>
+    emissions: Map<string, Set<string>>
     remedies: Map<string, Set<string>>
     commandOwners: Map<string, Set<string>>
 }

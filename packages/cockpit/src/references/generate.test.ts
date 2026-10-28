@@ -90,6 +90,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 function input(troubleshooting = prose) {
     return { skills, troubleshooting, diagnostics: { items: ['diagnostic:SYNTHETIC_FAILURE'],
         owners: new Map([['SYNTHETIC_FAILURE', new Set(['packages/cockpit/src/document/command.ts'])]]),
+        emissions: new Map([['SYNTHETIC_FAILURE', new Set(['packages/cockpit/src/document/command.ts'])]]),
         remedies: new Map([['SYNTHETIC_FAILURE', new Set(['repair the synthetic input'])]]),
         commandOwners: new Map([['document', new Set(['packages/cockpit/src/document/command.ts'])]]) },
         capabilities, guideCosts: [], adoptSkill }
@@ -311,7 +312,12 @@ describe('reference generation', () => {
         const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
         const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}`), cli.indexOf(`## cockpit ${next}`))
         expect(section('sync', 'check')).toContain('`SURFACE_STATE_CONFLICT`')
+        expect(section('sync', 'check')).toContain('`COCKPIT_VERSION_MISMATCH`')
+        expect(section('check', 'preflight')).toContain('`COCKPIT_VERSION_MISMATCH`')
         expect(section('up', 'sleep')).toContain('`GUARD_REFUSED`')
+        expect(section('sibling', 'preflight')).not.toContain('`CLAIM_CO_TENANT`')
+        expect(section('sibling', 'preflight')).not.toContain('`DATA_MODE_UNAVAILABLE`')
+        expect(section('sibling', 'preflight')).not.toContain('`TEMPLATE_NOT_FOUND`')
     })
 
     it.each(['', `${begin}\n${begin}\n${end}`, `${end}\n${begin}`, `${begin}\n${end}\n${end}`, `${begin} inline\n${end}`])('refuses ambiguous or malformed region markers: %s', body => {

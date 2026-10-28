@@ -16,7 +16,7 @@ do not use a command runner that can download a missing package implicitly.
 Choose the current harness target explicitly from the
 [capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
 which separates generation from measured native enforcement.
-For Codex CLI, preview with `cockpit init . --target codexcli --json`; substitute the selected
+For Codex CLI, preview with `./node_modules/.bin/cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
 The CLI owns registry interpretation, preview, durable state, artifact publication and environment checks.
 Do not re-derive those decisions in this procedure.
@@ -26,7 +26,7 @@ and CLI output cannot answer, in a small answerable round. Present inferred fact
 for confirmation. These conversation controls are instructed; no harness enforces their count.
 
 Show the exact preview before mutation. In a human terminal, run
-`cockpit init . --target codexcli --interactive` and accept only the exact displayed digest.
+`./node_modules/.bin/cockpit init . --target codexcli --interactive` and accept only the exact displayed digest.
 JSON mode returns a preview without acceptance. An agent session has no terminal, so it uses the
 non-interactive form instead. Run the `--json` preview and read `interview.outstanding`: every field
 the interview will ask, each with its inferred values and the file each came from. Write the answers
@@ -94,11 +94,11 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    Without that authorisation, declare an environment cockpit renders itself and leave the product
    untouched. Done when either the human approved that specific file or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
-   `cockpit sync --config cockpit.toml` then `cockpit check --config cockpit.toml --json`. Done when
+   `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
    the check exits 0. Where a runtime is declared, measure it with
-   `cockpit runtime measure --config cockpit.toml --image <local-image> --write`, using an image
+   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write`, using an image
    already on this machine because the probe never pulls. Then start the stack with
-   `cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
+   `./node_modules/.bin/cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
    Report the actual result. Done when the stack reports healthy, or you have named what stopped it.
 
 ## Secret handling
@@ -139,20 +139,20 @@ Use this on an installed cockpit when a product gains another repository. The `s
 Read the repository and ask the human for the purpose when no source states it. Show the human the proposed
 sibling declaration before invoking the command: slug, purpose, source mode, directory and exported variable.
 Pick the form by where the repository is. For a checkout already on disk run
-`cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json`;
-for a new one run `cockpit sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json`;
+`./node_modules/.bin/cockpit sibling add billing --config cockpit.toml --from ../billing --purpose "<purpose>" --json`;
+for a new one run `./node_modules/.bin/cockpit sibling add billing --config cockpit.toml --create --purpose "<purpose>" --json`;
 for a known remote run
-`cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json`.
+`./node_modules/.bin/cockpit sibling add billing --config cockpit.toml --remote <url> --purpose "<purpose>" --json`.
 The command writes cockpit.toml immediately; `--json` changes only its output format, so it is neither a preview
-nor an acceptance gate. After the edit, a human runs `cockpit sync --config cockpit.toml` in a terminal because
-the changed declaration affects the guard. Then run `cockpit check --config cockpit.toml --json`. Done when the
+nor an acceptance gate. After the edit, a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal because
+the changed declaration affects the guard. Then run `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when the
 check exits 0.
 
 Add `--instruction-pointer` only after the human approves the exact marked block. First run
-`cockpit setup --config cockpit.toml --json`; it reports the proposed **AGENTS.md** path without
+`./node_modules/.bin/cockpit setup --config cockpit.toml --json`; it reports the proposed **AGENTS.md** path without
 writing it. If the guide is missing, show the exact new-file draft; otherwise show the appended
 block and the preserved team text. After approval, run
-`cockpit setup --config cockpit.toml --write-instruction-pointers`, which writes only the marked
+`./node_modules/.bin/cockpit setup --config cockpit.toml --write-instruction-pointers`, which writes only the marked
 block and refuses an edited or ambiguous existing block.
 
 ## After upgrading cockpit
@@ -162,9 +162,9 @@ applied silently.
 
 1. Run `npm install --save-dev --save-exact @b0dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
-2. Preview without writing: `cockpit upgrade --config cockpit.toml` (a read-only plan) or
-   `cockpit sync --dry-run --config cockpit.toml`.
-3. A human runs `cockpit sync --interactive --config cockpit.toml` in a terminal and approves the exact
+2. Preview without writing: `./node_modules/.bin/cockpit upgrade --config cockpit.toml` (a read-only plan) or
+   `./node_modules/.bin/cockpit sync --dry-run --config cockpit.toml`.
+3. A human runs `./node_modules/.bin/cockpit sync --interactive --config cockpit.toml` in a terminal and approves the exact
    stale-removal digest when the upgrade renamed or retired an owned surface. The guard blocks an agent from
    regenerating its own guard, so do not try to route around it; ask the human to run it.
 4. Review the diff. A hand edit to an owned file stops sync with a conflict (`SURFACE_STATE_CONFLICT`):
@@ -175,20 +175,20 @@ applied silently.
 6. Read `CHANGELOG.md` between the old and new version for lines starting `Upgrade:`. Each names a step
    that sync alone does not do. The convention is in `.changeset/README.md` in the cockpit repository.
 
-Done when `cockpit check --config cockpit.toml --json` exits 0 and every `Upgrade:` line has been done or
+Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0 and every `Upgrade:` line has been done or
 reported to the human.
 
 ## Diagnose
 
-Run `cockpit doctor --config cockpit.toml --json` first: it reports health and wiring without repairing
-anything. Follow the fix each diagnostic names. Use `cockpit preflight --config cockpit.toml --json` when
+Run `./node_modules/.bin/cockpit doctor --config cockpit.toml --json` first: it reports health and wiring without repairing
+anything. Follow the fix each diagnostic names. Use `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` when
 the environment must pass the blocking gate, and **Explain** to turn the result into a plain account.
 
 ## Explain
 
-Run only the read-only command that answers the question. Use `cockpit doctor --config cockpit.toml --json`
-for environment health and wiring, `cockpit check --config cockpit.toml --json` for generated-surface
-drift, or `cockpit preflight --config cockpit.toml --json` for dependency and readiness checks.
+Run only the read-only command that answers the question. Use `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`
+for environment health and wiring, `./node_modules/.bin/cockpit check --config cockpit.toml --json` for generated-surface
+drift, or `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` for dependency and readiness checks.
 Combine them only when the question crosses those boundaries. Explain the relevant installed lanes,
 wired repositories, recorded reasons, current gaps and next accepted commands.
 For a secret question, follow **Secret handling** and distinguish tracked schema, encrypted/provider
@@ -216,10 +216,10 @@ against the estate that exists now. Operator acceptance remains a separate gate.
 
 Name the defect, expected behavior, and observed behavior. Reproduce at the narrowest real boundary:
 for logic-only changes use the owning product test or read-only command without starting the stack;
-use `cockpit up --config cockpit.toml` only when the behavior depends on a live process or integration.
-Then change the repository that owns it. Use `cockpit logs --config cockpit.toml --service service-id`
-and `cockpit doctor --config cockpit.toml` only for relevant runtime evidence. Use
-`cockpit check --config cockpit.toml` for generated-surface drift. Replace `service-id` with the
+use `./node_modules/.bin/cockpit up --config cockpit.toml` only when the behavior depends on a live process or integration.
+Then change the repository that owns it. Use `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`
+and `./node_modules/.bin/cockpit doctor --config cockpit.toml` only for relevant runtime evidence. Use
+`./node_modules/.bin/cockpit check --config cockpit.toml` for generated-surface drift. Replace `service-id` with the
 declared service being inspected. Follow the generated testing tiers: extend the nearest behavior
 test through its public surface, iterate with the narrowest selector, and batch complete or shared
 gates after the change stabilizes. Do not repeat weaker proof already established by a stronger test. In the
@@ -257,41 +257,41 @@ contract and the independent grading, not the thinking: reuse the planning skill
 
 0. **Is this a work order?** Ask whether anyone besides you must certify the result, or whether the work
    must survive a handoff or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
-   ceremony costs more than it proves. Then check there is room: `cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
+   ceremony costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** Run the harness's installed brainstorming and planning skills, then compile their output into
-   the work-order schema with `cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
+   the work-order schema with `./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
    The contract needs the parser-admitted number of acceptance criteria, each a Given/When/Then that independent reviewers could not
    disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from
-   intake, then a human accepts it in a terminal with `cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,
+   intake, then a human accepts it in a terminal with `./node_modules/.bin/cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,
    replacing `WO-001` with that ID. JSON and CI refuse, so an agent cannot accept its own work. Done when
-   `cockpit work-status --config cockpit.toml --work-order WO-001 --json` reports it accepted.
+   `./node_modules/.bin/cockpit work-status --config cockpit.toml --work-order WO-001 --json` reports it accepted.
 2. **Work test-first inside Authority.** Write the failing test for a criterion, then the code, touching only
    files the Authority lists. If the work needs another file, stop and ask for a renewed contract
-   (`work-renew`) rather than editing outside it. Record progress with `cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json`.
-3. **Run the criterion's declared gate** with `cockpit test-run --config cockpit.toml --gate declared-gate-id`,
+   (`work-renew`) rather than editing outside it. Record progress with `./node_modules/.bin/cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json`.
+3. **Run the criterion's declared gate** with `./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id`,
    replacing `declared-gate-id` with its ID from `[testing.gates]`. Only the complete declared gate can PASS; a
    subset reports PARTIAL. Done when that gate reports PASS.
 4. **Before grading, run reviews.** Run the harness's installed simplification and code-review skills. Apply security emphasis
    when the change touches authentication, secrets, guards or reach to non-local hosts. Fix their blocking
    findings and re-run affected proof. Then run
-   `cockpit work-review --config cockpit.toml --work-order WO-001` to run and persist cockpit's independent
+   `./node_modules/.bin/cockpit work-review --config cockpit.toml --work-order WO-001` to run and persist cockpit's independent
    simplification, code/spec and security findings. Fix every blocking finding and repeat the command until all
    all required review lanes pass.
-5. **Hand off to the evaluator subagent** through `cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
+5. **Hand off to the evaluator subagent** through `./node_modules/.bin/cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
    your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
    criterion is one of the verdicts in the evaluator's instructions; anything but "passed with current
    supporting evidence" sends you back to step 2 for that criterion.
 6. **Attempt cap.** At the configured failed-attempt cap for one criterion, make a different move, for example a
    root-cause diagnosis in a fresh context, before a third try. Read the count from work-order state, not
-   from memory: `cockpit work-status --config cockpit.toml --work-order WO-001 --json` returns the selected
+   from memory: `./node_modules/.bin/cockpit work-status --config cockpit.toml --work-order WO-001 --json` returns the selected
    order under `result.orders[0]`, with the counters at `result.orders[0].state.attempts`
    (step, approach, `failures`, `rootCause`), and the attempt cap is `workorders.attempt_cap`. A missing
    counter is not zero: if you cannot read it, say so and treat the step as unknown. Record the root cause
-   with `work-record` as above, then run `cockpit work-execute --config cockpit.toml --work-order WO-001 --approach second-try`, which refuses a
+   with `work-record` as above, then run `./node_modules/.bin/cockpit work-execute --config cockpit.toml --work-order WO-001 --approach second-try`, which refuses a
    capped approach.
-7. **Park, sweep and unpark.** `cockpit work-sweep --config cockpit.toml` previews which untouched drafts
-   would be parked to free capacity; add `--apply` to park them. `cockpit work-reverse --config cockpit.toml --work-order WO-001`
+7. **Park, sweep and unpark.** `./node_modules/.bin/cockpit work-sweep --config cockpit.toml` previews which untouched drafts
+   would be parked to free capacity; add `--apply` to park them. `./node_modules/.bin/cockpit work-reverse --config cockpit.toml --work-order WO-001`
    restores a swept order. An order a human parked by hand is reversed by a human, not by the sweep.
 
 Report the outcome of each criterion with the evidence the evaluator quoted, and name any step you could not run.

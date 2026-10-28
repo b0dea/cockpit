@@ -72,23 +72,23 @@ the guide section that owns the detail.
   package manifest `init` builds a surfaces-only cockpit and proposes the cockpit root itself as
   the first sibling (`dir = "."`, `mount = "none"`); the purpose comes from the human. Add each
   repository later with
-  `cockpit sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json`, whose
+  `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml --create --purpose "<purpose>" --json`, whose
   `result.publish.command` is the `gh repo create` command to hand to the human.
   Guide: *Empty directory*, *Docs or decisions only*.
 - **One or several repositories with services.** From the directory that holds them, follow
-  **Bootstrap** below: `cockpit init "$(pwd)" --target <target> --json`, then the same command
+  **Bootstrap** below: `./node_modules/.bin/cockpit init "$(pwd)" --target <target> --json`, then the same command
   with `--accept-preview` and `--answers`, then with `--accept-defaults` as well.
   Guide: *One or several repositories*.
 - **Repositories scattered across the disk.** Moving them is the human's call. Otherwise declare
-  each with `cockpit sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`
-  and run `cockpit setup --config cockpit.toml --json`. Guide: *Scattered repositories*.
+  each with `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`
+  and run `./node_modules/.bin/cockpit setup --config cockpit.toml --json`. Guide: *Scattered repositories*.
 - **An existing Compose file.** Answer `environment.compose_files = ["compose.yml"]` instead of a
   generated stack, and ask the human for the `environment.machine` floors `init` asks next.
   Guide: *Existing Compose file*.
 - **A service with no local setup.** Follow **Create a local setup** below.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
   refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run
-  `cockpit sync --config cockpit.toml --adopt <path> --json`. Guide: *Existing agent settings*.
+  `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. Guide: *Existing agent settings*.
 - **A repository joins or leaves an existing cockpit.** Run `cockpit sibling add` or
   `cockpit sibling remove`, then the `sync --dry-run`, `sync` and `check` sequence.
   Guide: *Add a repository*, *Remove a repository*.
@@ -96,17 +96,19 @@ the guide section that owns the detail.
 
 ## After bootstrap
 
-Done when `cockpit check --config cockpit.toml --json` exits 0 and, where a runtime is declared,
-`cockpit preflight --config cockpit.toml --json` passes.
+Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0 and, where a runtime is declared,
+`./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes.
 
 - Before the first `up`, measure the runtime with
-  `cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
+  `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
   guide's *Measure the runtime* says which runtimes are recognised and which have been measured.
-- Daily: `cockpit session --config cockpit.toml -- <agent command>`. `cockpit sleep` releases
-  this checkout's hold; `cockpit down` removes its runtime, so ask first.
-- Upgrade: install the new version, then run `cockpit check`, `cockpit sync --dry-run` and
-  `cockpit sync`. The guard pins the CLI it was rendered for, so after an upgrade the human may
-  need to run `cockpit sync --config cockpit.toml` in a terminal.
+- Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
+  `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
+  `./node_modules/.bin/cockpit down` removes its runtime, so ask first.
+- Upgrade: install the new version, then run `./node_modules/.bin/cockpit check`,
+  `./node_modules/.bin/cockpit sync --dry-run` and `./node_modules/.bin/cockpit sync`. The guard
+  pins the CLI it was rendered for, so after an upgrade the human may need to run
+  `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal.
 
 ## Shipped procedure
 
