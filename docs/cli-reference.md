@@ -78,7 +78,7 @@ Configuration: `none`. Owners: none.
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
@@ -321,7 +321,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
@@ -386,7 +386,7 @@ Configuration: `resolved`. Owners: `packages/cockpit/src/config/load.ts`, `packa
 | `GENERATED_DECISIONS_UNDECIDED` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_DRIFT` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |

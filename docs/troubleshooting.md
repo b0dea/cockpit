@@ -353,7 +353,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `GENERATED_DECLARATION_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_DECLARATION_MISSING` | `packages/cockpit/src/environment/generated-application.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle-composition.ts` | no static remedy captured; inspect implementing owners |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/generated-environment/adopt.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INPUT_INVALID` | `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/environment/generated-render.ts`, `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_INSPECTION_INVALID` | `packages/cockpit/src/environment/generated-stack.ts` | no static remedy captured; inspect implementing owners |
 | `GENERATED_LOCAL_STATE_CONFLICT` | `packages/cockpit/src/generated-environment/uninstall.ts` | no static remedy captured; inspect implementing owners |
