@@ -346,6 +346,27 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
 
         })
 
+        it('keeps an active in-repo sibling runnable without projecting root instruction files into themselves', async () => {
+            const fixture = await surfaceConsumer('in-repo-active-sibling')
+            await mkdir(join(fixture.root, 'docs'))
+            await writeFile(join(fixture.root, 'docs/CONVENTIONS.md'), 'Synthetic product conventions.\n')
+            const declaration = await readFile(fixture.configPath, 'utf8')
+            await writeFile(fixture.configPath, declaration
+                .replace('dir = "app"', 'dir = "."')
+                .replace('guides = ["AGENTS.md"]', 'guides = ["CLAUDE.md", "AGENTS.md", "docs/CONVENTIONS.md"]'))
+
+            const first = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(first, JSON.stringify(first.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+
+            await expect(lstat(join(fixture.root, '.sibling-app-CLAUDE.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            await expect(lstat(join(fixture.root, '.sibling-app-AGENTS.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+            expect(await readlink(join(fixture.root, '.sibling-app-docs-CONVENTIONS.md'))).toBe('docs/CONVENTIONS.md')
+            expect(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')).toContain(fixture.root)
+        }, 180_000)
+
         it('refuses changed stale ownership and preserves consumer bytes', async () => {
             const module = 'adapters/synthetic.mjs'
             const changed = await surfaceConsumer('surface-stale-changed', { custom: customHarness(module) })

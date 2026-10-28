@@ -1824,7 +1824,14 @@ async function prepareSurfaces(
     } catch {
         return refuse('SURFACE_SOURCE_UNAVAILABLE', 'an active sibling checkout could not be authenticated', 'surfaces')
     }
-    const guideRequests = selected.flatMap(sibling => (sibling.guides ?? ['CLAUDE.md', 'AGENTS.md']).map(guide => Object.freeze({
+    // A root guide that projection also writes would become both an authenticated input and an
+    // owned output. Native harness loading already reaches these files, so a self-link adds no rule.
+    const rootInstructionOutputs = new Set(['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'opencode.jsonc'])
+    const projectionGuides = (sibling: typeof config.sibling[number]): readonly string[] =>
+        siblingRoots.get(sibling.slug) === prepared.root
+            ? sibling.guides.filter(guide => !rootInstructionOutputs.has(guide))
+            : sibling.guides
+    const guideRequests = selected.flatMap(sibling => projectionGuides(sibling).map(guide => Object.freeze({
         slug: sibling.slug, root: siblingRoots.get(sibling.slug)!, sourcePath: resolve(siblingRoots.get(sibling.slug)!, guide),
     }))).sort((left, right) => compareCodeUnits(left.sourcePath, right.sourcePath))
     const observedGuides = guideRequests.length === 0
@@ -1836,7 +1843,7 @@ async function prepareSurfaces(
         siblingsRoot: config.cockpit.siblings_root,
         activeProfiles: profiles,
         guideCapLines: config.cockpit.guide_cap,
-        siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...row.guides] })),
+        siblings: config.sibling.map(row => ({ slug: row.slug, mount: row.mount, directoryAuthority: row.dir, guides: [...projectionGuides(row)] })),
         mountedPaths: selected.map(row => ({ slug: row.slug, path: siblingRoots.get(row.slug)! })),
         directoryGrants: selected.flatMap(row => SURFACE_TARGETS.map(target => ({ slug: row.slug, target, path: siblingRoots.get(row.slug)! }))),
         guideObservations: observedGuides.observations,
@@ -2139,7 +2146,7 @@ async function prepareSurfaces(
         module: modulePath, moduleSha256: moduleRead.sha256 })
     const restrictions = expandRestrictions({
         canonicalProjectRoot: prepared.root,
-        allowedProjectRoots: [prepared.root, ...selected.map(row => siblingRoots.get(row.slug)!).sort(compareCodeUnits)],
+        allowedProjectRoots: [...new Set([prepared.root, ...selected.map(row => siblingRoots.get(row.slug)!)])].sort(compareCodeUnits),
         guardTemplate: asset(RESTRICTION_ASSETS[0]).bytes, guardPath: '.cockpit/guards/bash-guard.sh',
         instances: prepared.registry.secretPaths.filter(row => siblingRoots.has(row.slug)).map(row => ({
             kind: 'instance' as const, name: `${row.slug}-${sha256(row.path).slice(0, 12)}`, root: siblingRoots.get(row.slug)!, path: row.path,

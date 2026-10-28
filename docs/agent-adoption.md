@@ -129,8 +129,12 @@ is where the product's notes and decisions live until its repositories exist.
    vendor_endpoint_hosts = []
    ```
 
-   `mount = "none"` because the agent already works in the root: mounting it, or projecting its
-   guides, would point the cockpit's own files at themselves.
+   `mount = "none"` is the honest initial answer because this directory has no runtime to mount.
+   If the root later becomes runnable and the generated stack must bind-mount it, change the row to
+   `mount = "always"`, then run `cockpit sync --config cockpit.toml` and
+   `cockpit check --config cockpit.toml`. The root `AGENTS.md` and `CLAUDE.md` are already native
+   harness inputs, so sync does not project them back into themselves; other declared guide paths
+   still project normally.
 3. **Accept the preview and the answers, then the defaults**, exactly as in steps 3 and 4 of
    [One or several repositories](#one-or-several-repositories). The run ends at
    `environment-verified` and reports `ENVIRONMENT_NOT_DECLARED` as information.
