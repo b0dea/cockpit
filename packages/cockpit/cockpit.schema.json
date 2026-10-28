@@ -10332,7 +10332,7 @@
                   },
                   {
                     "type": "string",
-                    "pattern": "^(?!(?:claudecode|codexcli|opencode)$)"
+                    "pattern": "^(?!(?:claudecode|codexcli|opencode|cursor|grokcli)$)"
                   }
                 ]
               },
