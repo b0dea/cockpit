@@ -61,6 +61,8 @@ const schemaDefaultTargets = [
     'guards.vendor_endpoint_hosts',
     'guards.protected_branches',
     'guards.ask_is_deny_on',
+    'guards.allow',
+    'guards.deny',
     'mcp.approved',
     'workorders.attempt_cap',
     'workorders.wip_cap',
@@ -700,6 +702,8 @@ describe('document round trip inventory', () => {
                     vendor_endpoint_hosts: [],
                     protected_branches: ['main', 'master'],
                     ask_is_deny_on: ['codex'],
+                    allow: [],
+                    deny: [],
                 })
                 expect(draft.mcp).toEqual({ approved: [] })
                 expect(draft.workorders).toEqual({ attempt_cap: 2, wip_cap: 3, programme_wip_cap: 1 })

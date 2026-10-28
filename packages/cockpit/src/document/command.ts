@@ -508,6 +508,8 @@ function buildAttributions(model: Pick<DocumentModel, 'name' | 'siblings' | 'def
         ['guards.vendor_endpoint_hosts', defaults.guards.vendor_endpoint_hosts, 'vendor endpoint hosts'],
         ['guards.protected_branches', defaults.guards.protected_branches, 'protected branches'],
         ['guards.ask_is_deny_on', defaults.guards.ask_is_deny_on, 'harnesses where ask means deny'],
+        ['guards.allow', defaults.guards.allow, 'allowed commands'],
+        ['guards.deny', defaults.guards.deny, 'denied commands'],
         ['mcp.approved', defaults.mcp.approved, 'approved MCP servers'],
         ['workorders.attempt_cap', defaults.workorders.attempt_cap, 'the work-order attempt cap'],
         ['workorders.wip_cap', defaults.workorders.wip_cap, 'the work-order WIP cap'],
