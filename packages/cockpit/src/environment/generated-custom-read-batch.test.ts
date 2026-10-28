@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import * as surfaceGenerator from '../surfaces/generator-adapter.js'
+import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import { cockpitId } from './identity.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 
@@ -87,15 +88,12 @@ describe('custom surface output authentication batching', () => {
         let initialBytes = ''
         if (existing) {
             const sourceSha256 = digest(await readFile(configPath, 'utf8'))
-            const payload = {
-                format: 'cockpit-generated-ownership/v2',
-                cockpitId: cockpitId({ name: 'generated-environment', mainCheckoutPath: root }),
-                generation: digest(`generated-environment\0${sourceSha256}`),
-                source: { path: 'cockpit.toml', sha256: sourceSha256 },
+            initialBytes = encodeOwnershipManifest({
+                root, configPath, cockpitId: cockpitId({ name: 'generated-environment', mainCheckoutPath: root }),
+                generation: digest(`generated-environment\0${sourceSha256}`), sourceSha256,
                 personaSource: { path: 'fixtures/personas.json', sha256: digest(await readFile(join(root, 'fixtures/personas.json'), 'utf8')) },
-                entries: [],
-            }
-            initialBytes = `${JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) })}\n`
+                owned: [], surfaces: [],
+            }).bytes
             await writeFile(ledgerPath, initialBytes)
         }
         const initialIdentity = existing ? await lstat(ledgerPath) : undefined

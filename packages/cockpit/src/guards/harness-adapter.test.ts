@@ -37,6 +37,7 @@ describe('closed native guard representation', () => {
     it('keeps the real evaluator hard denial despite an exact grant on every harness', () => {
         const decision = evaluateGuard(parseGuardInput(payload), {
             canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
+            declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', 'HEAD:main'] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
         expect(decision.decision).toBe('deny')
@@ -55,6 +56,7 @@ describe('closed native guard representation', () => {
         const input = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: `git push origin ${source}` } }
         const decision = evaluateGuard(parseGuardInput(input), {
             canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
+            declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', source] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
         for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {

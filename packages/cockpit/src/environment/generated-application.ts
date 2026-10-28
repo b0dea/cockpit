@@ -39,7 +39,6 @@ import {
     renderSharedPostimage,
     bindSurfaceOwnershipIdentity,
     classifyGeneratedPaths,
-    captureLegacySharedOwnership,
     encodeOwnershipManifest,
     parseOwnershipManifest,
     projectGeneratedPathFacts,
@@ -2627,7 +2626,7 @@ async function classifyOwnedState(
     const facts: GeneratedPathFact[] = []
     const observations: Array<Record<string, unknown>> = []
     for (const [path, observed] of raw) {
-        const fact = observed.kind === 'missing' || manifest?.migratedFromV1 && observed.kind === 'symlink'
+        const fact = observed.kind === 'missing'
             ? desired.get(path) ?? previous.get(path) : previous.get(path) ?? desired.get(path)
         if (!fact) continue
         facts.push(fact)
@@ -2708,33 +2707,6 @@ function surfaceMutations(
         else result.push(Object.freeze({ path: action.path, phase: 'stale', operation: action.priorOwned.kind === 'symlink' ? 'remove-symlink' : 'remove-file', expected }))
     }
     return Object.freeze(result)
-}
-
-function migratedSurfaceOwnership(
-    prepared: PreparedEnvironment,
-    manifest: OwnershipManifest,
-    raw: ReadonlyMap<string, AnchoredEntry>,
-): readonly SurfacePriorOwnedEntry[] | undefined {
-    const rows: SurfacePriorOwnedEntry[] = []
-    for (const desired of prepared.surfaces) {
-        const prior = manifest.entries.find((row): row is EnvironmentOwnershipEntry => row.path === desired.path && !('harnesses' in row))
-        if (!prior) continue
-        const current = raw.get(desired.path)
-        if (!current) return undefined
-        if (desired.kind === 'file') {
-            if (current.kind !== 'file' || current.sha256 !== prior.sha256) return undefined
-            const { bytes: _bytes, ...entry } = desired
-            rows.push(entry)
-        } else if (desired.kind === 'symlink') {
-            if (current.kind !== 'symlink' || current.target !== desired.target) return undefined
-            rows.push(desired)
-        } else if (current.kind === 'file' && current.sha256 === prior.sha256) {
-            const entry = captureLegacySharedOwnership(current.bytes, desired, manifest)
-            if (!entry) return undefined
-            rows.push(entry)
-        } else return undefined
-    }
-    return Object.freeze(rows.sort((left, right) => compareCodeUnits(left.path, right.path)))
 }
 
 async function environmentMutations(
@@ -2839,10 +2811,7 @@ async function preparePublication(
     if (classified.kind !== 'complete') return refuse(classified.diagnostic.code, classified.diagnostic.message, classified.diagnostic.target)
     const unknown = classified.paths.find(row => row.state === 'unknown')
     if (unknown) return refuse('SURFACE_STATE_CONFLICT', 'owned surface identity or confinement is unknown', unknown.fact.path)
-    const migrated = ownership.kind === 'complete' && ownership.manifest.migratedFromV1
-        ? migratedSurfaceOwnership(prepared, ownership.manifest, surfaceState.raw) : []
-    if (!migrated) return refuse('SURFACE_STATE_CONFLICT', 'legacy whole-file ownership does not match the current surface state', 'surfaces')
-    const effectivePriorSurfaces = [...priorSurfaces, ...migrated].sort((left, right) => compareCodeUnits(left.path, right.path))
+    const effectivePriorSurfaces = priorSurfaces
     const environment = await environmentMutations(prepared, ownership.kind === 'complete' ? ownership.manifest : undefined, adapters)
     if (environment.kind === 'invalid') return Object.freeze({ prepared, ownership, refusal: refuse(
         'GENERATED_STALE_ARTIFACT_DRIFT', 'a generated whole-file path is unmanaged, changed, or unsafe', environment.path,
@@ -3021,10 +2990,7 @@ async function checkCanonicalGeneratedEnvironment(
     if (classified.kind !== 'complete') return refuse(classified.diagnostic.code, classified.diagnostic.message, classified.diagnostic.target)
     const unknown = classified.paths.find(row => row.state === 'unknown')
     if (unknown) return refuse('SURFACE_STATE_CONFLICT', 'owned surface identity or confinement is unknown', unknown.fact.path)
-    const migrated = ownership.manifest.migratedFromV1
-        ? migratedSurfaceOwnership(prepared, ownership.manifest, surfaceState.raw) : []
-    if (!migrated) return refuse('SURFACE_STATE_CONFLICT', 'legacy whole-file ownership does not match the current surface state', 'surfaces')
-    const effectivePriorSurfaces = [...priorSurfaces, ...migrated].sort((left, right) => compareCodeUnits(left.path, right.path))
+    const effectivePriorSurfaces = priorSurfaces
     const surfacePaths = new Set(prepared.surfaces.map(row => row.path))
     const staleEnvironment = ownership.manifest.entries.filter(row => !('harnesses' in row) && !surfacePaths.has(row.path)
         && !prepared.owned.some(file => file.path === row.path))

@@ -378,12 +378,18 @@ describe('restriction expansion', () => {
         expect(target(result, 'opencode').files[0]!.bytes).toContain('"tool.execute.before"')
         expect(target(result, 'opencode').files[0]!.bytes).toContain('spawnSync("/bin/bash"')
 
-        expect(runGuard(result, bash('psql postgresql://db.example.test/app')).stdout)
-            .toContain('permissionDecision":"deny')
+        expect(JSON.parse(runGuard(result, bash('psql postgresql://db.example.test/app')).stdout)).toMatchObject({ hookSpecificOutput: {
+            permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('declared hosted database'),
+        } })
         expect(runGuard(result, bash('git push origin main')).stdout)
             .toContain('permissionDecision":"deny')
         // Read-only inspection passes the installed route without a prompt; reading the instance does not.
         expect(runGuard(result, bash('ls -la && git status'))).toMatchObject({ status: 0, stdout: '', stderr: '' })
+        const ambientRipgrep = runGuard(result, bash('rg needle src'), { RIPGREP_CONFIG_PATH: '' })
+        expect(ambientRipgrep, ambientRipgrep.stderr).toMatchObject({ status: 0, stderr: '' })
+        expect(JSON.parse(ambientRipgrep.stdout)).toMatchObject({ hookSpecificOutput: {
+            permissionDecision: 'ask', permissionDecisionReason: expect.stringContaining('exact permitted profile'),
+        } })
         expect(JSON.parse(runGuard(result, bash('cat env/service.env')).stdout)).toMatchObject({ hookSpecificOutput: {
             permissionDecision: 'deny', permissionDecisionReason: 'Refusing to read a declared environment instance or secrets directory into the agent context.',
         } })

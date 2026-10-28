@@ -10,6 +10,7 @@ import { readActiveStackInventory } from '../environment/claims.js'
 import { ENVIRONMENT_CODES, snapshotGeneratedJson, type HolderId } from '../environment/contract.js'
 import { checkoutId, cockpitId, stackId } from '../environment/identity.js'
 import { abortStateTransaction, snapshotStateNamespace, transactState, type StateNamespace } from '../environment/state.js'
+import { observeGuardLocalRemoval, removeObservedGuardLocal } from '../guards/local-identity.js'
 import { SURFACE_FILE_MAX_BYTES } from '../surfaces/contract.js'
 import { classifyGeneratedPaths, parseOwnershipManifest, projectGeneratedPathFacts, removeSharedOwnership, type OwnershipManifest } from '../surfaces/ownership.js'
 import { observeSiblingGuides } from '../surfaces/projection.js'
@@ -103,6 +104,8 @@ async function remove(
         if (manifest.kind !== 'complete') return abortStateTransaction(refuse('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is malformed or unsafe', OWNERSHIP_PATH))
         const owned = manifest.manifest
         const authority = { root, cockpitId: cockpit, configPath: loaded.result.source.path }
+        const local = mode === 'uninstall' ? await observeGuardLocalRemoval(root, loaded.result.source.path, loaded.result.source.sha256) : { kind: 'absent' as const }
+        if (local.kind === 'refusal') return abortStateTransaction(refuse('GENERATED_LOCAL_STATE_CONFLICT', local.message, '.cockpit/local'))
         const mutations: PublicationMutation[] = []
         // An adopted harness settings file goes back to the team's own bytes instead of disappearing.
         // The transaction only ever removes an owned whole file, so the merged file is removed there
@@ -168,6 +171,11 @@ async function remove(
                     return abortStateTransaction(refuse('SURFACE_ADOPTION_REFUSED',
                         `cockpit's files were removed, but ${path} could not be restored from ${copy.source} (${error instanceof Error ? error.message : String(error)}); copy ${copy.source} to ${path} by hand`, path))
                 }
+            }
+            if (local.kind === 'complete') {
+                const removed = await removeObservedGuardLocal(local.observation)
+                if (removed.kind === 'refusal') return abortStateTransaction(refuse('GENERATED_LOCAL_STATE_CONFLICT',
+                    `cockpit's generated files were removed, but ${removed.message}; remove .cockpit/local after confirming it contains only cockpit guard identity files`, '.cockpit/local'))
             }
         }
         return abortStateTransaction(outcome)

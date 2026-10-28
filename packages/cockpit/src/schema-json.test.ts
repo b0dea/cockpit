@@ -172,6 +172,22 @@ describe('the published cockpit schema', () => {
         }
     })
 
+    it('publishes the same bounded guard-rule contract as the runtime schema', () => {
+        const schemas = [JSON.parse(renderCockpitSchema()), JSON.parse(readFileSync(new URL('../cockpit.schema.json', import.meta.url), 'utf8'))]
+        const validators = schemas.map(schema => compileDraft04Schema(schema))
+        for (const [guards, accepted] of [
+            [{ allow: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: '.' }],
+                deny: [{ contains: ['--environment', 'shared'], reason: 'Shared environments require an operator.', fix: 'Use local.' }] }, true],
+            [{ allow: [{ argv: [], reason: 'Empty.' }] }, false],
+            [{ deny: [{ prefix: ['make'], contains: ['release'], reason: 'Ambiguous.' }] }, false],
+            [{ allow: [{ argv: ['make'], reason: 'Escapes.', cwd: '../outside' }] }, false],
+        ] as Array<[Record<string, unknown>, boolean]>) {
+            const config = { ...validConfig, guards }
+            expect(CockpitConfig.safeParse(config).success, JSON.stringify(guards)).toBe(accepted)
+            for (const validate of validators) expect(validate(config), JSON.stringify(guards)).toBe(accepted)
+        }
+    })
+
     it('publishes the consumer surface shapes and names loader-only matrix relations', () => {
         const config = {
             ...structuredClone(validConfig),

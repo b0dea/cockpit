@@ -11,7 +11,6 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { CockpitConfig } from '../schema.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { cockpitId } from '../environment/identity.js'
 import {
     generatedApplicationProjection,
     type GeneratedStaleRemovalApprovalRequest,
@@ -379,46 +378,6 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 kind: 'refusal', diagnostics: [expect.objectContaining({ target: 'custom/rules.md' })],
             })
             expect(await readFile(join(changed.root, 'custom/rules.md'), 'utf8')).toBe('consumer bytes\n')
-        })
-
-        it('strictly migrates v1 whole-file ownership without changing source identities', async () => {
-            const { root, configPath } = await consumer('ownership-v1-migration')
-            const declaration = await readFile(configPath, 'utf8')
-            await writeFile(configPath, declaration
-                .replace('compose.generated.yml', 'fixtures/a.yml')
-                .replace('fixtures/personas.generated.ts', 'fixtures/Z.ts'))
-            const first = await syncGeneratedEnvironment({ configPath })
-            expect(first).toMatchObject({ kind: 'complete' })
-            if (first.kind !== 'complete') return
-            const current = await ownership(root)
-            expect(current.format).toBe('cockpit-generated-ownership/v3')
-            const files = await Promise.all(first.result.paths.map(async (path) => ({
-                path, ownership: 'whole-file' as const, sha256: digest(await readFile(join(root, path))),
-            })))
-            const payload = {
-                format: 'cockpit-generated-ownership/v1',
-                cockpitId: cockpitId({ name: 'generated-environment', mainCheckoutPath: root }),
-                generation: first.result.generation,
-                source: { path: 'cockpit.toml', sha256: first.result.sourceSha256 },
-                personaSource: { path: 'fixtures/personas.json', sha256: digest(await readFile(join(root, 'fixtures/personas.json'))) },
-                files: files.sort((left, right) => left.path.localeCompare(right.path)),
-            }
-            expect(payload.files.map(file => file.path).filter(path => path.startsWith('fixtures/'))).toEqual(['fixtures/a.yml', 'fixtures/Z.ts'])
-            const mismatched = { ...payload, source: { ...payload.source, path: 'other.toml' } }
-            await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), `${JSON.stringify({
-                ...mismatched, integrity: digest(JSON.stringify(mismatched)),
-            }, null, 2)}\n`)
-            expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal' })
-            await writeFile(join(root, '.cockpit/generated-environment-ownership.json'), `${JSON.stringify({
-                ...payload, integrity: digest(JSON.stringify(payload)),
-            }, null, 2)}\n`)
-
-            expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-            const migrated = await ownership(root)
-            expect(migrated).toMatchObject({
-                format: 'cockpit-generated-ownership/v3', source: current.source, personaSource: current.personaSource,
-            })
-            expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
         })
 
         it('preserves shared outside bytes and refuses ambiguous OpenCode ownership', async () => {

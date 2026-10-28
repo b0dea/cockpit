@@ -187,7 +187,7 @@ function cockpit(argv: readonly string[]): Classified {
 }
 
 /** The paths an exact read-only invocation touches, or undefined when it is not one. */
-export function classifyReadOnlyInvocation(invocation: ParsedInvocation): ReadOnlyAccess | undefined {
+export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
     if (invocation.executable === null || invocation.wrapped || invocation.redirects.some(redirect => redirect.write)
         || invocation.words.some(word => word.role === 'environment-assignment-value')) return undefined
     const argv = invocation.argv
@@ -204,7 +204,7 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation): ReadOn
         case 'head': case 'tail': return shape(files(argv, HEAD_TAIL))
         case 'wc': return shape(files(argv, WC))
         case 'grep': return shape(search(argv, GREP, false))
-        case 'rg': return shape(search(argv, RG, true))
+        case 'rg': return environment.ripgrepConfigActive ? undefined : shape(search(argv, RG, true))
         case 'fd': {
             const parsed = parseOptions(argv, FD)
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length > 1 ? parsed.positionals.slice(1) : ['.'] })

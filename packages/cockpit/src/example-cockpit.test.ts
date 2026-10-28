@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -33,6 +34,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],
     ['examples/compose-first/README.md', [executed, runtime]],
+    ['examples/extended/README.md', [executed]],
 ])
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
@@ -266,6 +268,7 @@ describe('the public synthetic cockpit', () => {
         expect(classified.filter(row => row.kind === 'executed')).toEqual([
             { path: 'examples/compose-first/README.md', block: 1, ...executed },
             { path: 'examples/docs-only/README.md', block: 1, ...executed },
+            { path: 'examples/extended/README.md', block: 1, ...executed },
             { path: 'examples/minimal/README.md', block: 1, ...executed },
             { path: 'examples/synthetic/README.md', block: 2, ...executed },
             { path: 'examples/synthetic/README.md', block: 4, ...executed },
@@ -347,6 +350,26 @@ describe('cockpits without a generated environment', () => {
         expect(override).toContain('  web:\n    labels:\n      dev.b0dea.cockpit.config-sha256:')
         expect(readFileSync(join(root, 'compose.yml'), 'utf8')).toBe(compose)
         expect(check!.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
+    })
+
+    it('preserves build-beside extensions when sync upgrades producer ownership', () => {
+        const root = copyPlainExample('extended', 'extended')
+        const owned = ['Makefile', 'scripts/verify.mjs', 'compose.yml', 'api/server.mjs'].map(path => [path, readFileSync(join(root, path), 'utf8')] as const)
+        const first = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+        expect(first.status, `${first.stdout}\n${first.stderr}`).toBe(0)
+        const ownershipPath = join(root, '.cockpit/generated-environment-ownership.json')
+        const prior = JSON.parse(readFileSync(ownershipPath, 'utf8'))
+        delete prior.integrity
+        prior.producer.version = '0.0.0-prior'
+        writeFileSync(ownershipPath, `${JSON.stringify({ ...prior, integrity: createHash('sha256').update(JSON.stringify(prior)).digest('hex') }, null, 2)}\n`)
+        const upgraded = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+        expect(upgraded.status, `${upgraded.stdout}\n${upgraded.stderr}`).toBe(0)
+        for (const [path, bytes] of owned) expect(readFileSync(join(root, path), 'utf8')).toBe(bytes)
+        const manifest = JSON.parse(readFileSync(ownershipPath, 'utf8'))
+        expect(manifest.entries.map((entry: { path: string }) => entry.path)).not.toEqual(expect.arrayContaining(owned.map(([path]) => path)))
+        expect(existsSync(join(root, '.agents/skills/verify-workflow/SKILL.md'))).toBe(true)
+        expect(existsSync(join(root, '.codex/hooks.json'))).toBe(true)
+        expect(spawnSync('make', ['verify'], { cwd: root }).status).toBe(0)
     })
 
     it('fails check on a published host port that no ports.bases variable leases', () => {

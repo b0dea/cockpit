@@ -12,7 +12,7 @@ import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../enviro
 import { snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
 import { installedPackageMetadata } from '../package-metadata.js'
-import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPaths, removeSharedOwnership, renderSharedPostimage, captureLegacySharedOwnership,
+import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPaths, removeSharedOwnership, renderSharedPostimage,
     type OwnershipAuthority, type OwnershipManifest, type GeneratedPathFact, type SurfaceDesiredEntry } from '../surfaces/ownership.js'
 import { isInspectedBootstrapOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import type { SurfaceChange } from '../surfaces/sync.js'
@@ -2161,9 +2161,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
                     const before = current.kind === 'file' ? new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) : desired.region.format === 'opencode-json-root-properties' ? '{}' : ''
                     const action = captured.surfaceActions?.find(row => row.path === path)
                     if (!action || action.kind !== 'write' || action.desired.kind !== 'shared-region') return refuse('GENERATED_PUBLICATION_FAILED', 'shared write requires its admitted surface action', path)
-                    const effective = previous?.kind === 'file' && prior?.migratedFromV1 && current.kind === 'file'
-                        ? captureLegacySharedOwnership(current.bytes, action.desired, prior) : previous
-                    const rendered = renderSharedPostimage(before, action.desired, effective)
+                    const rendered = renderSharedPostimage(before, action.desired, previous)
                     if (rendered.kind !== 'complete' || rendered.bytes !== mutation.bytes || action.postimage !== mutation.bytes) return refuse('GENERATED_PUBLICATION_FAILED', 'shared write would change foreign bytes', path)
                 }
             }

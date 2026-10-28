@@ -24,6 +24,9 @@ function policy() {
     return {
         canonicalRoot: root, configPath: `${root}/cockpit.toml`, allowedRoots: [root, other], instances: [{ name: 'active', path: instance }], protectedIdentities: protectedIdentities([{ path: instance }]),
         protectedBranches: ['main', 'release/stable'], hostedDatabaseHosts: ['db.example.test', '*.database.example.test'], vendorHosts: ['api.vendor.example.test'],
+        declaredAllows: [] as Array<{ argv: string[]; reason: string; cwd?: string }>,
+        declaredDenies: [] as Array<{ match: 'prefix' | 'contains'; argv: string[]; reason: string; fix?: string }>,
+        ripgrepConfigActive: false,
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
         projectCommands: [
             { checkoutRoot: root, kind: 'test', executable: 'npm', argv: ['test'] },
@@ -41,6 +44,34 @@ function decide(command: string, configured = policy(), cwd = root) {
 }
 
 describe('resolved guard evaluation', () => {
+    it('applies declared deny and allow rules in precedence order to normalized invocations', () => {
+        const configured = policy()
+        configured.declaredAllows.push(
+            { argv: ['make', 'verify'], reason: 'The repository verification target is safe.', cwd: root },
+            { argv: ['printf'], reason: 'Synthetic output is safe.' },
+            { argv: ['tool', '*'], reason: 'A literal star operand is safe.' },
+        )
+        configured.declaredDenies.push(
+            { match: 'prefix', argv: ['make', 'release'], reason: 'Release changes shared state.', fix: 'Run make verify instead.' },
+            { match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.' },
+        )
+
+        expect(decide('make verify --unit', configured)).toEqual({ decision: 'allow', reason: 'The repository verification target is safe.' })
+        expect(decide("tool '*'", configured)).toEqual({ decision: 'allow', reason: 'A literal star operand is safe.' })
+        expect(decide('make verify --unit', configured, other).decision).toBe('ask')
+        expect(decide('make release --environment local', configured)).toEqual({
+            decision: 'deny', reason: 'Release changes shared state. Fix: Run make verify instead.',
+        })
+        expect(decide('tool deploy --environment shared --confirm', configured)).toEqual({
+            decision: 'deny', reason: 'Shared environments are human-operated.',
+        })
+        expect(decide('timeout 30 make release', configured).decision).toBe('deny')
+        expect(decide('env RELEASE_MODE=1 make release', configured).decision).toBe('deny')
+        expect(decide('timeout 30 make verify', configured).decision).toBe('ask')
+        expect(decide('printf db.example.test', configured).decision).toBe('deny')
+        expect(decide('printf ok > /outside/result', configured).decision).toBe('unavailable')
+    })
+
     it('matches every literal project tuple word while preserving exactness and hard denies', () => {
         for (const executable of ['npm', 'build tool', 'tool*?[];literal']) {
             const tuple = [executable, '*', '**', '?', '[', ']', 'file[1]?.txt']
@@ -457,6 +488,13 @@ const withGit = ({ path, cwd }: { path: string; cwd: string }) => {
 const decideInRepositories = (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy(), withGit)
 
 describe('built-in read-only profile', () => {
+    it('asks before ripgrep when an ambient configuration can add hidden behavior', () => {
+        const configured = policy()
+        configured.ripgrepConfigActive = true
+        expect(decide('rg needle src', configured).decision).toBe('ask')
+        expect(decide('grep needle src', configured).decision).toBe('allow')
+    })
+
     it('allows exact read-only inspection commands and pipelines of them without a prompt', () => {
         for (const command of ['ls', 'ls -la src', 'pwd', 'cat README.md', 'cat -n README.md', 'head -n 20 src/a.ts', 'head -5 src/a.ts', 'tail -n5 src/a.ts',
             'wc -l src/a.ts src/b.ts', 'rg needle src', "rg -i -g '*.ts' needle src", 'rg --files src', 'grep -rn needle src', 'grep needle src/a.ts',

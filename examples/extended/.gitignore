@@ -1,0 +1,8 @@
+/*
+!/.gitignore
+!/README.md
+!/cockpit.toml
+!/compose.yml
+!/Makefile
+!/scripts/
+!/api/

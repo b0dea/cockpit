@@ -71,6 +71,15 @@ paths, wrapped or environment-modifying commands, and unmatched invocation profi
 Broad staging can still produce a hard denial if it includes an environment instance. Unsupported
 staging options or unproven pathspec grammar produce `unavailable`.
 
+Declared rules refine that final prompt boundary. Each vector starts with the executable.
+`[[guards.deny]]` matches a command-vector prefix or a contiguous command-vector sequence and may
+name a safe fix. `[[guards.allow]]` matches a command-vector prefix,
+optionally only at one checkout-relative working directory. Evaluation order is built-in hard
+denials, declared denials, missing authority, declared allows, the built-in read-only profile, then
+`ask`. An allow therefore cannot bypass a hosted endpoint, protected branch, secret path, malformed
+capture or unavailable filesystem evidence. Wrapped and environment-modifying invocations are never
+allowed by a declared rule because wrappers can change which program actually runs.
+
 Malformed or oversized input, incomplete policy, escaped or symlinked path evidence, inspection
 failure, and exceeded limits also produce `unavailable`. The
 [invocation parser](../packages/cockpit/src/guards/invocation-parser.ts) captures bounded input once;
@@ -91,6 +100,9 @@ next word can never be misread. Git runs read-only only in a directory with its 
 Git otherwise treats a directory holding `HEAD`, `objects` and `refs` as a repository and honours
 its configuration; Git operands are inspected as files whose content may be printed. A pipeline or
 chain is permitted only when every segment is.
+
+`rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent. An ambient ripgrep configuration can
+inject options such as a preprocessor, so its presence falls back to the ordinary prompt rules.
 
 Every hard denial still applies first. Reading a declared instance or anything under `.secrets` is
 denied under every spelling the volume resolves to it, a hard link included. A path that is a

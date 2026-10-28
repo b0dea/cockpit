@@ -37,6 +37,8 @@ accept new output. `doctor` lists active overrides and changed originals from an
 authenticated read-only generation preview; an unavailable preview is reported explicitly.
 Authored Markdown frontmatter must use unqualified YAML delimiters and valid bounded YAML.
 Cockpit rejects language-qualified or malformed frontmatter before generator dispatch.
+For the complete list of supported product extension seams and the build-beside pattern, see
+[Extending cockpit](extending.md); this page owns only generated surface behavior.
 
 The generator uses a checked-in, SHA-pinned bundle of Rulesync only for harness-specific
 spelling. Packaging verifies the bundle against its source and includes its third-party notices;

@@ -32,7 +32,7 @@ describe('bounded exact project command declarations', () => {
 
 describe('declared guard hosts', () => {
     it('defaults vendor authority separately and refuses normalized duplicates in either declaration', () => {
-        expect(Guards.parse({})).toEqual({ hosted_db_hosts: [], vendor_endpoint_hosts: [], protected_branches: ['main', 'master'], ask_is_deny_on: ['codex'] })
+        expect(Guards.parse({})).toEqual({ hosted_db_hosts: [], vendor_endpoint_hosts: [], protected_branches: ['main', 'master'], ask_is_deny_on: ['codex'], allow: [], deny: [] })
         for (const field of ['hosted_db_hosts', 'vendor_endpoint_hosts']) {
             for (const hosts of [['db.example.test', 'db.example.test'], ['db.example.test', '*.db.example.test'], ['*.db.example.test', 'db.example.test'], Array.from({ length: 129 }, (_, index) => `host-${index}.example.test`)]) {
                 expect(Guards.safeParse({ [field]: hosts }).success, `${field}: ${hosts}`).toBe(false)
@@ -40,6 +40,30 @@ describe('declared guard hosts', () => {
             expect(Guards.safeParse({ [field]: Array.from({ length: 128 }, (_, index) => `host-${index}.example.test`) }).success).toBe(true)
         }
         expect(Guards.parse({ hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['*.db.example.test'] })).toMatchObject({ hosted_db_hosts: ['db.example.test'], vendor_endpoint_hosts: ['*.db.example.test'] })
+    })
+
+    it('accepts bounded command allow and deny rules and rejects ambiguous deny matchers', () => {
+        const declared = Guards.parse({
+            allow: [{ argv: ['make', 'verify'], reason: 'The repository-owned verification target is read-only.', cwd: '.' }],
+            deny: [
+                { prefix: ['make', 'release'], reason: 'Release changes shared state.', fix: 'Run make verify instead.' },
+                { contains: ['--environment', 'shared'], reason: 'Shared environments are human-operated.' },
+            ],
+        })
+        expect(declared.allow).toEqual([{ argv: ['make', 'verify'], reason: 'The repository-owned verification target is read-only.', cwd: '.' }])
+        expect(declared.deny).toHaveLength(2)
+        for (const deny of [
+            { reason: 'missing matcher' },
+            { prefix: ['make'], contains: ['release'], reason: 'ambiguous matcher' },
+            { prefix: [], reason: 'empty matcher' },
+            { contains: ['x\n'], reason: 'control word' },
+        ]) expect(Guards.safeParse({ deny: [deny] }).success, JSON.stringify(deny)).toBe(false)
+        for (const allow of [
+            { argv: [], reason: 'empty matcher' },
+            { argv: ['make'], reason: '' },
+            { argv: ['make'], reason: 'valid', cwd: '../outside' },
+            { argv: ['make'], reason: 'valid', cwd: '/outside' },
+        ]) expect(Guards.safeParse({ allow: [allow] }).success, JSON.stringify(allow)).toBe(false)
     })
 })
 const operation = { location: 'in-stack', service: 'app', cwd: '.', argv: ['node', 'synthetic-operation.mjs'], timeout_seconds: 30, provenance }

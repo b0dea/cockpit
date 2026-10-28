@@ -136,17 +136,16 @@ it('preserves the complete-estate producer timestamp during no-op sync', async (
     expect(canonicalReads).toHaveLength(1)
 })
 
-it.each(['v2 migration', 'producer identity change'])('timestamps committed %s with the actual installed producer', async kind => {
+it('timestamps a changed producer identity with the actual installed producer', async () => {
     const { root, configPath } = await consumer('producer-migration')
     expect(await syncGeneratedEnvironment({ configPath }, { now: () => '2026-10-22T12:00:00.000Z' })).toMatchObject({ kind: 'complete' })
     const path = join(root, '.cockpit/generated-environment-ownership.json')
     const prior = JSON.parse(await readFile(path, 'utf8'))
     delete prior.integrity
-    if (kind === 'v2 migration') { prior.format = 'cockpit-generated-ownership/v2'; delete prior.producer }
-    else prior.producer.version = '0.0.0-previous'
+    prior.producer.version = '0.0.0-previous'
     await writeFile(path, `${JSON.stringify({ ...prior, integrity: createHash('sha256').update(JSON.stringify(prior)).digest('hex') }, null, 2)}\n`)
     const current = await prepareGeneratedEnvironmentCurrentness({ configPath }, { now: () => '2026-10-23T12:00:00.000Z' })
-    expect(current.storedProducer).toEqual(kind === 'v2 migration' ? null : prior.producer)
+    expect(current.storedProducer).toEqual(prior.producer)
     expect(current.changes).toEqual([{ operation: 'write', path: '.cockpit/generated-environment-ownership.json' }])
     const outputPaths = ['app/.env.example', 'compose.generated.yml', 'docs/cockpit/environment-decisions.md', 'fixtures/personas.generated.ts']
     const canonicalReads: { action: string; entries: { path: string; maxBytes: number; action: string }[]; afterPublication: boolean }[] = []

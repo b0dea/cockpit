@@ -28,6 +28,17 @@ export interface GuardProtectedIdentity {
     readonly identity: string | null
     readonly ancestors: readonly string[]
 }
+export interface GuardDeclaredAllow {
+    readonly argv: readonly string[]
+    readonly reason: string
+    readonly cwd?: string
+}
+export interface GuardDeclaredDeny {
+    readonly match: 'prefix' | 'contains'
+    readonly argv: readonly string[]
+    readonly reason: string
+    readonly fix?: string
+}
 export interface GuardEvaluationPolicy {
     readonly canonicalRoot: string
     /** The configuration every guarded call reads; deleting it strands the agent. */
@@ -38,6 +49,9 @@ export interface GuardEvaluationPolicy {
     readonly protectedBranches: readonly string[]
     readonly hostedDatabaseHosts: readonly string[]
     readonly vendorHosts: readonly string[]
+    readonly declaredAllows: readonly GuardDeclaredAllow[]
+    readonly declaredDenies: readonly GuardDeclaredDeny[]
+    readonly ripgrepConfigActive: boolean
     readonly cockpitInvocations: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
 }
@@ -114,6 +128,9 @@ function argv(value: JsonSnapshot | undefined): value is readonly string[] {
         typeof word === 'string' && !/[\uD800-\uDFFF]/u.test(word) && !/[\x00-\x1f\x7f]/.test(word)
         && Buffer.byteLength(word) <= GUARD_INPUT_LIMITS.wordBytes && word !== '*' && word !== '**')
 }
+function ruleArgv(value: JsonSnapshot | undefined): value is readonly string[] {
+    return Array.isArray(value) && GuardCommandArgv.safeParse(value).success
+}
 function projectTuple(value: JsonSnapshotObject): boolean {
     if (!Array.isArray(value.argv)) return false
     const tuple = GuardCommandArgv.safeParse([value.executable, ...value.argv])
@@ -121,16 +138,24 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'cockpitInvocations', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'cockpitInvocations', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
-        || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)) return undefined
+        || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
+        || typeof p.ripgrepConfigActive !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)) return undefined
     const roots = p.allowedRoots
     const confined = (value: JsonSnapshot | undefined): value is string => canonical(value) && roots.some((root) => within(value, root))
     if ([p.hostedDatabaseHosts, p.vendorHosts].some((hosts) => hosts.length > GUARD_HOST_LIMITS.rows
         || !hosts.every(isGuardHost) || new Set(hosts.map(normalizeGuardHost)).size !== hosts.length)
         || p.protectedBranches.some((branch) => /[\s:*?\[\\]/.test(branch))
         || p.instances.some((item) => !record(item) || !keys(item, ['name', 'path']) || !scalar(item.name) || !confined(item.path))
+        || p.declaredAllows.length > 64 || p.declaredAllows.some((item) => !record(item)
+            || !keys(item, item.cwd === undefined ? ['argv', 'reason'] : ['argv', 'reason', 'cwd'])
+            || !ruleArgv(item.argv) || !scalar(item.reason) || item.cwd !== undefined && !confined(item.cwd))
+        || p.declaredDenies.length > 64 || p.declaredDenies.some((item) => !record(item)
+            || !keys(item, item.fix === undefined ? ['match', 'argv', 'reason'] : ['match', 'argv', 'reason', 'fix'])
+            || !['prefix', 'contains'].includes(String(item.match)) || !ruleArgv(item.argv) || !scalar(item.reason)
+            || item.fix !== undefined && !scalar(item.fix))
         || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv']) || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv))
         || p.projectCommands.some((item) => !record(item) || !keys(item, ['executable', 'checkoutRoot', 'kind', 'argv']) || !confined(item.checkoutRoot) || !['build', 'test'].includes(String(item.kind)) || !projectTuple(item))
         || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
@@ -157,6 +182,14 @@ function hostUsed(value: string, configured: string): boolean {
         offset = lower.indexOf(host, offset + 1)
     }
     return false
+}
+
+function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | GuardDeclaredDeny): boolean {
+    if (invocation.executable === null) return false
+    const words = [invocation.executable, ...invocation.argv]
+    if ('cwd' in rule && rule.cwd !== undefined && rule.cwd !== invocation.cwd) return false
+    if (!('match' in rule) || rule.match === 'prefix') return rule.argv.every((word, index) => words[index] === word)
+    return words.some((_, start) => rule.argv.every((word, index) => words[start + index] === word))
 }
 
 interface GitInvocation { verb: string; args: readonly string[]; cwd: string; uncertain: boolean }
@@ -269,11 +302,15 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
     const structuralDenial = deny(`Refusing to delete, rename or truncate ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
-    let pending: GuardDecision | undefined
+    let authorityUnavailable: GuardDecision | undefined
     let hardDeny: GuardDecision | undefined
     const hold = (decision: GuardDecision) => {
         if (decision.decision === 'deny') hardDeny = decision
-        else if (!pending || decision.decision === 'unavailable') pending = decision
+        else if (decision.decision === 'unavailable' && !authorityUnavailable) authorityUnavailable = decision
+    }
+    const askDecisions = new Map<ParsedInvocation, GuardDecision>()
+    const holdAsk = (invocation: ParsedInvocation, decision: GuardDecision) => {
+        if (!askDecisions.has(invocation)) askDecisions.set(invocation, decision)
     }
     // Identity facts for inspected evidence: the leaf itself, everything above it, and what it covers.
     const evidenceFacts = (evidence: JsonSnapshotObject) => {
@@ -392,16 +429,17 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const git = gitInvocation(invocation)
         const removed = removedOperands(invocation, git)
         for (const path of removed?.paths ?? []) inspectRemoval(path, removed!.cwd)
-        const access = classifyReadOnlyInvocation(invocation)
+        const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
         if (access && inspectReadOnly(access)) readOnly.add(invocation)
         if (!git) continue
         inspectPath({ path: git.cwd, cwd: invocation.cwd, operation: 'cwd' })
-        if (git.uncertain) hold(ask('Git execution context is not an exact resolved profile.'))
+        if (git.uncertain) holdAsk(invocation, ask('Git execution context is not an exact resolved profile.'))
         if (git.verb === 'push') {
             const decision = pushDecision(git.args, resolved.protectedBranches)
-            if (decision) hold(decision)
+            if (decision?.decision === 'deny') hold(decision)
+            else if (decision) holdAsk(invocation, decision)
         }
-        if (git.verb === 'reset' && git.args.includes('--hard') || git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) hold(ask('Destructive Git operation requires human approval.'))
+        if (git.verb === 'reset' && git.args.includes('--hard') || git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) holdAsk(invocation, ask('Destructive Git operation requires human approval.'))
         if (git.verb === 'add') {
             let options = true
             let operands = 0
@@ -419,13 +457,23 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                     else inspectPath({ path: arg, cwd: git.cwd, operation: 'stage' })
                 }
             }
-            if (!operands) hold(ask('Staging without explicit paths requires human approval.'))
+            if (!operands) holdAsk(invocation, ask('Staging without explicit paths requires human approval.'))
         }
     }
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
     if (hardDeny) return hardDeny
-    if (pending) return pending
     for (const invocation of input.invocations) {
+        const declared = resolved.declaredDenies.find(rule => ruleMatches(invocation, rule))
+        if (declared) return deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
+    }
+    if (authorityUnavailable) return authorityUnavailable
+    const declaredReasons: string[] = []
+    for (const invocation of input.invocations) {
+        const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
+            ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
+        if (declared) { declaredReasons.push(declared.reason); continue }
+        const pending = askDecisions.get(invocation)
+        if (pending) return pending
         if (invocation.wrapped || invocation.words.some((word) => word.role === 'environment-assignment-value')) return ask('Wrapped or environment-modifying invocation requires human approval.')
         if (invocation.executable === null) continue
         const matches = (profile: { executable: string; argv: readonly string[] }, cwd: string) => profile.executable === invocation.executable
@@ -433,5 +481,5 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (!readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => matches(profile, profile.cwd))
             && !resolved.projectCommands.some((profile) => matches(profile, profile.checkoutRoot))) return ask('Invocation does not match an exact permitted profile.')
     }
-    return allowed
+    return declaredReasons.length === 1 ? { decision: 'allow', reason: declaredReasons[0]! } : allowed
 }

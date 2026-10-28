@@ -805,6 +805,17 @@ const GuardHosts = z.array(z.string().regex(GUARD_HOST_PATTERN)).max(GUARD_HOST_
     })
     .describe('Declared guard hosts; uniqueness after removing one leading wildcard is enforced at runtime.')
 
+const GuardRuleText = z.string().min(1).max(512).regex(/\S/).regex(/^[^\x00-\x1f\x7f-\x9f]+$/u)
+const GuardAllow = z.object({
+    argv: GuardCommandArgv,
+    reason: GuardRuleText,
+    cwd: z.union([z.literal('.'), SafeRelativePath.max(4096)]).optional(),
+}).strict()
+const GuardDeny = z.union([
+    z.object({ prefix: GuardCommandArgv, reason: GuardRuleText, fix: GuardRuleText.optional() }).strict(),
+    z.object({ contains: GuardCommandArgv, reason: GuardRuleText, fix: GuardRuleText.optional() }).strict(),
+])
+
 export const Guards = z
     .object({
         hosted_db_hosts: GuardHosts.default([]),
@@ -812,6 +823,8 @@ export const Guards = z
         protected_branches: z.array(z.string()).default(['main', 'master']),
         // Codex has no `ask` tier. A prompt that cannot be shown must refuse, not proceed.
         ask_is_deny_on: z.array(z.string()).default(['codex']),
+        allow: z.array(GuardAllow).max(64).default([]),
+        deny: z.array(GuardDeny).max(64).default([]),
     })
     .strict()
 

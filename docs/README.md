@@ -19,6 +19,7 @@ are trying to do. Contributor documentation lives separately under docs/contribu
 - [Incremental adoption](adoption.md): move an existing setup over one layer at a time.
 - [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
+- [Extending cockpit](extending.md): supported seams, upgrade ownership and the build-beside pattern.
 - [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
 - [Work and browser workflows](work-and-browser.md): work orders, grading, browser evidence and
   test tiers.

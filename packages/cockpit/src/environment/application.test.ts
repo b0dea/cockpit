@@ -302,7 +302,10 @@ describe('pending guard policy construction', () => {
         mkdirSync(join(root, 'app/config'), { recursive: true })
         writeFileSync(join(root, 'app/package-lock.json'), '{}')
         commandAuthority(root, configPath)
-        writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'], ...(declared ? { vendor_endpoint_hosts: ['api.vendor.example.test'] } : {}) } }))
+        writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'],
+            allow: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: '.' }],
+            deny: [{ contains: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
+            ...(declared ? { vendor_endpoint_hosts: ['api.vendor.example.test'] } : {}) } }))
         const loaded = await loadCockpitConfig(configPath)
         if (loaded.kind !== 'complete') throw new Error('guard fixture did not load')
         const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: loaded.result.config.cockpit.name,
@@ -480,23 +483,12 @@ describe('pending guard policy construction', () => {
         expect(loads).toBe(checkpoint)
     }, 120_000)
 
-    it.each(['package', 'version', 'sourceRevision', 'legacy-v1', 'legacy-v2'] as const)(
-        'refuses structurally valid prior or legacy producer authority: %s', async change => {
+    it.each(['package', 'version', 'sourceRevision'] as const)(
+        'refuses structurally valid prior producer authority: %s', async change => {
             const { root, configPath, request, adapters } = await installedGuardRequest()
             const path = join(root, '.cockpit/generated-environment-ownership.json')
             const { integrity: _integrity, ...payload } = JSON.parse(readFileSync(path, 'utf8'))
-            if (change === 'legacy-v1' || change === 'legacy-v2') {
-                payload.format = `cockpit-generated-ownership/${change.slice('legacy-'.length)}`
-                delete payload.producer
-                if (change === 'legacy-v1') {
-                    payload.files = payload.entries.filter((entry: { kind: string }) => entry.kind === 'file')
-                        .map(({ path, ownership, sha256 }: { path: string; ownership: string; sha256: string }) => ({ path, ownership, sha256 }))
-                        .sort((left: { path: string }, right: { path: string }) => left.path.localeCompare(right.path))
-                    delete payload.entries
-                }
-            } else {
-                payload.producer[change] = change === 'package' ? 'prior-cockpit' : change === 'version' ? '0.0.0-prior' : 'prior-revision'
-            }
+            payload.producer[change] = change === 'package' ? 'prior-cockpit' : change === 'version' ? '0.0.0-prior' : 'prior-revision'
             const bytes = JSON.stringify({ ...payload, integrity: createHash('sha256').update(JSON.stringify(payload)).digest('hex') })
             expect(parseOwnershipManifest(bytes, { root, configPath, cockpitId: payload.cockpitId }).kind).toBe('complete')
             writeFileSync(path, bytes)
@@ -506,6 +498,25 @@ describe('pending guard policy construction', () => {
             expect(observeCheckout).not.toHaveBeenCalled()
         }, 120_000,
     )
+
+    it.each(['v1', 'v2'] as const)('refuses obsolete ownership format %s before checkout observation', async format => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const path = join(root, '.cockpit/generated-environment-ownership.json')
+        const { integrity: _integrity, producer: _producer, ...current } = JSON.parse(readFileSync(path, 'utf8'))
+        const payload = format === 'v1'
+            ? { ...current, format: `cockpit-generated-ownership/${format}`, files: current.entries
+                .filter((entry: { kind: string }) => entry.kind === 'file')
+                .map(({ path: ownedPath, ownership, sha256 }: { path: string; ownership: string; sha256: string }) => ({ path: ownedPath, ownership, sha256 })) }
+            : { ...current, format: `cockpit-generated-ownership/${format}` }
+        if (format === 'v1') delete payload.entries
+        const bytes = JSON.stringify({ ...payload, integrity: createHash('sha256').update(JSON.stringify(payload)).digest('hex') })
+        expect(parseOwnershipManifest(bytes, { root, configPath, cockpitId: payload.cockpitId })).toEqual({ kind: 'invalid' })
+        writeFileSync(path, bytes)
+        const observeCheckout = vi.fn(adapters.observeCheckout)
+        expect(await runGuardEvaluationApplication(request, { ...adapters, observeCheckout }))
+            .toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining('stale or unauthenticated') } })
+        expect(observeCheckout).not.toHaveBeenCalled()
+    }, 120_000)
 
     it('keeps the captured harness authoritative across an awaited adapter mutation', async () => {
         const { root, request: captured, adapters } = await installedGuardRequest()
@@ -525,7 +536,7 @@ describe('pending guard policy construction', () => {
             },
         })
         expect(request.harness).toBe('codexcli')
-        expect(result).toMatchObject({ decision: { decision: 'allow' }, native: { decision: 'allow' } })
+        expect(result, JSON.stringify(result)).toMatchObject({ decision: { decision: 'allow' }, native: { decision: 'allow' } })
         expect(dispatched).toHaveLength(1)
         expect(dispatched[0]!.argv.slice(-3)).toEqual(['--handler-stdio', '--harness', 'claudecode'])
     }, 120_000)
@@ -595,6 +606,9 @@ describe('pending guard policy construction', () => {
             instances: ['.env', 'config/runtime.env'].map(path => ({ name: `app-${createHash('sha256').update(path).digest('hex').slice(0, 12)}`, path: join(root, 'app', path) })),
             protectedIdentities: expect.any(Array),
             protectedBranches: ['main', 'master'], hostedDatabaseHosts: ['db.example.test'], vendorHosts: ['api.vendor.example.test'],
+            declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
+            declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
+            ripgrepConfigActive: false,
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'test', argv: ['test', '--', 'unit.test.ts'] },
@@ -607,7 +621,8 @@ describe('pending guard policy construction', () => {
         expect(input.configuration.config.environment.generated?.vendors[0].endpoints[0].sink).toBe('https://app:3000/messages')
         expect(Object.isFrozen(result.result)).toBe(true)
         expect(Object.isFrozen(policy)).toBe(true)
-        for (const values of [policy.allowedRoots, policy.instances, policy.protectedIdentities, policy.protectedBranches, policy.hostedDatabaseHosts, policy.vendorHosts, ...policy.instances, ...policy.protectedIdentities]) expect(Object.isFrozen(values)).toBe(true)
+        for (const values of [policy.allowedRoots, policy.instances, policy.protectedIdentities, policy.protectedBranches, policy.hostedDatabaseHosts, policy.vendorHosts,
+            policy.declaredAllows, policy.declaredDenies, ...policy.instances, ...policy.protectedIdentities, ...policy.declaredAllows, ...policy.declaredDenies]) expect(Object.isFrozen(values)).toBe(true)
         expect((await prepareGuardEvaluationPolicy(input)).kind).toBe('refusal')
     })
 

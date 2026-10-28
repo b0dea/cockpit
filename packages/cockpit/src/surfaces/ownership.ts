@@ -11,7 +11,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/surfaces/ownership.ts',
     exports: ['classifySurfaceOwnership', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
         'encodeOwnershipManifest', 'parseOwnershipManifest', 'projectGeneratedPathFacts',
-        'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths', 'captureLegacySharedOwnership'],
+        'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths'],
 } as const
 
 export type SurfaceOwnership = 'whole-file' | 'symlink' | 'shared-region'
@@ -427,8 +427,7 @@ function openCodeOwnedGroup(existing: string, keys: readonly string[]): {
 
 export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesiredEntry, priorOwned?: OwnershipEntry, manifest?: OwnershipManifest): SharedPostimageResult {
     const authority = manifest && issuedManifests.get(manifest)
-    if (manifest && (!authority || priorOwned && !manifest.entries.some(row => sameData(row, priorOwned))
-        && !(manifest.migratedFromV1 && manifest.entries.some(row => row.kind === 'file' && row.path === entry.path && row.sha256 === digest(existingBytes))))) {
+    if (manifest && (!authority || priorOwned && !manifest.entries.some(row => sameData(row, priorOwned)))) {
         return refusal('SURFACE_OWNERSHIP_INVALID', 'shared region lacks authenticated enclosing ownership', entry.path)
     }
     if (Buffer.byteLength(existingBytes) > SHARED_FILE_MAX_BYTES || entry.kind !== 'shared-region'
@@ -498,30 +497,6 @@ export function removeSharedOwnership(existingBytes: string, priorOwned: Ownersh
     return { kind: 'complete', bytes: `${existingBytes.slice(0, parsed.open + 1)}${current.separatorPrefix}${existingBytes.slice(current.finish)}` }
 }
 
-export function captureLegacySharedOwnership(
-    bytes: Uint8Array,
-    desired: SurfaceDesiredEntry,
-    manifest: OwnershipManifest,
-): SurfacePriorOwnedEntry | undefined {
-    const authority = issuedManifests.get(manifest)
-    if (!authority || !manifest.migratedFromV1 || desired.kind !== 'shared-region'
-        || !manifest.entries.some(entry => entry.kind === 'file' && entry.path === desired.path && entry.sha256 === digest(bytes))) return undefined
-    let text: string
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { return undefined }
-    if (desired.region.format === 'markdown-delimited') {
-        const region = markdownOwnedBytes(text, desired.region.begin, desired.region.end)
-        if (!region || text.includes(OWNER_PREFIX) && (markdownOwner(region.bytes) !== authority.cockpitId || text.split(OWNER_PREFIX).length !== 3)) return undefined
-        return Object.freeze({ ...desired, region: Object.freeze({ format: desired.region.format,
-            begin: desired.region.begin, end: desired.region.end, sha256: digest(region.bytes) }) })
-    }
-    const keys = desired.region.members.map(member => member.key)
-    const parsed = rootObject(text)
-    const group = openCodeOwnedGroup(text, keys)
-    if (!group || parsed?.owner && parsed.owner.id !== authority.cockpitId) return undefined
-    return Object.freeze({ ...desired, regionId: parsed?.owner ? `${OPENCODE_REGION}:${authority.cockpitId}` : OPENCODE_REGION,
-        region: Object.freeze({ format: desired.region.format, keys: Object.freeze(keys), sha256: group.sha256 }) })
-}
-
 export type OwnershipEntry = Readonly<{ kind: 'file'; path: string; ownership: 'whole-file'; sha256: string }>
     | SurfacePriorOwnedEntry
 export type EnvironmentOwnershipEntry = Readonly<{ kind: 'file'; path: string; ownership: 'whole-file'; sha256: string }>
@@ -534,8 +509,8 @@ export interface GeneratedProducer {
 }
 
 export interface OwnershipManifestPayload {
-    readonly format: 'cockpit-generated-ownership/v1' | 'cockpit-generated-ownership/v2' | 'cockpit-generated-ownership/v3'
-    readonly producer: GeneratedProducer | null
+    readonly format: 'cockpit-generated-ownership/v3'
+    readonly producer: GeneratedProducer
     readonly cockpitId: string
     readonly generation: string
     readonly source: Readonly<{ path: string; sha256: string }>
@@ -545,7 +520,6 @@ export interface OwnershipManifestPayload {
 
 export interface OwnershipManifest extends OwnershipManifestPayload {
     readonly integrity: string
-    readonly migratedFromV1: boolean
 }
 
 
@@ -650,33 +624,30 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
     try {
         const record = ownRecord(JSON.parse(bytes))
         if (!uniqueJsonKeys(bytes)) return undefined
-        const v3 = record?.format === 'cockpit-generated-ownership/v3'
-        const v1 = record?.format === 'cockpit-generated-ownership/v1'
-        const listKey = v1 ? 'files' : 'entries'
-        if (!record || !exactKeys(record, ['format', 'cockpitId', 'generation', 'source', 'personaSource', ...(v3 ? ['producer'] : []), listKey, 'integrity'])
-            || !v1 && !v3 && record.format !== 'cockpit-generated-ownership/v2' || record.cockpitId !== prepared.cockpitId
+        if (!record || record.format !== 'cockpit-generated-ownership/v3'
+            || !exactKeys(record, ['format', 'producer', 'cockpitId', 'generation', 'source', 'personaSource', 'entries', 'integrity'])
+            || record.cockpitId !== prepared.cockpitId
             || typeof record.generation !== 'string' || !SHA256.test(record.generation)
             || typeof record.integrity !== 'string' || !SHA256.test(record.integrity)
-            || !Array.isArray(record[listKey]) || record[listKey].length > MAX_OWNED_FILES) return undefined
+            || !Array.isArray(record.entries) || record.entries.length > MAX_OWNED_FILES) return undefined
         const source = ownRecord(record.source)
         const personaSource = ownRecord(record.personaSource)
         if (!source || !personaSource || !exactKeys(source, ['path', 'sha256']) || !exactKeys(personaSource, ['path', 'sha256'])
             || source.path !== basename(prepared.configPath) || typeof source.sha256 !== 'string' || !SHA256.test(source.sha256)
             || typeof personaSource.path !== 'string' || typeof personaSource.sha256 !== 'string' || !SHA256.test(personaSource.sha256)) return undefined
-        const producer = v3 ? ownRecord(record.producer) : null
-        if (v3 && (!producer || !exactKeys(producer, ['package', 'version', 'sourceRevision', 'producedAt'])
+        const producer = ownRecord(record.producer)
+        if (!producer || !exactKeys(producer, ['package', 'version', 'sourceRevision', 'producedAt'])
             || [producer.package, producer.version, producer.sourceRevision].some(value => typeof value !== 'string' || value.length === 0 || value.length > 256 || /[\u0000-\u0020\u007f-\u009f]/.test(value))
             || typeof producer.package !== 'string' || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(producer.package)
             || typeof producer.version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(producer.version)
             || typeof producer.producedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(producer.producedAt)
-            || !Number.isFinite(Date.parse(producer.producedAt)) || new Date(producer.producedAt).toISOString() !== producer.producedAt)) return undefined
+            || !Number.isFinite(Date.parse(producer.producedAt)) || new Date(producer.producedAt).toISOString() !== producer.producedAt) return undefined
         const entries: OwnershipEntry[] = []
-        for (const item of record[listKey] as unknown[]) {
+        for (const item of record.entries as unknown[]) {
             const row = ownRecord(item)
             if (!row || typeof row.path !== 'string' || !safePath(row.path) || !confinedOwnershipPath(prepared.root, row.path) || row.path === OWNERSHIP_PATH) return undefined
-            if (v1 || exactKeys(row, ['kind', 'path', 'ownership', 'sha256'])) {
-                if (!exactKeys(row, v1 ? ['path', 'ownership', 'sha256'] : ['kind', 'path', 'ownership', 'sha256'])
-                    || !v1 && row.kind !== 'file' || row.ownership !== 'whole-file'
+            if (exactKeys(row, ['kind', 'path', 'ownership', 'sha256'])) {
+                if (row.kind !== 'file' || row.ownership !== 'whole-file'
                     || typeof row.sha256 !== 'string' || !SHA256.test(row.sha256)) return undefined
                 entries.push(Object.freeze({ kind: 'file', path: row.path, ownership: 'whole-file', sha256: row.sha256 }))
                 continue
@@ -711,31 +682,22 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
         }
         if (new Set(entries.map(({ path }) => path)).size !== entries.length
             || entries.some((file, index) => index > 0
-                && (v1 ? entries[index - 1]!.path.localeCompare(file.path) : compareCodeUnits(entries[index - 1]!.path, file.path)) >= 0)) return undefined
-        const rawPayload = v1 ? {
-            format: 'cockpit-generated-ownership/v1', cockpitId: record.cockpitId as string,
-            generation: record.generation, source: source as OwnershipManifestPayload['source'],
-            personaSource: personaSource as OwnershipManifestPayload['personaSource'],
-            files: entries.map(({ kind: _kind, ...entry }) => entry),
-        } : {
+                && compareCodeUnits(entries[index - 1]!.path, file.path) >= 0)) return undefined
+        const rawPayload = {
             format: record.format, cockpitId: record.cockpitId as string,
             generation: record.generation, source: source as OwnershipManifestPayload['source'],
-            personaSource: personaSource as OwnershipManifestPayload['personaSource'], ...(v3 ? { producer } : {}), entries,
+            personaSource: personaSource as OwnershipManifestPayload['personaSource'], producer, entries,
         }
         if (record.integrity !== sha256(JSON.stringify(rawPayload))) return undefined
-        const normalizedEntries = v1
-            ? [...entries].sort((left, right) => compareCodeUnits(left.path, right.path))
-            : entries
         const payload: OwnershipManifestPayload = {
-            format: record.format as OwnershipManifestPayload['format'], producer: producer as unknown as GeneratedProducer | null, cockpitId: record.cockpitId as string,
+            format: record.format, producer: producer as unknown as GeneratedProducer, cockpitId: record.cockpitId as string,
             generation: record.generation, source: source as OwnershipManifestPayload['source'],
-            personaSource: personaSource as OwnershipManifestPayload['personaSource'], entries: normalizedEntries,
+            personaSource: personaSource as OwnershipManifestPayload['personaSource'], entries,
         }
         const manifest = snapshotGeneratedJson({
             ...payload,
-            entries: Object.freeze(normalizedEntries.map((entry) => Object.freeze(entry))),
+            entries: Object.freeze(entries.map((entry) => Object.freeze(entry))),
             integrity: record.integrity,
-            migratedFromV1: v1,
         }) as unknown as OwnershipManifest | undefined
         if (!manifest) return undefined
         issuedManifests.set(manifest, Object.freeze({ root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath }))

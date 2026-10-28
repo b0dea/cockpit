@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -8,6 +9,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { acquireClaim } from '../environment/claims.js'
 import { checkoutId, cockpitId, holderId, stackId } from '../environment/identity.js'
 import { selectStateRoot, transactState } from '../environment/state.js'
+import { writeGuardLocalIdentity } from '../guards/local-identity.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import { observeSiblingGuides } from '../surfaces/projection.js'
 import { syncGeneratedEnvironment } from './command.js'
@@ -72,6 +74,74 @@ async function consumerWithGuide() {
 }
 
 describe('generated uninstall and forget', () => {
+    it('removes only cockpit-owned machine-local guard state during uninstall', async () => {
+        const c = await consumer()
+        const identity = {
+            root: c.root, rootDevice: '1', rootInode: '2', configPath: c.configPath,
+            configSha256: digest(await readFile(c.configPath, 'utf8')), configDevice: '3', configInode: '4',
+            node: '/synthetic/node', nodeSha256: digest('node'), nodeFingerprint: 'fingerprint',
+            module: '/synthetic/cockpit', moduleSha256: digest('module'),
+        }
+        expect(await writeGuardLocalIdentity(c.root, identity)).toEqual({ kind: 'complete' })
+        const preview = await uninstallGeneratedEnvironment({ configPath: c.configPath, dryRun: true }, c.context)
+        expect(preview, JSON.stringify(preview)).toMatchObject({ kind: 'complete' })
+        expect((await lstat(join(c.root, '.cockpit/local'))).isDirectory()).toBe(true)
+
+        const outcome = await uninstallGeneratedEnvironment({ configPath: c.configPath }, c.context, { authorizeStaleRemoval: approve })
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete' })
+        await expect(lstat(join(c.root, '.cockpit/local'))).rejects.toMatchObject({ code: 'ENOENT' })
+
+        const planted = await consumer()
+        expect(await writeGuardLocalIdentity(planted.root, { ...identity, root: planted.root, configPath: planted.configPath,
+            configSha256: digest(await readFile(planted.configPath, 'utf8')) })).toEqual({ kind: 'complete' })
+        await writeFile(join(planted.root, '.cockpit/local/foreign'), 'retained')
+        const refused = await uninstallGeneratedEnvironment({ configPath: planted.configPath }, planted.context, { authorizeStaleRemoval: approve })
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_LOCAL_STATE_CONFLICT' })] })
+        expect(await readFile(join(planted.root, planted.ownedPath), 'utf8')).toBe('owned')
+        expect(await readFile(join(planted.root, ledgerPath), 'utf8')).toBe(planted.ledger.bytes)
+        expect(await readFile(join(planted.root, '.cockpit/local/foreign'), 'utf8')).toBe('retained')
+
+        const redirected = await consumer()
+        const local = join(redirected.root, '.cockpit/local')
+        const held = `${local}.held`
+        expect(await writeGuardLocalIdentity(redirected.root, { ...identity, root: redirected.root, configPath: redirected.configPath,
+            configSha256: digest(await readFile(redirected.configPath, 'utf8')) })).toEqual({ kind: 'complete' })
+        await rename(local, held)
+        await symlink(held, local)
+        expect(await uninstallGeneratedEnvironment({ configPath: redirected.configPath }, redirected.context, { authorizeStaleRemoval: approve }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_LOCAL_STATE_CONFLICT' })] })
+        expect(await readFile(join(held, 'guard-identity'), 'utf8')).toContain('cockpit-guard-local/v1')
+        expect(await readFile(join(redirected.root, redirected.ownedPath), 'utf8')).toBe('owned')
+    })
+
+    it.each(['symlink', 'fifo', 'oversized'] as const)('refuses a planted %s local identity without reading or removing it', async kind => {
+        const c = await consumer()
+        const local = join(c.root, '.cockpit/local')
+        const identityPath = join(local, 'guard-identity')
+        const external = join(c.root, 'external-identity')
+        await mkdir(local)
+        await writeFile(join(local, '.gitignore'), '# cockpit-owned: machine-local guard identity, written by `cockpit sync`, never committed\n*\n')
+        if (kind === 'symlink') {
+            await writeFile(external, 'external identity must not be read or removed')
+            await symlink(external, identityPath)
+        } else if (kind === 'fifo') {
+            expect(spawnSync('mkfifo', [identityPath]).status).toBe(0)
+        } else {
+            await writeFile(identityPath, 'x'.repeat(1_048_577))
+        }
+
+        const refused = await uninstallGeneratedEnvironment({ configPath: c.configPath }, c.context, { authorizeStaleRemoval: approve })
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_LOCAL_STATE_CONFLICT' })] })
+        expect(await readFile(join(c.root, c.ownedPath), 'utf8')).toBe('owned')
+        expect(await readFile(join(c.root, ledgerPath), 'utf8')).toBe(c.ledger.bytes)
+        const planted = await lstat(identityPath)
+        if (kind === 'symlink') {
+            expect(planted.isSymbolicLink()).toBe(true)
+            expect(await readFile(external, 'utf8')).toBe('external identity must not be read or removed')
+        } else if (kind === 'fifo') expect(planted.isFIFO()).toBe(true)
+        else expect(planted.size).toBe(1_048_577)
+    })
+
     it('uninstalls exact manifest leaves, preserves foreign bytes and leaves every parent directory', async () => {
         const c = await consumer()
         const input = { configPath: c.configPath }

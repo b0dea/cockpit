@@ -607,7 +607,7 @@ describe('generated publication transaction', () => {
                 ...(version === 1 ? { files: [file] } : { entries: [{ kind: 'file', ...file }] }) }
             const legacy = JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) })
             await writeFile(join(root, ledgerPath), legacy)
-            expect(ownership.parseOwnershipManifest(legacy, input.authority).kind, `legacy v${version}`).toBe('complete')
+            expect(ownership.parseOwnershipManifest(legacy, input.authority).kind, `obsolete v${version}`).toBe('invalid')
             expect((await admitPublicationPlan({ ...current, ledgerExpected: { kind: 'file', sha256: digest(legacy), identity: await identity(ledgerPath) } },
                 { execute: executeProbe })).kind).toBe('refusal')
             expect(await readFile(join(root, 'a-stale.txt'), 'utf8')).toBe('corrupt')

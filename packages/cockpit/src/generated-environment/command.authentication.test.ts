@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { observeConfigSource } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { cockpitId } from '../environment/identity.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
@@ -28,47 +27,6 @@ describe('generated environment command', () => {
         expect(results).toEqual(results.map(() => expect.objectContaining({
             kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_INPUT_INVALID' })],
         })))
-    })
-
-    it('refuses ownership claims on authenticated inputs before preparation', async () => {
-        const { root, configPath } = await consumer('protected-ledger-inputs')
-        const initial = await syncGeneratedEnvironment({ configPath })
-        expect(initial.kind).toBe('complete')
-        if (initial.kind !== 'complete') return
-        const ledgerPath = join(root, '.cockpit/generated-environment-ownership.json')
-        const original = await readFile(ledgerPath, 'utf8')
-        const payload = JSON.parse(original)
-        delete payload.integrity
-        const authored = await bytes(root, initial.result.paths)
-        const inputs = ['cockpit.toml', 'fixtures/personas.json']
-        const before = await bytes(root, inputs)
-        const legacy = initial.result.paths.map(path => ({ path, ownership: 'whole-file', sha256: digest(authored[path]!) }))
-        const results = []
-        const preparations: number[] = []
-        for (const format of ['cockpit-generated-ownership/v1', 'cockpit-generated-ownership/v2']) for (const path of inputs) {
-            const claim = { path, ownership: 'whole-file', sha256: digest(before[path]!) }
-            const rows = format.endsWith('/v1') ? [...legacy, claim] : [...payload.entries, { kind: 'file', ...claim }]
-            rows.sort((left, right) => format.endsWith('/v1')
-                ? left.path.localeCompare(right.path)
-                : left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
-            const candidate = format.endsWith('/v1')
-                ? { format, cockpitId: payload.cockpitId, generation: payload.generation, source: payload.source, personaSource: payload.personaSource, files: rows }
-                : { ...payload, entries: rows }
-            await writeFile(ledgerPath, JSON.stringify({ ...candidate, integrity: digest(JSON.stringify(candidate)) }))
-            let prepared = 0
-            results.push(await syncGeneratedEnvironment({ configPath }, {
-                execute: async step => { if (step.labels.action === 'prepare') prepared += 1; return executeProbe(step) },
-            }))
-            preparations.push(prepared)
-            await writeFile(ledgerPath, original)
-        }
-        expect(preparations).toEqual([0, 0, 0, 0])
-        expect(results.map(result => result.diagnostics[0]?.target)).toEqual([...inputs, ...inputs])
-        expect(results).toEqual(results.map(() => expect.objectContaining({
-            kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_OWNERSHIP_INVALID' })],
-        })))
-        expect(await bytes(root, inputs)).toEqual(before)
-        expect(await bytes(root, initial.result.paths)).toEqual(authored)
     })
 
     it('refuses a recomputed ownership ledger that claims an unrelated confined file', async () => {

@@ -2724,11 +2724,14 @@ function guardArchitectureViolations(
         [APPLICATION_MODULE, ['prepareGuardEvaluationPolicy', 'runGuardEvaluationApplication']],
     ])
     const declarations = analysis.declarations
-    const runtimeFields = new Set(['protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'cockpitInvocations', 'projectCommands'])
+    const runtimeFields = new Set(['protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies',
+        'cockpitInvocations', 'projectCommands'])
     const fieldConsumers = new Map([
         ['protected_branches', { path: APPLICATION_MODULE, target: 'protectedBranches' }],
         ['hosted_db_hosts', { path: APPLICATION_MODULE, target: 'hostedDatabaseHosts' }],
         ['vendor_endpoint_hosts', { path: APPLICATION_MODULE, target: 'vendorHosts' }],
+        ['allow', { path: APPLICATION_MODULE, target: 'declaredAllows' }],
+        ['deny', { path: APPLICATION_MODULE, target: 'declaredDenies' }],
         ['ask_is_deny_on', { path: generated, target: 'ask_is_deny_on' }],
     ])
     const consumed = new Set<string>()
@@ -2834,6 +2837,8 @@ function guardArchitectureViolations(
                     if (ts.isArrayLiteralExpression(value) && value.elements.length === 1 && ts.isSpreadElement(value.elements[0]!)) {
                         value = unwrap(value.elements[0]!.expression)
                     }
+                    if (ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)
+                        && value.expression.name.text === 'map') value = unwrap(value.expression.expression)
                     if (ts.isPropertyAccessExpression(value) && value.name.text === consumer[0]
                         && ts.isPropertyAccessExpression(value.expression) && value.expression.name.text === 'guards'
                         && ts.isIdentifier(value.expression.expression) && value.expression.expression.text === 'config') consumed.add(consumer[0])
@@ -6891,6 +6896,21 @@ describe('guard architecture controls', () => {
         const wrapped = new Map(sources)
         wrapped.set(path, source.replace(original, 'vendorHosts: ((Object.freeze([...(config.guards.vendor_endpoint_hosts! as readonly string[])])) satisfies readonly string[])'))
         expect(guardArchitectureViolations(wrapped)).toEqual([])
+    })
+
+    it.each([
+        ['declaredAllows', 'allow'],
+        ['declaredDenies', 'deny'],
+    ])('requires the %s policy projection to consume guards.%s', (target, field) => {
+        const path = modulePath('environment/application.ts')
+        const sources = productionSources()
+        const source = sources.get(path)
+        if (!source) throw new Error('guard application owner is missing')
+        const pattern = new RegExp(`${target}: Object\\.freeze\\(config\\.guards\\.${field}\\.map\\([\\s\\S]*?\\)\\),`)
+        expect(source).toMatch(pattern)
+        const planted = new Map(sources)
+        planted.set(path, source.replace(pattern, `${target}: Object.freeze([]),`))
+        expect(guardArchitectureViolations(planted)).toContain('ARCH055_GUARD_DECLARATION_CONSUMPTION')
     })
 
     it.each(['cli.ts', 'environment/generated-application.ts', 'guards/harness-adapter.ts', 'duplicate.ts'])('rejects runtime policy reconstruction in %s', (path) => {

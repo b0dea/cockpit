@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 import { classifySurfaceOwnership, removeSharedOwnership, renderSharedPostimage, type SurfaceDesiredEntry } from './ownership.js'
-import { bindSurfaceOwnershipIdentity, captureLegacySharedOwnership, classifyGeneratedPaths, encodeOwnershipManifest, parseOwnershipManifest, projectGeneratedPathFacts } from './ownership.js'
+import { bindSurfaceOwnershipIdentity, classifyGeneratedPaths, encodeOwnershipManifest, parseOwnershipManifest, projectGeneratedPathFacts } from './ownership.js'
 
 const digest = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
 
@@ -15,13 +15,8 @@ const manifestInput = () => ({ ...authority, generation: 'b'.repeat(64), sourceS
     owned: [{ path: 'generated.txt', sha256: digest('generated\n') }], surfaces: [] })
 
 describe('generated ownership manifest', () => {
-    it('keeps v2 producer facts unknown and rejects producer integrity and timestamp tampering', () => {
+    it('rejects producer integrity and timestamp tampering', () => {
         const encoded = encodeOwnershipManifest(manifestInput())
-        const { integrity: _integrity, producer: _producer, ...legacy } = JSON.parse(encoded.bytes)
-        const payload = { ...legacy, format: 'cockpit-generated-ownership/v2' }
-        expect(parseOwnershipManifest(JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) }), authority)).toMatchObject({
-            kind: 'complete', manifest: { format: 'cockpit-generated-ownership/v2', producer: null, migratedFromV1: false },
-        })
         expect(parseOwnershipManifest(encoded.bytes.replace('development', 'tampered'), authority)).toEqual({ kind: 'invalid' })
         const changed = JSON.parse(encoded.bytes)
         delete changed.integrity
@@ -52,7 +47,7 @@ describe('generated ownership manifest', () => {
             entries: [{ kind: 'file', path: 'generated.txt', ownership: 'whole-file', sha256: digest('generated\n') }] }
         const encoded = encodeOwnershipManifest(input)
         expect(encoded.bytes).toBe(`${JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) }, null, 2)}\n`)
-        expect(parseOwnershipManifest(encoded.bytes, authority)).toMatchObject({ kind: 'complete', manifest: { migratedFromV1: false } })
+        expect(parseOwnershipManifest(encoded.bytes, authority)).toMatchObject({ kind: 'complete' })
         for (const changed of [{ ...authority, cockpitId: 'foreign' }, { ...authority, configPath: '/synthetic/cockpit/other.toml' }]) {
             expect(parseOwnershipManifest(encoded.bytes, changed)).toMatchObject({ kind: 'invalid' })
         }
@@ -60,18 +55,6 @@ describe('generated ownership manifest', () => {
         expect(parseOwnershipManifest(JSON.stringify({ ...unknown, integrity: digest(JSON.stringify(unknown)) }), authority)).toMatchObject({ kind: 'invalid' })
         expect(parseOwnershipManifest('{"format":"cockpit-generated-ownership/v4"}', authority)).toMatchObject({ kind: 'unsupported' })
         for (const bytes of ['{', '{"format":"another/v3"}']) expect(parseOwnershipManifest(bytes, authority)).toMatchObject({ kind: 'invalid' })
-    })
-
-    it('preserves legacy integrity and locale ordering while normalizing migrated rows', () => {
-        const input = manifestInput()
-        const payload = { format: 'cockpit-generated-ownership/v1', cockpitId: input.cockpitId, generation: input.generation,
-            source: { path: 'cockpit.toml', sha256: input.sourceSha256 }, personaSource: input.personaSource,
-            files: ['a.txt', 'Z.txt'].map(path => ({ path, ownership: 'whole-file', sha256: digest(path) })) }
-        const bytes = JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) })
-        const parsed = parseOwnershipManifest(bytes, authority)
-        expect(parsed).toMatchObject({ kind: 'complete', manifest: { migratedFromV1: true,
-            entries: [{ path: 'Z.txt', kind: 'file' }, { path: 'a.txt', kind: 'file' }] } })
-        expect(parseOwnershipManifest(bytes.replace('a.txt', 'b.txt'), authority)).toMatchObject({ kind: 'invalid' })
     })
 
     it('joins immutable producer facts by exact identity and never authorizes historical absence', () => {
@@ -324,24 +307,6 @@ describe('identity-bearing shared ownership', () => {
         if (result.kind !== 'complete') throw new Error('expected identity binding')
         return result.entries[0]!
     }
-
-    it('authenticates legacy whole-file shared migration from exact raw bytes', () => {
-        const original = markdown()
-        const rendered = renderSharedPostimage('', original)
-        if (rendered.kind !== 'complete') throw new Error('expected legacy bytes')
-        const input = manifestInput()
-        const payload = { format: 'cockpit-generated-ownership/v1', cockpitId: authority.cockpitId,
-            generation: input.generation, source: { path: 'cockpit.toml', sha256: input.sourceSha256 }, personaSource: input.personaSource,
-            files: [{ path: original.path, ownership: 'whole-file', sha256: digest(rendered.bytes) }] }
-        const parsed = parseOwnershipManifest(JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) }), authority)
-        if (parsed.kind !== 'complete') throw new Error('expected authenticated legacy manifest')
-        const desired = bound(original)
-        const prior = captureLegacySharedOwnership(Buffer.from(rendered.bytes), desired, parsed.manifest)
-        expect(prior).toMatchObject({ kind: 'shared-region', region: { sha256: digest('generated\n') } })
-        expect(renderSharedPostimage(rendered.bytes, desired, prior, parsed.manifest)).toMatchObject({ kind: 'complete' })
-        expect(captureLegacySharedOwnership(Buffer.from(`${rendered.bytes}tamper`), desired, parsed.manifest)).toBeUndefined()
-        expect(captureLegacySharedOwnership(Buffer.from(rendered.bytes), desired, { ...parsed.manifest })).toBeUndefined()
-    })
 
     it('reconciles authenticated legacy Markdown once and refuses copied, partial, duplicated and injected owner markers', () => {
         const legacy = markdown()
