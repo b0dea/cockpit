@@ -70,6 +70,24 @@ describe('inferred interview answers', () => {
         expect(byTarget(facts, 'services.cache')).toMatchObject({ value: { image: 'redis:7' } })
     })
 
+    it('does not infer facts through a symlinked repository directory ancestor', async () => {
+        const root = estate({})
+        const outside = estate({
+            'workflows/probe.yml': 'jobs:\n  test:\n    services:\n      database:\n        image: marker.invalid/outside\n',
+        })
+        symlinkSync(outside, join(root, '.github'), 'dir')
+
+        const result = await deriveInferredFacts({ root, repositories: api })
+
+        expect(byTarget(result.facts, 'services.database')).toBeUndefined()
+        expect(result.skipped).toContainEqual(expect.objectContaining({
+            source: '.github/workflows',
+            reason: expect.stringContaining('redirected directory'),
+        }))
+        expect(JSON.stringify(result)).not.toContain('marker.invalid/outside')
+        expect(JSON.stringify(result)).not.toContain(outside)
+    })
+
     it('proposes the cockpit root as the first sibling only when no repository was observed', async () => {
         const parent = estate({})
         mkdirSync(join(parent, 'product-notes'))

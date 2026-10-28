@@ -2257,6 +2257,32 @@ describe('init command admission', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it.skipIf(process.platform === 'win32')('refuses a FIFO answers file without waiting for a writer', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-init-answers-fifo-'))
+        scratch.push(directory)
+        const canonical = realpathSync(directory)
+        const answers = join(canonical, 'answers.toml')
+        execFileSync('mkfifo', [answers])
+
+        const result = spawnSync(process.execPath, ['--import', 'tsx', cli,
+            'init', canonical, '--target', 'codexcli', '--json',
+            '--accept-preview', 'a'.repeat(64), '--answers', answers], {
+            cwd: root,
+            encoding: 'utf8',
+            env: process.env,
+            timeout: 2_000,
+        })
+
+        expect(result.error).toBeUndefined()
+        expect(result.signal).toBeNull()
+        expect(result.status).toBe(2)
+        expect(JSON.parse(result.stdout)).toMatchObject({ diagnostics: [{
+            code: 'CLI_USAGE_INVALID',
+            message: expect.stringContaining('replace it with a plain TOML file and retry'),
+            target: '--answers',
+        }] })
+    })
+
     it('refuses missing, extra or duplicate root and target before dispatch', async () => {
         for (const args of [
             [], ['--target', 'codexcli'], ['.'], ['.', '.', '--target', 'codexcli'],

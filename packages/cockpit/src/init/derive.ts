@@ -4,9 +4,10 @@
 // config that looks complete but holds guesses is the failure cockpit exists to prevent.
 // Deliberately cheap and exact: Dockerfile, env template variable names, Compose files and CI
 // service containers. Orchestrator manifests are not parsed; their shape is too varied to read reliably.
-import { lstat, readdir, readFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { lstat, readdir, realpath } from 'node:fs/promises'
+import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
+import { readBoundedInput } from '../config/load.js'
 
 export const mechanism = {
     id: 'init-inference',
@@ -57,19 +58,54 @@ const DATABASE_VARIABLE = /(?:^|_)(?:DATABASE|DB|POSTGRES(?:QL)?|PG|MYSQL|MARIAD
 const VENDOR_VARIABLE = /_(?:API_)?(?:BASE|BASE_URL|URL|ENDPOINT|HOST)$/
 
 type Read = { kind: 'absent' } | { kind: 'skipped'; reason: string } | { kind: 'text'; text: string }
+type DirectoryRead = { kind: 'absent' } | { kind: 'skipped'; reason: string }
+    | { kind: 'complete'; path: string; dev: number; ino: number }
 
-async function readBounded(path: string): Promise<Read> {
-    let stat
-    try { stat = await lstat(path) }
+async function inspectDirectory(root: string, directory: string): Promise<DirectoryRead> {
+    const canonicalRoot = resolve(root)
+    const path = resolve(canonicalRoot, directory)
+    const confined = pathRelative(canonicalRoot, path)
+    if (canonicalRoot !== root || confined === '..' || confined.startsWith(`..${sep}`) || isAbsolute(confined)) {
+        return { kind: 'skipped', reason: 'escapes the canonical inference root' }
+    }
+    try {
+        const stat = await lstat(path)
+        if (!stat.isDirectory() || stat.isSymbolicLink()) return { kind: 'skipped', reason: 'is a redirected directory' }
+        const expected = resolve(await realpath(canonicalRoot), directory)
+        if (await realpath(path) !== expected) return { kind: 'skipped', reason: 'is a redirected directory' }
+        return { kind: 'complete', path, dev: stat.dev, ino: stat.ino }
+    }
     catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' }
         return { kind: 'skipped', reason: `could not be inspected (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` }
     }
-    if (!stat.isFile() || stat.isSymbolicLink()) return { kind: 'skipped', reason: 'is not a regular file' }
-    if (stat.size > MAX_BYTES) return { kind: 'skipped', reason: `exceeds the ${MAX_BYTES}-byte inference limit` }
-    try { return { kind: 'text', text: await readFile(path, 'utf8') } }
+}
+
+function sameDirectory(left: DirectoryRead, right: DirectoryRead): boolean {
+    return left.kind === 'complete' && right.kind === 'complete'
+        && left.path === right.path && left.dev === right.dev && left.ino === right.ino
+}
+
+async function readBounded(root: string, directory: string, name: string): Promise<Read> {
+    const parent = await inspectDirectory(root, directory)
+    if (parent.kind !== 'complete') return parent
+    try {
+        const read = await readBoundedInput(resolve(parent.path, name))
+        if (read.kind === 'too-large' || read.bytes.byteLength > MAX_BYTES) {
+            return { kind: 'skipped', reason: `exceeds the ${MAX_BYTES}-byte inference limit` }
+        }
+        if (!sameDirectory(parent, await inspectDirectory(root, directory))) {
+            return { kind: 'skipped', reason: 'directory changed while the file was read' }
+        }
+        return { kind: 'text', text: read.bytes.toString('utf8') }
+    }
     catch (error) {
-        return { kind: 'skipped', reason: `could not be read (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` }
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') return { kind: 'absent' }
+        if (code === 'ELOOP' || (error instanceof Error && error.message === 'structured input is not a regular file')) {
+            return { kind: 'skipped', reason: 'is not a regular file' }
+        }
+        return { kind: 'skipped', reason: `could not be read (${code ?? 'unknown I/O error'})` }
     }
 }
 
@@ -161,7 +197,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     const relative = (directory: string, name: string) => directory === '' ? name : `${directory}/${name}`
     const read = async (directory: string, name: string): Promise<string | undefined> => {
         const source = relative(directory, name)
-        const result = await readBounded(join(input.root, source))
+        const result = await readBounded(input.root, directory, name)
         if (result.kind === 'skipped') skipped.push({ source, reason: result.reason })
         return result.kind === 'text' ? result.text : undefined
     }
@@ -191,10 +227,20 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             }
         }
         let templates: string[] = []
-        try { templates = (await readdir(join(input.root, directory.path))).filter(name => ENV_TEMPLATE.test(name)).sort() }
-        catch (error) {
-            skipped.push({ source: directory.path === '' ? '.' : directory.path,
-                reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
+        const templateDirectory = await inspectDirectory(input.root, directory.path)
+        if (templateDirectory.kind === 'complete') {
+            try {
+                templates = (await readdir(templateDirectory.path)).filter(name => ENV_TEMPLATE.test(name)).sort()
+                if (!sameDirectory(templateDirectory, await inspectDirectory(input.root, directory.path))) {
+                    templates = []
+                    skipped.push({ source: directory.path === '' ? '.' : directory.path, reason: 'directory changed while it was listed' })
+                }
+            } catch (error) {
+                skipped.push({ source: directory.path === '' ? '.' : directory.path,
+                    reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
+            }
+        } else if (templateDirectory.kind === 'skipped') {
+            skipped.push({ source: directory.path === '' ? '.' : directory.path, reason: templateDirectory.reason })
         }
         if (templates.length > MAX_ENV_TEMPLATES) {
             skipped.push({ source: directory.path === '' ? '.' : directory.path,
@@ -228,11 +274,19 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
         }
         const workflowDirectory = relative(directory.path, '.github/workflows')
         let entries: string[] = []
-        try { entries = (await readdir(join(input.root, workflowDirectory))).filter(name => /\.ya?ml$/.test(name)).sort() }
-        catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'ENOTDIR') {
+        const workflow = await inspectDirectory(input.root, workflowDirectory)
+        if (workflow.kind === 'complete') {
+            try {
+                entries = (await readdir(workflow.path)).filter(name => /\.ya?ml$/.test(name)).sort()
+                if (!sameDirectory(workflow, await inspectDirectory(input.root, workflowDirectory))) {
+                    entries = []
+                    skipped.push({ source: workflowDirectory, reason: 'directory changed while it was listed' })
+                }
+            } catch (error) {
                 skipped.push({ source: workflowDirectory, reason: `could not be listed (${(error as NodeJS.ErrnoException).code ?? 'unknown I/O error'})` })
             }
+        } else if (workflow.kind === 'skipped') {
+            skipped.push({ source: workflowDirectory, reason: workflow.reason })
         }
         if (entries.length > MAX_WORKFLOWS) {
             skipped.push({ source: workflowDirectory, reason: `holds more than ${MAX_WORKFLOWS} workflows; only the first ${MAX_WORKFLOWS} were read` })

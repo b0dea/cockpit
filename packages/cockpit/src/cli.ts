@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { installedPackageMetadata } from './package-metadata.js'
 import { initializeTeamMetadata, validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
-import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { parse as parseToml } from 'smol-toml'
 import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -71,7 +71,7 @@ import {
     type EnvironmentDiagnostic,
     type SetupRefusalEvidence,
 } from './environment/contract.js'
-import { loadCockpitConfig, observeConfigSource } from './config/load.js'
+import { loadCockpitConfig, observeConfigSource, readBoundedInput } from './config/load.js'
 import { gitEnvironment, planSetup } from './environment/setup.js'
 import { synchronizeInstructionPointer } from './environment/instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
@@ -767,12 +767,13 @@ async function decodeUnattendedInit(values: {
     if (answersPath !== undefined) {
         const path = resolve(answersPath)
         try {
-            if ((await stat(path)).size > ANSWERS_FILE_BYTE_LIMIT) return usageOutcome('CLI_USAGE_INVALID',
-                `--answers file exceeds ${ANSWERS_FILE_BYTE_LIMIT} bytes`, '--answers')
-            answers = parseToml(await readFile(path, 'utf8'))
+            const read = await readBoundedInput(path)
+            if (read.kind === 'too-large' || read.bytes.byteLength > ANSWERS_FILE_BYTE_LIMIT) return usageOutcome('CLI_USAGE_INVALID',
+                `--answers file exceeds ${ANSWERS_FILE_BYTE_LIMIT} bytes; replace it with a plain TOML file within that limit and retry`, '--answers')
+            answers = parseToml(read.bytes.toString('utf8'))
         } catch (error) {
             return usageOutcome('CLI_USAGE_INVALID',
-                `--answers ${path} could not be read as TOML (${error instanceof Error ? error.message : 'unknown error'})`, '--answers')
+                `--answers ${path} could not be read as one bounded regular TOML file (${error instanceof Error ? error.message : 'unknown error'}); replace it with a plain TOML file and retry`, '--answers')
         }
     }
     return { value: { previewSha256, answers, ...(defaultsSha256 === undefined ? {} : { defaultsSha256 }) } }
