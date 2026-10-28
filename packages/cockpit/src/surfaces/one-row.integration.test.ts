@@ -291,11 +291,21 @@ describe('one-row generated surface integration', () => {
 
         const codexPath = join(added.root, '.codex/config.toml')
         const codexBytes = await readFile(codexPath, 'utf8')
-        const workerRoot = join(added.root, 'worker')
-        expect(codexBytes).toContain(workerRoot)
-        await writeFile(codexPath, codexBytes.replaceAll(workerRoot, join(added.root, 'nested/worker')))
+        const codexDocument = parseToml(codexBytes)
+        expect({ sandbox_mode: codexDocument.sandbox_mode, sandbox_workspace_write: codexDocument.sandbox_workspace_write }).toEqual({
+            sandbox_mode: 'workspace-write',
+            sandbox_workspace_write: { writable_roots: ['app', 'worker'] },
+        })
+        const changedCodexBytes = codexBytes.replace('"worker"', '"nested/worker"')
+        expect(changedCodexBytes).not.toBe(codexBytes)
+        expect(parseToml(changedCodexBytes)).toEqual({
+            ...codexDocument,
+            sandbox_workspace_write: { writable_roots: ['app', 'nested/worker'] },
+        })
+        await writeFile(codexPath, changedCodexBytes)
         await expectDrift(added.configPath, '.codex/config.toml')
         await writeFile(codexPath, codexBytes)
+        expect(await readFile(codexPath, 'utf8')).toBe(codexBytes)
         expect(await checkGeneratedEnvironment({ configPath: added.configPath })).toMatchObject({ kind: 'complete' })
 
         const nested = join(added.root, 'nested')
