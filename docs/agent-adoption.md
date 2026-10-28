@@ -259,9 +259,9 @@ Run from the directory that holds the repositories. Each step stops for the huma
    the run stops there and resumes when you rerun the same command.
 
 Rerunning with the same answers file resumes. A changed value for a recorded answer is refused
-with `INIT_ANSWER_CONFLICT`: drop that key to keep the recorded answer, or tell the human there is
-no command to reset it. One repository gets the same cockpit as several: instructions, guards
-and settings.
+with `INIT_ANSWER_CONFLICT`: drop that key to keep the recorded answer, or follow the canonical
+[recorded-answer reset](getting-started.md#bootstrap-without-a-terminal) before `cockpit.toml` is
+prepared. One repository gets the same cockpit as several: instructions, guards and settings.
 
 ### Scattered repositories
 
@@ -424,8 +424,10 @@ tool call, `cockpit sync` run through the agent included, until a human regenera
 deliberate: guard policy comes from `cockpit.toml`, and an agent able to apply its own edit could
 loosen its guard. The refusal names what changed and the command to run. The upgrade sequence is:
 
-1. Update the dependency, for example `npm update @b0dea/cockpit`.
-2. In a terminal, outside the agent, run `cockpit sync --config cockpit.toml`.
+1. Select the reviewed version and run
+   `npm install --save-dev --save-exact @b0dea/cockpit@<version>`.
+2. In a terminal, outside the agent, run
+   `./node_modules/.bin/cockpit sync --config cockpit.toml`.
 3. Review and commit the regenerated files.
 
 Each clone keeps its own machine-local guard identity in `.cockpit/local/`, which Git ignores, so

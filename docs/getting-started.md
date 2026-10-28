@@ -252,15 +252,16 @@ cockpit instructions. This changes what agents in that repository load, so setup
 proposal without writing it:
 
 ```sh
-cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders" --instruction-pointer
-cockpit setup --config ./cockpit.toml --json
+./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --from ~/code/api \
+  --purpose "HTTP API for orders" --instruction-pointer
+./node_modules/.bin/cockpit setup --config ./cockpit.toml --json
 # after a human approves the exact AGENTS.md block
-cockpit setup --config ./cockpit.toml --write-instruction-pointers
+./node_modules/.bin/cockpit setup --config ./cockpit.toml --write-instruction-pointers
 ```
 
-The link points to **AGENTS.md** beside the selected **cockpit.toml**, including when that configuration
-is below the Git checkout root. Paths are encoded as Markdown destinations. The approved write
-preserves existing team text and appends only the marked block. If **AGENTS.md**
+The link points to **AGENTS.md** beside the selected **cockpit.toml**, including when that
+configuration is below the Git checkout root. Paths are encoded as Markdown destinations. The
+approved write preserves existing team text and appends only the marked block. If **AGENTS.md**
 is missing, the proposal is a new guide containing that block. An edited, partial or duplicate
 pointer is refused rather than replaced. The root sibling (`dir = "."`) cannot opt in because its
 guide already is the cockpit guide.

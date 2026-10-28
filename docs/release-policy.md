@@ -18,9 +18,11 @@ Fixes land on the latest released minor only. Older minors are deprecated when a
 ships, so pin an exact version in each consumer lockfile and review an upgrade before applying
 its generated changes.
 
-Nothing is published yet. Before the first public release, obsolete commands, paths and fields are
-removed without compatibility code or a migration promise. The policy below starts with published
-contracts; while the package remains pre-1.0, a minor release may still carry a breaking change.
+Nothing is published yet. The development version is `0.0.0`, and the package stays private on
+the main development branch until a separate release branch deliberately prepares publication.
+Before the first public release, obsolete commands, paths and fields are removed without
+compatibility code or a migration promise. The policy below starts with published contracts;
+while the package remains pre-1.0, a minor release may still carry a breaking change.
 
 ## Deprecation
 
