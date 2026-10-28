@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, renameSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
@@ -310,6 +311,31 @@ describe('pending guard policy construction', () => {
         const captured = spawnSync('/bin/bash', ['-c', `cockpit() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
         expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<sync>\n<--config>\n<${configPath}>\n` })
     })
+
+    it('delimits a dash-prefixed configuration filename in application restore guidance', async () => {
+        const base = mkdtempSync(join(tmpdir(), 'cockpit-guard-restore-'))
+        scratch.push(base)
+        const createdRoot = join(base, "cock'pit root")
+        mkdirSync(createdRoot)
+        const root = realpathSync(createdRoot)
+        const rootStatus = lstatSync(root)
+        const configFile = "-cock'pit.toml"
+        const configPath = join(root, configFile)
+        const digest = '0'.repeat(64)
+        const identity = {
+            root, rootDevice: String(rootStatus.dev), rootInode: String(rootStatus.ino), configPath, configSha256: digest,
+            configDevice: '0', configInode: '0', node: process.execPath, nodeSha256: digest,
+            nodeFingerprint: 'synthetic', module: realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))), moduleSha256: digest,
+        }
+        const result = await runGuardEvaluationApplication({ identity, guardRoot: root, payload: {}, harness: 'claudecode', cwd: root }, {
+            loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'unavailable', reason: 'not reached' }),
+        })
+        const command = /restore it with `([^`]+)`/.exec(result.decision.reason)?.[1]
+        expect(command, result.decision.reason).toBeDefined()
+        const captured = spawnSync('/bin/bash', ['-c', `git() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
+        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<-C>\n<${root}>\n<restore>\n<-->\n<${configFile}>\n` })
+    })
     async function observedPolicy(declared = true, tuple?: string[]) {
         const { configPath } = fixture()
         const root = realpathSync(dirname(configPath))
@@ -466,7 +492,7 @@ describe('pending guard policy construction', () => {
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
             change === 'changed' ? 'publication changed during evaluation'
-                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: a human must restore it with \`git -C ${root} restore .cockpit/guards/bash-guard.sh\``
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
                     : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
@@ -487,7 +513,7 @@ describe('pending guard policy construction', () => {
             expect(decision.decision).toBe('unavailable')
             expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so every tool call is held`)
             expect(decision.reason).toContain(sync
-                ? `Fix: a human must restore it with \`git -C ${root} restore ${file}\` (it is committed)${sync.startsWith(',') ? '' : ' '}${sync} \`cockpit sync --config ${configPath}\``
+                ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed)${sync.startsWith(',') ? '' : ' '}${sync} \`cockpit sync --config ${configPath}\``
                 : `Fix: a human must run \`cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
         } finally { renameSync(join(root, `${file}.away`), join(root, file)) }
     }, 120_000)

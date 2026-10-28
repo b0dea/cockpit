@@ -303,8 +303,8 @@ function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fi
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : fix.thenSync
             // A restored file is a new file, so its identity must be authenticated again.
-            ? `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', fix.path])}\` (it is committed) and then run ${sync}`
-            : `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', fix.path])}\` (it is committed), or run ${sync}`
+            ? `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed) and then run ${sync}`
+            : `a human must restore it with \`${shellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
     return `${what}; ${why}, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: ${action}.`
 }
 
