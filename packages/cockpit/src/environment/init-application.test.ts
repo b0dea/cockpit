@@ -10,6 +10,7 @@ import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
 import { deriveInferredFacts } from '../init/derive.js'
 import { runCli } from '../cli.js'
+import { renderHumanValue } from '../diagnostics.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { selectBootstrapStateRoot } from './state.js'
@@ -562,7 +563,7 @@ describe('init application', () => {
 })
 
 
-it('composes observed greenfield answers into a loadable configuration and actual generated sync/check', async () => {
+it.each([false, true])('composes observed greenfield answers and surfaces review values (large purpose: %s)', async largePurpose => {
     const f = fixture()
     mkdirSync(join(f.root, 'app'))
     mkdirSync(join(f.root, 'fixtures'))
@@ -570,8 +571,9 @@ it('composes observed greenfield answers into a loadable configuration and actua
     await writeFile(join(f.root, 'app/package.json'), packageBytes)
     await writeFile(join(f.root, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
     const sourceConfig = parseToml(await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')) as {
-        sibling: unknown; ports: { bases: unknown }; environment: { install_policies: unknown; generated: unknown }
+        sibling: Record<string, unknown>[]; ports: { bases: unknown }; environment: { install_policies: unknown; generated: unknown }
     }
+    if (largePurpose) sourceConfig.sibling[0]!.purpose = 'p'.repeat(65_000)
     const synchronizeInputs: boolean[] = []
     let defaultsDocument: string | undefined
     const adapters: InitApplicationAdapters = {
@@ -608,19 +610,36 @@ it('composes observed greenfield answers into a loadable configuration and actua
         expect(count).toBeLessThan(8)
         const question = outcome.result.question
         if (question.field === 'configuration.defaults') {
+            if (largePurpose) expect(Buffer.byteLength(defaultsDocument!)).toBeGreaterThan(65_536)
             expect(defaultsDocument).toContain('# [default] ')
             expect(defaultsDocument).toContain('# [inferred] ')
             expect(outcome).toMatchObject({ artifact: null, destination: null,
-                result: { question: { document: defaultsDocument } } })
+                result: { question: { document: defaultsDocument!.split('\n') } } })
+            expect(question.document!.join('\n')).toBe(defaultsDocument)
             expect(existsSync(f.destination)).toBe(false)
-            for (const json of [true, false]) {
+            let interactiveReview = ''
+            expect(await runCli(['init', f.root, '--target', 'codexcli', '--interactive'], {
+                stdout: { write: () => true }, stderr: { write: () => true },
+                answerInitQuestion: async current => {
+                    interactiveReview = renderHumanValue(current)
+                    return undefined
+                },
+            }, { init: () => runInitApplication(greenfieldInput, adapters) })).toBe(2)
+            expect(interactiveReview).toContain(question.expectedSha256)
+            expect(interactiveReview).toContain(sourceConfig.sibling[0]!.purpose)
+            for (const line of defaultsDocument!.split('\n').filter(line => line.startsWith('# [default]') || line.startsWith('# [inferred]'))) {
+                expect(interactiveReview).toContain(line)
+            }
+            for (const json of [false, true]) {
                 let stdout = ''
                 expect(await runCli(['init', f.root, '--target', 'codexcli', ...(json ? ['--json'] : [])], {
                     stdout: { write: value => { stdout += value; return true } },
                     stderr: { write: () => true },
                 }, { init: () => runInitApplication(greenfieldInput, adapters) })).toBe(0)
-                if (json) expect(JSON.parse(stdout).result.question.document).toBe(defaultsDocument)
+                if (json) expect(JSON.parse(stdout).result.question.document.join('\n')).toBe(defaultsDocument)
                 else {
+                    expect(stdout).toContain(question.expectedSha256)
+                    expect(stdout).toContain(sourceConfig.sibling[0]!.purpose)
                     for (const line of defaultsDocument!.split('\n').filter(line => line.startsWith('# [default]') || line.startsWith('# [inferred]'))) {
                         expect(stdout).toContain(line)
                     }
@@ -634,6 +653,7 @@ it('composes observed greenfield answers into a loadable configuration and actua
                 diagnostics: expect.arrayContaining([{ severity: 'error', code: 'DOCUMENT_DEFAULT_CONFIRMATION_INVALID',
                     message: expect.any(String), target: 'configuration.defaults' }]) })
             expect(existsSync(f.destination)).toBe(false)
+            if (largePurpose) return
         }
         const value = question.field === 'sibling' ? sourceConfig.sibling
             : question.field === 'ports.bases' ? sourceConfig.ports.bases

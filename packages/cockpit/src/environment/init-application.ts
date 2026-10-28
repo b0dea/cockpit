@@ -155,8 +155,8 @@ export interface GreenfieldQuestion {
     readonly source: string
     readonly why: string
     readonly expectedSha256?: string
-    /** Owner-rendered draft with the exact attributed values covered by the confirmation digest. */
-    readonly document?: string
+    /** Lines preserve the owner draft exactly when joined with a newline, within bounded human rendering. */
+    readonly document?: readonly string[]
 }
 
 type IssuedEstateClassificationResult = EstateClassificationResult & Readonly<{
@@ -563,7 +563,7 @@ export async function runInitApplication(
         const question = documented.question
         if (question) {
             const surfacedQuestion = question.field === 'configuration.defaults'
-                ? { ...question, document: documented.artifact } : question
+                ? { ...question, document: documented.artifact.split('\n') } : question
             const expected = state?.questions[state.answers.length]
             if (!proposed && expected && JSON.stringify(expected) !== JSON.stringify(question)) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration question changed after it was persisted', address.path)

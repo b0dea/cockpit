@@ -141,8 +141,9 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
 2. Write the answers as TOML, keyed by field, and show them to the human together with the digest.
 3. Rerun with `--accept-preview <previewSha256>` and `--answers <file>`. The run stops at the
    first field still unanswered, or at `configuration.defaults`. There, `result.question.document`
-   is an incomplete review draft whose provenance comments list each inferred or default value,
-   its target and reason; `result.question.expectedSha256` is the digest covering those values.
+   is an array of lines from the incomplete review draft; joining them with `\n` reproduces
+   the exact draft, including its final newline. Its provenance comments list each inferred or
+   default value, its target and reason; `result.question.expectedSha256` is the digest covering those values.
    Read the document before asking the human to accept that digest. The human output and the
    interactive question show the same document; it is not written to `cockpit.toml`.
 4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one
