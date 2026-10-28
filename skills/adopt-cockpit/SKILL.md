@@ -123,7 +123,7 @@ The CLI owns registry interpretation, preview, durable state, artifact publicati
 Do not re-derive those decisions in this procedure.
 
 Explore the repository estate before asking questions. Ask only for facts the repositories
-and CLI output cannot answer, with at most three questions per round. Present inferred facts
+and CLI output cannot answer, in a small answerable round. Present inferred facts
 for confirmation. These conversation controls are instructed; no harness enforces their count.
 
 Show the exact preview before mutation. In a human terminal, run
