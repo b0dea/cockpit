@@ -78,10 +78,11 @@ authenticated filesystem identities, so alternate case and aliases do not bypass
 
 The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `git mv`, `tee`,
 `dd`, `touch`, `truncate` and `chmod` forms. An unsupported option is unavailable, and an
-unclassified non-read-only command that visibly names a control is unavailable before declared
-allows. This screening does not inspect arbitrary approved script bodies; such a script remains
-authority granted by its exact command contract, not a filesystem sandbox. To restore or
-intentionally replace generated controls, stop the guarded session and have a human run
+unclassified non-read-only command whose visible operand names a control, a protected plugin
+subtree or a directory containing either is unavailable before declared allows. This screening
+does not inspect arbitrary approved script bodies; such a script remains authority granted by its
+exact command contract, not a filesystem sandbox. To restore or intentionally replace generated
+controls, stop the guarded session and have a human run
 `cockpit sync --config cockpit.toml` in a terminal.
 
 Pushes to declared protected branches are hard denials. This includes explicit protected

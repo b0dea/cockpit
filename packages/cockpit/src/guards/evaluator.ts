@@ -506,15 +506,16 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const lexical = posix.resolve(cwd, path)
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
         const folded = fold(lexical)
-        if (controlFiles.some((target) => folded === fold(target))
-            || controlDirectories.some((target) => within(folded, fold(target)))) {
+        if (controlFiles.some((target) => within(fold(target), folded))
+            || controlDirectories.some((target) => within(folded, fold(target)) || within(fold(target), folded))) {
             hold(unavailable('Invocation names a guard control but its filesystem effect is not classified.'))
             return
         }
         const evidence = resolvedEvidence({ path, cwd, operation: 'write' })
         if (!evidence) return
-        const { is, below } = evidenceFacts(evidence)
-        if (controlFiles.some(is) || controlDirectories.some(below)) {
+        const { is, below, covers } = evidenceFacts(evidence)
+        if (controlFiles.some((target) => is(target) || covers(target))
+            || controlDirectories.some((target) => below(target) || covers(target))) {
             hold(unavailable('Invocation names a guard control but its filesystem effect is not classified.'))
         }
     }

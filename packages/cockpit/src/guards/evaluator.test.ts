@@ -652,6 +652,10 @@ describe('cockpit structure protection', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('custom-mutator notes/registration.json')), linked, facts)).toEqual({
             decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
         })
+        linked.declaredAllows.push({ argv: ['tar'], reason: 'Repository archive extraction is declared safe.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C notes/codex-copy')), linked, facts)).toEqual({
+            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        })
     })
 
     it('does not let an unclassified command grant authorize a visible guard control operand', () => {
@@ -659,6 +663,13 @@ describe('cockpit structure protection', () => {
         configured.declaredAllows.push({ argv: ['custom-mutator'], reason: 'The custom mutator is declared safe.' })
         expect(evaluateGuard(parseGuardInput(shellPayload('custom-mutator .cursor/cli.json')), configured, inspect)).toEqual({
             decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        })
+        configured.declaredAllows.push({ argv: ['tar'], reason: 'Repository archive extraction is declared safe.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C .codex')), configured, inspect)).toEqual({
+            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        })
+        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C archive')), configured, inspect)).toEqual({
+            decision: 'allow', reason: 'Repository archive extraction is declared safe.',
         })
     })
 
