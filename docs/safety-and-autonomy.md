@@ -79,13 +79,14 @@ authenticated filesystem identities, so alternate case and aliases do not bypass
 The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `git mv`, `tee`,
 `dd`, `touch`, `truncate` and `chmod` forms, and the destination of bounded `tar` extraction
 forms. Extraction without an explicit destination writes to the invocation's working directory.
-An unsupported option is unavailable, and an unclassified non-read-only command whose visible
-operand names a control, a protected plugin subtree or a directory containing either is
-unavailable before declared allows. This screening does not inspect archive member paths or
-arbitrary approved script bodies, and classifying an extraction directory does not prove that an
-archive cannot traverse outside it. An exact command contract grants that authority; it is not a
-filesystem sandbox. To restore or intentionally replace generated controls, stop the guarded
-session and have a human run
+Visible source files for bounded `cp`, `install`, `dd` and `tar` forms receive the same protected
+read check as built-in read-only commands. Every unsupported `tar` mode or option is unavailable,
+as is an unclassified non-read-only command whose visible operand names a control, a protected
+plugin subtree or a directory containing either. These checks run before declared allows. This
+screening does not inspect archive member paths or arbitrary approved script bodies, and
+classifying an extraction directory does not prove that an archive cannot traverse outside it.
+An exact command contract grants that authority; it is not a filesystem sandbox. To restore or
+intentionally replace generated controls, stop the guarded session and have a human run
 `cockpit sync --config cockpit.toml` in a terminal.
 
 Pushes to declared protected branches are hard denials. This includes explicit protected

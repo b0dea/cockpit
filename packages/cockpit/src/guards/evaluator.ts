@@ -286,11 +286,12 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
     }
 }
 
-interface VisibleWrites { readonly paths: readonly string[]; readonly uncertain: boolean }
+interface VisibleWrites { readonly paths: readonly string[]; readonly reads?: readonly string[]; readonly uncertain: boolean }
 
-function tarExtractionWrites(args: readonly string[]): VisibleWrites | undefined {
+function tarExtractionWrites(args: readonly string[]): VisibleWrites {
     let extraction = false
     let destination = '.'
+    let archive: string | undefined
     let uncertain = false
     let options = true
     for (let index = 0; index < args.length; index++) {
@@ -300,15 +301,18 @@ function tarExtractionWrites(args: readonly string[]): VisibleWrites | undefined
         if (arg === '-x' || arg === '--extract' || arg === '--get') { extraction = true; continue }
         if (arg === '-xf') {
             extraction = true
-            if (args[++index] === undefined) uncertain = true
+            archive = args[++index]
+            if (archive === undefined) uncertain = true
             continue
         }
         if (arg === '-f' || arg === '--file') {
-            if (args[++index] === undefined) uncertain = true
+            archive = args[++index]
+            if (archive === undefined) uncertain = true
             continue
         }
         if (arg.startsWith('--file=')) {
-            if (arg.length === '--file='.length) uncertain = true
+            archive = arg.slice('--file='.length)
+            if (!archive) uncertain = true
             continue
         }
         if (arg === '-C' || arg === '--directory') {
@@ -326,7 +330,7 @@ function tarExtractionWrites(args: readonly string[]): VisibleWrites | undefined
         if (/^-[^-]*x/.test(arg) || arg.startsWith('--extract=') || arg.startsWith('--get=')) extraction = true
         uncertain = true
     }
-    return extraction ? { paths: [destination], uncertain } : undefined
+    return { paths: extraction ? [destination] : [], reads: archive === undefined ? [] : [archive], uncertain: uncertain || !extraction }
 }
 
 /** Destinations exposed directly by bounded filesystem writer grammars. */
@@ -335,11 +339,12 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
     const name = posix.basename(invocation.executable)
     if (name === 'cp' || name === 'install' || name === 'mv') {
         const transfer = transferOperands(name, invocation.argv)
-        return { paths: transfer.writes, uncertain: transfer.uncertain }
+        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, uncertain: transfer.uncertain }
     }
     if (name === 'dd') {
         const paths = invocation.argv.filter(arg => arg.startsWith('of=')).map(arg => arg.slice(3)).filter(Boolean)
-        return { paths, uncertain: invocation.argv.some(arg => !/^[a-z_]+=/i.test(arg)) }
+        const reads = invocation.argv.filter(arg => arg.startsWith('if=')).map(arg => arg.slice(3)).filter(Boolean)
+        return { paths, reads, uncertain: invocation.argv.some(arg => !/^[a-z_]+=/i.test(arg)) }
     }
     if (name === 'tar') return tarExtractionWrites(invocation.argv)
     const scan = (plain: Set<string>, valued: Set<string>) => {
@@ -615,12 +620,15 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
         const writes = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
-            return { paths: transfer.writes, uncertain: transfer.uncertain }
+            return { paths: transfer.writes, reads: [], uncertain: transfer.uncertain }
         })() : visibleWrites(invocation)
         if (writes) {
             for (const path of writes.paths) {
                 pathCount++
                 inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
+            }
+            if (writes.reads?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: writes.reads, trees: [], listings: [] })) {
+                hold(unavailable('Visible writer source is unavailable or unsafe to read.'))
             }
             if (writes.uncertain) hold(unavailable('Unsupported visible writer option.'))
         } else if (!access) {

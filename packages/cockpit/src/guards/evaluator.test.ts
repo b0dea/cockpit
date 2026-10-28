@@ -568,6 +568,7 @@ describe('built-in read-only profile', () => {
 describe('cockpit structure protection', () => {
     const removal = 'Refusing to delete, rename or truncate cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
     const controlRemoval = 'Refusing mutation of the guard, its hook registration or its ownership manifest.'
+    const protectedRead = 'Refusing to read a declared environment instance or secrets directory into the agent context.'
     const patch = (body: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: root,
         tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` } }), policy(), inspect)
 
@@ -679,6 +680,39 @@ describe('cockpit structure protection', () => {
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('tar -xvf payload.tar -C archive')), configured, inspect)).toEqual({
             decision: 'unavailable', reason: 'Unsupported visible writer option.',
+        })
+        for (const command of ['tar xf payload.tar', 'tar --extr -f payload.tar']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'unavailable', reason: 'Unsupported visible writer option.',
+            })
+        }
+    })
+
+    it('denies protected sources of bounded writers before declared command grants', () => {
+        const configured = policy()
+        for (const executable of ['cp', 'install', 'dd', 'tar']) {
+            configured.declaredAllows.push({ argv: [executable], reason: 'Repository file writing is declared safe.' })
+        }
+        for (const command of ['cp config/active.instance copy.txt', 'install config/active.instance copy.txt',
+            'dd if=config/active.instance of=copy.txt', 'tar -xf config/active.instance -C archive']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'deny', reason: protectedRead,
+            })
+        }
+        for (const command of ['cp source.txt copy.txt', 'install source.txt copy.txt', 'dd if=source.txt of=copy.txt']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect).decision, command).toBe('allow')
+        }
+
+        const linked = policy()
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], { [instance]: { identity: '7:8', ancestors: ['7:1'] } })
+        linked.declaredAllows.push({ argv: ['cp'], reason: 'Repository file writing is declared safe.' })
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            return { status: 'resolved', path: resolved, symlink: false,
+                identity: resolved === `${root}/notes/source.instance` ? '7:8' : null, ancestors: [] }
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('cp notes/source.instance copy.txt')), linked, facts)).toEqual({
+            decision: 'deny', reason: protectedRead,
         })
     })
 
