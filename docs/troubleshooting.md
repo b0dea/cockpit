@@ -251,6 +251,10 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `AUTONOMY_EVIDENCE_REQUIRED` | `packages/cockpit/src/autonomy/launcher.ts` | no static remedy captured; inspect implementing owners |
 | `AUTONOMY_GRANTS_INVALID` | `packages/cockpit/src/autonomy/launcher.ts` | no static remedy captured; inspect implementing owners |
 | `AUTONOMY_MODE_INVALID` | `packages/cockpit/src/autonomy/launcher.ts` | no static remedy captured; inspect implementing owners |
+| `BOOTSTRAP_ANSWER_RESET_FIELD_INVALID` | `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
+| `BOOTSTRAP_ANSWER_RESET_INDETERMINATE` | `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
+| `BOOTSTRAP_ANSWER_RESET_STALE` | `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
+| `BOOTSTRAP_ANSWER_RESET_UNAVAILABLE` | `packages/cockpit/src/environment/state.ts` | no static remedy captured; inspect implementing owners |
 | `CHECKOUT_ADJACENCY_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/git-observation.ts` | no static remedy captured; inspect implementing owners |
 | `CLAIM_CO_TENANT` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/lifecycle.ts`, `packages/cockpit/src/environment/ports.ts` | no static remedy captured; inspect implementing owners |
 | `CLAIM_LIVENESS_UNKNOWN` | `packages/cockpit/src/environment/claims.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
@@ -397,6 +401,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `INIT_ANSWER_CONFLICT` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_FIELD_UNKNOWN` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_INVALID` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
+| `INIT_ANSWER_RESET_CONFLICT` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ANSWER_UNUSED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_ARTIFACT_WRITE_FAILED` | `packages/cockpit/src/init/command.ts` | no static remedy captured; inspect implementing owners |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` | `packages/cockpit/src/environment/init-application.ts` | no static remedy captured; inspect implementing owners |
