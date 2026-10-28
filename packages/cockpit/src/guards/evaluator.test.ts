@@ -654,22 +654,31 @@ describe('cockpit structure protection', () => {
         })
         linked.declaredAllows.push({ argv: ['tar'], reason: 'Repository archive extraction is declared safe.' })
         expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C notes/codex-copy')), linked, facts)).toEqual({
-            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+            decision: 'deny', reason: controlRemoval,
         })
     })
 
-    it('does not let an unclassified command grant authorize a visible guard control operand', () => {
+    it('does not let command grants authorize visible control operands or extraction destinations', () => {
         const configured = policy()
         configured.declaredAllows.push({ argv: ['custom-mutator'], reason: 'The custom mutator is declared safe.' })
         expect(evaluateGuard(parseGuardInput(shellPayload('custom-mutator .cursor/cli.json')), configured, inspect)).toEqual({
             decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
         })
         configured.declaredAllows.push({ argv: ['tar'], reason: 'Repository archive extraction is declared safe.' })
-        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C .codex')), configured, inspect)).toEqual({
-            decision: 'unavailable', reason: 'Invocation names a guard control but its filesystem effect is not classified.',
+        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar')), configured, inspect)).toEqual({
+            decision: 'deny', reason: controlRemoval,
         })
-        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C archive')), configured, inspect)).toEqual({
-            decision: 'allow', reason: 'Repository archive extraction is declared safe.',
+        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xf payload.tar -C .codex')), configured, inspect)).toEqual({
+            decision: 'deny', reason: controlRemoval,
+        })
+        for (const command of ['tar -xf payload.tar -C archive', 'tar -x -f payload.tar --directory archive',
+            'tar --extract --file=payload.tar --directory=archive', 'tar --get --file payload.tar -C archive']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'allow', reason: 'Repository archive extraction is declared safe.',
+            })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('tar -xvf payload.tar -C archive')), configured, inspect)).toEqual({
+            decision: 'unavailable', reason: 'Unsupported visible writer option.',
         })
     })
 

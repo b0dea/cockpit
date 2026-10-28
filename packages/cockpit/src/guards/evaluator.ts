@@ -288,6 +288,47 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
 
 interface VisibleWrites { readonly paths: readonly string[]; readonly uncertain: boolean }
 
+function tarExtractionWrites(args: readonly string[]): VisibleWrites | undefined {
+    let extraction = false
+    let destination = '.'
+    let uncertain = false
+    let options = true
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (options && arg === '--') { options = false; continue }
+        if (!options || !arg.startsWith('-') || arg === '-') continue
+        if (arg === '-x' || arg === '--extract' || arg === '--get') { extraction = true; continue }
+        if (arg === '-xf') {
+            extraction = true
+            if (args[++index] === undefined) uncertain = true
+            continue
+        }
+        if (arg === '-f' || arg === '--file') {
+            if (args[++index] === undefined) uncertain = true
+            continue
+        }
+        if (arg.startsWith('--file=')) {
+            if (arg.length === '--file='.length) uncertain = true
+            continue
+        }
+        if (arg === '-C' || arg === '--directory') {
+            const value = args[++index]
+            if (value === undefined) uncertain = true
+            else destination = value
+            continue
+        }
+        if (arg.startsWith('--directory=')) {
+            const value = arg.slice('--directory='.length)
+            if (!value) uncertain = true
+            else destination = value
+            continue
+        }
+        if (/^-[^-]*x/.test(arg) || arg.startsWith('--extract=') || arg.startsWith('--get=')) extraction = true
+        uncertain = true
+    }
+    return extraction ? { paths: [destination], uncertain } : undefined
+}
+
 /** Destinations exposed directly by bounded filesystem writer grammars. */
 function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined {
     if (invocation.executable === null) return undefined
@@ -300,6 +341,7 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
         const paths = invocation.argv.filter(arg => arg.startsWith('of=')).map(arg => arg.slice(3)).filter(Boolean)
         return { paths, uncertain: invocation.argv.some(arg => !/^[a-z_]+=/i.test(arg)) }
     }
+    if (name === 'tar') return tarExtractionWrites(invocation.argv)
     const scan = (plain: Set<string>, valued: Set<string>) => {
         const operands: string[] = []
         let uncertain = false
@@ -462,8 +504,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const folded = fold(lexical)
         if (mutating && (folded.split('/').includes('.secrets') || staging && within(fold(secretRoot), folded))) hold(secretDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || staging && within(fold(item.path), folded))) hold(instanceDenial)
-        if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path))
-            || controlDirectories.some((path) => within(folded, fold(path))))) hold(controlDenial)
+        if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
+            || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
