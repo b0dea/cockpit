@@ -469,6 +469,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         else if (decision.decision === 'unavailable' && !authorityUnavailable) authorityUnavailable = decision
     }
     const askDecisions = new Map<ParsedInvocation, GuardDecision>()
+    const approvalBarriers = new Map<ParsedInvocation, GuardDecision>()
     const holdAsk = (invocation: ParsedInvocation, decision: GuardDecision) => {
         if (!askDecisions.has(invocation)) askDecisions.set(invocation, decision)
     }
@@ -504,11 +505,12 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         const mutating = request.operation !== 'cwd'
         const staging = request.operation === 'stage'
+        const removing = request.operation === 'remove'
         // Spelling checks run before inspection so a hard denial survives missing evidence; they
         // cover leaves that do not exist yet, which have no identity to compare.
         const folded = fold(lexical)
-        if (mutating && (folded.split('/').includes('.secrets') || staging && within(fold(secretRoot), folded))) hold(secretDenial)
-        if (mutating && resolved.instances.some((item) => folded === fold(item.path) || staging && within(fold(item.path), folded))) hold(instanceDenial)
+        if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(secretDenial)
+        if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
             || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
@@ -525,29 +527,31 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
         const { is, below, covers } = evidenceFacts(evidence)
-        if (below(secretRoot) || staging && covers(secretRoot)) hold(secretDenial)
-        if (resolved.instances.some((item) => is(item.path) || staging && covers(item.path))) hold(instanceDenial)
+        if (below(secretRoot) || (staging || removing) && covers(secretRoot)) hold(secretDenial)
+        if (resolved.instances.some((item) => is(item.path) || (staging || removing) && covers(item.path))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
     }
     // Removing a control, anything below a control directory, or a directory containing one can
     // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
-    const inspectRemoval = (path: string, cwd: string) => {
-        if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return
+    // The return value preserves a prompt for command removals beyond the inspector's authority.
+    const inspectRemoval = (path: string, cwd: string): boolean => {
+        if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return false
         const lexical = posix.resolve(cwd, path)
-        if (structural.some((target) => within(fold(target), fold(lexical)))) { hold(structuralDenial); return }
+        if (structural.some((target) => within(fold(target), fold(lexical)))) { hold(structuralDenial); return false }
         if (controlFiles.some((target) => within(fold(target), fold(lexical)))
             || controlDirectories.some((target) => within(fold(target), fold(lexical)) || within(fold(lexical), fold(target)))) {
             hold(controlDenial)
-            return
+            return false
         }
-        if (!resolved.allowedRoots.some((root) => within(lexical, root))) return
+        if (!resolved.allowedRoots.some((root) => within(lexical, root))) return true
         inspectPath({ path, cwd, operation: 'remove' })
         const evidence = resolvedEvidence({ path, cwd, operation: 'remove' })
-        if (!evidence) return
+        if (!evidence) return false
         const { below, covers } = evidenceFacts(evidence)
-        if (structural.some(covers)) { hold(structuralDenial); return }
+        if (structural.some(covers)) { hold(structuralDenial); return false }
         if (controlFiles.some(covers) || controlDirectories.some((target) => covers(target) || below(target))) hold(controlDenial)
+        return false
     }
     const inspectPossibleControlOperand = (path: string, cwd: string) => {
         if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) return
@@ -599,7 +603,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const readOnly = new Set<ParsedInvocation>()
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
-    for (const path of input.removed) inspectRemoval(path, input.cwd)
+    for (const path of input.removed) {
+        if (inspectRemoval(path, input.cwd)) hold(unavailable('Removal path escapes configured roots.'))
+    }
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })
     for (const invocation of input.invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
@@ -617,7 +623,11 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         const git = gitInvocation(invocation)
         const removed = removedOperands(invocation, git)
-        for (const path of removed?.paths ?? []) inspectRemoval(path, removed!.cwd)
+        for (const path of removed?.paths ?? []) {
+            if (inspectRemoval(path, removed!.cwd) && !approvalBarriers.has(invocation)) {
+                approvalBarriers.set(invocation, ask('Removal outside configured roots requires human approval.'))
+            }
+        }
         const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
         const writes = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
@@ -680,6 +690,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     if (authorityUnavailable) return authorityUnavailable
     const declaredReasons: string[] = []
     for (const invocation of input.invocations) {
+        const barrier = approvalBarriers.get(invocation)
+        if (barrier) return barrier
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')
             ? resolved.declaredAllows.find(rule => ruleMatches(invocation, rule)) : undefined
         if (declared) { declaredReasons.push(declared.reason); continue }

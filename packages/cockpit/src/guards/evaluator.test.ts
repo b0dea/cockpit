@@ -757,13 +757,14 @@ describe('cockpit structure protection', () => {
         configured.declaredAllows.push(
             { argv: ['rm'], reason: 'Repository cleanup is declared safe.' },
             { argv: ['mv'], reason: 'Repository moves are declared safe.' },
+            { argv: ['find'], reason: 'Repository cleanup is declared safe.' },
         )
-        for (const command of ['rm config/active.instance', 'mv config/active.instance copy.txt']) {
+        for (const command of ['rm config/active.instance', 'mv config/active.instance copy.txt', 'rm -rf config']) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
                 decision: 'deny', reason: instanceMutation,
             })
         }
-        for (const command of ['rm env/.secrets/project/token', 'mv env/.secrets/project/token copy.txt']) {
+        for (const command of ['rm env/.secrets/project/token', 'mv env/.secrets/project/token copy.txt', 'find env -delete']) {
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
                 decision: 'deny', reason: secretMutation,
             })
@@ -777,8 +778,8 @@ describe('cockpit structure protection', () => {
         const secretRoot = `${root}/env/.secrets`
         const linked = policy()
         linked.protectedIdentities = protectedIdentities([{ path: instance }], {
-            [instance]: { identity: '7:8', ancestors: ['7:1'] },
-            [secretRoot]: { identity: '7:9', ancestors: ['7:1'] },
+            [instance]: { identity: '7:8', ancestors: ['7:1', '7:2'] },
+            [secretRoot]: { identity: '7:9', ancestors: ['7:1', '7:3'] },
         })
         linked.declaredAllows.push(
             { argv: ['rm'], reason: 'Repository cleanup is declared safe.' },
@@ -789,11 +790,33 @@ describe('cockpit structure protection', () => {
             const aliases: IdentityFacts = {
                 [`${root}/notes/active.alias`]: { identity: '7:8', ancestors: [] },
                 [`${root}/notes/token.alias`]: { identity: null, ancestors: ['7:9'] },
+                [`${root}/notes/config-copy`]: { identity: '7:2', ancestors: [] },
+                [`${root}/notes/env-copy`]: { identity: '7:3', ancestors: [] },
             }
             return { status: 'resolved', path: resolved, symlink: false, ...(aliases[resolved] ?? { identity: null, ancestors: [] }) }
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('rm notes/active.alias')), linked, facts)).toEqual({ decision: 'deny', reason: instanceMutation })
         expect(evaluateGuard(parseGuardInput(shellPayload('mv notes/token.alias copy.txt')), linked, facts)).toEqual({ decision: 'deny', reason: secretMutation })
+        expect(evaluateGuard(parseGuardInput(shellPayload('rm -rf notes/config-copy')), linked, facts)).toEqual({ decision: 'deny', reason: instanceMutation })
+        expect(evaluateGuard(parseGuardInput(shellPayload('mv notes/env-copy archive')), linked, facts)).toEqual({ decision: 'deny', reason: secretMutation })
+    })
+
+    it('does not let declared grants authorize removals outside configured roots', () => {
+        const configured = policy()
+        configured.declaredAllows.push(
+            { argv: ['rm'], reason: 'Repository cleanup is declared safe.' },
+            { argv: ['mv'], reason: 'Repository moves are declared safe.' },
+        )
+        for (const command of ['rm ../sibling/file', 'mv ../sibling/file copy.txt']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured, inspect), command).toEqual({
+                decision: 'ask', reason: 'Removal outside configured roots requires human approval.',
+            })
+            expect(decide(command).decision, command).toBe('ask')
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('rm notes/temporary.txt')), configured, inspect)).toEqual({
+            decision: 'allow', reason: 'Repository cleanup is declared safe.',
+        })
+        expect(patch('*** Delete File: ../sibling/file').decision).toBe('unavailable')
     })
 
     it('keeps editing the configuration and removing ordinary files outside the boundary', () => {

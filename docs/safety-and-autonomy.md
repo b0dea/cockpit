@@ -49,8 +49,9 @@ not remove these protections or promote pending evidence.
 
 The [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) denies mutation or staging of a
 declared environment instance, and mutation below a secrets directory. This includes command and
-patch removals as well as writes. Staging a containing directory can include an instance and is
-also denied. Executable use of a declared hosted database or vendor host is denied at hostname
+patch removals as well as writes; removing a directory that contains an instance or the secrets
+directory is also denied. Staging a containing directory can include an instance and is also
+denied. Executable use of a declared hosted database or vendor host is denied at hostname
 boundaries. Matching examines executable, argument, and environment-assignment-value roles;
 redirects, heredocs, comments, and definitions do not count as executable host use.
 
@@ -97,6 +98,10 @@ a human decision. An exact grant cannot override either boundary.
 
 Unresolved Git execution context, destructive Git reset or clean forms, staging without explicit
 paths, wrapped or environment-modifying commands, and unmatched invocation profiles produce `ask`.
+An explicit removal outside configured roots also stays at `ask` even when a declared allow
+matches, because cockpit has no filesystem authority to authenticate that target; review the
+exact path and approve it manually or move the work under a configured root. An ungranted removal
+keeps the same prompt boundary.
 Broad staging can still produce a hard denial if it includes an environment instance. Unsupported
 staging options or unproven pathspec grammar produce `unavailable`.
 
