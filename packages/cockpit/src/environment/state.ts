@@ -86,7 +86,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
 
 const STATE_FORMAT = 'cockpit-state/v1'
 export const SERIALIZED_RECORD_BYTE_LIMIT = 1_048_576
-const RECORD_KINDS = ['claim', 'lease', 'coordination', 'lifecycle', 'lifecycle-history', 'data-outcome', 'cache', 'baseline'] as const
+const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome', 'cache', 'baseline'] as const
 const safeSegment = /^[a-z0-9][a-z0-9._-]*$/
 const digest = /^[a-f0-9]{64}$/
 const cockpitIdentity = /^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/
@@ -237,8 +237,6 @@ export interface StateNamespace {
     readonly root: string
     readonly cockpitRoot: string
     readonly paths: {
-        readonly claim: (stackId: StackId) => StateAddress
-        readonly lease: (stackId: StackId) => StateAddress
         readonly coordination: (stackId: StackId) => StateAddress
         readonly lifecycle: (stackId: StackId) => StateAddress
         readonly dataOutcome: (stackId: StackId) => StateAddress
@@ -521,18 +519,13 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     const id = checkedIdentity(cockpitId, cockpitIdentity, 'cockpit id')
     const cockpitRoot = join(root, 'cockpits', id)
     const stackAddress = (
-        kind: 'claim' | 'lease' | 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome',
+        kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome',
         stackId: StackId,
     ): StateAddress => {
         const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
-        const directory = kind === 'lifecycle' || kind === 'lifecycle-history' || kind === 'coordination' || kind === 'data-outcome'
-            ? kind
-            : `${kind}s`
-        return address(join(cockpitRoot, 'records', directory, `${subjectId}.json`), root, cockpitRoot, kind, cockpitId, subjectId)
+        return address(join(cockpitRoot, 'records', kind, `${subjectId}.json`), root, cockpitRoot, kind, cockpitId, subjectId)
     }
     const paths: StateNamespace['paths'] = Object.freeze({
-        claim: (stackId) => stackAddress('claim', stackId),
-        lease: (stackId) => stackAddress('lease', stackId),
         coordination: (stackId) => stackAddress('coordination', stackId),
         lifecycle: (stackId) => stackAddress('lifecycle', stackId),
         dataOutcome: (stackId) => stackAddress('data-outcome', stackId),
@@ -642,8 +635,6 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         const cockpitRoot = own(value, 'cockpitRoot')
         const paths = own(value, 'paths')
         if (typeof root !== 'string' || typeof cockpitRoot !== 'string' || !paths || typeof paths !== 'object') return undefined
-        const claim = own(paths, 'claim')
-        const lease = own(paths, 'lease')
         const coordination = own(paths, 'coordination')
         const lifecycle = own(paths, 'lifecycle')
         const dataOutcome = own(paths, 'dataOutcome')
@@ -652,9 +643,7 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         const cache = own(paths, 'cache')
         const baseline = own(paths, 'baseline')
         if (
-            typeof claim !== 'function'
-            || typeof lease !== 'function'
-            || typeof coordination !== 'function'
+            typeof coordination !== 'function'
             || typeof lifecycle !== 'function'
             || typeof dataOutcome !== 'function'
             || typeof stateLock !== 'string'
@@ -666,8 +655,6 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             root,
             cockpitRoot,
             paths: Object.freeze({
-                claim,
-                lease,
                 coordination,
                 lifecycle,
                 dataOutcome,
@@ -857,9 +844,6 @@ function expectedAddressPath(address: StateAddress | BootstrapStateAddress): str
     if (!cockpitIdentity.test(address.cockpitId)) return undefined
     const expectedSubject = address.kind === 'cache' ? checkoutIdentity : stackIdentity
     if (!expectedSubject.test(address.subjectId)) return undefined
-    if (address.kind === 'claim' || address.kind === 'lease') {
-        return join(address.cockpitRoot, 'records', `${address.kind}s`, `${address.subjectId}.json`)
-    }
     if (
         address.kind === 'lifecycle'
         || address.kind === 'lifecycle-history'
@@ -1932,7 +1916,6 @@ export async function transactState<T>(
             && stableNamespace.cockpitRoot === join(stableNamespace.root, 'cockpits', stableAddress.cockpitId)
             && stableAddress.cockpitRoot === stableNamespace.cockpitRoot
             && stableNamespace.paths.stateLock === join(stableNamespace.cockpitRoot, 'locks', 'state.lock')
-            && stableAddress.kind !== 'claim' && stableAddress.kind !== 'lease'
     if (!isAbsolute(stableNamespace.root) || stableAddress.stateRoot !== stableNamespace.root
         || !(await addressIsSafe(stableAddress))
         || !identityValid || !bootstrapTransaction && !ordinaryTransaction

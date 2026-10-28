@@ -97,7 +97,7 @@ Promise<{ namespace: BootstrapStateNamespace; address: BootstrapStateAddress }> 
     return { namespace: selected.value, address: selected.value.paths.bootstrap(target) }
 }
 
-function claimRecord(revision: number, count: number): StateRecord {
+function lifecycleRecord(revision: number, count: number): StateRecord {
     return {
         format: 'cockpit-state/v1',
         kind: 'lifecycle',
@@ -299,8 +299,9 @@ describe('selectStateRoot', () => {
         const base = join(home, '.local', 'state', 'cockpit', 'v1', 'cockpits', cockpitId)
 
         expect(result.value.cockpitRoot).toBe(base)
-        expect(result.value.paths.claim(stackId).path).toBe(join(base, 'records', 'claims', `${stackId}.json`))
-        expect(result.value.paths.lease(stackId).path).toBe(join(base, 'records', 'leases', `${stackId}.json`))
+        expect(Object.keys(result.value.paths).sort()).toEqual([
+            'baseline', 'cache', 'coordination', 'dataOutcome', 'installLock', 'lifecycle', 'stateLock',
+        ])
         expect(result.value.paths.coordination(stackId).path).toBe(join(base, 'records', 'coordination', `${stackId}.json`))
         expect(result.value.paths.lifecycle(stackId).path).toBe(join(base, 'records', 'lifecycle', `${stackId}.json`))
         expect(result.value.paths.dataOutcome(stackId).path).toBe(join(base, 'records', 'data-outcome', `${stackId}.json`))
@@ -504,14 +505,14 @@ describe('readState', () => {
         await mkdir(home)
         const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
         if (selected.kind !== 'complete') throw new Error('expected a selected state root')
-        const address = selected.value.paths.claim(stackId)
+        const address = selected.value.paths.lifecycle(stackId)
 
         expect(await readState(address)).toEqual({ kind: 'missing', path: address.path })
 
         await mkdir(dirname(address.path), { recursive: true })
         const record = {
             format: 'cockpit-state/v1',
-            kind: 'claim',
+            kind: 'lifecycle',
             cockpitId,
             subjectId: stackId,
             revision: 0,
@@ -525,24 +526,24 @@ describe('readState', () => {
     it('uses one address snapshot for record authority and diagnostics', async () => {
         const { address } = await selectedNamespace()
         await mkdir(dirname(address.path), { recursive: true })
-        await writeFile(address.path, `${JSON.stringify(claimRecord(0, 7))}\n`)
+        await writeFile(address.path, `${JSON.stringify(lifecycleRecord(0, 7))}\n`)
         const originalPath = address.path
         const mutable = { ...address }
         const reading = readState(mutable)
         Object.assign(mutable, {
             path: join(dirname(originalPath), 'mutated.json'),
-            kind: 'lease',
+            kind: 'baseline',
             cockpitId: `cockpit:mutated:${'f'.repeat(64)}`,
             subjectId: `stack:${'f'.repeat(64)}`,
         })
-        expect(await reading).toEqual({ kind: 'complete', value: claimRecord(0, 7) })
+        expect(await reading).toEqual({ kind: 'complete', value: lifecycleRecord(0, 7) })
 
         await writeFile(originalPath, '{')
         const malformedAddress = { ...address }
         const malformedReading = readState(malformedAddress)
         Object.assign(malformedAddress, {
             path: join(dirname(originalPath), 'other.json'),
-            kind: 'lease',
+            kind: 'baseline',
             cockpitId: `cockpit:other:${'e'.repeat(64)}`,
             subjectId: `stack:${'e'.repeat(64)}`,
         })
@@ -554,36 +555,38 @@ describe('readState', () => {
     it.each([
         ['invalid UTF-8', Buffer.from([0xc3, 0x28]), ENVIRONMENT_CODES.STATE_RECORD_MALFORMED],
         ['malformed JSON', Buffer.from('{'), ENVIRONMENT_CODES.STATE_RECORD_MALFORMED],
-        ['unknown key', Buffer.from(JSON.stringify({ format: 'cockpit-state/v1', kind: 'claim', cockpitId, subjectId: stackId, revision: 0, updatedAt: '2026-09-07T12:00:00.000Z', value: {}, extra: true })), ENVIRONMENT_CODES.STATE_RECORD_MALFORMED],
-        ['newer version', Buffer.from(JSON.stringify({ format: 'cockpit-state/v2', kind: 'claim' })), ENVIRONMENT_CODES.STATE_FORMAT_UNSUPPORTED],
-        ['wrong identity', Buffer.from(JSON.stringify({ format: 'cockpit-state/v1', kind: 'claim', cockpitId: 'other-a1', subjectId: stackId, revision: 0, updatedAt: '2026-09-07T12:00:00.000Z', value: {} })), ENVIRONMENT_CODES.STATE_RECORD_MALFORMED],
+        ['unknown key', Buffer.from(JSON.stringify({ format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId, subjectId: stackId, revision: 0, updatedAt: '2026-09-07T12:00:00.000Z', value: {}, extra: true })), ENVIRONMENT_CODES.STATE_RECORD_MALFORMED],
+        ['newer version', Buffer.from(JSON.stringify({ format: 'cockpit-state/v2', kind: 'lifecycle' })), ENVIRONMENT_CODES.STATE_FORMAT_UNSUPPORTED],
+        ['wrong identity', Buffer.from(JSON.stringify({ format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: 'other-a1', subjectId: stackId, revision: 0, updatedAt: '2026-09-07T12:00:00.000Z', value: {} })), ENVIRONMENT_CODES.STATE_RECORD_MALFORMED],
     ])('fails closed for %s', async (_label, bytes, code) => {
         const parent = await temporaryDirectory()
         const home = join(parent, 'home')
         await mkdir(home)
         const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
         if (selected.kind !== 'complete') throw new Error('expected a selected state root')
-        const address = selected.value.paths.claim(stackId)
+        const address = selected.value.paths.lifecycle(stackId)
         await mkdir(dirname(address.path), { recursive: true })
         await writeFile(address.path, bytes)
 
         expect(await readState(address)).toMatchObject({ kind: 'refusal', code })
     })
 
-    it.each(['claim', 'lease'] as const)('refuses newer %s state by name and exact address', async kind => {
-        const { namespace } = await selectedNamespace()
-        const address = namespace.paths[kind](stackId)
+    it('refuses a record kind outside the current state format', async () => {
+        const { address } = await selectedNamespace()
         await mkdir(dirname(address.path), { recursive: true })
-        const bytes = JSON.stringify({ format: 'cockpit-state/v2', kind })
+        const bytes = JSON.stringify({
+            format: 'cockpit-state/v1', kind: 'unsupported', cockpitId, subjectId: stackId,
+            revision: 0, updatedAt: '2026-09-07T12:00:00.000Z', value: {},
+        })
         await writeFile(address.path, bytes)
-        expect(await readState(address)).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_FORMAT_UNSUPPORTED, target: address.path })
+        expect(await readState(address)).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, target: address.path })
         expect(await readFile(address.path, 'utf8')).toBe(bytes)
     })
 
     it('refuses a symlinked record without reading its target', async () => {
         const { address } = await selectedNamespace()
         const outside = join(await temporaryDirectory(), 'outside.json')
-        await writeFile(outside, `${JSON.stringify(claimRecord(0, 7))}\n`)
+        await writeFile(outside, `${JSON.stringify(lifecycleRecord(0, 7))}\n`)
         await mkdir(dirname(address.path), { recursive: true })
         await symlink(outside, address.path)
 
@@ -596,8 +599,8 @@ describe('readState', () => {
     it('refuses a symlinked cockpit namespace before following its record path', async () => {
         const { namespace, address } = await selectedNamespace()
         const outside = join(await temporaryDirectory(), 'outside')
-        await mkdir(join(outside, 'records', 'claims'), { recursive: true })
-        await writeFile(join(outside, 'records', 'claims', `${stackId}.json`), `${JSON.stringify(claimRecord(0, 7))}\n`)
+        await mkdir(join(outside, 'records', 'lifecycle'), { recursive: true })
+        await writeFile(join(outside, 'records', 'lifecycle', `${stackId}.json`), `${JSON.stringify(lifecycleRecord(0, 7))}\n`)
         await mkdir(join(namespace.root, 'cockpits'), { recursive: true })
         await symlink(outside, namespace.cockpitRoot)
 
@@ -611,8 +614,8 @@ describe('readState', () => {
         const { address } = await selectedNamespace()
         const outside = join(await temporaryDirectory(), 'outside.json')
         await mkdir(dirname(address.path), { recursive: true })
-        await writeFile(address.path, `${JSON.stringify(claimRecord(0, 1))}\n`)
-        await writeFile(outside, `${JSON.stringify(claimRecord(0, 99))}\n`)
+        await writeFile(address.path, `${JSON.stringify(lifecycleRecord(0, 1))}\n`)
+        await writeFile(outside, `${JSON.stringify(lifecycleRecord(0, 99))}\n`)
 
         let baselineAccesses = 0
         const countedAddress = {
@@ -716,7 +719,7 @@ describe('transactState', () => {
             await mkdir(quarantine, { mode: 0o700 })
             await writeFile(join(created, 'unexpected-entry'), 'occupied')
         }
-        const update = vi.fn(() => claimRecord(0, 1))
+        const update = vi.fn(() => lifecycleRecord(0, 1))
 
         const result = await transactState(namespace, address, { ownerId: holderA }, update)
 
@@ -727,16 +730,14 @@ describe('transactState', () => {
         expect(update).not.toHaveBeenCalled()
     })
 
-    it('rejects writes through legacy claim and lease addresses', async () => {
-        const { namespace } = await selectedNamespace()
-        for (const address of [namespace.paths.claim(stackId), namespace.paths.lease(stackId)]) {
-            const result = await transactState(namespace, address, { ownerId: holderA }, () => ({
-                ...claimRecord(0, 1),
-                kind: address.kind,
-            }))
-            expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
-            expect(await readState(address)).toMatchObject({ kind: 'missing' })
-        }
+    it('rejects a transaction address kind outside the current namespace', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const unsupported = { ...address, kind: 'unsupported' } as unknown as StateAddress
+
+        await expect(transactState(namespace, unsupported, { ownerId: holderA }, () => lifecycleRecord(0, 1)))
+            .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+        await expect(readState(unsupported))
+            .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
     })
 
     it('returns an exact typed abort without creating a missing record and releases the lock', async () => {
@@ -753,14 +754,14 @@ describe('transactState', () => {
         expect(aborted).toEqual({ aborted: true, value: reason })
         expect(await readState(address)).toEqual({ kind: 'missing', path: address.path })
 
-        const retry = await transactState(namespace, address, { ownerId: holderB }, () => claimRecord(0, 1))
+        const retry = await transactState(namespace, address, { ownerId: holderB }, () => lifecycleRecord(0, 1))
         expect(retry).toMatchObject({ kind: 'complete', value: { revision: 0, value: { count: 1 } } })
     })
 
     it('preserves existing bytes and revision when an update aborts', async () => {
         const { namespace, address } = await selectedNamespace()
         await mkdir(dirname(address.path), { recursive: true })
-        const prior = `${JSON.stringify(claimRecord(0, 1))}\n`
+        const prior = `${JSON.stringify(lifecycleRecord(0, 1))}\n`
         await writeFile(address.path, prior)
 
         const aborted = await transactState(
@@ -782,7 +783,7 @@ describe('transactState', () => {
         await expect(transactState(namespace, address, { ownerId: holderA }, () => { throw failure }))
             .rejects.toBe(failure)
         await expect(transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 },
-            () => claimRecord(0, 1))).resolves.toMatchObject({ kind: 'complete' })
+            () => lifecycleRecord(0, 1))).resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('rejects a structural lookalike of the private transaction abort', async () => {
@@ -836,11 +837,11 @@ describe('transactState', () => {
         const first = transactState(namespace, address, { ownerId: holderA }, async () => {
             entered()
             await mayPublish
-            return claimRecord(0, 1)
+            return lifecycleRecord(0, 1)
         })
         await lockHeld
         const second = transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 1_000 }, (current) => (
-            claimRecord((current?.revision ?? -1) + 1, 2)
+            lifecycleRecord((current?.revision ?? -1) + 1, 2)
         ))
         setTimeout(release, 30)
 
@@ -851,11 +852,11 @@ describe('transactState', () => {
     it('validates before publication and preserves the prior bytes on failure', async () => {
         const { namespace, address } = await selectedNamespace()
         await mkdir(dirname(address.path), { recursive: true })
-        const prior = `${JSON.stringify(claimRecord(0, 1))}\n`
+        const prior = `${JSON.stringify(lifecycleRecord(0, 1))}\n`
         await writeFile(address.path, prior)
 
         const result = await transactState(namespace, address, { ownerId: holderA }, () => ({
-            ...claimRecord(1, 2),
+            ...lifecycleRecord(1, 2),
             cockpitId: 'wrong-id' as CockpitId,
         }))
 
@@ -865,16 +866,16 @@ describe('transactState', () => {
 
     it('authenticates only the exact issued publication identity, address, revision, and value', async () => {
         const { namespace, address } = await selectedNamespace()
-        const result = await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 2))
+        const result = await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 2))
         if (result.kind !== 'complete') throw new Error('expected durable publication')
         const expectation = { publication: result, address }
 
-        expect(authenticateStatePublication(expectation)).toEqual({ status: 'complete', record: claimRecord(0, 2) })
+        expect(authenticateStatePublication(expectation)).toEqual({ status: 'complete', record: lifecycleRecord(0, 2) })
         expect(authenticateStatePublication({ ...expectation, publication: { ...result } })).toBeUndefined()
         expect(authenticateStatePublication({ ...expectation, address: { ...address, subjectId: `stack:${'c'.repeat(64)}` as StackId } })).toBeUndefined()
         const mutableRecord = result.value as { updatedAt: string }
         mutableRecord.updatedAt = '2026-09-07T11:59:59.999Z'
-        expect(authenticateStatePublication(expectation)).toEqual({ status: 'complete', record: claimRecord(0, 2) })
+        expect(authenticateStatePublication(expectation)).toEqual({ status: 'complete', record: lifecycleRecord(0, 2) })
 
         let reads = 0
         const accessor = { address }
@@ -892,7 +893,7 @@ describe('transactState', () => {
         })
         let result
         try {
-            result = await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 2))
+            result = await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 2))
         } finally {
             sync.restore()
         }
@@ -900,7 +901,7 @@ describe('transactState', () => {
         expect(result).toMatchObject({
             kind: 'indeterminate',
             code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            value: claimRecord(0, 2),
+            value: lifecycleRecord(0, 2),
         })
         expect(JSON.stringify(result)).toContain('read the record before deciding whether to retry')
         expect(await readState(address)).toMatchObject({
@@ -908,7 +909,7 @@ describe('transactState', () => {
             value: { revision: 0, value: { count: 2 } },
         })
         expect(authenticateStatePublication({ publication: result, address }))
-            .toEqual({ status: 'indeterminate', record: claimRecord(0, 2) })
+            .toEqual({ status: 'indeterminate', record: lifecycleRecord(0, 2) })
     })
 
     it('reports complete only after syncing the exact publication parent', async () => {
@@ -918,12 +919,12 @@ describe('transactState', () => {
         const sync = await interceptDirectorySync(publicationParent, () => undefined)
         let result
         try {
-            result = await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 2))
+            result = await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 2))
         } finally {
             sync.restore()
         }
 
-        expect(result).toMatchObject({ kind: 'complete', value: claimRecord(0, 2) })
+        expect(result).toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 2) })
         expect(sync.calls()).toBe(1)
     })
 
@@ -936,7 +937,7 @@ describe('transactState', () => {
         })
         let result
         try {
-            result = await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 6))
+            result = await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 6))
         } finally {
             sync.restore()
         }
@@ -971,7 +972,7 @@ describe('transactState', () => {
                 beforeRelease: async () => {
                     await writeFile(join(namespace.paths.stateLock, 'unexpected-entry'), 'occupied')
                 },
-            }, () => claimRecord(0, 9))
+            }, () => lifecycleRecord(0, 9))
         } finally {
             sync?.restore()
         }
@@ -984,14 +985,14 @@ describe('transactState', () => {
                 : 'state bytes were committed but the state lock could not be released safely',
             target: address.path,
             recovery: `${publicationRecovery}; inspect the quarantined lock holder and restore or reclaim it using positive owner evidence`,
-            value: claimRecord(0, 9),
+            value: lifecycleRecord(0, 9),
         })
         const quarantines = (await readdir(dirname(namespace.paths.stateLock)))
             .filter((name) => name.startsWith('.state.lock.release-'))
         expect(quarantines).toHaveLength(1)
         expect(await readFile(join(dirname(namespace.paths.stateLock), quarantines[0]!, 'owner.json'), 'utf8'))
             .toContain(holderA)
-        expect(await readState(address)).toMatchObject({ kind: 'complete', value: claimRecord(0, 9) })
+        expect(await readState(address)).toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 9) })
     })
 
     it.each([2, 3, 4, 5, 6])('preserves exact owner evidence when release directory sync %i fails', async (failedSync) => {
@@ -1020,14 +1021,14 @@ describe('transactState', () => {
                         await handle.close()
                     }
                 } } : {}),
-            }, () => claimRecord(0, failedSync))
+            }, () => lifecycleRecord(0, failedSync))
         } finally {
             sync.restore()
         }
 
         expect(result).toMatchObject({
             kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            value: claimRecord(0, failedSync),
+            value: lifecycleRecord(0, failedSync),
         })
         const locksRoot = dirname(namespace.paths.stateLock)
         const residues = (await readdir(locksRoot)).filter((name) => name.startsWith('.state.lock.release-'))
@@ -1046,7 +1047,7 @@ describe('transactState', () => {
             }
         }
         expect(evidence).toContainEqual(expect.stringContaining(holderA))
-        await expect(transactState(namespace, address, { ownerId: holderB }, () => claimRecord(1, 9)))
+        await expect(transactState(namespace, address, { ownerId: holderB }, () => lifecycleRecord(1, 9)))
             .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
     })
 
@@ -1108,10 +1109,10 @@ describe('transactState', () => {
             mutableOptions.ownerId = holderB
             mutableOptions.beforePublish = async () => { throw new Error('mutated publish hook') }
             mutableOptions.beforeRelease = async () => { throw new Error('mutated release hook') }
-            return claimRecord(0, 3)
+            return lifecycleRecord(0, 3)
         })
 
-        expect(result).toMatchObject({ kind: 'complete', value: claimRecord(0, 3) })
+        expect(result).toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 3) })
         expect({ beforePublishCalls, beforeReleaseCalls }).toEqual({ beforePublishCalls: 1, beforeReleaseCalls: 1 })
         expect(await readFile(sentinel, 'utf8')).toBe('outside-bytes')
         await expect(readFile(namespace.paths.stateLock, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
@@ -1122,7 +1123,7 @@ describe('transactState', () => {
         const hostile = { ...address }
         Object.defineProperty(hostile, 'path', { get: () => { throw new Error('hostile path getter') } })
 
-        await expect(transactState(namespace, hostile, { ownerId: holderA }, () => claimRecord(0, 1)))
+        await expect(transactState(namespace, hostile, { ownerId: holderA }, () => lifecycleRecord(0, 1)))
             .resolves.toMatchObject({
                 kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, target: 'state transaction input',
             })
@@ -1138,7 +1139,7 @@ describe('transactState', () => {
                 tombstone = join(dirname(namespace.paths.stateLock), `.state.lock.release-${owner.token}`)
                 await writeFile(`${tombstone}.owner.json`, 'occupied')
             },
-        }, () => claimRecord(0, 4))
+        }, () => lifecycleRecord(0, 4))
 
         expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
         expect(await readFile(join(tombstone, 'owner.json'), 'utf8')).toContain(holderA)
@@ -1153,7 +1154,7 @@ describe('transactState', () => {
         await mkdir(tombstone, { recursive: true })
         await writeFile(evidence, 'durable-owner-evidence')
 
-        expect(await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 1))).toMatchObject({
+        expect(await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 1))).toMatchObject({
             kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED, target: tombstone,
             recovery: expect.stringContaining(evidence),
         })
@@ -1162,7 +1163,7 @@ describe('transactState', () => {
 
     it.each([
         ['typed no-write abort', () => abortStateTransaction({ reason: 'no-write' as const })],
-        ['invalid proposed record', () => ({ ...claimRecord(0, 1), revision: 99 })],
+        ['invalid proposed record', () => ({ ...lifecycleRecord(0, 1), revision: 99 })],
     ])('keeps %s retry refusal semantics when lock release fails', async (_label, update) => {
         const { namespace, address } = await selectedNamespace()
         const result = await transactState(namespace, address, {
@@ -1183,7 +1184,7 @@ describe('transactState', () => {
         })
 
         await rm(address.path)
-        const oversized = claimRecord(0, 1)
+        const oversized = lifecycleRecord(0, 1)
         oversized.value = { payload: 'x'.repeat(1_048_576) }
         expect(await transactState(namespace, address, { ownerId: holderA }, () => oversized)).toMatchObject({
             kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
@@ -1194,7 +1195,7 @@ describe('transactState', () => {
     it('leaves the prior bytes intact when a process is interrupted after fsync but before rename', async () => {
         const { namespace, address } = await selectedNamespace()
         await mkdir(dirname(address.path), { recursive: true })
-        const prior = `${JSON.stringify(claimRecord(0, 1))}\n`
+        const prior = `${JSON.stringify(lifecycleRecord(0, 1))}\n`
         await writeFile(address.path, prior)
         const marker = join(dirname(address.path), 'publication-ready')
         const stateModule = new URL('./state.ts', import.meta.url).href
@@ -1252,7 +1253,7 @@ describe('transactState', () => {
                 await writeFile(temporaryPath, 'replacement-bytes')
                 throw new Error('injected publication failure')
             },
-        }, () => claimRecord(0, 5))
+        }, () => lifecycleRecord(0, 5))
 
         expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
         expect(await readFile(temporary, 'utf8')).toBe('replacement-bytes')
@@ -1272,7 +1273,7 @@ describe('transactState', () => {
             namespace,
             address,
             { ownerId: holderB, observeHolder },
-            () => claimRecord(0, 1),
+            () => lifecycleRecord(0, 1),
         )
 
         expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
@@ -1287,7 +1288,7 @@ describe('transactState', () => {
             namespace,
             address,
             { ownerId: 'consumer-label' as HolderId },
-            () => claimRecord(0, 1),
+            () => lifecycleRecord(0, 1),
         )
 
         expect(result).toMatchObject({
@@ -1325,7 +1326,7 @@ describe('transactState', () => {
                         }
                     }
                 },
-            }, () => (${JSON.stringify(claimRecord(0, 1))}))
+            }, () => (${JSON.stringify(lifecycleRecord(0, 1))}))
             process.stdout.write(JSON.stringify(result))
         `
         const childResult = executeFile(
@@ -1364,7 +1365,7 @@ describe('transactState', () => {
         expect(completed).toMatchObject({
             kind: 'indeterminate',
             code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            value: claimRecord(0, 1),
+            value: lifecycleRecord(0, 1),
         })
         const remainingLocks = await readdir(locksRoot)
         const ownerFiles = remainingLocks
@@ -1377,7 +1378,7 @@ describe('transactState', () => {
         let updateCalled = false
         const retry = await transactState(namespace, address, { ownerId: holderA }, (current) => {
             updateCalled = true
-            return claimRecord((current?.revision ?? -1) + 1, 2)
+            return lifecycleRecord((current?.revision ?? -1) + 1, 2)
         })
         expect(retry).toMatchObject({
             kind: 'refusal',
@@ -1412,7 +1413,7 @@ describe('transactState', () => {
                 await rename(join(tombstone, 'owner.json'), join(tombstone, 'verified-owner.json'))
                 await writeFile(join(tombstone, 'owner.json'), replacementOwner)
             },
-        }, () => claimRecord(0, 7))
+        }, () => lifecycleRecord(0, 7))
 
         expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
         expect(await readFile(join(tombstone, 'owner.json'), 'utf8')).toBe(replacementOwner)
@@ -1448,7 +1449,7 @@ describe('transactState', () => {
                     beforeLockMetadata: async (operation) => {
                         if (operation === failedOperation) throw new Error(`injected ${operation} failure`)
                     },
-                }, () => claimRecord(0, 8))
+                }, () => lifecycleRecord(0, 8))
             } finally {
                 sync?.restore()
             }
@@ -1472,11 +1473,11 @@ describe('transactState', () => {
 describe('state path permissions', () => {
     it.each(['directory', 'record'] as const)('refuses read and publication after %s permissions become unsafe', async (target) => {
         const { namespace, address } = await selectedNamespace()
-        expect(await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 7))).toMatchObject({ kind: 'complete' })
+        expect(await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 7))).toMatchObject({ kind: 'complete' })
         const bytes = await readFile(address.path)
         await chmod(target === 'directory' ? namespace.cockpitRoot : address.path, target === 'directory' ? 0o770 : 0o666)
         expect(await readState(address)).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
-        const update = vi.fn(() => claimRecord(1, 99))
+        const update = vi.fn(() => lifecycleRecord(1, 99))
         expect(await transactState(namespace, address, { ownerId: holderA }, update)).toMatchObject({ kind: 'refusal' })
         expect(update).not.toHaveBeenCalled()
         expect(await readFile(address.path)).toEqual(bytes)
@@ -1486,7 +1487,7 @@ describe('state path permissions', () => {
         const { namespace, address } = await selectedNamespace()
         await mkdir(dirname(namespace.paths.stateLock), { recursive: true })
         await chmod(dirname(namespace.paths.stateLock), 0o777)
-        const update = vi.fn(() => claimRecord(0, 7))
+        const update = vi.fn(() => lifecycleRecord(0, 7))
         expect(await transactState(namespace, address, { ownerId: holderA }, update)).toMatchObject({ kind: 'refusal' })
         expect(update).not.toHaveBeenCalled()
         expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
@@ -1497,12 +1498,12 @@ describe('state path permissions', () => {
 describe('state permission revalidation', () => {
     it('refuses a record directory made unsafe immediately before commit', async () => {
         const { namespace, address } = await selectedNamespace()
-        expect(await transactState(namespace, address, { ownerId: holderA }, () => claimRecord(0, 7))).toMatchObject({ kind: 'complete' })
+        expect(await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 7))).toMatchObject({ kind: 'complete' })
         const bytes = await readFile(address.path)
         expect(await transactState(namespace, address, {
             ownerId: holderA,
             beforeCommit: () => { chmodSync(dirname(address.path), 0o777); return undefined },
-        }, () => claimRecord(1, 99))).toMatchObject({ kind: 'refusal' })
+        }, () => lifecycleRecord(1, 99))).toMatchObject({ kind: 'refusal' })
         expect(await readFile(address.path)).toEqual(bytes)
     })
 
@@ -1532,7 +1533,7 @@ describe('state release permissions', () => {
                 ownerBytes = await readFile(ownerPath)
                 await chmod(target === 'root' ? dirname(namespace.paths.stateLock) : target === 'lock' ? namespace.paths.stateLock : ownerPath, target === 'owner' ? 0o666 : 0o777)
             },
-        }, () => claimRecord(0, 7))
+        }, () => lifecycleRecord(0, 7))
         expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
         expect(await readdir(dirname(namespace.paths.stateLock))).toEqual(['state.lock'])
         expect(await readFile(ownerPath)).toEqual(ownerBytes)
@@ -1546,7 +1547,7 @@ describe('state release permissions', () => {
             ownerId: holderA,
             beforeRelease: async () => { ownerBytes = await readFile(join(namespace.paths.stateLock, 'owner.json')) },
             beforeLockMetadata: async (stage) => { if (stage === checkpoint) await chmod(releaseRoot, 0o777) },
-        }, () => claimRecord(0, 7))
+        }, () => lifecycleRecord(0, 7))
         expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
         const entries = await readdir(releaseRoot)
         const evidencePaths = entries.flatMap((entry) => entry.endsWith('.owner.json') ? [join(releaseRoot, entry)] : [join(releaseRoot, entry, 'owner.json')])

@@ -294,18 +294,18 @@ describe('whole-family port leases', () => {
         })
     })
 
-    it('refuses allocation while a legacy lease authority exists', async () => {
+    it('ignores unrelated record directories during allocation', async () => {
         const state = await namespace()
-        const address = state.paths.lease(stackA)
-        await mkdir(dirname(address.path), { recursive: true })
-        await writeFile(address.path, JSON.stringify({
+        const path = join(state.cockpitRoot, 'records', 'leases', `${stackA}.json`)
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, JSON.stringify({
             format: 'cockpit-state/v1', kind: 'lease', cockpitId, subjectId: stackA,
             revision: 0, updatedAt: now, value: { offset: 0, ports: { WEB: 3000 }, released: false },
         }))
         expect(await leasePortFamily({
             namespace: state, stackId: stackB, holderId: holderB, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
+        })).toMatchObject({ kind: 'complete', lease: { stackId: stackB } })
     })
 
     it('snapshots mutable configuration before observation and persists one coherent declaration', async () => {
@@ -717,8 +717,8 @@ describe('whole-family port leases', () => {
             kind: 'complete',
             value: { value: { holders: [{ holderId: holderA }], lease: { released: false } } },
         })
-        expect(await readState(state.paths.claim(stackA))).toMatchObject({ kind: 'missing' })
-        expect(await readState(state.paths.lease(stackA))).toMatchObject({ kind: 'missing' })
+        await expect(lstat(join(state.cockpitRoot, 'records', 'claims', `${stackA}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(lstat(join(state.cockpitRoot, 'records', 'leases', `${stackA}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('publishes neither holder nor lease when initial allocation refuses', async () => {

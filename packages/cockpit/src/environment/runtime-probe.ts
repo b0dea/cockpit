@@ -4,21 +4,21 @@ import { arch, platform } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
+import { ENVIRONMENT_CODES, type ExecutionStep, type StackId } from './contract.js'
 import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { runDown, runLogs, runReset, runSleep, runUp } from './application.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
-import { readActiveStackInventory } from './claims.js'
-import { readState } from './state.js'
+import { decodeCoordinationRecord, readActiveStackInventory, type ActiveStackInventoryResult } from './claims.js'
+import { readState, type StateRecord, type StateResult } from './state.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import { issueRuntimeMeasurementProbeAuthority, observeDockerRuntime } from './runtime.js'
 
 export const mechanism = {
     id: 'runtime-capability-probe',
     module: 'packages/cockpit/src/environment/runtime-probe.ts',
-    exports: ['probeRuntimeSupport'],
+    exports: ['currentCoordinationCleanupVerdict', 'probeRuntimeSupport'],
 } as const
 
 export interface RuntimeProbeRequest {
@@ -304,6 +304,30 @@ function stateSnapshot(value: unknown): string {
     return JSON.stringify(value)
 }
 
+function currentLeaseSnapshot(result: StateResult<StateRecord>, stackId: StackId): string | undefined {
+    if (result.kind !== 'missing' && result.kind !== 'complete') return undefined
+    const coordination = decodeCoordinationRecord(result.kind === 'complete' ? result.value : null, stackId)
+    if (!coordination) return undefined
+    return stateSnapshot(coordination.lease === null || coordination.lease.released ? null : coordination.lease)
+}
+
+export function currentCoordinationCleanupVerdict(
+    beforeClaims: ActiveStackInventoryResult,
+    afterClaims: ActiveStackInventoryResult,
+    beforeLease: StateResult<StateRecord>,
+    afterLease: StateResult<StateRecord>,
+    stackId: StackId,
+): Readonly<{ claimsEqual: boolean; leasesEqual: boolean }> {
+    const beforeSnapshot = currentLeaseSnapshot(beforeLease, stackId)
+    const afterSnapshot = currentLeaseSnapshot(afterLease, stackId)
+    const inactive = stateSnapshot(null)
+    return Object.freeze({
+        claimsEqual: beforeClaims.kind === 'complete' && afterClaims.kind === 'complete'
+            && stateSnapshot(beforeClaims.value) === stateSnapshot(afterClaims.value),
+        leasesEqual: beforeSnapshot === inactive && afterSnapshot === inactive,
+    })
+}
+
 function inventoriesEqual(left: Readonly<Record<string, readonly string[]>>, right: Readonly<Record<string, readonly string[]>>): boolean {
     return ['containers', 'volumes', 'networks', 'images'].every((kind) => JSON.stringify(left[kind]) === JSON.stringify(right[kind]))
 }
@@ -388,8 +412,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     let changedResourceKinds: readonly string[] = Object.freeze([])
     let ownedSurvivors: readonly string[] = Object.freeze([])
     let failureReason: string | undefined
-    let preClaims = ''
-    let preLease = ''
+    let preClaims: ActiveStackInventoryResult | undefined
+    let preLease: StateResult<StateRecord> | undefined
     let lifecycleEnvironment: Readonly<Record<string, string>> | undefined
     let dockerContext = ''
     let ownerCleanup: (() => Promise<void>) | undefined
@@ -493,8 +517,8 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
                 : 'the production lifecycle owner could not authenticate the disposable checkout')
         }
         const context = loadedContext.result
-        preClaims = stateSnapshot(await readActiveStackInventory(context.namespace))
-        preLease = stateSnapshot(await readState(context.namespace.paths.lease(context.stackId)))
+        preClaims = await readActiveStackInventory(context.namespace)
+        preLease = await readState(context.namespace.paths.coordination(context.stackId))
         // The candidate carries the same ownership set generated stacks carry. Reclaim admits a
         // resource as current only with stack, config and owner labels, and reset admits a
         // data-bearing volume only with a generation; without them the probe measured a reset
@@ -526,10 +550,13 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             if (left !== undefined && left.volumes.length > 0) await exactCleanup(cleanupExecute.run, { ...left, containers: [], networks: [] })
             const [postClaims, postLease] = await Promise.all([
                 readActiveStackInventory(context.namespace),
-                readState(context.namespace.paths.lease(context.stackId)),
+                readState(context.namespace.paths.coordination(context.stackId)),
             ])
-            claimsEqual = preClaims === stateSnapshot(postClaims)
-            leasesEqual = preLease === stateSnapshot(postLease)
+            if (preClaims !== undefined && preLease !== undefined) {
+                ({ claimsEqual, leasesEqual } = currentCoordinationCleanupVerdict(
+                    preClaims, postClaims, preLease, postLease, context.stackId,
+                ))
+            }
         }
         const labelLines = Object.entries(labels).map(([name, value]) => `      ${JSON.stringify(name)}: ${JSON.stringify(value)}`)
         candidateSource = [

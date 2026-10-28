@@ -1045,9 +1045,10 @@ describe('active stack inventory', () => {
 
     it('reads only the current coordination store', async () => {
         const state = await namespace()
-        for (const address of [state.paths.claim(stackId), state.paths.lease(stackId)]) {
-            await mkdir(dirname(address.path), { recursive: true })
-            await writeFile(address.path, 'superseded bytes')
+        for (const directory of ['claims', 'leases']) {
+            const path = join(state.cockpitRoot, 'records', directory, `${stackId}.json`)
+            await mkdir(dirname(path), { recursive: true })
+            await writeFile(path, 'unrelated bytes')
         }
 
         await expect(readActiveStackInventory(state)).resolves.toEqual({ kind: 'complete', value: [] })

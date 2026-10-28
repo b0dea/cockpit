@@ -7,7 +7,8 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { parseNpmPackJson } from '../test-support/npm-pack-json.js'
-import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
+import { currentCoordinationCleanupVerdict, probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
+import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
 
 const packageRoot = new URL('../../', import.meta.url)
 const repositoryRoot = realpathSync(new URL('../../../../', import.meta.url))
@@ -190,6 +191,68 @@ function persistEvidence(verdict: RuntimeProbeVerdict): void {
 }
 
 describe('installed container-runtime capability promotion', () => {
+    it.each([
+        ['ordinary released cleanup', 'complete', 'complete', 'missing', 'released', true, true],
+        ['explicit empty lease cleanup', 'complete', 'complete', 'empty', 'empty', true, true],
+        ['active lease left behind', 'complete', 'complete', 'missing', 'active', true, false],
+        ['pre-existing active lease', 'complete', 'complete', 'active', 'active', true, false],
+        ['malformed coordination', 'complete', 'complete', 'missing', 'malformed', true, false],
+        ['indeterminate coordination observation', 'complete', 'complete', 'missing', 'indeterminate', true, false],
+        ['refused coordination observation', 'complete', 'complete', 'missing', 'refusal', true, false],
+        ['changed complete claim inventory', 'complete', 'changed', 'missing', 'missing', false, true],
+        ['matching inventory refusals', 'refusal', 'refusal', 'missing', 'missing', false, true],
+    ] as const)('%s has a truthful current coordination verdict', (
+        _label, beforeClaimsKind, afterClaimsKind, beforeLeaseKind, afterLeaseKind, claimsEqual, leasesEqual,
+    ) => {
+        const stackId = `stack:${'b'.repeat(64)}` as StackId
+        const cockpitId = `cockpit:probe:${'a'.repeat(64)}` as CockpitId
+        const holderId = `holder:${'c'.repeat(64)}:session` as HolderId
+        const checkoutId = `checkout:${'d'.repeat(64)}` as CheckoutId
+        const activeLease = {
+            offset: 0, ports: { PROBE_PORT: 40_000 }, released: false,
+            declaration: { step: 1, count: 1, bases: { PROBE_PORT: 40_000 } },
+        }
+        type InventoryRead = Parameters<typeof currentCoordinationCleanupVerdict>[0]
+        type ActiveCoordination = Extract<InventoryRead, { readonly kind: 'complete' }>['value'][number]['record']
+        const activeCoordination = {
+            holders: [{ holderId, checkoutId, claimedAt: '2026-09-07T12:00:00.000Z' }],
+            lease: activeLease, lastReleasedHolder: null, drain: null, restore: null,
+        } satisfies ActiveCoordination
+        const inventories: Record<'complete' | 'changed' | 'refusal', InventoryRead> = {
+            complete: { kind: 'complete', value: [] },
+            changed: { kind: 'complete', value: [{ stackId, record: activeCoordination }] },
+            refusal: { kind: 'refusal', diagnostics: [{ severity: 'error', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+                message: 'synthetic malformed inventory', target: 'synthetic' }] },
+        }
+        type CoordinationRead = Parameters<typeof currentCoordinationCleanupVerdict>[2]
+        type CompleteCoordination = Extract<CoordinationRead, { readonly kind: 'complete' }>['value']
+        const emptyRecord = { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
+            subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z',
+            value: { holders: [], lease: null, lastReleasedHolder: null, drain: null, restore: null } } satisfies CompleteCoordination
+        const states: Record<'missing' | 'empty' | 'released' | 'active' | 'malformed' | 'indeterminate' | 'refusal', CoordinationRead> = {
+            missing: { kind: 'missing', path: 'synthetic' },
+            empty: { kind: 'complete', value: emptyRecord },
+            released: { kind: 'complete', value: { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
+                subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z',
+                value: { holders: [], lease: { ...activeLease, released: true }, lastReleasedHolder: null, drain: null, restore: null } } },
+            active: { kind: 'complete', value: { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
+                subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z',
+                value: activeCoordination } },
+            malformed: { kind: 'complete', value: { format: 'cockpit-state/v1', kind: 'coordination', cockpitId,
+                subjectId: stackId, revision: 1, updatedAt: '2026-09-07T12:00:00.000Z', value: {} } },
+            indeterminate: { kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
+                message: 'synthetic durability uncertainty', target: 'synthetic',
+                recovery: 're-read the current coordination record', value: emptyRecord },
+            refusal: { kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+                message: 'synthetic malformed state', target: 'synthetic' },
+        }
+
+        expect(currentCoordinationCleanupVerdict(
+            inventories[beforeClaimsKind], inventories[afterClaimsKind],
+            states[beforeLeaseKind], states[afterLeaseKind], stackId,
+        )).toEqual({ claimsEqual, leasesEqual })
+    })
+
     it('does not promote an executor-authenticated parser-only four-step run', async () => {
         const verdict = await probeRuntimeSupport({
             executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'staged' },
