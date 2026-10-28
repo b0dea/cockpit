@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 import { parseComparisonFixture } from './contract.js'
 import { runComparison, type ComparisonSubjectProjection } from './runner.js'
 
@@ -148,10 +149,6 @@ describe('comparison runner', () => {
         await run('git', ['add', '.'], { cwd: selected })
         await run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture'], { cwd: selected })
         const legacyRevision = (await run('git', ['rev-parse', 'HEAD'], { cwd: selected })).stdout.trim()
-        await writeFile(join(selected, 'comparison-baseline.txt'), 'current comparison baseline\n')
-        await run('git', ['add', 'comparison-baseline.txt'], { cwd: selected })
-        await run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'comparison baseline'], { cwd: selected })
-        const revision = (await run('git', ['rev-parse', 'HEAD'], { cwd: selected })).stdout.trim()
         const runtime = await packagedComparisonRuntime(cockpitRevision)
         const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
         const material = [
@@ -196,6 +193,15 @@ describe('comparison runner', () => {
         const source = { path: join(selected, 'cockpit.toml'), byteLength: selectedConfig.byteLength, sha256: hash(selectedConfig) }
         const expectedCheckout = runtime.identity.checkoutId({ checkoutPath: selected })
         const expectedStack = observedPostState.result.stack
+        await publishComposeOwnership(selected, {
+            stackId: expectedStack,
+            cockpitId: runtime.identity.cockpitId({ name: 'selected', mainCheckoutPath: active }),
+            source,
+        })
+        await writeFile(join(selected, 'comparison-baseline.txt'), 'current comparison baseline\n')
+        await run('git', ['add', 'comparison-baseline.txt', 'compose.cockpit.yml'], { cwd: selected })
+        await run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'comparison baseline'], { cwd: selected })
+        const revision = (await run('git', ['rev-parse', 'HEAD'], { cwd: selected })).stdout.trim()
         await writeFile(join(selected, 'topology.json'), JSON.stringify({ services: { api: {
             labels: { 'dev.b0dea.cockpit.stack-id': expectedStack, 'dev.b0dea.cockpit.config-sha256': source.sha256 },
             volumes: [{ type: 'bind', source: join(active, 'siblings/api'), target: '/api' }],
@@ -242,12 +248,14 @@ describe('comparison runner', () => {
                 }))),
                 decideReset: async () => 'approve',
             })
+            expect(executableChanged).toBe(true)
             expect(result).toMatchObject({
                 kind: 'refusal', retainCheckout: true, reason: 'comparison subject identity changed during execution',
             })
             return
         }
         if (scenario === 'final-fifo') {
+            let materialReplaced = false
             const result = await runtime.runner.runComparison(accepted.fixture, {
                 refresh,
                 withLifecycle: <T>(use: (value: any) => Promise<T>) => withLifecycle(bounded => use(Object.freeze({
@@ -257,11 +265,13 @@ describe('comparison runner', () => {
                         const path = join(selected, registryPath)
                         await rm(path)
                         await run('mkfifo', [path])
+                        materialReplaced = true
                         return outcome
                     },
                 }))),
                 decideReset: async () => 'approve',
             })
+            expect(materialReplaced).toBe(true)
             expect(result).toMatchObject({
                 kind: 'refusal', retainCheckout: true, reason: 'comparison subject identity changed during execution',
             })
