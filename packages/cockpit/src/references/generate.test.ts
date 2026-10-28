@@ -111,7 +111,7 @@ async function fixture() {
         oid: createHash('sha1').update(`blob ${Buffer.byteLength(bytes)}\0`).update(bytes).digest('hex') }))
     const script = `#!${process.execPath}\nconst args=process.argv.slice(2);const objects=${JSON.stringify(objects)};` +
         `if(args[0]==='rev-parse')process.stdout.write(args[1]==='--show-object-format'?'sha1\\n':'${'a'.repeat(40)}\\n');` +
-        `else if(args[0]==='ls-files')process.stdout.write(objects.map(row=>'100644 '+row.oid+' 0\\t'+row.path+'\\0').join(''));` +
+        `else if(args[0]==='ls-tree')process.stdout.write(objects.map(row=>'100644 blob '+row.oid+'\\t'+row.path+'\\0').join(''));` +
         `else if(args[0]==='cat-file'){const row=objects.find(row=>row.oid===args[2]);if(!row)process.exitCode=1;else process.stdout.write(row.bytes);}` +
         `else process.exitCode=1;\n`
     await writeFile(join(root, 'git'), script)
