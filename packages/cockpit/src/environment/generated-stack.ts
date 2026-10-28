@@ -285,6 +285,7 @@ export function inspectGeneratedEnvironment(input: {
 
 
 const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
+const GENERATED_RUNTIME_IDENTITY_ENV = new Set(['COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
 
 function generatedObservationStep(
     observation: GeneratedObservationPlan,
@@ -296,8 +297,9 @@ function generatedObservationStep(
         || !/^[a-z0-9][a-z0-9_-]*$/.test(runtime.projectName)
         || runtime.composeFiles.length === 0
         || runtime.composeFiles.some(({ path, sha256: digest }) => !isAbsolute(path) || normalize(path) !== path || !SHA256.test(digest))
-        || Object.entries(runtime.publicEnv).some(([name, value]) => !SAFE_RUNTIME_ENV.has(name)
-            && !declaredPortVariables.has(name) || typeof value !== 'string' || value.includes('\0'))
+        || Object.entries(runtime.publicEnv).some(([name, value]) => (!SAFE_RUNTIME_ENV.has(name)
+            && !GENERATED_RUNTIME_IDENTITY_ENV.has(name) && !declaredPortVariables.has(name))
+            || typeof value !== 'string' || value.includes('\0'))
         || !Number.isSafeInteger(runtime.stdoutLimitBytes) || runtime.stdoutLimitBytes < 0 || runtime.stdoutLimitBytes > 16_777_216
         || !Number.isSafeInteger(runtime.stderrLimitBytes) || runtime.stderrLimitBytes < 0 || runtime.stderrLimitBytes > 16_777_216) return undefined
     let argv: readonly [string, ...string[]]
@@ -506,10 +508,13 @@ export function projectGeneratedRuntimeAuthority(input: {
     const declaredPortVariables = new Set(declaration.services.flatMap((service) => service.ports.map(({ host_variable }) => host_variable)))
     const executionEnvironment = projectRuntimeExecutionEnvironment(current)
     if (!executionEnvironment || !isDeepStrictEqual(runtime.publicEnv, executionEnvironment)
+        || runtime.publicEnv.COCKPIT_OWNER_ID !== authority.cockpitId
+        || runtime.publicEnv.COCKPIT_STACK_ID !== authority.stackId
         || [...declaredPortVariables].some((name) => !Object.hasOwn(runtime.publicEnv, name)
             || !/^\d+$/.test(runtime.publicEnv[name]!) || Number(runtime.publicEnv[name]) < 1 || Number(runtime.publicEnv[name]) > 65_535)
         || Object.entries(runtime.publicEnv).some(([name, value]) => {
             if (SAFE_RUNTIME_ENV.has(name)) return false
+            if (GENERATED_RUNTIME_IDENTITY_ENV.has(name)) return false
             return !declaredPortVariables.has(name) || !/^\d+$/.test(value)
                 || Number(value) < 1 || Number(value) > 65_535
         })) return undefined

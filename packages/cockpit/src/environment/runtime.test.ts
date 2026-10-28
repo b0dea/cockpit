@@ -1715,7 +1715,7 @@ fi
 
             // A compose-first stack's own file reads the leased variable and its sibling directory
             // variable, with no generated authority.
-            const ownCompose = 'services:\n  app:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n'
+            const ownCompose = 'services:\n  app:\n    image: busybox\n    ports: ["${APP_HOST_PORT:-4100}:3000"]\n    volumes: ["${APP_DIR}:/app"]\n    labels: ["owner=${COCKPIT_OWNER_ID:?owner required}", "stack=${COCKPIT_STACK_ID:?stack required}"]\n'
             const ownPath = join(directory, 'compose.own.yml')
             writeFileSync(ownPath, ownCompose)
             const ownFile = { reference: 'compose.own.yml', canonicalPath: ownPath, source: ownCompose, sha256: sha(ownCompose) }

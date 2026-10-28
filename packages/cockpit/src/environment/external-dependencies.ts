@@ -366,6 +366,7 @@ export function planExternalDependency(input: {
         return unmeasured('EXTERNAL_DEPENDENCY_EXECUTION_UNAVAILABLE', 'generated port variables must not control host processes', dependency)
     }
     const allowedRuntimeEnv = generated ? new Set([...SAFE_RUNTIME_ENV,
+        'COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID',
         ...generated.declaration.services.flatMap(({ ports }) => ports.map(({ host_variable }) => host_variable))]) : SAFE_RUNTIME_ENV
     const steps: ExternalDependencyStep[] = []
     for (const item of orderedOperations(declaration, issuedAt, purpose)) {

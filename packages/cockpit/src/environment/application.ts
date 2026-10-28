@@ -3023,8 +3023,7 @@ async function executeUpRound(
             return outcome
         }, refused) ?? unavailable(), refused) ?? unavailable()
     }
-    return await adapters.withRuntimeReadiness(context, async (runtime) => await adapters.withLifecycleStage(context, async (stage) =>
-        await adapters.withAcquiredPorts(context, async (ports) => {
+    return await adapters.withLifecycleStage(context, async (stage) => await adapters.withAcquiredPorts(context, async (ports) => {
             if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) {
                 return { kind: 'complete' as const, result: lifecycleRefusal(
                     ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
@@ -3032,10 +3031,11 @@ async function executeUpRound(
                     context.stackId,
                 ) }
             }
-            const outcome = await operate(runtime, stage, ports)
+            const outcome = await adapters.withRuntimeReadiness(context,
+                (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
             rememberAcquisition(ports.leaseResult)
             return outcome
-        }, refused) ?? unavailable(), refused) ?? unavailable(), undefined, refused) ?? unavailable()
+        }, refused) ?? unavailable(), refused) ?? unavailable()
 }
 
 export async function runUp(

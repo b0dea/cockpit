@@ -319,8 +319,8 @@ const UNRESOLVED_TOKEN = /(?<!\$)\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)|\{\{[^}]
 function composeTokensResolved(source: string, portNames: readonly string[]): boolean {
     const tokens = source.match(new RegExp(UNRESOLVED_TOKEN.source, 'g')) ?? []
     return tokens.every((token) => {
-        const match = token.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}$/)
-        return match !== null && (match[2] !== undefined || portNames.includes(match[1]!))
+        const match = token.match(/^\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])[^}]*)?\}$/)
+        return match !== null && (match[2]?.endsWith('-') === true || portNames.includes(match[1]!))
     })
 }
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]*$/

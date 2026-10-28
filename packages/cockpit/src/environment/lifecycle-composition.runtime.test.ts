@@ -643,7 +643,7 @@ describe('production lifecycle adapter composition', () => {
 
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `generated environment identity changed since lifecycle progress was recorded; run \`cockpit down --config ${JSON.stringify(loaded.result.source.path)}\` to remove the old stack, then \`cockpit up --config ${JSON.stringify(loaded.result.source.path)}\``,
+            message: `generated environment identity changed since lifecycle progress was recorded; run \`cockpit down --config ${loaded.result.source.path}\` to remove the old stack, then \`cockpit up --config ${loaded.result.source.path}\``,
         }] })
     })
 })
