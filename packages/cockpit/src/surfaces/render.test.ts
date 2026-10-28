@@ -43,7 +43,9 @@ function input() {
 
 describe('surface rendering', () => {
     it('publishes shared instructions once and makes Claude import the common guide', () => {
-        const result = renderSurfaceSet({ ...input(), instructions: '# Working here\nUse the cockpit.\n' })
+        const value = input()
+        value.generated.files.push(file('claudecode', 'CLAUDE.md', 'base instructions\n'))
+        const result = renderSurfaceSet({ ...value, instructions: '# Working here\nUse the cockpit.\n' })
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind !== 'complete') return
         expect(result.entries.find(entry => entry.path === 'AGENTS.md')).toMatchObject({

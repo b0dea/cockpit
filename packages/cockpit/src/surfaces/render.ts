@@ -634,7 +634,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
             ownership: 'whole-file', bytes, sha256: digest(bytes) })
     }
     for (const [path, contributions] of markdown) {
-        const generatorRows = captured.generated.files.filter(row => object(row) && row.path === path)
+        const generatorRows = path === 'CLAUDE.md' ? [] : captured.generated.files.filter(row => object(row) && row.path === path)
         if (generatorRows.length > 1 && new Set(generatorRows.map(row => object(row) ? row.bytes : undefined)).size !== 1) {
             return refuse('SURFACE_PATH_CONFLICT', 'shared generator instruction bases diverge', path)
         }
