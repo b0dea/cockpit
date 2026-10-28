@@ -156,7 +156,7 @@ function observationIssuedAt(value: unknown): number | undefined {
 }
 
 const CHECKOUT_ID = /^checkout:[a-f0-9]{64}$/
-const HOLDER_ID = /^holder:[a-f0-9]{64}:(?:compat|session)$/
+const HOLDER_ID = /^holder:[a-f0-9]{64}:session$/
 const SHA256 = /^[a-f0-9]{64}$/
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const VOLUME = /^[a-z0-9][a-z0-9_.-]*$/

@@ -716,7 +716,7 @@ export function snapshotLifecyclePlan(value: unknown): LifecyclePlan | undefined
                 && ownership !== null && typeof ownership === 'object'
                 && !Array.isArray(ownership) && exactKeys(ownership, ['stackId', 'holderId', 'recordRevision', 'change'])
                 && typeof ownership.stackId === 'string' && /^stack:[a-f0-9]{64}$/.test(ownership.stackId)
-                && typeof ownership.holderId === 'string' && /^holder:[a-f0-9]{64}:(?:compat|session)$/.test(ownership.holderId)
+                && typeof ownership.holderId === 'string' && /^holder:[a-f0-9]{64}:session$/.test(ownership.holderId)
                 && Number.isSafeInteger(ownership.recordRevision) && ownership.recordRevision >= 0 && ownership.change === 'acquired'
         })) return undefined
     const boundary = plan.resumeBoundary

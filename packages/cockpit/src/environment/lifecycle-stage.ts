@@ -54,7 +54,7 @@ export const observationDeclarations = Object.freeze([{
 
 const HistoryValue = z.object({ status: z.enum(['started', 'seeded']) }).strict()
 const STACK_ID = /^stack:[a-f0-9]{64}$/
-const HOLDER_ID = /^holder:[a-f0-9]{64}:(?:compat|session)$/
+const HOLDER_ID = /^holder:[a-f0-9]{64}:session$/
 const AUTHORITY_LIFETIME_MS = 30_000
 const issuedObservations = new WeakMap<object, number>()
 const issuedAuthorities = new WeakMap<object, LifecycleAuthorityBinding>()

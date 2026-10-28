@@ -155,7 +155,7 @@ const issuedOutcomeProjections = new WeakMap<object, DataModeOutcomeEnvelope>()
 const issuedDataModeObservations = new WeakMap<object, number>()
 const sha256Identity = /^[a-f0-9]{64}$/
 const stackIdentity = /^stack:[a-f0-9]{64}$/
-const holderIdentity = /^holder:[a-f0-9]{64}:(?:compat|session)$/
+const holderIdentity = /^holder:[a-f0-9]{64}:session$/
 const canonicalExecutionEnvironment = Object.freeze({})
 
 function dataModeObservationIssuedAt(value: unknown): number | undefined {

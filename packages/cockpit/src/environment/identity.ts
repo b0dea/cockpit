@@ -93,13 +93,10 @@ export function stackId(input: {
 export function holderId(input: {
     readonly stackId: StackId
     readonly checkoutId: CheckoutId
-    readonly sessionId?: string
+    readonly sessionId: string
 }): HolderId {
     const stack = closedIdentity(input?.stackId, STACK_ID, 'stackId')
     const checkout = closedIdentity(input?.checkoutId, CHECKOUT_ID, 'checkoutId')
-    if (input.sessionId === undefined) {
-        return `holder:${digest([stack, checkout, 'compat'])}:compat` as HolderId
-    }
     if (typeof input.sessionId !== 'string' || input.sessionId.length === 0 || input.sessionId.includes('\0')) {
         throw new TypeError('identity: sessionId must be a non-empty string without NUL bytes')
     }

@@ -142,7 +142,7 @@ export async function observePortFamily(input: {
 }
 
 const stackIdentity = /^stack:[a-f0-9]{64}$/
-const holderIdentity = /^holder:[a-f0-9]{64}:(?:compat|session)$/
+const holderIdentity = /^holder:[a-f0-9]{64}:session$/
 const portKey = /^[A-Z][A-Z0-9_]*$/
 const DerivativeInputSchema = z.object({
     lease: z.object({

@@ -101,7 +101,7 @@ export async function observeClaimState(input: { readonly namespace: StateNamesp
     })
 }
 
-const holderIdentity = /^holder:[a-f0-9]{64}:(?:compat|session)$/
+const holderIdentity = /^holder:[a-f0-9]{64}:session$/
 const checkoutIdentity = /^checkout:[a-f0-9]{64}$/
 const stackIdentity = /^stack:[a-f0-9]{64}$/
 const sha256Identity = /^[a-f0-9]{64}$/

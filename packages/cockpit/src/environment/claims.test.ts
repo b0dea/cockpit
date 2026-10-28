@@ -120,7 +120,8 @@ const checkoutA = `checkout:${'c'.repeat(64)}` as CheckoutId
 const checkoutB = `checkout:${'d'.repeat(64)}` as CheckoutId
 const holderA = `holder:${'e'.repeat(64)}:session` as HolderId
 const holderB = `holder:${'f'.repeat(64)}:session` as HolderId
-const compatibilityHolder = `holder:${'1'.repeat(64)}:compat` as HolderId
+const holderC = `holder:${'1'.repeat(64)}:session` as HolderId
+const obsoleteCompatibilityHolder = `holder:${'2'.repeat(64)}:compat` as HolderId
 const roots: string[] = []
 
 afterEach(async () => {
@@ -228,7 +229,7 @@ function after(instant: string, millis: number): string {
 async function seedCoordination(
     state: StateNamespace,
     holders: Parameters<typeof claimRecord>[0] = [{
-        holderId: compatibilityHolder,
+        holderId: holderC,
         checkoutId: checkoutA,
         claimedAt: '2026-09-07T11:59:00.000Z',
     }],
@@ -2949,7 +2950,7 @@ describe('session-aware claims', () => {
         })
     })
 
-    it('keeps session and compatibility holders distinct and acquisition idempotent', async () => {
+    it('keeps distinct session holders and acquisition idempotent', async () => {
         const state = await namespace()
         await seedCoordination(state)
 
@@ -2967,10 +2968,10 @@ describe('session-aware claims', () => {
             now: '2036-09-07T12:00:00.000Z',
         })
         const afterDuplicate = await readFile(state.paths.coordination(stackId).path)
-        const compatibility = await acquireClaim({
+        const existingSession = await acquireClaim({
             namespace: state,
             stackId,
-            holder: { holderId: compatibilityHolder, checkoutId: checkoutA },
+            holder: { holderId: holderC, checkoutId: checkoutA },
             now: '2026-09-07T12:00:01.000Z',
         })
 
@@ -2983,19 +2984,31 @@ describe('session-aware claims', () => {
             now: '2036-09-07T12:00:00Z',
         })).toMatchObject({ kind: 'refusal' })
         expect(await readFile(state.paths.coordination(stackId).path)).toEqual(beforeDuplicate)
-        expect(compatibility).toMatchObject({ kind: 'complete', change: 'unchanged' })
+        expect(existingSession).toMatchObject({ kind: 'complete', change: 'unchanged' })
         const stored = await readState(state.paths.coordination(stackId))
         expect(stored).toMatchObject({
             kind: 'complete',
             value: {
                 value: {
                     holders: [
-                        { holderId: compatibilityHolder, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
+                        { holderId: holderC, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
                         { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' },
                     ],
                 },
             },
         })
+    })
+
+    it('rejects an obsolete compatibility holder at claim admission', async () => {
+        const state = await namespace()
+        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
+
+        expect(await acquireClaim({
+            namespace: state,
+            stackId,
+            holder: { holderId: obsoleteCompatibilityHolder, checkoutId: checkoutB },
+            now: '2026-09-07T12:00:00.000Z',
+        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
     })
 
     it('releases only the exact non-final holder and requires a drain for the final holder', async () => {
@@ -3015,7 +3028,7 @@ describe('session-aware claims', () => {
         expect(await releaseClaim({ namespace: state, stackId, requesterId: holderA, holderId: holderA, now: '2026-09-07T12:00:02.000Z' }))
             .toMatchObject({ kind: 'complete', change: 'unchanged', decision: 'retain', remaining: [holderB] })
         expect(await releaseClaim({
-            namespace: state, stackId, requesterId: compatibilityHolder, holderId: compatibilityHolder,
+            namespace: state, stackId, requesterId: holderC, holderId: holderC,
             now: '2026-09-07T12:00:02.000Z',
         })).toMatchObject({ kind: 'complete', change: 'unchanged', decision: 'retain', remaining: [holderB] })
         expect(await readFile(state.paths.coordination(stackId).path)).toEqual(beforeDuplicate)
@@ -3053,12 +3066,12 @@ describe('session-aware claims', () => {
         if (stored.kind !== 'complete') throw new Error('expected coordination record')
         const probe = await issuedProcessProbe(state)
         const classified = await classifyHolders({
-            record: stored.value, requester: compatibilityHolder,
+            record: stored.value, requester: holderC,
             requestedAt: probe.requestedAt, timeoutMs: 10_000, observations: probe.observations,
         })
         expect(classified).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
         expect(await releaseClaim({
-            namespace: state, stackId, requesterId: compatibilityHolder, holderId: holderB,
+            namespace: state, stackId, requesterId: holderC, holderId: holderB,
             now: after(probe.requestedAt, 250),
         })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
     })
@@ -3080,7 +3093,7 @@ describe('session-aware claims', () => {
         if (stored.kind !== 'complete') throw new Error('expected coordination record')
         const probe = await issuedProcessProbe(state)
         const classified = await classifyHolders({
-            record: stored.value, requester: compatibilityHolder,
+            record: stored.value, requester: holderC,
             requestedAt: probe.requestedAt, timeoutMs: 10_000, observations: probe.observations,
         })
         expect(classified).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }] })
@@ -3094,7 +3107,7 @@ describe('session-aware claims', () => {
             { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T11:59:00.000Z', pid: commandPid },
         ])
         expect(await releaseClaim({
-            namespace: state, stackId, requesterId: compatibilityHolder, holderId: holderB,
+            namespace: state, stackId, requesterId: holderC, holderId: holderB,
             now: after(probe.requestedAt, 250),
         })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
     })
@@ -3299,7 +3312,7 @@ describe('session-aware claims', () => {
             timeoutMs: 500,
             get observations() {
                 record.revision = 99
-                request.requester = compatibilityHolder
+                request.requester = holderC
                 return [{ holderId: holderB, observation: {
                     state: 'available' as const,
                     value: { state: 'dead' as const, evidence: 'process-absent' as const },
@@ -3328,7 +3341,7 @@ describe('session-aware claims', () => {
             producer: 'resolved-holder-probe',
         }
         expect(await classifyHolders({
-            record, requester: compatibilityHolder, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
+            record, requester: holderC, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
             observations: [
                 { holderId: holderB, observation },
                 { holderId: holderA, observation },
@@ -3338,11 +3351,11 @@ describe('session-aware claims', () => {
         for (const observations of [
             [{ holderId: holderA, observation }],
             [{ holderId: holderA, observation }, { holderId: holderA, observation }],
-            [{ holderId: compatibilityHolder, observation }, { holderId: holderA, observation }],
+            [{ holderId: holderC, observation }, { holderId: holderA, observation }],
             [{ holderId: holderA, observation, ignored: true }, { holderId: holderB, observation }],
         ]) {
             expect(await classifyHolders({
-                record, requester: compatibilityHolder, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
+                record, requester: holderC, requestedAt: '2026-09-07T12:00:00.000Z', timeoutMs: 500,
                 observations: observations as never,
             })).toMatchObject({
                 kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN }],
@@ -3455,7 +3468,7 @@ describe('session-aware claims', () => {
 
         const source = await readFile(state.paths.coordination(stackId).path, 'utf8')
         expect(JSON.parse(source).value.holders).toEqual([
-            { holderId: compatibilityHolder, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
+            { holderId: holderC, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' },
             { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' },
             { holderId: holderB, checkoutId: checkoutB, claimedAt: '2026-09-07T12:00:00.000Z' },
         ])

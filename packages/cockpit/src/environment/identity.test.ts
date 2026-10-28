@@ -111,18 +111,19 @@ describe('canonical environment identities', () => {
             .not.toBe(publicationCockpitId({ name: 'other-cockpit' }))
     })
 
-    it('keeps session holders distinct and spells the no-session compatibility holder explicitly', () => {
+    it('requires a valid session when deriving distinct holder identities', () => {
         const cockpit = cockpitId({ name: 'sample-cockpit', mainCheckoutPath: '/srv/cockpit' })
         const checkout = checkoutId({ checkoutPath: '/srv/cockpit' })
         const stack = stackId({ cockpitId: cockpit, checkoutId: checkout, variant: { kind: 'shared' } })
 
         const first = holderId({ stackId: stack, checkoutId: checkout, sessionId: 'session-one' })
         const second = holderId({ stackId: stack, checkoutId: checkout, sessionId: 'session-two' })
-        const compatibility = holderId({ stackId: stack, checkoutId: checkout })
 
         expect(first).not.toBe(second)
-        expect(compatibility).toMatch(/:compat$/)
-        expect(compatibility).not.toBe(holderId({ stackId: stack, checkoutId: checkout, sessionId: 'compat' }))
+        expect(first).toMatch(/^holder:[a-f0-9]{64}:session$/)
+        expect(() => holderId({ stackId: stack, checkoutId: checkout } as Parameters<typeof holderId>[0])).toThrow('sessionId')
+        expect(() => holderId({ stackId: stack, checkoutId: checkout, sessionId: '' })).toThrow('sessionId')
+        expect(() => holderId({ stackId: stack, checkoutId: checkout, sessionId: 'invalid\0session' })).toThrow('sessionId')
     })
 
     it('derives a bootstrap-only lock owner from checkout and session without runtime authority', () => {
@@ -167,6 +168,7 @@ describe('canonical environment identities', () => {
         expect(() => holderId({
             stackId: 'stack:not-a-digest' as never,
             checkoutId: 'checkout:not-a-digest' as never,
+            sessionId: 'session-one',
         })).toThrow('stackId')
     })
 })
