@@ -277,6 +277,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'dist/up/command.js',
                 'cockpit.schema.json',
                 'libexec/install-filesystem.cjs',
+                'libexec/release-evidence.mjs',
                 'libexec/rulesync-generator.cjs',
                 'libexec/rulesync-generator.NOTICE.md',
                 'libexec/validate-harness-evidence.d.mts',
@@ -296,6 +297,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     it('ships internal helpers without exposing another public command', () => {
         expect(packedFiles().filter((path) => path.startsWith('libexec/'))).toEqual([
             'libexec/install-filesystem.cjs',
+            'libexec/release-evidence.mjs',
             'libexec/rulesync-generator.cjs',
             'libexec/rulesync-generator.NOTICE.md',
             'libexec/validate-harness-evidence.d.mts',

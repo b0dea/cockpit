@@ -85,6 +85,7 @@ describe('authenticated release evidence discovery', () => {
         await writeFile(`${conflictedOutput}.sha256`, 'reviewed digest\n')
         const conflicted = spawnSync(process.execPath, [script, ...args.slice(0, -1), conflictedOutput], { encoding: 'utf8' })
         expect(conflicted.status).toBe(2)
+        expect(conflicted.stderr).toContain('EEXIST')
         await expect(readFile(conflictedOutput, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
         expect(await readFile(`${conflictedOutput}.sha256`, 'utf8')).toBe('reviewed digest\n')
     })

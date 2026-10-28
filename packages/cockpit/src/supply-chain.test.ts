@@ -96,6 +96,12 @@ describe('the supply-chain readiness detector', () => {
         ])
     })
 
+    it('admits the shipped release-evidence helper and refuses an inventory that omits it', () => {
+        expect(PACK_FILES).toContain('libexec/release-evidence.mjs')
+        expect(inspect(repositoryRoot, PACK_FILES.filter(path => path !== 'libexec/release-evidence.mjs')).diagnostics)
+            .toContainEqual(expect.objectContaining({ code: 'PACKAGE_REQUIRED_FILE_MISSING', path: 'libexec/release-evidence.mjs' }))
+    })
+
     it.each([
         ['mutable dependency', (root: string) => mutate(root, 'packages/cockpit/package.json', value => { value.dependencies.zod = '^4.4.3' }), PACK_FILES, 'DEPENDENCY_VERSION_MUTABLE'],
         ['lock mismatch', (root: string) => mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].dependencies.zod = '4.4.2' }), PACK_FILES, 'LOCKFILE_MISMATCH'],

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Produces one release record without network access, or assembles two independently hashed
 // records into the pair consumed by `cockpit upgrade`.
-import { open, unlink } from 'node:fs/promises'
+import { lstat, open, unlink } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 
 import { assembleReleaseEvidence, createReleaseRecord } from '../dist/upgrade/release-evidence.js'
@@ -29,17 +29,42 @@ async function writeExclusivePair(path, bytes, sha256) {
     const files = []
     let failure
     try {
-        files.push(await open(paths[0], 'wx', 0o600))
-        files.push(await open(paths[1], 'wx', 0o600))
-        await files[0].writeFile(bytes, 'utf8')
-        await files[1].writeFile(`${sha256}  ${basename(path)}\n`, 'utf8')
+        for (const ownedPath of paths) {
+            const file = await open(ownedPath, 'wx', 0o600)
+            const owned = { path: ownedPath, file, identity: undefined }
+            files.push(owned)
+            owned.identity = await file.stat()
+        }
+        await files[0].file.writeFile(bytes, 'utf8')
+        await files[1].file.writeFile(`${sha256}  ${basename(path)}\n`, 'utf8')
     } catch (error) {
         failure = error
     }
-    const closed = await Promise.allSettled(files.map(file => file.close()))
-    failure ??= closed.find(result => result.status === 'rejected')?.reason
+    const closed = await Promise.allSettled(files.map(owned => owned.file.close()))
+    const closeFailures = closed.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    failure ??= closeFailures[0]
     if (failure !== undefined) {
-        await Promise.allSettled(paths.slice(0, files.length).map(ownedPath => unlink(ownedPath)))
+        const cleanupFailures = closeFailures.slice(failure === closeFailures[0] ? 1 : 0)
+        for (const owned of files) {
+            if (owned.identity === undefined) {
+                cleanupFailures.push(new Error(`${owned.path}: created file identity is unavailable`))
+                continue
+            }
+            try {
+                const current = await lstat(owned.path)
+                if (current.dev !== owned.identity.dev || current.ino !== owned.identity.ino) {
+                    cleanupFailures.push(new Error(`${owned.path}: path no longer identifies the created file`))
+                    continue
+                }
+                await unlink(owned.path)
+            } catch (error) {
+                if (!(error && typeof error === 'object' && error.code === 'ENOENT')) cleanupFailures.push(error)
+            }
+        }
+        if (cleanupFailures.length > 0) {
+            const details = cleanupFailures.map(error => error instanceof Error ? error.message : String(error)).join('; ')
+            throw new Error(`${failure instanceof Error ? failure.message : String(failure)}; cleanup failed: ${details}`, { cause: failure })
+        }
         throw failure
     }
 }

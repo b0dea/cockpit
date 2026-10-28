@@ -52,6 +52,7 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'bin/cockpit.mjs',
     'cockpit.schema.json',
     'libexec/install-filesystem.cjs',
+    'libexec/release-evidence.mjs',
     'libexec/rulesync-generator.NOTICE.md',
     'libexec/rulesync-generator.cjs',
     'libexec/validate-harness-evidence.d.mts',
