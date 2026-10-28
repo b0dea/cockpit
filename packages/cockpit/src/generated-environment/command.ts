@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline/promises'
+import { renderHumanValue } from '../diagnostics.js'
 import type { Diagnostic } from '../diagnostics.js'
 import type { PortLeaseProjection } from '../environment/ports.js'
 import { runSyncOperatorApplication } from '../environment/operator-application.js'
@@ -135,7 +136,7 @@ async function confirmStaleRemoval(
 ): Promise<string | undefined> {
     if (io.confirmStaleRemoval) return io.confirmStaleRemoval(request)
     if (!io.stdin) return undefined
-    io.stderr.write(`${JSON.stringify(request, null, 2)}\n`)
+    io.stderr.write(renderHumanValue(request))
     const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
     try {
         const answer = await prompt.question('Type the exact stale-removal digest to approve this sync: ')

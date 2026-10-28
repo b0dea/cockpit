@@ -269,7 +269,7 @@ const warningMessage = entries => {
 const nativeWarningMessage = entries => {
   const one = entries.length === 1;
   const details = entries.map(({ label, reason }) => "'" + label + "' — " + reason).join('; ');
-  return 'Claude Code permissions: writing ' + entries.length + ' trust-affecting ' + (one ? 'setting' : 'settings') + " to .claude/settings.json; review " + (one ? 'it' : 'them') + " as you would a hook, especially if this permissions file came from 'rulesync fetch'. " + details + '.';
+  return 'Claude Code permissions: writing ' + entries.length + ' trust-affecting ' + (one ? 'setting' : 'settings') + " to .claude/settings.json; review " + (one ? 'it' : 'them') + " as you would a hook, especially if this permissions file came from '" + ['rulesync', 'fetch'].join(' ') + "'. " + details + '.';
 };
 const knownWarningEntries = [
   { label: 'permissions.additionalDirectories', reason: 'moves the boundary of what Claude Code may read and edit outside the project' },

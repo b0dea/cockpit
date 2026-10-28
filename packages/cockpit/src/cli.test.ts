@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Readable } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import * as fixCatalogue from './fix-catalogue.js'
 import { runCli, type CliIo } from './cli.js'
 import { createInvocationRecord } from './invocation.js'
@@ -1883,6 +1883,33 @@ describe('document output execution', () => {
 })
 
 describe('generated sync operator admission', () => {
+    it('shows the interactive stale-removal preview as human-readable text', async () => {
+        const preview = {
+            format: 'cockpit-stale-removal-request/v1' as const,
+            cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
+            entries: [{ path: 'old', operation: 'remove-file' as const, current: {
+                kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2,
+            } }],
+            digest: 'c'.repeat(64),
+        }
+        const stdin = Readable.from([`${preview.digest}\n`]) as NodeJS.ReadStream
+        Object.defineProperty(stdin, 'isTTY', { value: true })
+        const stderr = new PassThrough()
+        let shown = ''
+        stderr.on('data', chunk => { shown += chunk.toString() })
+
+        const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
+            interactive: true, json: false, ci: undefined,
+        }, { stderr, stdin }, async (input) => input.dryRun
+            ? { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: preview } }
+            : { status: 0, diagnostics: [], result: { dryRun: false } })
+
+        expect(outcome.status).toBe(0)
+        expect(shown).toContain('digest:')
+        expect(shown).toContain('path: old')
+        expect(shown).not.toContain('{')
+    })
+
     it('withholds stale-removal authority when entries change while the supplied digest remains equal', async () => {
         const preview = {
             format: 'cockpit-stale-removal-request/v1' as const,
