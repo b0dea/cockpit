@@ -231,7 +231,7 @@ function capturedInput(input: unknown): CapturedRestrictionExpansionInput | 'uns
         || typeof value.canonicalProjectRoot !== 'string' || !canonicalRoot(value.canonicalProjectRoot)
         || typeof value.guardTemplate !== 'string' || value.guardPath !== GUARD_PATH
         || !Array.isArray(value.instances) || value.instances.length > MAX_INSTANCES || !Array.isArray(value.adapters)
-        || typeof value.configFile !== 'string' || !confinedRelativePath(value.configFile) || /['$`"\\]/.test(value.configFile)) return undefined
+        || typeof value.configFile !== 'string' || !confinedRelativePath(value.configFile)) return undefined
     const allowedProjectRoots = hasAllowedRoots ? value.allowedProjectRoots : [value.canonicalProjectRoot]
     if (!Array.isArray(allowedProjectRoots) || allowedProjectRoots.length === 0 || allowedProjectRoots.length > MAX_INSTANCES
         || !allowedProjectRoots.every((root) => typeof root === 'string' && canonicalRoot(root))
@@ -455,7 +455,7 @@ function renderGuard(input: CapturedRestrictionExpansionInput): string | undefin
     }
     for (const [marker, value] of Object.entries(replacements)) {
         if (rendered.split(marker).length !== 2) return undefined
-        rendered = rendered.replace(marker, shellLiteral(value))
+        rendered = rendered.replace(marker, () => shellLiteral(value))
     }
     return rendered
 }

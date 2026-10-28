@@ -617,8 +617,24 @@ while (Date.now() < end) {
         expect(expandRestrictions({ ...baseInput, guardTemplate: `${minimal}${'"'.repeat(padding)}` })).toMatchObject({
             kind: 'refusal', code: 'RESTRICTION_OUTPUT_LIMIT',
         })
-        for (const configFile of ["cock'pit.toml", '../cockpit.toml', '/cockpit.toml', 'cockpit$(id).toml']) {
+        for (const configFile of ['../cockpit.toml', '/cockpit.toml']) {
             expect(expandRestrictions({ ...baseInput, configFile })).toMatchObject({ kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID' })
+        }
+    })
+
+    it('preserves shell and replacement metacharacters in literal configuration paths', async () => {
+        const shipped = await shippedInputs()
+        for (const configFile of ["cock'pit.toml", 'cockpit$(false);.toml', 'cockpit$&.toml', 'cockpit$`.toml', "cockpit$'.toml"]) {
+            const expanded = expandRestrictions({ ...pureInput(shipped), configFile })
+            expect(expanded.kind, JSON.stringify(expanded)).toBe('complete')
+            if (expanded.kind !== 'complete') return
+            const assignment = expanded.sharedGuard.bytes.split('\n').find(line => line.startsWith('config='))
+            expect(assignment).toBeDefined()
+            const captured = spawnSync('/bin/bash', ['-c', `${assignment}\nprintf '%s' "$config"`], {
+                encoding: 'utf8', env: { PATH: '/usr/bin:/bin' },
+            })
+            expect(captured.status, captured.stderr).toBe(0)
+            expect(captured.stdout).toBe(configFile)
         }
     })
 
