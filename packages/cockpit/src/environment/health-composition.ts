@@ -70,8 +70,7 @@ import { observeConfiguration, readState, selectStateRoot } from './state.js'
 import {
     externalDependencyTemplateFragments,
     inspectEnvironmentKeys,
-    observeEnvironmentKeys,
-    observeSiblingPresence,
+    observeTemplateHealth,
 } from './templates.js'
 
 export const mechanism = {
@@ -137,11 +136,6 @@ function commandConfigPath(value: unknown): string | undefined {
     } catch {
         return undefined
     }
-}
-
-function duplicateObservationCodes(values: readonly EnvironmentObservation[]): boolean {
-    const keys = values.map(({ owner, code, stackId: observedStack }) => `${observedStack}\0${owner}\0${code}`)
-    return new Set(keys).size !== keys.length
 }
 
 function producers(input: {
@@ -499,25 +493,10 @@ function producers(input: {
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),
         }),
-        templates: async () => {
-            const timestamp = observedAt()
-            const values: EnvironmentObservation[] = []
-            for (const sibling of input.config.result.config.sibling) {
-                values.push(await observeSiblingPresence({
-                    stackId: input.stack, observedAt: timestamp, siblingRoot, sibling,
-                }))
-                const checkoutRoot = resolve(siblingRoot, sibling.dir)
-                for (const declaration of sibling.environment_files ?? []) {
-                    values.push(...await observeEnvironmentKeys({
-                        stackId: input.stack, observedAt: timestamp, siblingRoot: checkoutRoot, declaration,
-                    }))
-                }
-            }
-            if (duplicateObservationCodes(values)) {
-                throw new TypeError('template health needs one aggregate observation per declared code')
-            }
-            return Object.freeze(values)
-        },
+        templates: async () => observeTemplateHealth({
+            stackId: input.stack, observedAt: observedAt(), siblingRoot,
+            siblings: input.config.result.config.sibling,
+        }),
     })
 }
 

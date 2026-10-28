@@ -17,12 +17,12 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { EnvironmentFile, Sibling, type EnvironmentFile as EnvironmentFileDeclaration } from '../schema.js'
-import { ENVIRONMENT_CODES, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, isCanonicalTimestamp, snapshotEnvironmentObservation, snapshotJson, type EnvironmentObservation, type JsonSnapshot, type StackId } from './contract.js'
 
 export const mechanism = {
     id: 'environment-template-seeding',
     module: 'packages/cockpit/src/environment/templates.ts',
-    exports: ['externalDependencyTemplateFragments', 'inspectEnvironmentKeys', 'planEnvironmentSeed', 'seedEnvironmentInstance', 'seedEnvironmentInstanceSync', 'observeSiblingPresence', 'observeEnvironmentKeys', 'isTemplateObservation', 'observationDeclarations'],
+    exports: ['externalDependencyTemplateFragments', 'inspectEnvironmentKeys', 'planEnvironmentSeed', 'seedEnvironmentInstance', 'seedEnvironmentInstanceSync', 'observeSiblingPresence', 'observeEnvironmentKeys', 'observeTemplateHealth', 'isTemplateObservation', 'observationDeclarations'],
 } as const
 
 export interface ExternalEndpointRuntimeFragment {
@@ -441,6 +441,45 @@ export async function observeEnvironmentKeys(input: {
             applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
         }),
     ])
+}
+
+/** Health admits one row per code; aggregate here so every declaration retains owner-issued evidence. */
+export async function observeTemplateHealth(input: {
+    readonly stackId: StackId
+    readonly observedAt: string
+    readonly siblingRoot: string
+    readonly siblings: readonly unknown[]
+}): Promise<readonly EnvironmentObservation[]> {
+    const groups = new Map<string, EnvironmentObservation[]>()
+    const add = (observation: EnvironmentObservation) => {
+        const group = groups.get(observation.code) ?? []
+        group.push(observation)
+        groups.set(observation.code, group)
+    }
+    for (const value of input.siblings) {
+        const sibling = Sibling.parse(value)
+        add(await observeSiblingPresence({ stackId: input.stackId, observedAt: input.observedAt,
+            siblingRoot: input.siblingRoot, sibling }))
+        for (const declaration of sibling.environment_files ?? []) {
+            const observations = await observeEnvironmentKeys({ stackId: input.stackId, observedAt: input.observedAt,
+                siblingRoot: resolve(input.siblingRoot, sibling.dir), declaration })
+            observations.forEach(add)
+        }
+    }
+    return Object.freeze([...groups.values()].map(group => {
+        if (group.length === 1) return group[0]!
+        const failures = group.filter(row => row.observed.state !== 'available' || row.observed.value !== true)
+        const unreadable = failures.filter(row => row.observed.state !== 'available')
+        const bounded = (value: string) => Buffer.byteLength(value) <= OBSERVATION_REASON_BYTE_LIMIT ? value
+            : `${Buffer.from(value).subarray(0, OBSERVATION_REASON_BYTE_LIMIT - 3).toString('utf8').replace(/�$/, '')}...`
+        return issueObservation({
+            ...group[0]!,
+            source: bounded((failures.length > 0 ? failures : group).map(row => row.source).join('; ')),
+            observed: unreadable.length > 0
+                ? { state: 'failed', reason: bounded(unreadable.map(row => `${row.source}: ${row.observed.state === 'available' ? '' : row.observed.reason}`).join('; ')), observedAt: input.observedAt }
+                : { state: 'available', value: failures.length === 0, observedAt: input.observedAt },
+        })
+    }))
 }
 
 interface FileIdentity {

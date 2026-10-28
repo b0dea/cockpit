@@ -230,6 +230,59 @@ describe('production health adapter composition', () => {
         expect(result.result.checks.find(({ owner }) => owner === 'lifecycle-stage')?.measured).toBe(false)
     })
 
+    it('reports every declared template across siblings without duplicate-code producer failures', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        const api = join(candidate.checkout, 'siblings/api')
+        const web = join(candidate.checkout, 'siblings/web')
+        await mkdir(web)
+        const declarations = [
+            'environment_files = [{ template = "first.template", instance = "first.instance" }, { template = "second.template", instance = "second.instance" }]',
+            '',
+            '[[sibling]]',
+            'slug = "web"',
+            'dir = "web"',
+            'mount = "none"',
+            'acquire = "none"',
+            'var = "WEB_DIR"',
+            'toolchain = "none"',
+            'purpose = "Synthetic web"',
+            'environment_files = [{ template = "web.template", instance = "web.instance" }]',
+            '',
+        ].join('\n')
+        const config = await readFile(candidate.configPath, 'utf8')
+        await writeFile(candidate.configPath, config.replace('[ports]', `${declarations}\n[ports]`))
+        await Promise.all([
+            writeFile(join(api, 'first.template'), 'FIRST=\n'),
+            writeFile(join(api, 'first.instance'), 'FIRST=synthetic\n'),
+            writeFile(join(api, 'second.template'), 'SECOND=\n'),
+            writeFile(join(api, 'second.instance'), 'OTHER=synthetic\n'),
+            writeFile(join(web, 'web.template'), 'WEB=\n'),
+        ])
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe)
+
+        const observed = await runDoctor({ configPath: candidate.configPath }, adapters)
+        const checks = observed.result.checks.filter(({ owner }) => owner === 'environment-template-seeding')
+        expect(observed.diagnostics).not.toEqual(expect.arrayContaining([expect.objectContaining({ target: 'templates' })]))
+        expect(checks).toHaveLength(3)
+        expect(checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'SIBLING_MISSING', verdict: 'pass' }),
+            expect.objectContaining({ code: 'ENVIRONMENT_KEYS_STALE', verdict: 'fail' }),
+            expect.objectContaining({ code: 'ENVIRONMENT_FILE_NOT_FOUND', verdict: 'fail' }),
+        ]))
+        expect(checks.find(({ code }) => code === 'ENVIRONMENT_KEYS_STALE')?.source).toContain('second.instance')
+        expect(checks.find(({ code }) => code === 'ENVIRONMENT_FILE_NOT_FOUND')?.source).toContain('web.instance')
+
+        await rm(web, { recursive: true })
+        const missing = await runDoctor({ configPath: candidate.configPath }, adapters)
+        expect(missing.result.checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'SIBLING_MISSING', verdict: 'fail', source: expect.stringContaining('web') }),
+        ]))
+    }, 120_000)
+
     it('binds the public command path and never executes for a different configuration', async () => {
         const candidate = await fixture()
         const execute = vi.fn(executeProbe)

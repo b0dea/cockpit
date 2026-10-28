@@ -72,6 +72,11 @@ bind-mounted, since that is what the declaration promises.
 both lexically and after resolving filesystem links. An absolute sibling path is accepted only
 inside that root. Acquire missing checkouts before generating their environment.
 
+`doctor` and `preflight` inspect every declared environment file in every sibling. Each check
+summarizes its failing paths, so a healthy file cannot hide another file's missing instance or
+stale key names. Restore the named checkout or synchronize its instance keys with its template,
+then rerun `cockpit doctor --config cockpit.toml`.
+
 Generated vendor templates must also lie inside the cockpit checkout. External sibling checkouts
 remain valid for mounted surfaces, but a vendor template outside the checkout is refused, and
 cockpit never substitutes a similarly named directory inside its own checkout. The
