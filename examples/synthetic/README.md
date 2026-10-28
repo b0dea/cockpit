@@ -3,7 +3,7 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 This example uses two synthetic working repositories and one local bare remote. From this
-directory, install the exact project-local cockpit package:
+directory, [install the exact project-local cockpit package](../../docs/getting-started.md#install-cockpit):
 
 ```sh human-only:package-install
 npm init --yes
@@ -33,8 +33,8 @@ Both sibling repositories now exist. The following inventory is executed in CI w
 environment template. Do not create that template by hand: an existing unmanaged file is refused.
 
 ```sh executable
-cockpit sync --config cockpit.toml --dry-run --json
-cockpit sync --config cockpit.toml --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run --json
+./node_modules/.bin/cockpit sync --config cockpit.toml --json
 ```
 
 Review the generated template and track it in its owning repository before setup uses it:
@@ -48,15 +48,15 @@ git -C repositories/app -c user.name=Synthetic -c user.email=synthetic@example.i
 tracked template. `check` verifies that the managed outputs remain current:
 
 ```sh executable
-cockpit setup --config cockpit.toml --json
-cockpit check --config cockpit.toml --json
+./node_modules/.bin/cockpit setup --config cockpit.toml --json
+./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
 Starting or stopping a product runtime is intentionally outside this empty example. These
 commands are human-only because a consumer must first supply real service declarations:
 
 ```sh human-only:runtime
-cockpit preflight --config cockpit.toml --json
-cockpit up --config cockpit.toml --json
-cockpit down --config cockpit.toml --json
+./node_modules/.bin/cockpit preflight --config cockpit.toml --json
+./node_modules/.bin/cockpit up --config cockpit.toml --json
+./node_modules/.bin/cockpit down --config cockpit.toml --json
 ```

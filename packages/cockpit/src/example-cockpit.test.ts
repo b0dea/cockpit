@@ -91,7 +91,7 @@ function stackCommands(text: string) {
 function inventory(readme: string) {
     const blocks = [...readme.matchAll(/```sh ([^\n]+)\n([\s\S]*?)```/g)]
     const machineLocal = /(?:\/Users\/|\/home\/|[A-Za-z]:\\|\.\.\/|\$HOME\b)/
-    if (machineLocal.test(readme)) throw new Error('example commands depend on a machine-local path')
+    if (blocks.some(([, , body]) => machineLocal.test(body!))) throw new Error('example commands depend on a machine-local path')
     if (blocks.some(([, marker]) => marker !== 'executable' && !marker?.startsWith('human-only:'))) {
         throw new Error('shell command block is not classified')
     }
@@ -144,7 +144,8 @@ describe('the public synthetic cockpit', () => {
         const { executable, humanOnly } = inventory(readme)
 
         expect(executable.map(argv => argv.slice(0, 2))).toEqual([
-            ['cockpit', 'sync'], ['cockpit', 'sync'], ['cockpit', 'setup'], ['cockpit', 'check'],
+            ['./node_modules/.bin/cockpit', 'sync'], ['./node_modules/.bin/cockpit', 'sync'],
+            ['./node_modules/.bin/cockpit', 'setup'], ['./node_modules/.bin/cockpit', 'check'],
         ])
         expect(humanOnly.map(argv => argv.slice(0, 2))).toEqual([
             ['npm', 'init'], ['npm', 'install'],
@@ -155,7 +156,8 @@ describe('the public synthetic cockpit', () => {
             ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
-            ['cockpit', 'preflight'], ['cockpit', 'up'], ['cockpit', 'down'],
+            ['./node_modules/.bin/cockpit', 'preflight'], ['./node_modules/.bin/cockpit', 'up'],
+            ['./node_modules/.bin/cockpit', 'down'],
         ])
         for (const argv of executable) {
             if (argv[1] === 'setup') {
@@ -261,6 +263,12 @@ describe('the public synthetic cockpit', () => {
         expect(config).toContain('source = "cockpit.overlay.toml"')
         expect(existsSync(join(exampleRoot, 'cockpit.overlay.toml'))).toBe(true)
         expect(dirname(join(exampleRoot, 'cockpit.toml'))).toBe(exampleRoot)
+        for (const example of ['synthetic', 'minimal', 'docs-only', 'compose-first', 'extended']) {
+            const commands = inventory(readFileSync(join(repositoryRoot, 'examples', example, 'README.md'), 'utf8'))
+            const cockpitExecutables = [...commands.executable, ...commands.humanOnly].flat()
+                .filter(token => token === 'cockpit' || token.endsWith('/cockpit'))
+            expect(new Set(cockpitExecutables), example).toEqual(new Set(['./node_modules/.bin/cockpit']))
+        }
     })
 
     it('inventories every public shell block as executed or human-only with an owner reason', () => {
