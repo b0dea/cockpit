@@ -5,14 +5,14 @@
 ![CI status](https://github.com/b0dea/cockpit/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
-**One config for a multi-repo product: the whole stack on your laptop, the same rules in every
-agent tool, and grading by something other than the agent that did the work.**
+**One config for your product: the stack on your laptop, consistent instructions across agent
+tools, and grading by something other than the agent that did the work.**
 
 cockpit runs the environment your AI coding agents work in. You declare your product's
 repositories once in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`; cockpit starts the whole stack against your live local
-checkouts, gives Claude Code, Codex CLI and OpenCode the same instructions, skills, guards and
-permissions, and hands finished work to an independent evaluator. It holds none of your product
-code.
+checkouts, renders each agent tool's instructions and skills, and hands finished work to an
+independent evaluator. Guard and permission support depends on the tool and its measured
+[capabilities](docs/capability-matrix.md). It holds none of your product code.
 
 > **Status: pre-alpha and not yet published.** Commands, configuration and the
 > generated file layout may change without a compatibility layer before the first public release.
@@ -44,7 +44,7 @@ prompting does not fix:
 flowchart LR
     toml["cockpit.toml<br/>repositories, services,<br/>guards, harnesses"] --> sync["cockpit sync"]
     sync --> compose["Docker Compose stack<br/>on your live checkouts"]
-    sync --> surfaces["Agent surfaces<br/>Claude Code · Codex CLI · OpenCode"]
+    sync --> surfaces["Agent surfaces<br/>instructions, skills, permissions"]
     compose --> session(("agent session"))
     surfaces --> session
     session --> grade["independent evaluator<br/>reruns checks, grades criteria"]
@@ -166,12 +166,11 @@ repository carries only synthetic fixtures. What is true today:
   `preflight`, `down` and `reset` require Docker Compose and a successful local measurement.
   Generation, `setup` and `check` work without Docker. See the owned
   [runtime identity and measurement table](docs/environment.md#measure-the-container-runtime).
-- **Native enforcement is not yet measured.** cockpit generates the hooks, permissions and rules,
-  and its guard adapters were probed against specific harness versions recorded in the
-  [capability matrix](docs/capability-matrix.md). It has not re-measured them against current
-  versions, so every built-in feature is reported as *instructed*, not *enforced*.
-  [Harness surfaces](docs/harness-surfaces.md#capability-states) explains the states and how
-  `cockpit selftest` measures them.
+- **Generation and native enforcement have separate evidence.** The
+  [capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*
+  or *unavailable* for its target. Generated files and passing adapter tests alone do not prove
+  that a native tool loads or enforces them. [Harness surfaces](docs/harness-surfaces.md#capability-states)
+  explains the states and how `cockpit selftest` measures them.
 - **Not a sandbox.** Guards, Git ignore rules and file permissions stop mistakes, not malicious
   code running as your user. [Safety and autonomy](docs/safety-and-autonomy.md) lists what each
   guard does.

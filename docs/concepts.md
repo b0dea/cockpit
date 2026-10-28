@@ -12,9 +12,10 @@ Everyday terms, in plain language.
 
 ### Agent harness
 
-The AI coding tool an agent runs in. cockpit ships targets for `claudecode` (Claude Code),
-`codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor), and `grokcli` (Grok Build).
-Native loading and enforcement support varies by target and stays unavailable until measured.
+The AI coding tool an agent runs in. The [capability matrix](capability-matrix.md) names the
+built-in target identifiers and records each feature's evidence. An instructions-only tool can
+read the shared guide without gaining guard or permission enforcement; see
+[Capability states](harness-surfaces.md#capability-states).
 
 ### Sibling repository
 

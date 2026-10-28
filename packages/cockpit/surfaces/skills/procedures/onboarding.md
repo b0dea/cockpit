@@ -7,8 +7,8 @@ budget: uncapped
 
 # Cockpit skill procedures
 
-Run from the cockpit root. Wherever this procedure writes `cockpit <command>`, invoke the exact
-project-local executable as `./node_modules/.bin/cockpit <command>`. If that file is absent, stop:
+Run from the cockpit root. Invoke each cockpit command through the exact project-local
+executable, `./node_modules/.bin/cockpit`. If that file is absent, stop:
 do not use a command runner that can download a missing package implicitly.
 
 ## Bootstrap
