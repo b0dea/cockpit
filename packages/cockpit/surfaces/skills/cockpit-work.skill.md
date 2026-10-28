@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [work-intake, work-status, work-grade, work-sweep, test-run]
+  commands: [work-intake, work-status, work-accept, work-renew, work-record, work-execute, work-review, work-grade, work-sweep, work-reverse, test-run]
   changes: [the repositories named in the accepted work order's Authority]
   non-goals: [grading its own work, planning inside cockpit, accepting a work order on the human's behalf]
   procedure: procedures/onboarding.md

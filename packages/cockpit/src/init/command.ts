@@ -51,7 +51,8 @@ export type InitApplicationHandler = (input: InitApplicationInput) => Promise<In
 const MAX_INTERVIEW_ANSWERS = 64
 
 const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
-    'environment.install_policies', 'environment.generated', 'environment.compose_files', 'environment.machine', 'guards'] as const
+    'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.compose_files',
+    'environment.machine', 'guards'] as const
 
 const isTable = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)

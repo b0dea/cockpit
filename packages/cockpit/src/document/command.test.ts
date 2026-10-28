@@ -852,28 +852,66 @@ describe('operator-confirmed document completion', () => {
         } })
         expect(policies).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.install_policies' } })
         const policyAnswer = answer(policies.question!, generatedConfig.environment.install_policies)
-        const generated = await documentCommand({ ...base, configuration: {
+        const testData = await documentCommand({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer],
+        } })
+        expect(testData).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.test_data',
+            why: expect.stringContaining('seeded data and signed-in users') } })
+        expect(await documentCommand({ ...base, configuration: { ...base.configuration,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer,
+                answer(testData.question!, { seeded_data: false })] } })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', target: 'environment.test_data' }] })
+        const testDataAnswer = answer(testData.question!, { seeded_data: false, signed_in_users: false })
+        const generated = await documentCommand({ ...base, configuration: {
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer],
         } })
         expect(generated).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.generated' } })
         const generatedAnswer = answer(generated.question!, portlessGeneratedDeclaration)
         const machine = await documentCommand({ ...base, configuration: {
-            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer],
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
         const guards = await documentCommand({ ...base, configuration: {
-            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const defaults = await documentCommand({ ...base, configuration: {
-            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const complete = await documentCommand({ ...base, configuration: {
             ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)],
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, guardAnswer,
+                confirmDefaults(defaults.question!)],
         } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
+        expect(complete.artifact).toContain('# Decision: seeded data: not declared')
+        expect(complete.artifact).toContain('# Decision: signed-in users: not declared')
+        const declared = await documentCommand({ ...base, configuration: {
+            ...base.configuration,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer,
+                answer(testData.question!, { seeded_data: true, signed_in_users: true }), generatedAnswer, machineAnswer,
+                guardAnswer, confirmDefaults(defaults.question!)],
+        } })
+        expect(declared).toMatchObject({ kind: 'complete', status: 0 })
+        expect(declared.artifact).toContain('# Decision: seeded data: declared by the product-owned seeded mode')
+        expect(declared.artifact).toContain('# Decision: signed-in users: required but unresolved')
+        const requiredTestData = answer(testData.question!, { seeded_data: true, signed_in_users: true })
+        const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
+        const unresolvedDefaults = await documentCommand({ ...base, configuration: {
+            ...base.configuration,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer,
+                guardAnswer],
+        } })
+        expect(unresolvedDefaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        const unresolved = await documentCommand({ ...base, configuration: {
+            ...base.configuration,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer,
+                guardAnswer, confirmDefaults(unresolvedDefaults.question!)],
+        } })
+        expect(unresolved).toMatchObject({ kind: 'complete', status: 0 })
+        expect(unresolved.artifact).toContain('# Decision: seeded data: required but unresolved')
+        expect(unresolved.artifact).toContain('# Decision: signed-in users: required but unresolved')
         expect(parseToml(complete.artifact!)).toMatchObject({
             cockpit: { name: 'single-product', siblings_root: '.' },
             sibling: [{ slug: 'app' }], ports: { bases: {} },
@@ -985,7 +1023,8 @@ describe('operator-confirmed document completion', () => {
             const configuration = { sourceObservationSha256, ...(classification ? { classification } : {}), answers: [] as ReturnType<typeof answer>[] }
             let pending = await documentCommand({ root: estateRoot, configuration })
             for (const value of [generatedConfig.sibling, { APP_HOST_PORT: 4100 },
-                generatedConfig.environment.install_policies, generatedDeclaration, machineFloor, guardHosts]) {
+                generatedConfig.environment.install_policies, { seeded_data: false, signed_in_users: false },
+                generatedDeclaration, machineFloor, guardHosts]) {
                 configuration.answers.push(answer(pending.question!, value))
                 pending = await documentCommand({ root: estateRoot, configuration })
             }

@@ -72,6 +72,10 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    ports and restore, and an explicit vendor posture for every third-party endpoint. Cockpit renders
    a subject with no decision as undecided, which keeps the gap visible. Done when each unknown is
    named with who can resolve it, and nothing in the declaration was filled in to make it load.
+   Answer `environment.test_data` with exact booleans for `seeded_data` and `signed_in_users`. A false
+   answer is retained as a not-declared decision. A true answer is only a requirement: it remains unresolved
+   until product-owned seed operations or browser authentication states are declared, and never proves that
+   data or a login exists.
 5. Decide where the runnable pieces live. A Dockerfile or Compose file written into a product
    repository is a product change, so ask the human first and show the exact path and contents.
    Without that authorisation, declare an environment cockpit renders itself and leave the product
@@ -132,7 +136,8 @@ applied silently.
 1. `npm update` moves the pinned `@b0dea/cockpit` dev dependency. Done when the lockfile shows the new version.
 2. Preview without writing: `cockpit upgrade --config cockpit.toml` (a read-only plan) or
    `cockpit sync --dry-run --config cockpit.toml`.
-3. A human runs `cockpit sync --config cockpit.toml` in a terminal. The guard blocks an agent from
+3. A human runs `cockpit sync --interactive --config cockpit.toml` in a terminal and approves the exact
+   stale-removal digest when the upgrade renamed or retired an owned surface. The guard blocks an agent from
    regenerating its own guard, so do not try to route around it; ask the human to run it.
 4. Review the diff. A hand edit to an owned file stops sync with a conflict (`SURFACE_STATE_CONFLICT`):
    move that change into a `[surfaces].overlays` entry instead of editing the generated file. An upgrade that
@@ -229,23 +234,28 @@ contract and the independent grading, not the thinking: reuse the planning skill
 1. **Intake.** Run the harness's installed brainstorming and planning skills, then compile their output into
    the work-order schema with `cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
    The contract needs three to seven acceptance criteria, each a Given/When/Then that two people could not
-   disagree about, an Authority list of exact files and a verification command per criterion. A human accepts it in a terminal with
-   `work-accept --interactive`; JSON and CI refuse, so an agent cannot accept its own work. Done when `work-status` reports it accepted.
+   disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from
+   intake, then a human accepts it in a terminal with `cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,
+   replacing `WO-001` with that ID. JSON and CI refuse, so an agent cannot accept its own work. Done when
+   `cockpit work-status --config cockpit.toml --work-order WO-001 --json` reports it accepted.
 2. **Work test-first inside Authority.** Write the failing test for a criterion, then the code, touching only
    files the Authority lists. If the work needs another file, stop and ask for a renewed contract
    (`work-renew`) rather than editing outside it. Record progress with `cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json`.
-3. **Run the declared gate** with `cockpit test-run --config cockpit.toml --gate unit`. Only the complete
-   declared gate can PASS; a subset reports PARTIAL. Done when the gate reports PASS.
-4. **Before grading,** run the harness's own simplify pass and then its code-review pass, weighted towards
-   security when the change touches authentication, secrets, guards or reach to non-local hosts. Fix what
-   they find and re-run the affected proof. `cockpit work-review --config cockpit.toml --work-order WO-001` retains the findings.
+3. **Run the criterion's declared gate** with `cockpit test-run --config cockpit.toml --gate declared-gate-id`,
+   replacing `declared-gate-id` with its ID from `[testing.gates]`. Only the complete declared gate can PASS; a
+   subset reports PARTIAL. Done when that gate reports PASS.
+4. **Before grading,** run `cockpit work-review --config cockpit.toml --work-order WO-001`. It owns the
+   independent simplification, code/spec and security review sequence, persists their findings and reruns
+   affected proof after a fixed finding. Security review weighs authentication, secrets, guards and reach to
+   non-local hosts most heavily. Fix every blocking finding, then repeat the command until all three reviews pass.
 5. **Hand off to the evaluator subagent** through `cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
    your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
    criterion is one of the four in the evaluator's instructions; anything but "passed with current
    supporting evidence" sends you back to step 2 for that criterion.
 6. **Two strikes.** After two failed attempts on one criterion, make a different move, for example a
    root-cause diagnosis in a fresh context, before a third try. Read the count from work-order state, not
-   from memory: `cockpit work-status --config cockpit.toml --work-order WO-001 --json` returns `state.attempts`
+   from memory: `cockpit work-status --config cockpit.toml --work-order WO-001 --json` returns the selected
+   order under `result.orders[0]`, with the counters at `result.orders[0].state.attempts`
    (step, approach, `failures`, `rootCause`), and the attempt cap is `workorders.attempt_cap`. A missing
    counter is not zero: if you cannot read it, say so and treat the step as unknown. Record the root cause
    with `work-record` as above, then run `cockpit work-execute --config cockpit.toml --work-order WO-001 --approach second-try`, which refuses a

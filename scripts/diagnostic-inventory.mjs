@@ -34,9 +34,10 @@ const SHIPPED_ASSETS = Object.freeze({
         'packages/cockpit/surfaces/guards/opencode.adapter.json',
     ]),
     skills: Object.freeze([
-        ['bootstrap', 'packages/cockpit/surfaces/skills/cockpit-setup.skill.md'],
-        ['explain', 'packages/cockpit/surfaces/skills/cockpit-explain.skill.md'],
-        ['fix', 'packages/cockpit/surfaces/skills/cockpit-fix.skill.md'],
+        ['cockpit-setup', 'packages/cockpit/surfaces/skills/cockpit-setup.skill.md'],
+        ['cockpit-explain', 'packages/cockpit/surfaces/skills/cockpit-explain.skill.md'],
+        ['cockpit-fix', 'packages/cockpit/surfaces/skills/cockpit-fix.skill.md'],
+        ['cockpit-work', 'packages/cockpit/surfaces/skills/cockpit-work.skill.md'],
     ]),
     collection: 'packages/cockpit/surfaces/skills/collection.json',
     terminal: 'packages/cockpit/surfaces/skills/procedures/onboarding.md',

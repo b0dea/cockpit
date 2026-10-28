@@ -32,6 +32,10 @@ owns product rows; the existing provider adapter owns provider users, organizati
 their idempotent commands to the existing seeded operations and probes. When an adapter is genuinely absent,
 add a thin consumer-owned adapter behind the seed command.
 
+Before any seed write, assert that its database and service targets are local. Resolve paths into a sibling by
+probing the declared sibling root and then the consumer's documented fallback; never encode one checkout layout
+as a constant. Seed twice and report every restore gap, because idempotence and omissions are otherwise invisible.
+
 ## Touch the identity provider safely
 
 **What.** Provider writes create or adopt the synthetic users, organization and memberships.
@@ -62,7 +66,7 @@ product defects.
    one state per persona, using the consumer's own authenticated Playwright package.
 3. Verify the active synthetic identity, organization, role and application permission before saving.
 4. Re-mint after any reseed or reset. Name files so the reset patterns match them; a file outside those
-   patterns survives a reset.
+   patterns survives a reset. Replay every wipe pattern against a synthetic fixture before relying on it.
 5. If the page raises a navigation-during-evaluate error, retry that one error, with a bound (a few attempts).
    Retrying anything else hides real failures.
 6. Run one permitted and one denied authorization behavior through the product surface. Reset the task's

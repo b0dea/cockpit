@@ -106,7 +106,8 @@ export interface DocumentCommandInput {
 }
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
-    | 'environment.install_policies' | 'environment.generated' | 'environment.machine' | 'guards' | 'configuration.defaults'
+    | 'environment.install_policies' | 'environment.test_data' | 'environment.generated' | 'environment.machine'
+    | 'guards' | 'configuration.defaults'
 export interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
     readonly field: DocumentConfigurationField
@@ -614,7 +615,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
         || typeof record.sourceObservationSha256 !== 'string' || !SHA256.test(record.sourceObservationSha256)
         || record.classification !== undefined && !['one-sibling', 'incomplete-multi-repository',
             'no-runnable-product', 'ready-multi-repository'].includes(record.classification as string)
-        || !Array.isArray(record.answers) || record.answers.length > 9) return undefined
+        || !Array.isArray(record.answers) || record.answers.length > 10) return undefined
     const answers: DocumentConfigurationAnswer[] = []
     for (const value of record.answers) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -640,6 +641,7 @@ const QUESTION_WHY = {
     siblingRegistry: 'the registry leaves required sibling configuration unresolved',
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
     policies: 'declare the exact dependency install protocols: toolchains, volumes, lockfiles, install and load probes, and any build or test commands',
+    testData: 'state whether this local setup needs seeded data and signed-in users; false records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
     generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer { "compose_files": ["compose.yml"] }',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements, so cockpit proposes them only from the product\'s own files and never invents them',
     guards: 'name the database hosts and live vendor API hosts of every non-local environment the product has (production, staging, shared dev or QA): cockpit runs only locally, so the guard denies agent commands that reach them; answer { "hosted_db_hosts": [], "vendor_endpoint_hosts": [] } to record that none exists',
@@ -670,6 +672,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
         { field: 'ports.bases' as const, why: QUESTION_WHY.ports },
         ...(surfacesOnly ? [] : [
             { field: 'environment.install_policies' as const, why: QUESTION_WHY.policies },
+            { field: 'environment.test_data' as const, why: QUESTION_WHY.testData },
             { field: 'environment.generated' as const, why: QUESTION_WHY.generated },
             { field: 'environment.machine' as const, why: QUESTION_WHY.machine },
         ]),
@@ -940,6 +943,7 @@ function completeConfigurationDocument(
     answerIndex += 1
 
     let environment = defaults.environment
+    let testData: Readonly<{ seeded_data: boolean; signed_in_users: boolean }> | undefined
     if (!surfacesOnly) {
         const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
         const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
@@ -951,6 +955,26 @@ function completeConfigurationDocument(
             `the operator-confirmed dependency install protocols do not match the schema: ${issueSummary(parsedPolicies.error)}`,
             policyQuestion.field)
         answerIndex += 1
+
+        if (greenfieldEstate) {
+            const testDataQuestion = configurationQuestion(context, 'environment.test_data', QUESTION_WHY.testData)
+            const testDataRead = readConfigurationAnswer(configuration.answers, answerIndex, testDataQuestion)
+            if (testDataRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+                attributions, gaps: [] }, destination, testDataQuestion)
+            if (testDataRead.kind === 'refusal') return testDataRead.outcome
+            const value = testDataRead.value
+            if (!value || typeof value !== 'object' || Array.isArray(value)
+                || Object.keys(value).sort().join(',') !== 'seeded_data,signed_in_users'
+                || typeof (value as Record<string, unknown>).seeded_data !== 'boolean'
+                || typeof (value as Record<string, unknown>).signed_in_users !== 'boolean') return refusal(
+                'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                'the local test-data answer must be exactly { seeded_data: boolean, signed_in_users: boolean }',
+                testDataQuestion.field,
+            )
+            testData = Object.freeze({ seeded_data: (value as { seeded_data: boolean }).seeded_data,
+                signed_in_users: (value as { signed_in_users: boolean }).signed_in_users })
+            answerIndex += 1
+        }
 
         const generatedQuestion = configurationQuestion(context, 'environment.generated', QUESTION_WHY.generated)
         const generatedRead = readConfigurationAnswer(configuration.answers, answerIndex, generatedQuestion)
@@ -1061,8 +1085,20 @@ function completeConfigurationDocument(
     if (configuration.answers.length !== answerIndex) return refusal('DOCUMENT_CONFIGURATION_ANSWER_EXTRA',
         'configuration completion received an answer for no current question')
 
-    const artifact = renderCompleteDocument(candidate.data, schemaDirective(destination),
-        noGuardHosts ? [`guards: ${NO_GUARD_HOSTS_DECISION}; list those hosts under [guards] once one exists`] : [])
+    const decisions = [
+        ...(noGuardHosts ? [`guards: ${NO_GUARD_HOSTS_DECISION}; list those hosts under [guards] once one exists`] : []),
+        ...(testData ? [testData.seeded_data
+            ? candidate.data.environment.generated?.data?.modes.some(mode => mode.mode === 'seeded')
+                ? 'seeded data: declared by the product-owned seeded mode in environment.generated.data'
+                : 'seeded data: required but unresolved; declare product-owned seed operations before claiming a seeded local setup'
+            : 'seeded data: not declared because the operator stated that this local setup does not need it',
+        testData.signed_in_users
+            ? candidate.data.browser?.authentication.states.length
+                ? 'signed-in users: declared by browser.authentication states backed by seeded personas'
+                : 'signed-in users: required but unresolved; declare seeded personas and browser authentication states before claiming signed-in testing'
+            : 'signed-in users: not declared because the operator stated that this local setup does not need them'] : []),
+    ]
+    const artifact = renderCompleteDocument(candidate.data, schemaDirective(destination), decisions)
     const diagnostics = diagnosticsFor(attributions, [])
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${NO_GUARD_HOSTS_DECISION}, so the guard denies no command by host`,

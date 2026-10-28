@@ -317,6 +317,26 @@ persona source. cockpit renders that source into typed persona outputs (JSON or 
 tests. [`examples/synthetic/cockpit.toml`](../examples/synthetic/cockpit.toml) declares all three
 modes.
 
+Run the declared flow in this order. Replace the two `*-gate-id` placeholders with IDs from
+`[testing.gates]`; those gates call the product-owned state-minting and authorization setup, because
+cockpit does not create identities or write product rows.
+
+```sh human-only: resets data, creates provider state, and requires the declared local stack
+cockpit check --config cockpit.toml --json
+cockpit up --config cockpit.toml
+cockpit reset --config cockpit.toml --json
+cockpit reset --interactive --config cockpit.toml
+cockpit up --config cockpit.toml
+cockpit test-run --config cockpit.toml --gate auth-state-gate-id
+cockpit test-run --config cockpit.toml --gate authorization-gate-id
+cockpit check --config cockpit.toml --json
+```
+
+The first `up` applies the declared default data mode. Reset previews the exact owned data and auth
+artifacts it will remove; only the interactive command applies that preview. The second `up` reseeds,
+the first product gate mints one signed-in state per persona, and the second proves both an allowed and
+a denied operation. A subset is only PARTIAL, never proof of the complete gate.
+
 **Personas.** Give each test user a stable synthetic ID such as `auth-admin` or `auth-member`, its
 role and permissions, and one operation it must be allowed and one it must be denied. Stable IDs
 let a re-seed update the same rows instead of duplicating them. The allowed and denied pair is what
@@ -331,6 +351,12 @@ proves the roles work, not only that a sign-in succeeded.
   disable the interface.
 - Every mode keeps the schema's indexes and constraints (`constraints_and_indexes = true` is
   required), so an empty stack still rejects the rows production would reject.
+- Print every restore gap before applying the restore. A silent omission looks like a complete local
+  copy even though the missing table or object can change product behavior.
+- Before a seed writer runs, assert that every database and service target is local. A development
+  fixture is not authority to reach a shared or non-local environment.
+- Resolve a sibling fixture path by probing the declared sibling root and a documented fallback;
+  never embed one checkout layout as a constant.
 - Adopt only provider objects that carry the synthetic namespace's ownership marker. Refuse any
   other, naming the account, and never rewrite the roles of an identity people share.
 - A local stack receives no webhooks from an identity provider, so link the provider's ID to the
@@ -342,7 +368,8 @@ proves the roles work, not only that a sign-in succeeded.
 root (directory mode 0700, files 0600). Warm the application first, and wait for the provider's
 session to exist before saving the state. Mint again after any reseed or reset, because a reused
 session goes stale and fails in ways that look like product bugs. Name the files so that the reset
-patterns match them; a file outside those patterns survives a reset. The shipped
+patterns match them, and replay each wipe pattern against a synthetic fixture before relying on it;
+a file outside those patterns survives a reset. The shipped
 `cockpit-setup` test-data reference walks an agent through this, including a starter for one identity
 provider that it reads only when the lockfile shows that provider.
 

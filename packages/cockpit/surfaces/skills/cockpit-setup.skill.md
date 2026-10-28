@@ -28,7 +28,7 @@ opencode:
 # Set up and maintain an installed cockpit
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
-Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow the section that matches the request: **Add a repository** (`cockpit sibling`), **After upgrading cockpit** (`cockpit upgrade`, then a human runs `cockpit sync`), or **Diagnose** (`cockpit doctor`, `cockpit check`, `cockpit preflight`).
+Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow the section that matches the request: **Add a repository** (`cockpit sibling`), **After upgrading cockpit** (`cockpit upgrade`, then a human runs `cockpit sync --interactive`), or **Diagnose** (`cockpit doctor`, `cockpit check`, `cockpit preflight`).
 **Bootstrap** (`cockpit init`, `cockpit document`, `cockpit up`) is what the first install ran; a repository that has never run locally follows **Create a local setup**.
 For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`. Read the identity-provider reference it names only when the lockfile shows that provider.
 

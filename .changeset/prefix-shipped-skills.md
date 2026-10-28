@@ -1,3 +1,5 @@
+<!-- cockpit:verified version=0.0.0 -->
+
 ---
 "@b0dea/cockpit": minor
 ---
@@ -8,4 +10,4 @@ The shipped skills now carry a `cockpit-` prefix so they do not collide with a p
 loads the test-data reference; the new experimental `cockpit-work` runs the work-order loop; the evaluator
 gains a hunt list for passes that are green for the wrong reason.
 
-Upgrade: run cockpit sync, and update any of your own instructions that name the old skills.
+Upgrade: run `cockpit sync --interactive --config cockpit.toml`, approve its exact stale-removal digest, and update any of your own instructions that name the old skills.

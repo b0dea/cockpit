@@ -369,7 +369,7 @@ describe('init application', () => {
             answered: [], inferenceSkipped: [{ source: 'app/.github/workflows/ci.yml' }] } } })
         const planned = preview.result!.interview!.outstanding
         expect(planned.map(row => row.field)).toEqual(['sibling', 'ports.bases', 'environment.install_policies',
-            'environment.generated', 'environment.machine', 'guards', 'configuration.defaults'])
+            'environment.test_data', 'environment.generated', 'environment.machine', 'guards', 'configuration.defaults'])
         expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
             provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }])
         expect(planned.find(row => row.field === 'sibling')!.inferred).toEqual([])
@@ -381,7 +381,8 @@ describe('init application', () => {
             questionId: first.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
         expect(second.result!.interview).toMatchObject({ answered: ['sibling'] })
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
-            'environment.install_policies', 'environment.generated', 'environment.machine', 'guards', 'configuration.defaults'])
+            'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.machine', 'guards',
+            'configuration.defaults'])
     })
 
     it('refuses a different target after bootstrap state is bound', async () => {
@@ -499,11 +500,12 @@ it('composes observed greenfield answers into a loadable configuration and actua
     const accepted = { ...greenfieldInput, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
-        expect(count).toBeLessThan(7)
+        expect(count).toBeLessThan(8)
         const question = outcome.result.question
         const value = question.field === 'sibling' ? sourceConfig.sibling
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
+                : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
                 : question.field === 'environment.generated' ? sourceConfig.environment.generated
                 : question.field === 'environment.machine'
                     ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }

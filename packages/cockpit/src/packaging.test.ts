@@ -288,6 +288,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'surfaces/skills/cockpit-fix.skill.md',
                 'surfaces/skills/cockpit-work.skill.md',
                 'surfaces/skills/procedures/onboarding.md',
+                'surfaces/references/test-data-and-personas.md',
+                'surfaces/references/identity-provider-clerk.md',
             ]),
         )
     })
@@ -704,7 +706,8 @@ it('runs installed init for each isolated target and refuses missing roots or br
                     toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json',
                     install: ['npm', 'ci'], load_probe: ['node', '--version'],
                 }])
-                // The interview now continues past the policy question, so the fourth question is
+                if (question.field === 'environment.test_data') return JSON.stringify({ seeded_data: false, signed_in_users: false })
+                // The interview now continues past the local test-data decision, so the fifth question is
                 // reached; declining it leaves the target unwritten and the answers resumable. A
                 // surfaces-only interview has no environment questions and reaches the defaults instead.
                 if (question.field === 'environment.generated' || question.field === 'configuration.defaults') return undefined
@@ -745,7 +748,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
             expect(questions.map(question => question.field)).toEqual([
-                'sibling', 'ports.bases', 'environment.install_policies', 'environment.generated',
+                'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.generated',
             ])
             const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
                 cwd: root, env, encoding: 'utf8',
