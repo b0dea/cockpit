@@ -2,6 +2,9 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
+This guide is for users choosing between a direct fix and a durable work order, then collecting
+independent grading, browser evidence and the right test tier for that choice.
+
 All `work-*` and `browser-*` commands are experimental. Their interfaces may change before a
 stable release; use the command-specific help as the current contract.
 
@@ -9,7 +12,7 @@ stable release; use the command-specific help as the current contract.
 
 The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill drives the browser commands in [Browser evidence](#browser-evidence) and reports findings with evidence without editing code.
 
-<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Work orders use the bounded executable document contract owned by [the work-order parser](../packages/cockpit/src/work-orders/contract.ts). Its frontmatter, source provenance, Authority paths, three to seven acceptance criteria, verification commands and ordered plan are validated together. Invalid or contradictory documents refuse before work starts.
+<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Work orders use the bounded executable document contract owned by [the work-order parser](../packages/cockpit/src/work-orders/contract.ts). Its frontmatter, source provenance, Authority paths, bounded acceptance criteria, verification commands and ordered plan are validated together. Invalid or contradictory documents refuse before work starts.
 
 <!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The bounded descriptor links a task, issue, specification, decision or programme artifact and declares whether certification or a durable handoff is needed. Routing and current capacity are checked before any candidate is read or draft is written. A fix creates no work-order files. A work-order route reports that a candidate is needed; submit its contained path with `--candidate drafts/task.md` to validate and publish the draft and source audit. Existing orders can be inspected with `--work-order WO-001`.
 
@@ -17,7 +20,7 @@ The experimental `cockpit-work` skill walks an agent through the loop below: it 
 
 <!-- cockpit:ref command=work-programme-mint --> Programme intent remains in one ordered ledger. `cockpit work-programme-mint --config cockpit.toml --programme release` reports the first unminted item as a provisional candidate request. Candidate validation checks predecessor completion, shippability and remaining capacity. Future item folders are unnecessary. Candidate publication rechecks the current ledger, identity and capacity.
 
-<!-- cockpit:ref schema=workorders.wip_cap --> <!-- cockpit:ref schema=workorders.programme_wip_cap --> <!-- cockpit:ref schema=workorders.attempt_cap --> The configured cockpit and programme WIP caps are positive integers bounded by their framework maxima of three and one. The attempt cap may be one or two. After that many failures, record root-cause analysis and choose a different approach before execution resumes. Unresolved human-input gaps also block execution. Historical state remains readable; current execution uses the issued policy.
+<!-- cockpit:ref schema=workorders.wip_cap --> <!-- cockpit:ref schema=workorders.programme_wip_cap --> <!-- cockpit:ref schema=workorders.attempt_cap --> The configured cockpit, programme WIP and attempt caps are positive integers bounded by the [configuration schema](configuration-reference.md). At the configured attempt cap, record root-cause analysis and choose a different approach before execution resumes. Unresolved human-input gaps also block execution. Historical state remains readable; current execution uses the issued policy.
 
 Repository identities admit exact, nonzero SHA-1 or SHA-256 Git object IDs. Identity inspection
 covers local and remote branches and linked worktrees; tags alone do not reserve an identity.
@@ -39,7 +42,7 @@ Malformed or null object IDs refuse instead of becoming durable source evidence.
 
 ## Verify and grade independently
 
-<!-- cockpit:ref command=work-execute --> <!-- cockpit:ref command=work-review --> <!-- cockpit:ref command=work-grade --> Execution uses the accepted contract’s declared verification commands. After substantial implementation and before grading, `work-review` authenticates the current subject and performs simplification followed by independent code and security review. Findings, dispositions and affected-proof reruns are retained. `work-grade` repeats the final review sequence, runs final declared verification and then invokes the independent grader. Changed authority refuses before grading. Completion requires three distinct non-author reviewers, current evidence and an exclusive lock through readback and the completion sentinel.
+<!-- cockpit:ref command=work-execute --> <!-- cockpit:ref command=work-review --> <!-- cockpit:ref command=work-grade --> Execution uses the accepted contract’s declared verification commands. After substantial implementation and before grading, `work-review` authenticates the current subject and performs simplification followed by independent code and security review. Findings, dispositions and affected-proof reruns are retained. `work-grade` repeats the final review sequence, runs final declared verification and then invokes the independent grader. Changed authority refuses before grading. Completion requires the distinct non-author review lanes owned by the [review sequencer](../packages/cockpit/src/work-orders/review.ts), current evidence and an exclusive lock through readback and the completion sentinel.
 
 Authority references beginning with `siblings/`, followed by a declared repository name and a relative path, select files within that repository, including repositories outside the cockpit directory. Unqualified references remain relative to the cockpit. References to unknown repositories, escaped paths or symlinks are refused. Declared environment instances, credential files and browser authentication state cannot become evaluator artifacts or source evidence.
 

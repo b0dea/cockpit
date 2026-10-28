@@ -161,6 +161,16 @@ describe('reference generation', () => {
         if (rendered.kind !== 'complete') return
         for (const file of rendered.files) expect(file.bytes, file.path).toMatch(/[^\n]\n$/)
     })
+    it('opens each generated reference with its audience and purpose', () => {
+        const rendered = renderReferences({ committed, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
+        expect(rendered.kind).toBe('complete')
+        if (rendered.kind !== 'complete') return
+        const files = new Map(rendered.files.map(file => [file.path, file.bytes]))
+        expect(files.get('docs/cli-reference.md')).toContain('for users looking up an exact command, flag, exit code or diagnostic')
+        expect(files.get('docs/configuration-reference.md')).toContain('for users authoring or reviewing `cockpit.toml`')
+        expect(files.get('docs/command-list.md')).toContain('for users choosing the command that owns their next operation')
+        expect(files.get('docs/capability-matrix.md')).toContain('for users checking what each harness can enforce, instruct or cannot provide')
+    })
     it('preserves the exact CRLF marker boundary when replacing its bounded index', () => {
         const source = prose.replace(`${begin}\n`, `${begin}\r\n`)
         const rendered = renderReferences(input(source))

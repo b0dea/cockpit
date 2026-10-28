@@ -18,8 +18,9 @@ Fixes land on the latest released minor only. Older minors are deprecated when a
 ships, so pin an exact version in each consumer lockfile and review an upgrade before applying
 its generated changes.
 
-Nothing is published yet: the package is private at 0.0.0. Until 1.0, minors may contain
-breaking changes, each with the notice and migration note below.
+Nothing is published yet. Before the first public release, obsolete commands, paths and fields are
+removed without compatibility code or a migration promise. The policy below starts with published
+contracts; while the package remains pre-1.0, a minor release may still carry a breaking change.
 
 ## Deprecation
 
@@ -44,19 +45,20 @@ not a substitute.
 Before publishing generated changes:
 
 ```sh
-cockpit upgrade --config ./cockpit.toml \
+./node_modules/.bin/cockpit upgrade --config ./cockpit.toml \
   --release-evidence ./release-evidence.json \
   --release-evidence-sha256 EXPECTED_SHA256
-cockpit sync --config ./cockpit.toml --dry-run
-cockpit sync --config ./cockpit.toml
-cockpit preflight --config ./cockpit.toml
+./node_modules/.bin/cockpit sync --config ./cockpit.toml --dry-run
+./node_modules/.bin/cockpit sync --config ./cockpit.toml
+./node_modules/.bin/cockpit preflight --config ./cockpit.toml
 ```
 
 `upgrade` is experimental and its interface may change before a stable release. It is a
 read-only plan and fails closed without exact release evidence. Review changed
 overlays, ownership, capability evidence and any manual steps it lists before `sync`.
 
-Release evidence is read from a stable regular file of at most 1 MiB; pipes and other special
-files refuse without waiting for a writer. Release integrity values must contain canonical base64 SHA-256, SHA-384, or SHA-512 digests with
+Release evidence is read from a size-bounded stable regular file; pipes and other special files
+refuse without waiting for a writer. The [release-evidence owner](../packages/cockpit/src/upgrade/release-evidence.ts)
+defines the current input bound. Release integrity values must contain canonical base64 SHA-256, SHA-384, or SHA-512 digests with
 the matching byte length. Hexadecimal digests and truncated placeholders are refused even when
 the surrounding evidence file has the expected hash.

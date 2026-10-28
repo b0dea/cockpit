@@ -13,8 +13,8 @@ what response to expect, and what is in scope.
 | everything older | no |
 
 Fixes land on the newest minor release only. There is no long-term support branch and no
-backporting; upgrading to the newest minor is the fix. Nothing has been released yet (the
-package is at 0.0.0), so this applies from the first release.
+backporting; upgrading to the newest minor is the fix. Nothing has been released yet, so this
+applies from the first release.
 
 ## Reporting a vulnerability
 

@@ -7,6 +7,10 @@ budget: uncapped
 
 # Cockpit skill procedures
 
+Run from the cockpit root. Wherever this procedure writes `cockpit <command>`, invoke the exact
+project-local executable as `./node_modules/.bin/cockpit <command>`. If that file is absent, stop:
+do not use a command runner that can download a missing package implicitly.
+
 ## Bootstrap
 
 Choose the current harness target explicitly: `claudecode`, `codexcli`, or `opencode`.

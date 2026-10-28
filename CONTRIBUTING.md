@@ -30,8 +30,9 @@ file to that list is the review.
 ## Setup
 
 You need the Node.js and platform prerequisites in
-[Getting started](docs/getting-started.md#install-cockpit), Git 2.42 or newer
-(the hygiene scanner uses `git cat-file -Z`), and Bash and zsh.
+[Getting started](docs/getting-started.md#install-cockpit), a Git release that supports the
+[`git cat-file -Z` invocation used by the hygiene scanner](scripts/hygiene-scan.mjs), and Bash
+and zsh.
 
 ```sh
 npm ci --ignore-scripts

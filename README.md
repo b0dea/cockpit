@@ -14,8 +14,8 @@ checkouts, gives Claude Code, Codex CLI and OpenCode the same instructions, skil
 permissions, and hands finished work to an independent evaluator. It holds none of your product
 code.
 
-> **Status: pre-alpha, version 0.0.0.** Commands, configuration and the
-> generated file layout will change in backward-incompatible ways before 1.0.
+> **Status: pre-alpha and not yet published.** Commands, configuration and the
+> generated file layout may change without a compatibility layer before the first public release.
 > See [Status and limits](#status-and-limits).
 
 ## For AI agents
@@ -70,7 +70,7 @@ for cockpit to manage:
 cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo" && cd "${TMPDIR:-/tmp}/cockpit-demo"
 npm init --yes
 npm install -D @b0dea/cockpit
-npx cockpit --help
+./node_modules/.bin/cockpit --help
 ```
 
 Until the package is published, use the verified
@@ -84,7 +84,7 @@ agent tools and the stack, and writes none of them (output trimmed):
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
-$ npx cockpit sync --config cockpit.toml --dry-run
+$ ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run
 write "AGENTS.md"
 write "CLAUDE.md"
 write "compose.generated.yml"

@@ -16,7 +16,8 @@ diagnostic code; unknown flags are refused. `logs` defaults to `--tail 100 --sin
 
 ## Input limits
 
-Configuration, registry and adoption files are limited to 1,048,576 bytes before parsing.
+Configuration, registry and adoption files are size-bounded before parsing. The
+[bounded-input owner](../packages/cockpit/src/config/load.ts) defines the current limit.
 Unreadable, non-regular, oversized or concurrently changed inputs refuse with a diagnostic.
 Reduce an oversized input; raising an output or subprocess limit does not change this boundary.
 

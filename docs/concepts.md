@@ -116,10 +116,11 @@ cockpit own several repositories neutrally. It grows from one repository to many
   redirected Git metadata or take over unrelated files. `"in-repo"` makes the product
   repository the cockpit root: it then carries the cockpit files, and the cockpit cannot
   neutrally own several repositories.
-- **To move an in-repo cockpit out later**, run `cockpit init` again from the product repository
-  with `cockpit.root = "dedicated"`, which builds the dedicated cockpit beside it. Then delete
-  from the product repository every path listed in `.cockpit/generated-environment-ownership.json`,
-  that file, and `cockpit.toml`.
+
+Moving an existing in-repo cockpit changes generated ownership. There is no authenticated public
+migration command yet; do not delete an ownership manifest or its listed paths by hand. Create a
+new dedicated cockpit as a separate adoption and remove the old one only when a future command can
+preview and postcheck that cleanup.
 
 ## Cockpit sibling declaration
 

@@ -177,9 +177,9 @@ Without that approval, or when process isolation cannot be established, the cell
 `human_needed` until the required official-authoring or native-diagnostics evidence is attached.
 Repository tests and generated receipts do not promote those native or human rows.
 
-Legacy adapter evidence is also bounded before parsing: each manifest, candidate, broken control,
-and transcript file is limited to 1 MiB. Commands admit at most 256 arguments and 1 MiB of total
-argument text; individual event output and required text fields are limited to 1 MiB. Changed
+Legacy adapter evidence, command vectors and captured output are bounded before parsing. The
+[evidence validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) owns the current
+limits. Changed
 files and non-regular files refuse. These receipts retain their historical capability strength;
 passing their validator does not promote a native capability.
 

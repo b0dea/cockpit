@@ -256,7 +256,9 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         if (document === undefined) return refusal('troubleshooting needs exactly one ordered pair of standalone diagnostic-index markers', 'docs/troubleshooting.md')
         const defaults = configurationDefaults()
         const exits = Object.entries(EXIT_CODES).map(([name, value]) => `| ${value} | ${name} |\n`).join('')
-        const cli = documentHeading('CLI reference') + 'Commands and flags derive from the implementing command table.\n\n' + commands.map(command => {
+        const cli = documentHeading('CLI reference')
+            + 'This generated reference is for users looking up an exact command, flag, exit code or diagnostic. Commands and flags derive from the implementing command table.\n\n'
+            + commands.map(command => {
             const commandOwners = input.diagnostics.commandOwners.get(command.handler)
             const ownedDiagnostics = commandOwners
                 ? codes.filter(name => [...input.diagnostics.owners.get(name)!].some(owner => commandOwners.has(owner)))
@@ -284,7 +286,8 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const entrypoints = collection.entrypoints.map(entry => `| ${code(sourcePath(entry.path))} | ${entry.metric} | ${entry.cap} | ${code(sourcePath(entry.displacement))} |\n`).join('')
         const guideCosts = ('guideCosts' in input ? input.guideCosts : []).map(cost => cost.status === 'unavailable' ? `- ${cost.target}: unavailable (${cell(cost.reason)}).\n`
             : `- ${cost.target}: ${cost.value}/${cost.cap} ${cost.metric}; ${cost.status}; ${cell(cost.provenance)} (${cost.measuredOn}).\n`).join('')
-        const configuration = documentHeading('Configuration reference') + 'The runtime schema and defaults are the configuration authorities.\n\n'
+        const configuration = documentHeading('Configuration reference')
+            + 'This generated reference is for users authoring or reviewing `cockpit.toml`. The runtime schema and defaults are the configuration authorities.\n\n'
             + '## Defaults\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
             + '## Governed standing cost\n\n'
             + `Collection authority: ${code(sourcePath(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`
@@ -293,13 +296,15 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             + `Terminal ${code(sourcePath(collection.terminal.path))}: loading=pull; budget=uncapped; SHA-256 ${code(collection.terminal.sha256)}.\n\n`
             + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} derives from the registry schema (default ${defaults.cockpit.guide_cap} lines); measured guide costs are instance-specific and come from the sibling projection owner.\n\n` + guideCosts
             + '\n## JSON Schema\n\n```json\n' + renderCockpitSchema().trim() + '\n```\n'
-        const list = documentHeading('Command list') + 'The command table supplies this list.\n\n' + commands.map(command =>
-            `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
+        const list = documentHeading('Command list')
+            + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
+            + commands.map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
             + '\n## Consumer documentation pipeline\n\n```yaml\ndocumentation-pipeline:\n  generate: <declared producer command>\n  check: <declared byte comparison command>\n  named-references: <declared reference validation command>\n```\n'
-        const matrix = committed ? documentHeading('Capability matrix') + 'Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.\n\n'
+        const matrixOpening = 'This generated matrix is for users checking what each harness can enforce, instruct or cannot provide. '
+        const matrix = committed ? documentHeading('Capability matrix') + matrixOpening + 'Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.\n\n'
             + `Source manifest: ${code(committed.sha256)}.\n\n| Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n`
             + committed.cells.map(row => `| ${cell(row.target)} | ${cell(row.capability)} | ${cell(row.skill)} | ${cell(row.state)} | ${cell(row.evidence)} | ${cell(row.provenance)} | ${cell(row.measuredOn)} | ${cell(row.measuredVersion ?? 'unmeasured')} |\n`).join('')
-            : documentHeading('Capability matrix') + 'This projection describes declared surfaces and pending probe cells. A probe expectation grants no enforced capability; missing or unavailable native evidence remains non-authorizing.\n\n'
+            : documentHeading('Capability matrix') + matrixOpening + 'This projection describes declared surfaces and pending probe cells. A probe expectation grants no enforced capability; missing or unavailable native evidence remains non-authorizing.\n\n'
             + `Source manifest: ${code(expectation!.generatedManifestSha256)}.\n\n| Harness | Capability | Skill | Evidence |\n| --- | --- | --- | --- |\n`
             + expectation!.cells.map(row => `| ${cell(row.harness.kind === 'builtin' ? row.harness.name : row.harness.id)} | ${row.capability} | ${row.capability === 'skill-parity' ? row.skill : 'n/a'} | instructed; native probe pending |\n`).join('')
             + '\nCustom declarations retain their recorded state and measurement date; a declaration alone supplies no native proof.\n\n'

@@ -17,14 +17,14 @@ with an independent evaluator for finished work.
   Devbox is simpler.
 - You need isolation from untrusted code: cockpit is not a sandbox.
 - You are on Windows: only macOS and Linux are supported.
-- You need a published, stable tool today: cockpit is pre-alpha and installs from source.
+- You need a published, stable tool today: cockpit is pre-alpha and not yet published.
 
 The full list of non-goals, with reasons, is in [Architecture](architecture.md#non-goals).
 
 ## Is it on npm?
 
-No. The package is private at 0.0.0. Install it from source with
-[Install cockpit](getting-started.md#install-cockpit).
+Not yet. [Install cockpit](getting-started.md#install-cockpit) owns the intended project-local
+install and the verified source-package fallback available before publication.
 
 ## Do I have to use every agent tool?
 
@@ -42,10 +42,10 @@ Grok Build configuration does not claim native loading or guard enforcement. The
 
 ## Does cockpit change my product code?
 
-No. It writes generated files into the cockpit checkout and into the paths you declare, such as
-an environment template in a sibling repository, and it records every file it owns. `setup` can
-clone a missing sibling from its declared remote. It never rewrites Git remotes or edits files
-it does not own.
+Only in paths the configuration declares and the relevant preview admits. cockpit writes generated
+files into the cockpit checkout and can write declared outputs in a sibling repository, such as an
+environment template; it records every file it owns. `setup` can clone a missing sibling from its
+declared remote. It never rewrites Git remotes or edits undeclared files.
 
 ## Can two agents use the same machine at once?
 

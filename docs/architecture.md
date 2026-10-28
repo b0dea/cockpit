@@ -90,7 +90,8 @@ write, and CLI and configuration references generated from the source so they ca
 - **No telemetry.** The only network request cockpit makes itself is `doctor` reading the latest
   published version from the npm registry, skipped when `CI` or `NO_UPDATE_NOTIFIER` is set.
 - **No Windows.** Process-group handling and the shell guards target macOS and Linux.
-- **Not a monorepo tool.** It assumes several independent repositories with their own histories.
+- **Not a monorepo or build-system replacement.** It can manage one repository or several, but
+  delegates each repository's build and dependency graph to that repository's own tools.
 - **No per-test containers.** One stack per checkout, shared across the agent's work.
 
 ## Processing path

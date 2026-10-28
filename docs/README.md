@@ -27,7 +27,8 @@ are trying to do. Contributor documentation lives separately under docs/contribu
 
 ## Reference
 
-These pages are generated from the source and change with it.
+The first four pages are generated from the source and change with it. Troubleshooting combines
+hand-written recovery guidance with a generated diagnostic index.
 
 - [Command list](command-list.md)
 - [CLI reference](cli-reference.md)

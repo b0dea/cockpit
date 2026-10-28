@@ -8,8 +8,9 @@ work first on a throwaway example, follow the [tutorial](tutorial.md).
 
 ## Install cockpit
 
-You need Node.js `^22.13.0 || ^24.0.0 || ^26.0.0`, Git, and macOS or Linux. The commands that
-run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker Compose and a
+You need a Node.js release admitted by the
+[`engines` field in the package manifest](../packages/cockpit/package.json), Git, and macOS or
+Linux. The commands that run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker Compose and a
 local runtime that has passed cockpit's measurement probe. The
 [runtime identity table and measurement procedure](environment.md#measure-the-container-runtime)
 are the canonical runtime support record. Configuration, generation, `setup` and `check` work
@@ -17,11 +18,13 @@ without Docker.
 
 ```sh
 npm install -D @b0dea/cockpit
-npx cockpit --help
+./node_modules/.bin/cockpit --help
 ```
 
-The install is project-local and recorded in the project's lockfile. Run it as
-`npx cockpit <command>`.
+The install is project-local and recorded in the project's lockfile. From the project root, run
+the exact installed executable as `./node_modules/.bin/cockpit <command>`. This path fails when
+the dependency is missing; it cannot implicitly download a different package. After `init`
+publishes the cockpit-owned package scripts, use those scripts for setup, sync and check.
 
 ### Install from source
 
@@ -38,7 +41,7 @@ COCKPIT_PACKAGE_DIR="$(mktemp -d)"
 npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
 cd /path/to/the-cockpit-project
 npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
-npx cockpit --help
+./node_modules/.bin/cockpit --help
 ```
 
 Keep `COCKPIT_PACKAGE_DIR` until the install finishes, then remove it with
@@ -50,7 +53,7 @@ Check the install:
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
-$ npx cockpit --help
+$ ./node_modules/.bin/cockpit --help
 Usage: cockpit <command> [options]
 
 Commands:
@@ -80,7 +83,7 @@ Pick the agent harness you will use first: `claudecode`, `codexcli`, `opencode`,
 `grokcli`. From the directory that will hold the configuration, preview the bootstrap:
 
 ```sh
-npx cockpit init "$(pwd)" --target codexcli --json
+./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --json
 ```
 
 The preview writes nothing. It returns the files it would install (the cockpit-setup skill for that
@@ -88,7 +91,7 @@ harness), a `previewSha256` digest and the next step. To accept, run the same co
 interactively in a terminal and type the digest it shows:
 
 ```sh
-npx cockpit init "$(pwd)" --target codexcli --interactive
+./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --interactive
 ```
 
 `init` then looks at the repositories under the directory and asks for every fact it cannot
@@ -134,9 +137,9 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
    is refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 
 ```sh
-npx cockpit init "$(pwd)" --target codexcli --json
-npx cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json
-npx cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --json
+./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json
+./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
 ```
 
 The answers file spells each field as a TOML path, so `ports.bases` is the `bases` key of a
@@ -191,10 +194,10 @@ about which host it points at, not as a host. Each is a proposal to confirm, not
 This is the canonical sequence. Every other page links here rather than repeating it.
 
 ```sh
-npx cockpit setup --config ./cockpit.toml
-npx cockpit sync --config ./cockpit.toml --dry-run
-npx cockpit sync --config ./cockpit.toml
-npx cockpit check --config ./cockpit.toml
+./node_modules/.bin/cockpit setup --config ./cockpit.toml
+./node_modules/.bin/cockpit sync --config ./cockpit.toml --dry-run
+./node_modules/.bin/cockpit sync --config ./cockpit.toml
+./node_modules/.bin/cockpit check --config ./cockpit.toml
 ```
 
 - `setup` clones or verifies each declared repository and checks its remote.
@@ -207,8 +210,8 @@ npx cockpit check --config ./cockpit.toml
 Review and commit the generated files, then start the stack and run the gate:
 
 ```sh
-npx cockpit up --config ./cockpit.toml
-npx cockpit preflight --config ./cockpit.toml
+./node_modules/.bin/cockpit up --config ./cockpit.toml
+./node_modules/.bin/cockpit preflight --config ./cockpit.toml
 ```
 
 `up` starts or resumes the stack. `preflight` is the gate: a successful `up` is not proof the
@@ -226,16 +229,16 @@ where the repository is:
 
 ```sh
 # a directory that already exists under the siblings root (acquire = "none")
-npx cockpit sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
+./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --purpose "HTTP API for orders"
 
 # a repository that does not exist yet: runs `git init` on an empty or missing path
-npx cockpit sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
+./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --create --purpose "HTTP API for orders"
 
 # a checkout elsewhere on disk: records its origin so `setup` clones a fresh copy
-npx cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
+./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --from ~/code/api --purpose "HTTP API for orders"
 
 # a known remote (acquire = "auto"); also records a remote for an existing acquire = "none" sibling
-npx cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
+./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
 ```
 
 `--dir <relative dir>` sets the directory under the siblings root (default: the slug), `--var <NAME>`
@@ -265,7 +268,7 @@ the result, and with `--json` returns them as `result.publish.command` and
 no `origin` remote.
 
 ```sh
-npx cockpit sibling remove api --config ./cockpit.toml
+./node_modules/.bin/cockpit sibling remove api --config ./cockpit.toml
 ```
 
 `remove` drops the table only if nothing else refers to the sibling (generated services, vendor
@@ -279,7 +282,7 @@ It never deletes the checkout or any generated file. After either command, run
 releases it when the agent exits:
 
 ```sh
-npx cockpit session --config ./cockpit.toml -- codex
+./node_modules/.bin/cockpit session --config ./cockpit.toml -- codex
 ```
 
 Put the agent command after `--`, with its own arguments. Once the command's process group has

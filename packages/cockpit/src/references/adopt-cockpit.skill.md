@@ -33,15 +33,15 @@ with invented values in it is the failure it is built to prevent. Work under fiv
 
 ## Install cockpit if it is missing
 
-Done when `cockpit --help` lists the commands.
+Done when the exact project-local executable lists the commands.
 
-cockpit installs from source today. Tell the human, then run the commands from the Quickstart in
-<https://raw.githubusercontent.com/b0dea/cockpit/main/README.md>, which is the current path:
+Tell the human that cockpit is not yet published, then follow the canonical
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md#install-cockpit>
+installation. It owns both the intended registry install and the verified source-package
+fallback. Verify the installed dependency without permitting an implicit download:
 
 ```sh
-git clone https://github.com/b0dea/cockpit.git && cd cockpit
-npm ci --ignore-scripts && npm run build
-npm link --workspace @b0dea/cockpit
+./node_modules/.bin/cockpit --help
 ```
 
 Your harness target is the tool you run in: `claudecode` (Claude Code), `codexcli` (Codex CLI),
@@ -49,7 +49,9 @@ Your harness target is the tool you run in: `claudecode` (Claude Code), `codexcl
 built-ins, cockpit's AGENTS.md still gives it the instructions; guards and permissions are not enforced there
 (<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>).
 
-Read flags from `cockpit <command> --help`. Pass `--json` and read `result`, `diagnostics[].code`
+Run commands from the cockpit root through `./node_modules/.bin/cockpit`; if that file is absent,
+stop and repair the project-local install. Read flags from
+`./node_modules/.bin/cockpit <command> --help`. Pass `--json` and read `result`, `diagnostics[].code`
 and `invocation.exitCode`; a pending `init` also exits 0, so read its `result.stage` and
 `result.question`.
 
