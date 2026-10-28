@@ -10,5 +10,5 @@ export const mechanism = {
 export function isPackageDescendant(root: string, candidate: string,
     paths: Pick<typeof nativePaths, 'relative' | 'isAbsolute' | 'sep'> = nativePaths): boolean {
     const offset = paths.relative(root, candidate)
-    return offset.length > 0 && offset !== '..' && !offset.startsWith(`..${paths.sep}`) && !paths.isAbsolute(offset)
+    return candidate.startsWith(`${root}${paths.sep}`) && offset.length > 0 && offset !== '..' && !offset.startsWith(`..${paths.sep}`) && !paths.isAbsolute(offset)
 }

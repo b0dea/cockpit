@@ -111,6 +111,7 @@ describe('browser transport surfaces', () => {
             [win32, 'C:\\Workspace With Spaces\\node_modules\\@playwright\\test', 'C:\\Workspace With Spaces\\node_modules\\@playwright\\test\\index.js', true],
             [win32, 'C:\\packages\\test', 'C:\\packages\\test', false],
             [win32, 'C:\\packages\\test', 'C:\\packages\\test-other\\index.js', false],
+            [win32, 'C:\\packages\\test', 'C:\\packages\\Test\\outside.js', false],
             [win32, 'C:\\packages\\test', 'C:\\packages\\test\\..\\outside.js', false],
             [win32, 'C:\\packages\\test', 'D:\\packages\\test\\index.js', false],
             [posix, '/packages/test', '/packages/test/index.js', true],
