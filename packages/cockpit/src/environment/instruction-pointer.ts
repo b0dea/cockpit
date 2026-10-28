@@ -5,6 +5,11 @@ import { basename, dirname, join, relative, sep } from 'node:path'
 
 import { readBoundedInput } from '../config/load.js'
 
+export const mechanism = {
+    id: 'instruction-pointer', module: 'packages/cockpit/src/environment/instruction-pointer.ts',
+    exports: ['synchronizeInstructionPointer'],
+} as const
+
 const BEGIN = '<!-- cockpit:instruction-pointer:start -->'
 const END = '<!-- cockpit:instruction-pointer:end -->'
 
