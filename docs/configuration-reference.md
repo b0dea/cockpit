@@ -64,13 +64,15 @@ The runtime schema and defaults are the configuration authorities.
 
 ## Governed standing cost
 
-Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `9001bbdd2c698f5db7792a12a7581e2060a82384c014442e8c465bb1776bcb52`.
+Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `738daf2662c9504c7493183159684508075aa0d0d5364ddb3f0f3719c4842eec`.
 
 | Target | Metric | Cap | Displacement |
 | --- | --- | --- | --- |
 | claudecode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | codexcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | opencode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| cursor | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
+| grokcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
 | Entrypoint | Metric | Cap | Displacement |
 | --- | --- | --- | --- |
@@ -10421,7 +10423,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                   },
                   {
                     "type": "string",
-                    "pattern": "^(?!(?:claudecode|codexcli|opencode)$)"
+                    "pattern": "^(?!(?:claudecode|codexcli|opencode|cursor|grokcli)$)"
                   }
                 ]
               },
