@@ -76,6 +76,12 @@ export interface GeneratedObservationRuntime {
     readonly serviceAuthority?: Readonly<{ topology: RuntimeTopologyEvidence; evidence: RuntimeServiceEvidence }>
 }
 
+export interface GeneratedHostInputRoot {
+    readonly path: string
+    readonly dev: number
+    readonly ino: number
+}
+
 export interface GeneratedRuntimeAuthority { readonly kind: 'generated-runtime-authority' }
 type GeneratedDataDeclaration = NonNullable<GeneratedEnvironmentDeclaration['data']>
 export type GeneratedDataOperation = GeneratedDataDeclaration['modes'][number]['operations'][number]['operation']
@@ -93,6 +99,7 @@ export type GeneratedRuntimeEnvelope = Readonly<{
     declaration: GeneratedEnvironmentDeclaration
     topology: RuntimeTopologyEvidence
     runtime: GeneratedObservationRuntime
+    hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
     stackId: StackId
     sourceSha256: string
     generation: string
@@ -131,6 +138,7 @@ const issuedRuntimeAuthorities = new WeakMap<object, Readonly<{
     declaration: GeneratedEnvironmentDeclaration
     topology: RuntimeTopologyEvidence
     runtime: GeneratedObservationRuntime
+    hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
     stackId: StackId
     sourceSha256: string
     generation: string
@@ -288,10 +296,51 @@ export function inspectGeneratedEnvironment(input: {
 const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 const GENERATED_RUNTIME_IDENTITY_ENV = new Set(['COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
 
+// Walking through the child process cwd pins each directory before reading the next segment.
+// Checking a complete string path once would let an intermediate symlink redirect a later read.
+const HOST_INPUT_PROBE = `
+const fs = require('node:fs'); const path = require('node:path');
+const root = JSON.parse(process.argv[2]);
+const same = (status, identity) => status.dev === identity.dev && status.ino === identity.ino;
+if (fs.realpathSync(root.path) !== root.path) throw new Error('generated host input root changed');
+process.chdir(root.path);
+const base = fs.lstatSync('.');
+if (!base.isDirectory() || base.isSymbolicLink() || !same(base, root)) throw new Error('generated host input root changed');
+const relative = path.relative(root.path, process.argv[1]);
+const segments = relative === '' ? [] : relative.split(path.sep);
+if (path.isAbsolute(relative) || segments.some(segment => segment === '..' || segment === '.')) throw new Error('generated host input escaped its sibling');
+const name = segments.pop() || '.';
+for (const segment of segments) {
+    const before = fs.lstatSync(segment);
+    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('generated host input crosses a symbolic or non-directory entry');
+    process.chdir(segment);
+    if (!same(fs.lstatSync('.'), before)) throw new Error('generated host input directory changed');
+}
+const entry = fs.lstatSync(name);
+if (entry.isSymbolicLink()) throw new Error('generated host input is a symbolic entry');
+if (process.argv[3] === 'mount-lstat') {
+    if (!(process.argv[4] === 'file' ? entry.isFile() : entry.isDirectory())) throw new Error('generated mount input type differs');
+} else {
+    if (!entry.isFile() || entry.size > 1024 || fs.constants.O_NOFOLLOW === undefined) throw new Error('generated toolchain input is not a bounded file');
+    const fd = fs.openSync(name, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+        const before = fs.fstatSync(fd);
+        if (!same(before, entry) || !before.isFile() || before.size > 1024) throw new Error('generated toolchain input changed');
+        const bytes = Buffer.alloc(1025);
+        const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
+        const after = fs.fstatSync(fd);
+        if (length !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) throw new Error('generated toolchain input changed');
+        const value = bytes.subarray(0, length).toString('utf8').trim();
+        if (value !== process.argv[4] || value !== process.argv[5]) throw new Error('generated toolchain input differs from its pin');
+    } finally { fs.closeSync(fd); }
+}
+`
+
 function generatedObservationStep(
     observation: GeneratedObservationPlan,
     runtime: GeneratedObservationRuntime,
     declaredPortVariables: ReadonlySet<string>,
+    hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>,
 ): ExecutionStep | undefined {
     const docker = resolvedDockerExecutable(runtime.executable)
     if (!docker || !isAbsolute(runtime.root) || normalize(runtime.root) !== runtime.root
@@ -309,22 +358,23 @@ function generatedObservationStep(
     let timeoutMs: number
     let consumedFiles: ExecutionStep['consumedFiles']
     let usesCompose = false
+    let measuredPaths: readonly string[] = []
     if (observation.kind === 'mount-lstat' || observation.kind === 'toolchain-pin') {
         const currentNode = realpathSync(process.execPath)
         const node = Object.values(runtime.hostExecutables ?? {})
             .map((value) => resolvedExecutable(value)).find((value) => value?.canonicalPath === currentNode)
-        const target = resolve(runtime.root, observation.target)
-        const relation = relative(runtime.root, target)
-        if (!node || relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return undefined
+        const root = typeof observation.expected.service === 'string' ? hostInputRoots[observation.expected.service] : undefined
+        if (!node || !root) return undefined
+        const target = resolve(root.path, observation.target)
+        const relation = relative(root.path, target)
+        if (relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return undefined
         const expectedType = observation.expected.type
         const observed = observation.expected.observed
         const pinned = observation.expected.pinned
         if (observation.kind === 'mount-lstat' && expectedType !== 'file' && expectedType !== 'directory'
             || observation.kind === 'toolchain-pin' && (typeof observed !== 'string' || typeof pinned !== 'string')) return undefined
-        const script = observation.kind === 'mount-lstat'
-            ? "const {lstatSync}=require('node:fs');const s=lstatSync(process.argv[1]);process.exit((process.argv[2]==='file'?s.isFile():s.isDirectory())?0:7)"
-            : "const {readFileSync}=require('node:fs');const v=readFileSync(process.argv[1],'utf8').trim();process.exit(v===process.argv[2]&&v===process.argv[3]?0:7)"
-        argv = Object.freeze([node.canonicalPath, '-e', script, target,
+        measuredPaths = Object.freeze([target])
+        argv = Object.freeze([node.canonicalPath, '-e', HOST_INPUT_PROBE, target, JSON.stringify(root), observation.kind,
             ...(observation.kind === 'mount-lstat' ? [expectedType as string] : [observed as string, pinned as string])]) as readonly [string, ...string[]]
         argv0 = node.invocationPath
         timeoutMs = 5_000
@@ -387,8 +437,6 @@ function generatedObservationStep(
             ])
         }
     }
-    const measuredPaths = observation.kind === 'mount-lstat' || observation.kind === 'toolchain-pin'
-        ? [resolve(runtime.root, observation.target)] : []
     const env = usesCompose
         ? composeProcessEnvironment(runtime.publicEnv)
         : Object.freeze({ ...runtime.publicEnv })
@@ -502,9 +550,10 @@ export function projectGeneratedRuntimeAuthority(input: {
     readonly rendered: GeneratedEnvironmentResult
     readonly topology: RuntimeTopologyEvidence
     readonly runtime: GeneratedObservationRuntime
+    readonly hostInputRoots?: Readonly<Record<string, GeneratedHostInputRoot>>
 }): GeneratedRuntimeAuthority | undefined {
     const captured = ownRecord(input)
-    if (!captured || !exactKeys(captured, ['rendered', 'runtime', 'topology'])) return undefined
+    if (!captured || !exactKeys(captured, ['rendered', 'runtime', 'topology', ...(Object.hasOwn(captured, 'hostInputRoots') ? ['hostInputRoots'] : [])])) return undefined
     const rendered = captured.rendered
     const topology = captured.topology
     const authority = authenticateGeneratedRender(rendered as GeneratedEnvironmentResult)
@@ -512,6 +561,24 @@ export function projectGeneratedRuntimeAuthority(input: {
     if (!authority || !runtime || !topology || typeof topology !== 'object' || !isRuntimeTopologyEvidence(topology as RuntimeTopologyEvidence)) return undefined
     const current = topology as RuntimeTopologyEvidence
     const declaration = authority.declaration
+    const roots = ownRecord(captureData(captured.hostInputRoots ?? {}))
+    const hostServices = Object.keys(authority.hostInputDirectories)
+    if (!roots || !exactKeys(roots, hostServices)) return undefined
+    for (const service of declaration.services) {
+        const directory = authority.hostInputDirectories[service.id]
+        const root = directory === undefined ? undefined : ownRecord(roots[service.id])
+        if (directory !== undefined && (!root || !exactKeys(root, ['path', 'dev', 'ino'])
+            || typeof root.path !== 'string' || !isAbsolute(root.path) || normalize(root.path) !== root.path
+            || root.path !== resolve(runtime.root, directory)
+            || !Number.isSafeInteger(root.dev) || (root.dev as number) < 0
+            || !Number.isSafeInteger(root.ino) || (root.ino as number) < 0)) return undefined
+        const sources = [...new Set(service.mounts.filter(mount => mount.kind !== 'volume')
+            .map(mount => resolve(root!.path as string, mount.source)))].sort()
+        const observed = current.services.find(candidate => candidate.id === service.id)
+        if (!observed || !isDeepStrictEqual(observed.bindMountSources, sources)) return undefined
+    }
+    const hostInputRoots = Object.freeze(roots) as unknown as Readonly<Record<string, GeneratedHostInputRoot>>
+
     const declaredPortVariables = new Set(declaration.services.flatMap((service) => service.ports.map(({ host_variable }) => host_variable)))
     const executionEnvironment = projectRuntimeExecutionEnvironment(current)
     const expectedExecutionEnvironment = executionEnvironment && Object.freeze({ ...executionEnvironment,
@@ -541,7 +608,7 @@ export function projectGeneratedRuntimeAuthority(input: {
         || !isRuntimeServiceEvidence(runtime.serviceAuthority.evidence))) return undefined
     const projection = Object.freeze({ kind: 'generated-runtime-authority' as const })
     issuedRuntimeAuthorities.set(projection, Object.freeze({
-        rendered: rendered as object, declaration, topology: current, runtime,
+        rendered: rendered as object, declaration, topology: current, runtime, hostInputRoots,
         stackId: authority.stackId, sourceSha256: authority.sourceSha256, generation: authority.generation,
     }))
     return projection
@@ -644,7 +711,7 @@ export function createGeneratedObservationExecution(input: {
         .flatMap((service) => service.ports.map(({ host_variable }) => host_variable)))
     const plan = effectiveObservationPlan(observation as GeneratedObservationPlan, generatedAuthority.runtime)
     if (!plan) return Object.freeze({ kind: 'unavailable', id: (observation as GeneratedObservationPlan).id, reason: 'generated observation has no authentic executable plan' })
-    const step = generatedObservationStep(plan, generatedAuthority.runtime, declaredPortVariables)
+    const step = generatedObservationStep(plan, generatedAuthority.runtime, declaredPortVariables, generatedAuthority.hostInputRoots)
     if (!step) return Object.freeze({ kind: 'unavailable', id: plan.id, reason: 'generated observation has no authentic executable plan' })
     const execution = Object.freeze({ kind: 'planned' as const, id: plan.id, step })
     issuedObservationExecutions.set(execution, Object.freeze({

@@ -5225,6 +5225,15 @@ describe('product architecture contract', () => {
         expect(importDirectionViolations(sources)).toContain('ARCH002_KERNEL_DIRECTION')
     })
 
+    it('confines generated host input authority issuance to the prepared application owner', () => {
+        const users = [...productionSources()]
+            .filter(([path, source]) => path !== 'packages/cockpit/src/environment/generated-stack.ts'
+                && /\bprojectGeneratedRuntimeAuthority\b/.test(source))
+            .map(([path]) => path)
+            .sort()
+        expect(users).toEqual(['packages/cockpit/src/environment/generated-application.ts'])
+    })
+
     it('keeps controlled runtime measurement authority confined to the probe and lifecycle consumer', () => {
         const sources = productionSources()
         const issuerUsers = [...sources]

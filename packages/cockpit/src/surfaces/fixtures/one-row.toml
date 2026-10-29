@@ -105,7 +105,7 @@ kind = "declared"
 reason = "Synthetic declaration"
 
 [[sibling.derives.generated.service.toolchain_pins]]
-path = "worker/.node-version"
+path = ".node-version"
 pinned = "22.0.0"
 observed = "22.0.0"
 
@@ -132,7 +132,7 @@ target = "/workspace/node_modules"
 
 [[sibling.derives.generated.additional_mounts]]
 kind = "environment-file"
-source = "worker/.env.local"
+source = ".env.local"
 target = "/workspace/.env"
 source_type = "file"
 
@@ -190,7 +190,7 @@ provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind =
 [[sibling.derives.generated.decisions]]
 id = "mount-worker-checkout"
 subject = "mount"
-subject_id = "worker:bind:worker:/workspace/worker"
+subject_id = "worker:bind:.:/workspace/worker"
 decided_on = "2026-10-12"
 decision = "Mount the worker checkout"
 rejected = ["Copied source tree"]
@@ -212,7 +212,7 @@ provenance = { source = "synthetic-row.toml", observed_on = "2026-10-12", kind =
 [[sibling.derives.generated.decisions]]
 id = "mount-worker-environment"
 subject = "mount"
-subject_id = "worker:environment-file:worker/.env.local:/workspace/.env"
+subject_id = "worker:environment-file:.env.local:/workspace/.env"
 decided_on = "2026-10-12"
 decision = "Mount the worker environment instance"
 rejected = ["Embed environment values"]

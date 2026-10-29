@@ -100,7 +100,7 @@ source_type = "directory"
 
 [[environment.generated.services.mounts]]
 kind = "environment-file"
-source = "app/.env"
+source = ".env"
 target = "/workspace/.env"
 source_type = "file"
 
@@ -147,7 +147,7 @@ kind = "declared"
 reason = "Synthetic declaration"
 
 [[environment.generated.services.toolchain_pins]]
-path = "app/.node-version"
+path = ".node-version"
 pinned = "22.0.0"
 observed = "22.0.0"
 
@@ -853,7 +853,7 @@ reason = "Synthetic declaration"
 [[environment.generated.decisions.entries]]
 id = "mount-environment"
 subject = "mount"
-subject_id = "app:environment-file:app/.env:/workspace/.env"
+subject_id = "app:environment-file:.env:/workspace/.env"
 decided_on = "2026-09-26"
 decision = "Use declared mount"
 rejected = [ "Implicit environment behavior" ]

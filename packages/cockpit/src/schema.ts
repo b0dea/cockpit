@@ -324,6 +324,7 @@ export const GeneratedService = z.object({
     host_aliases: z.array(GeneratedHostAlias).max(64).refine((aliases) => !hasDuplicate(aliases.map(({ hostname }) => hostname)), {
         message: 'generated service host aliases must name unique hostnames',
     }).optional(),
+    // Host inputs belong to the service sibling; named volumes retain their declared identities.
     mounts: z.array(z.object({ kind: z.enum(['bind', 'volume', 'environment-file']), source: z.union([z.literal('.'), SafeRelativePath.max(4096)]), target: ContainerPath, source_type: z.enum(['file', 'directory']).optional() }).strict().refine((mount) => mount.kind === 'volume' ? mount.source_type === undefined && mount.source !== '.' : mount.kind === 'environment-file' ? mount.source_type === 'file' : mount.source_type !== undefined, { path: ['source_type'], message: 'bind sources require their expected type and volume sources use declared identities' })).max(256).default([]),
     dependencies: z.array(z.object({ service: DeclarationId, condition: z.enum(['service_started', 'service_healthy', 'service_completed_successfully']), reason: DeclarationReason }).strict()).max(256).default([]),
     health: z.object({
@@ -338,6 +339,7 @@ export const GeneratedService = z.object({
     }).strict().refine((health) => health.measurement === undefined || health.start_period_seconds >= health.measurement.duration_seconds, {
         path: ['start_period_seconds'], message: 'start period is shorter than its measurement',
     }),
+    // Pin files are read from this service sibling, including services without bind mounts.
     toolchain_pins: z.array(z.object({ path: SafeRelativePath, pinned: z.string().min(1).max(256), observed: z.string().min(1).max(256), provenance: Provenance }).strict()).max(32).default([]),
     // Absent means the value is declared by the configuration file itself.
     provenance: Provenance.optional(),
@@ -747,7 +749,7 @@ export const Sibling = z
             ['service', new Set([sibling.slug])],
             ['volume', new Set((generated.volumes ?? []).map((volume) => volume.id))],
             ['mount', new Set([
-                `${sibling.slug}:bind:${sibling.dir}:${generated.checkout_mount.target}`,
+                `${sibling.slug}:bind:.:${generated.checkout_mount.target}`,
                 ...generated.additional_mounts.map((mount) => `${sibling.slug}:${mount.kind}:${mount.source}:${mount.target}`),
             ])],
             ['port', new Set(generated.service.ports.map((port) => `${sibling.slug}:${port.name}`))],

@@ -102,7 +102,7 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
         sibling: sibling.slug,
         profiles: sibling.mount === 'always' ? [] : [sibling.mount.slice('profile:'.length)],
         mounts: [
-            { kind: 'bind' as const, source: sibling.dir, ...generated.checkout_mount },
+            { kind: 'bind' as const, source: '.', ...generated.checkout_mount },
             ...generated.additional_mounts,
         ],
     }))

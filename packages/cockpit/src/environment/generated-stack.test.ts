@@ -138,8 +138,11 @@ else process.exit(7)
         COCKPIT_STACK_ID: stackId,
     }
     const observationRuntime = { root, executable, composeFiles: [{ path: compose, sha256: composeSha256 }], projectName: 'synthetic', publicEnv, stdoutLimitBytes: 4_096, stderrLimitBytes: 1_024, hostExecutables: { [process.execPath]: nodeExecutable } }
+    await mkdir(join(root, 'app'), { recursive: true })
+    const siblingIdentity = await stat(join(root, 'app'))
+    const hostInputRoots = { app: { path: join(root, 'app'), dev: siblingIdentity.dev, ino: siblingIdentity.ino } }
     const authority = projectGeneratedRuntimeAuthority({
-        rendered: result, topology: topology.topology,
+        hostInputRoots, rendered: result, topology: topology.topology,
         runtime: observationRuntime,
     })
     if (!authority) throw new Error('generated runtime authority unavailable')
@@ -147,7 +150,7 @@ else process.exit(7)
         expect(consumePortLeaseProjection(portLeaseProjection)).toBe(portLeaseProjection)
         expect(inspectPortLeaseProjection(portLeaseProjection)).toBeUndefined()
     }
-    return { authority, topology: topology.topology, runtime: observationRuntime }
+    return { authority, topology: topology.topology, runtime: observationRuntime, hostInputRoots }
 }
 
 describe('generated environment rendering', () => {
@@ -268,7 +271,7 @@ describe('generated environment rendering', () => {
             const good = await generatedAuthority(result, goodRoot)
             expect(projectGeneratedRuntimeAuthority({
                 rendered: result,
-                topology: good.topology,
+                topology: good.topology, hostInputRoots: good.hostInputRoots,
                 runtime: { ...good.runtime, publicEnv: { ...good.runtime.publicEnv, APP_HOST_PORT: '4200' } },
             })).toBeUndefined()
             const goodExecution = createGeneratedObservationExecution({ authority: good.authority, observation })
@@ -301,7 +304,7 @@ describe('generated environment rendering', () => {
         }
         const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput })
         if (result.kind !== 'complete') throw new Error(result.reason)
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-generated-observation-'))
+        const root = realpathSync(await mkdtemp(join(tmpdir(), 'cockpit-generated-observation-')))
         const observation = result.observations.find(({ id }) => id === 'image:app:manifest')!
         const nodeSha256 = createHash('sha256').update(await readFile(process.execPath)).digest('hex')
         await mkdir(join(root, 'app'), { recursive: true })
@@ -337,7 +340,7 @@ describe('generated environment rendering', () => {
         expect(createGeneratedObservationExecution({ authority: { ...authority }, observation })).toMatchObject({ kind: 'unavailable' })
         expect(observeGeneratedEnvironment({ rendered: result, inspection: { ...inspection }, admissions: [] })).toBeUndefined()
         const staticObservations = result.observations.filter(({ id }) => id === 'mount:app:/workspace/source'
-            || id === 'toolchain:app:app/.node-version' || id === 'mount:app:/workspace/.env')
+            || id === 'toolchain:app:.node-version' || id === 'mount:app:/workspace/.env')
         const staticAdmissions = []
         for (const candidate of staticObservations) {
             const planned = createGeneratedObservationExecution({ authority, observation: candidate })
@@ -348,16 +351,16 @@ describe('generated environment rendering', () => {
         let nestedEvaluations = 0
         const executableProxy = new Proxy(harness.runtime.executable, { get: () => { nestedEvaluations += 1; throw new Error('must not run') } })
         expect(projectGeneratedRuntimeAuthority({
-            rendered: result, topology: harness.topology, runtime: { ...harness.runtime, executable: executableProxy },
+            rendered: result, topology: harness.topology, hostInputRoots: harness.hostInputRoots, runtime: { ...harness.runtime, executable: executableProxy },
         })).toBeUndefined()
         const hostProxy = new Proxy(harness.runtime.hostExecutables[process.execPath]!, { get: () => { nestedEvaluations += 1; throw new Error('must not run') } })
         expect(projectGeneratedRuntimeAuthority({
-            rendered: result, topology: harness.topology,
+            rendered: result, topology: harness.topology, hostInputRoots: harness.hostInputRoots,
             runtime: { ...harness.runtime, hostExecutables: { [process.execPath]: hostProxy } },
         })).toBeUndefined()
         const accessor = Object.defineProperty({}, 'canonicalPath', { enumerable: true, get: () => { nestedEvaluations += 1; return process.execPath } })
         expect(projectGeneratedRuntimeAuthority({
-            rendered: result, topology: harness.topology, runtime: { ...harness.runtime, executable: accessor as never },
+            rendered: result, topology: harness.topology, hostInputRoots: harness.hostInputRoots, runtime: { ...harness.runtime, executable: accessor as never },
         })).toBeUndefined()
         expect(nestedEvaluations).toBe(0)
         const dataOperation = generated.data!.modes[0]!.probes[0]!
@@ -412,7 +415,7 @@ describe('generated environment rendering', () => {
         expect(result.decisions).toContain('- Vendor posture: "stubbed"')
         expect(result.replay).toEqual({ profiles: ['application'], mounts: [
             'app:bind:.:/workspace/source',
-            'app:environment-file:app/.env:/workspace/.env',
+            'app:environment-file:.env:/workspace/.env',
             'app:volume:dependencies:/workspace/node_modules',
             'app:volume:product-data:/workspace/data',
         ], route: 'generated-compose' })
@@ -648,7 +651,7 @@ describe('generated environment rendering', () => {
     it('refuses malformed declarations, aliases and missing literal port defaults', async () => {
         const generated = await declaration()
         expect(renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, portDefaults: {} })).toMatchObject({ kind: 'refusal', code: 'GENERATED_TEMPLATE_INVALID' })
-        expect(renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, siblingDirectories: {} })).toMatchObject({ kind: 'refusal', code: 'GENERATED_TEMPLATE_INVALID' })
+        expect(renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, siblingDirectories: {} })).toMatchObject({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID' })
         generated.vendors[0]!.nonempty_variables = ['MESSAGES_URL']
         expect(renderGeneratedEnvironment({ declaration: generated, ...resolvedInput })).toMatchObject({ kind: 'refusal', code: 'GENERATED_DECLARATION_INVALID' })
     })

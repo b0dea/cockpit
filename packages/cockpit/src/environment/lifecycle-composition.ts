@@ -14,6 +14,7 @@ import {
     observeGeneratedApplication,
     projectGeneratedApplicationNodeExecutable,
     projectGeneratedApplicationRuntimeAuthority,
+    projectGeneratedApplicationMountSources,
     resolveGeneratedApplicationOperation,
     syncGeneratedEnvironment,
     type GeneratedApplicationProjection,
@@ -872,11 +873,9 @@ export function createLifecycleCommandAdapters(
             if (!artifact) return undefined
             artifacts = Object.freeze([artifact])
             activeProfiles = generatedApplication.profiles
-            const sources = generated.services.flatMap((service) => service.mounts
-                .filter((mount) => mount.kind !== 'volume')
-                .map((mount) => resolve(currentBinding.checkoutRoot, mount.source)))
-            if (sources.some((source) => !confined(currentBinding.checkoutRoot, source))) return undefined
-            expectedMountSources = Object.freeze([...new Set(sources)].sort())
+            const sources = await projectGeneratedApplicationMountSources(generatedApplication)
+            if (!sources) return undefined
+            expectedMountSources = sources
         } else {
             const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
             if (!declared) return undefined

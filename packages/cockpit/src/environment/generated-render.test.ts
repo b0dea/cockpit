@@ -74,6 +74,38 @@ describe('generated browser runner rendering', () => {
             siblingDirectories: { api: '../api' } })).toMatchObject({ kind: 'refusal', code: 'GENERATED_DECLARATION_INVALID' })
     })
 
+    it('renders image-service mount inputs from the sibling while keeping browser inputs cockpit-local', async () => {
+        const loaded = await loadCockpitConfig(resolve('fixtures/registries/generated-environment.toml'))
+        if (loaded.kind !== 'complete' || !loaded.result.config.environment.generated) throw new Error('fixture unavailable')
+        const template = loaded.result.config.environment.generated.services[0]!
+        const service = { ...template, mounts: [
+            { kind: 'bind' as const, source: '.', target: '/workspace/source', source_type: 'directory' as const },
+            { kind: 'environment-file' as const, source: 'config/runtime', target: '/workspace/config', source_type: 'file' as const },
+        ] }
+        const runner = { ...service, id: 'browser', ports: [], mounts: [
+            { kind: 'bind' as const, source: '.cockpit/browser', target: '/browser', source_type: 'directory' as const },
+        ] }
+        const input = { declaration: { compose_file: 'compose.generated.yml', services: [service] }, browserRunner: { service: runner },
+            sourceSha256: 'a'.repeat(64), generation: 'b'.repeat(64), stackId: `stack:${'c'.repeat(64)}`,
+            cockpitId: `cockpit:mounts:${'d'.repeat(64)}`, portDefaults: loaded.result.config.ports.bases,
+            siblingDirectories: { app: '../api' } }
+        const rendered = renderGeneratedEnvironment(input)
+        expect(rendered).toMatchObject({ kind: 'complete' })
+        if (rendered.kind !== 'complete') throw new Error(rendered.reason)
+        const compose = parse(rendered.compose)
+        expect(compose.services.app.volumes).toEqual([
+            { type: 'bind', source: '../api', target: '/workspace/source', read_only: false },
+            { type: 'bind', source: '../api/config/runtime', target: '/workspace/config', read_only: true },
+        ])
+        expect(compose.services.browser.volumes).toEqual([
+            { type: 'bind', source: '.cockpit/browser', target: '/browser', read_only: false },
+        ])
+        expect(compose.services.app.labels['dev.b0.cockpit.mounts']).toBe('bind:.:/workspace/source,environment-file:config/runtime:/workspace/config')
+        expect(rendered.replay.mounts).toContain('app:bind:.:/workspace/source')
+        expect(rendered.observations.find(({ id }) => id === 'mount:app:/workspace/source')?.target).toBe('.')
+        expect(renderGeneratedEnvironment({ ...input, siblingDirectories: {} })).toMatchObject({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID' })
+    })
+
     it('refuses cyclic generated input within the shared capture bounds', () => {
         const cyclic: Record<string, unknown> = {}
         cyclic.self = cyclic

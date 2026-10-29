@@ -79,6 +79,7 @@ export interface GeneratedComposeArtifactAuthority { readonly kind: 'generated-c
 
 export type GeneratedRenderEnvelope = Readonly<{
     declaration: GeneratedEnvironmentDeclaration
+    hostInputDirectories: Readonly<Record<string, string>>
     stackId: StackId
     cockpitId: string
     sourceSha256: string
@@ -148,7 +149,7 @@ function safeGeneratedPath(value: string): boolean {
 }
 
 // Build inputs may be authenticated sibling checkouts beside the cockpit; owned outputs may not.
-function safeSiblingBuildDirectory(value: string): boolean {
+function safeSiblingInputDirectory(value: string): boolean {
     const remainder = value.replace(/^(?:\.\.\/)*/, '')
     return !/^[a-z]:/i.test(remainder) && (remainder === '..' || safeGeneratedPath(remainder))
 }
@@ -250,12 +251,16 @@ function serviceEnvironment(
     return { environment: Object.fromEntries([...values].sort(([left], [right]) => left.localeCompare(right))), normalize: [...normalize].sort(), startup }
 }
 
+function hostInputPath(directory: string, source: string): string {
+    return directory === '.' ? source : source === '.' ? directory : `${directory}/${source}`
+}
+
 function buildContext(build: NonNullable<GeneratedEnvironmentDeclaration['services'][number]['build']>, siblingDirectory: string): Record<string, string> {
-    const context = siblingDirectory === '.' ? build.context : build.context === '.' ? siblingDirectory : `${siblingDirectory}/${build.context}`
+    const context = hostInputPath(siblingDirectory, build.context)
     return { context, ...(build.dockerfile === undefined ? {} : { dockerfile: build.dockerfile }) }
 }
 
-function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: GeneratedEnvironmentInput): string | undefined {
+function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: GeneratedEnvironmentInput, hostInputDirectories: Readonly<Record<string, string>>): string | undefined {
     const ownershipLabels = {
         'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
         'dev.b0dea.cockpit.config-sha256': input.sourceSha256,
@@ -290,7 +295,7 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         if (ports.some((port) => port === undefined)) return undefined
         const mounts = [...service.mounts].sort((left, right) => `${left.kind}:${left.source}:${left.target}`.localeCompare(`${right.kind}:${right.source}:${right.target}`)).map((mount) => mount.kind === 'volume'
             ? { type: 'volume', source: mount.source, target: mount.target }
-            : { type: 'bind', source: mount.source, target: mount.target, read_only: mount.kind === 'environment-file' })
+            : { type: 'bind', source: hostInputPath(hostInputDirectories[service.id]!, mount.source), target: mount.target, read_only: mount.kind === 'environment-file' })
         services[service.id] = {
             ...(service.image ? { image: service.image.reference } : { build: buildContext(service.build!, input.siblingDirectories[service.sibling]!) }),
             ...(service.resources ? { mem_limit: `${service.resources.memory_mb}m`, cpus: service.resources.cpus } : {}),
@@ -388,9 +393,9 @@ function observationPlans(declaration: GeneratedEnvironmentDeclaration, portDefa
     })
     for (const service of declaration.services) {
         for (const mount of service.mounts) {
-            if (mount.kind !== 'volume') plans.push({ id: `mount:${service.id}:${mount.target}`, kind: 'mount-lstat', target: mount.source, expected: { type: mount.source_type } })
+            if (mount.kind !== 'volume') plans.push({ id: `mount:${service.id}:${mount.target}`, kind: 'mount-lstat', target: mount.source, expected: { service: service.id, type: mount.source_type } })
         }
-        for (const pin of service.toolchain_pins) plans.push({ id: `toolchain:${service.id}:${pin.path}`, kind: 'toolchain-pin', target: pin.path, expected: { pinned: pin.pinned, observed: pin.observed, action: 'diagnose-only' } })
+        for (const pin of service.toolchain_pins) plans.push({ id: `toolchain:${service.id}:${pin.path}`, kind: 'toolchain-pin', target: pin.path, expected: { service: service.id, pinned: pin.pinned, observed: pin.observed, action: 'diagnose-only' } })
         plans.push({ id: `health:${service.id}:property`, kind: 'health-probe', target: service.health.property, expected: { service: service.id, role: 'property', ...(service.health.tool_probe ? {} : { toolPresence: 'unchecked' }) }, operation: service.health.probe })
         if (service.health.tool_probe) plans.push({ id: `health:${service.id}:tool`, kind: 'health-probe', target: service.health.property, expected: { service: service.id, role: 'tool-availability' }, operation: service.health.tool_probe })
         // Launcher and manifest checks inspect a pinned image before start; a built service has
@@ -440,23 +445,31 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
     const capturedDeclaration = snapshotGeneratedJson(parsed.data) as GeneratedEnvironmentDeclaration | undefined
     if (!capturedDeclaration) return Object.freeze({ kind: 'refusal', code: 'GENERATED_DECLARATION_INVALID', reason: 'generated environment declaration exceeds capture bounds' })
     let declaration: GeneratedEnvironmentDeclaration = capturedDeclaration
+    let browserService: string | undefined
     if (safeInput.browserRunner) {
         const runner = GeneratedEnvironment.shape.services.element.safeParse(safeInput.browserRunner.service)
         if (!runner.success || declaration.services.some(({ id }) => id === runner.data.id)) {
             return Object.freeze({ kind: 'refusal', code: 'GENERATED_DECLARATION_INVALID', reason: 'browser runner service is invalid or duplicated' })
         }
+        browserService = runner.data.id
         declaration = { ...declaration, services: [...declaration.services, runner.data] }
     }
     if (!safeGeneratedPath(declaration.compose_file) || !safeGeneratedPath(declaration.decisions.path)) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID', reason: 'generated output path is invalid' })
     }
-    const invalidBuild = declaration.services.find(({ build, sibling }) => build !== undefined
-        && (typeof safeInput.siblingDirectories[sibling] !== 'string' || !safeSiblingBuildDirectory(safeInput.siblingDirectories[sibling]!)))
-    if (invalidBuild) {
+    const hostServices = declaration.services.filter(service => service.mounts.some(mount => mount.kind !== 'volume')
+        || service.toolchain_pins.length > 0)
+    const invalidInput = declaration.services.find(service => service.id !== browserService
+        && (service.build !== undefined || hostServices.includes(service))
+        && (typeof safeInput.siblingDirectories[service.sibling] !== 'string'
+            || !safeSiblingInputDirectory(safeInput.siblingDirectories[service.sibling]!)))
+    if (invalidInput) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID',
-            reason: `built service ${invalidBuild.id} names sibling ${invalidBuild.sibling} without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run cockpit sync` })
+            reason: `${invalidInput.build ? 'built' : 'generated'} service ${invalidInput.id} names sibling ${invalidInput.sibling} without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run cockpit sync` })
     }
-    const compose = renderCompose(declaration, safeInput)
+    const hostInputDirectories = Object.freeze(Object.fromEntries(hostServices.map(service =>
+        [service.id, service.id === browserService ? '.' : safeInput.siblingDirectories[service.sibling]!])))
+    const compose = renderCompose(declaration, safeInput, hostInputDirectories)
     const secretsTemplates = renderSecretsTemplates(declaration, safeInput.siblingDirectories)
     if (compose === undefined || secretsTemplates === undefined) return Object.freeze({ kind: 'refusal', code: 'GENERATED_TEMPLATE_INVALID', reason: 'external dependency template projection is invalid' })
     const decisions = renderDecisions(declaration, safeInput.sourceSha256, safeInput.generation)
@@ -475,7 +488,7 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
         replay: Object.freeze({ profiles, mounts, route: 'generated-compose' as const }),
     })
     issuedRenders.set(result, Object.freeze({
-        declaration, stackId: safeInput.stackId as StackId, cockpitId: safeInput.cockpitId,
+        declaration, hostInputDirectories, stackId: safeInput.stackId as StackId, cockpitId: safeInput.cockpitId,
         sourceSha256: safeInput.sourceSha256, generation: safeInput.generation,
     }))
     return result

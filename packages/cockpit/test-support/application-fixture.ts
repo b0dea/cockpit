@@ -84,7 +84,7 @@ function derivedRegistrySource(): string {
             decisions: [
                 decision('service-worker', 'service', 'worker'),
                 decision('volume-worker-dependencies', 'volume', 'worker-dependencies'),
-                decision('mount-worker-checkout', 'mount', 'worker:bind:worker:/workspace/worker'),
+                decision('mount-worker-checkout', 'mount', 'worker:bind:.:/workspace/worker'),
                 decision('mount-worker-dependencies', 'mount', 'worker:volume:worker-dependencies:/workspace/node_modules'),
                 decision('port-worker-http', 'port', 'worker:http'),
             ],

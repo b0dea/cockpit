@@ -95,9 +95,9 @@ describe('one-row generated surface integration', () => {
             profiles: ['worker'],
             ports: [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3200 }],
             mounts: [
-                { kind: 'bind', source: 'worker', target: '/workspace/worker', source_type: 'directory' },
+                { kind: 'bind', source: '.', target: '/workspace/worker', source_type: 'directory' },
                 { kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' },
-                { kind: 'environment-file', source: 'worker/.env.local', target: '/workspace/.env', source_type: 'file' },
+                { kind: 'environment-file', source: '.env.local', target: '/workspace/.env', source_type: 'file' },
             ],
         })
         expect(registry.result.config.ports.bases.WORKER_HOST_PORT).toBe(4250)
@@ -206,9 +206,9 @@ describe('one-row generated surface integration', () => {
 
         expect(addedSync.result.application).toMatchObject({ profiles: expect.arrayContaining(['worker']) })
         expect(addedSync.result.application.mounts).toEqual(expect.arrayContaining([
-            'worker:bind:worker:/workspace/worker',
+            'worker:bind:.:/workspace/worker',
             'worker:volume:worker-dependencies:/workspace/node_modules',
-            'worker:environment-file:worker/.env.local:/workspace/.env',
+            'worker:environment-file:.env.local:/workspace/.env',
         ]))
         expect(addedSync.result.application.surfaceSelftest.entries).toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: 'symlink', path: '.sibling-worker-AGENTS.md' }),

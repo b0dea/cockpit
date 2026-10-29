@@ -99,6 +99,7 @@ import {
     type GeneratedDataOperation,
     type GeneratedObservationRuntime,
     type GeneratedRuntimeAuthority,
+    type GeneratedHostInputRoot,
     type GeneratedEnvironmentResult,
 } from './generated-stack.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
@@ -121,7 +122,7 @@ import type { RuntimeTopologyEvidence } from './runtime.js'
 export const mechanism = {
     id: 'generated-environment-application',
     module: 'packages/cockpit/src/environment/generated-application.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplication'],
+    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationMountSources', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplication'],
 } as const
 
 export interface GeneratedEnvironmentCommandInput {
@@ -231,6 +232,7 @@ interface PreparedEnvironment {
     readonly warnings: readonly SurfaceGenerationWarning[]
     readonly registry: DerivedRegistry
     readonly siblingRoots: AuthenticatedSiblingRoots
+    readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
     readonly workEnvironment: ConsumedWorkEnvironmentConfig
     readonly workApplication?: WorkApplicationAuthorityRecord
     readonly browserRunner?: BrowserRunnerAuthority
@@ -532,6 +534,9 @@ const WORK_ASSETS = Object.freeze([
 ] as const)
 type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof REFERENCE_ASSETS[number] | typeof WORK_ASSETS[number]
 interface GeneratedApplicationRecord {
+    readonly root: string
+    readonly siblingRoots: AuthenticatedSiblingRoots
+    readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
     readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
     readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
@@ -630,6 +635,7 @@ function complete(
         }),
     })
     issuedApplicationProjections.set(application, Object.freeze({
+        root: prepared.root, siblingRoots: prepared.siblingRoots, hostInputRoots: prepared.hostInputRoots,
         ...(prepared.rendered && prepared.inspection ? { rendered: prepared.rendered, inspection: prepared.inspection } : {}),
         node: prepared.node,
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
@@ -949,6 +955,28 @@ export function projectGeneratedApplicationNodeExecutable(application: Generated
     return issuedApplicationProjections.get(application)?.node
 }
 
+export async function projectGeneratedApplicationMountSources(application: GeneratedApplicationProjection): Promise<readonly string[] | undefined> {
+    const record = application !== null && typeof application === 'object' ? issuedApplicationProjections.get(application) : undefined
+    if (!record?.rendered || !await siblingRootsCurrent(record.siblingRoots)) return undefined
+    try {
+        for (const root of Object.values(record.hostInputRoots)) {
+            const status = await lstat(root.path)
+            if (await realpath(root.path) !== root.path || !status.isDirectory() || status.isSymbolicLink()
+                || status.dev !== root.dev || status.ino !== root.ino) return undefined
+        }
+    } catch { return undefined }
+    const sources: string[] = []
+    for (const observation of record.rendered.observations) {
+        if (observation.kind !== 'mount-lstat') continue
+        const root = typeof observation.expected.service === 'string' ? record.hostInputRoots[observation.expected.service] : undefined
+        if (!root) return undefined
+        const target = resolve(root.path, observation.target)
+        if (!containedPath(root.path, target)) return undefined
+        sources.push(target)
+    }
+    return Object.freeze([...new Set(sources)].sort())
+}
+
 function generatedApplicationRuntimeAuthority(
     application: GeneratedApplicationProjection,
     input: unknown,
@@ -960,9 +988,10 @@ function generatedApplicationRuntimeAuthority(
     const runtime = captured ? ownRecord(captured.runtime) : undefined
     const hostExecutables = runtime?.hostExecutables === undefined ? {} : ownRecord(runtime.hostExecutables)
     if (!record?.rendered || !captured || !exactKeys(captured, ['runtime', 'topology']) || !runtime || !hostExecutables
-        || Object.hasOwn(hostExecutables, 'node')) return undefined
+        || runtime.root !== record.root || Object.hasOwn(hostExecutables, 'node')) return undefined
     return projectGeneratedRuntimeAuthority({
         rendered: record.rendered,
+        hostInputRoots: record.hostInputRoots,
         topology: captured.topology as RuntimeTopologyEvidence,
         runtime: Object.freeze({
             ...runtime,
@@ -1284,6 +1313,19 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'configured remote browser publication requires an authenticated current port lease',
         'browser',
     )
+    const hostInputRoots: Record<string, GeneratedHostInputRoot> = {}
+    for (const service of declaration?.services ?? []) {
+        if (!service.mounts.some(mount => mount.kind !== 'volume') && service.toolchain_pins.length === 0) continue
+        const sibling = siblingRoots.siblings.get(service.sibling)
+        if (!sibling) return refuse('GENERATED_SIBLING_ROOT_INVALID', 'a generated service names an unauthenticated sibling', service.id)
+        hostInputRoots[service.id] = Object.freeze({ path: sibling.root, ...sibling.identity })
+    }
+    if (projectedRunner) {
+        const status = await lstat(root)
+        if (!status.isDirectory() || status.isSymbolicLink() || await realpath(root) !== root) return refuse(
+            'GENERATED_SIBLING_ROOT_INVALID', 'the browser input root is not a canonical ordinary directory', 'browser')
+        hostInputRoots[projectedRunner.service.id] = Object.freeze({ path: root, dev: status.dev, ino: status.ino })
+    }
     const rendered = declaration ? renderGeneratedEnvironment({
         declaration,
         sourceSha256: loaded.result.source.sha256,
@@ -1406,6 +1448,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         warnings: Object.freeze([]),
         registry: derived.result,
         siblingRoots,
+        hostInputRoots: Object.freeze(hostInputRoots),
         workEnvironment,
         ...(projectedRunner ? { browserRunner: projectedRunner.authority } : {}),
         ...(inspectedPorts ? { portLease: inspectedPorts } : {}),

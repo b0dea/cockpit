@@ -109,8 +109,6 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
             .replaceAll('service = "app"', 'service = "worker"')
             .replaceAll('APP_HOST_PORT', 'WORKER_HOST_PORT')
             .replaceAll('source = "dependencies"', 'source = "worker-dependencies"')
-            .replaceAll('source = "app/.env"', 'source = "worker/.env"')
-            .replaceAll('path = "app/.node-version"', 'path = "worker/.node-version"')
         const decision = (id: string, nextId: string, replacements: Readonly<Record<string, string>>) => {
             const start = base.indexOf(`[[environment.generated.decisions.entries]]\nid = "${id}"`)
             const end = base.indexOf('[[environment.generated.decisions.entries]]', start + 1)
@@ -124,7 +122,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
             decision('mount-dependencies', 'mount-worker-dependencies', { 'subject_id = "app:volume:dependencies:/workspace/node_modules"': 'subject_id = "worker:volume:worker-dependencies:/workspace/node_modules"' }),
             decision('mount-data', 'mount-worker-data', { 'subject_id = "app:volume:product-data:/workspace/data"': 'subject_id = "worker:volume:product-data:/workspace/data"' }),
             decision('mount-source', 'mount-worker-source', { 'subject_id = "app:bind:.:/workspace/source"': 'subject_id = "worker:bind:.:/workspace/source"' }),
-            decision('mount-environment', 'mount-worker-environment', { 'subject_id = "app:environment-file:app/.env:/workspace/.env"': 'subject_id = "worker:environment-file:worker/.env:/workspace/.env"' }),
+            decision('mount-environment', 'mount-worker-environment', { 'subject_id = "app:environment-file:.env:/workspace/.env"': 'subject_id = "worker:environment-file:.env:/workspace/.env"' }),
             decision('port-http', 'port-worker-http', { 'subject_id = "app:http"': 'subject_id = "worker:http"' }),
         ].join('\n')
         base = base
@@ -264,7 +262,7 @@ async function configureGeneratedDocker(
                     'dev.b0.cockpit.source-sha256': context.source.sha256,
                 },
                 volumes: [
-                    { type: 'bind', source: candidate.checkout, target: '/workspace/source' },
+                    { type: 'bind', source: join(candidate.checkout, service), target: '/workspace/source' },
                     { type: 'bind', source: join(candidate.checkout, `${service}/.env`), target: '/workspace/.env' },
                     { type: 'volume', source: service === 'app' ? 'dependencies' : 'worker-dependencies', target: '/workspace/node_modules' },
                     { type: 'volume', source: 'product-data', target: '/workspace/data' },

@@ -245,14 +245,15 @@ export function createGeneratedCommandFixture() {
         root: string,
         application: GeneratedApplicationProjection,
         serviceGeneration = application.generation,
+        reportedSources?: Readonly<Record<string, readonly string[]>>,
     ) {
         const composePath = join(root, 'compose.generated.yml')
         const compose = await readFile(composePath, 'utf8')
-        const document = parseYaml(compose) as { services: { app: { image: string; labels: Record<string, string> } } }
+        const document = parseYaml(compose) as { services: Record<string, { image: string; labels: Record<string, string>; volumes?: { type: string; source: string; target: string }[] }> }
         const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
         const stack = stackId({ cockpitId: currentCockpit, checkoutId: checkoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
         const labels: Record<string, string> = {
-            ...document.services.app.labels,
+            ...document.services.app!.labels,
             'dev.b0dea.cockpit.stack-id': stack,
             'dev.b0dea.cockpit.owner-id': currentCockpit,
             'dev.b0.cockpit.generation': serviceGeneration,
@@ -279,6 +280,13 @@ export function createGeneratedCommandFixture() {
         const portLeaseProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
         if (!portLeaseProjection) throw new Error('port projection unavailable')
         const effectivePort = lease.lease.ports.APP_HOST_PORT!
+        const services = Object.fromEntries(Object.entries(document.services).map(([id, service]) => [id, {
+            image: service.image, labels, healthcheck: { test: ['CMD', 'true'] },
+            volumes: (service.volumes ?? []).filter(({ type }) => type === 'bind').map((mount, index) =>
+                ({ ...mount, source: reportedSources?.[id]?.[index] ?? resolve(root, mount.source) })),
+            ...(id === 'app' ? { ports: [{ target: 3000, published: String(effectivePort) }] } : {}),
+        }]))
+        const expectedMountSources = [...new Set(Object.values(services).flatMap(service => service.volumes.map(({ source }) => source)))].sort()
         const bin = join(root, '.test-bin')
         const docker = join(bin, 'docker')
         await mkdir(bin, { recursive: true })
@@ -286,7 +294,7 @@ export function createGeneratedCommandFixture() {
     const args = process.argv.slice(2)
     if (process.env.COCKPIT_STACK_ID !== ${JSON.stringify(stack)} || process.env.COCKPIT_OWNER_ID !== ${JSON.stringify(currentCockpit)}) process.exit(8)
     if (args.includes('config')) process.stdout.write(${JSON.stringify(JSON.stringify({
-            services: { app: { image: document.services.app.image, labels, healthcheck: { test: ['CMD', 'true'] }, ports: [{ target: 3000, published: String(effectivePort) }] } },
+            services,
         }))})
     else process.exit(7)
     `)
@@ -305,7 +313,7 @@ export function createGeneratedCommandFixture() {
             composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: composePath, source: compose, sha256: composeSha256 }],
             projectName: 'synthetic', env: {}, ports: [effectivePort],
             labels: { stackId: stack, configSha256: application.sourceSha256, batchId },
-            timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources: [],
+            timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources,
         }, { generatedComposeAuthority: application.generatedComposeAuthority!, portLeaseProjection })
         if (preview.kind !== 'preview') throw new Error('runtime preview unavailable')
         const topologyPlan = createRuntimeTopologyPlan({

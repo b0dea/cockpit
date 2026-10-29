@@ -64,7 +64,7 @@ function derivedConfig(): Record<string, unknown> {
                 decisions: [
                     decision('service-worker', 'service', 'worker'),
                     decision('volume-worker-dependencies', 'volume', 'worker-dependencies'),
-                    decision('mount-worker-checkout', 'mount', 'worker:bind:worker:/workspace/worker'),
+                    decision('mount-worker-checkout', 'mount', 'worker:bind:.:/workspace/worker'),
                     decision('mount-worker-dependencies', 'mount', 'worker:volume:worker-dependencies:/workspace/node_modules'),
                     decision('port-worker-http', 'port', 'worker:http'),
                 ],
@@ -86,7 +86,7 @@ describe('registry derivation', () => {
         expect(worker).toMatchObject({
             id: 'worker', sibling: 'worker', profiles: ['worker'],
             mounts: [
-                { kind: 'bind', source: 'worker', target: '/workspace/worker', source_type: 'directory' },
+                { kind: 'bind', source: '.', target: '/workspace/worker', source_type: 'directory' },
                 { kind: 'volume', source: 'worker-dependencies', target: '/workspace/node_modules' },
             ],
         })

@@ -117,6 +117,8 @@ describe('production lifecycle adapter composition', () => {
             'data:seeded:seeded-schema',
             'external:messages:loader',
         ]))
+        expect(passed.steps.find(({ id }) => id === 'generated-observation:mount:app:/workspace/source')?.paths)
+            .toContain(join(passed.candidate.checkout, 'app'))
         const seeded = await resolveLifecycleStage({
             namespace: passed.context.namespace,
             stackId: passed.context.stackId,
@@ -249,7 +251,7 @@ describe('production lifecycle adapter composition', () => {
                 'dev.b0.cockpit.source-sha256': loaded.result.source.sha256,
             },
             volumes: [
-                { type: 'bind', source: candidate.checkout, target: '/workspace/source' },
+                { type: 'bind', source: join(candidate.checkout, 'app'), target: '/workspace/source' },
                 { type: 'bind', source: join(candidate.checkout, 'app/.env'), target: '/workspace/.env' },
                 { type: 'volume', source: 'dependencies', target: '/workspace/node_modules' },
                 { type: 'volume', source: 'product-data', target: '/workspace/data' },

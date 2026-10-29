@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { readFile, rm, stat, writeFile, mkdir, chmod, realpath, lstat } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile, mkdir, chmod, realpath, lstat, rename, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { stringify } from 'smol-toml'
 
 import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { createGeneratedObservationExecution, inspectGeneratedRuntimeAuthority, projectGeneratedRuntimeAuthority } from '../environment/generated-stack.js'
 import { cockpitId } from '../environment/identity.js'
 import {
     generatedApplicationProjection,
@@ -59,6 +61,116 @@ describe('generated environment command', () => {
 
         const mismatched = await generatedRuntime(root, application, 'f'.repeat(64))
         expect(projectGeneratedApplicationRuntimeAuthority(application, mismatched)).toBeUndefined()
+    })
+
+    it.each([true, false])('measures sibling host inputs and refuses cockpit controls and redirected sibling paths (mount: %s)', async hasMount => {
+        const estate = await consumer('mount-estate')
+        const { root, configPath } = await consumer('sibling-inputs', estate.root)
+        const loaded = await loadCockpitConfig(configPath)
+        if (loaded.kind !== 'complete') throw new Error('fixture unavailable')
+        const config = structuredClone(loaded.result.config)
+        config.cockpit.siblings_root = '..'
+        const generated = config.environment.generated!
+        generated.vendors = []
+        generated.decisions.entries = generated.decisions.entries.filter(({ subject }) => subject !== 'vendor' && subject !== 'mount')
+        const service = generated.services[0]!
+        service.mounts = service.mounts.filter(({ kind }) => kind === 'volume')
+        if (hasMount) service.mounts.push({ kind: 'bind', source: 'src/module', target: '/workspace/source', source_type: 'directory' })
+        service.toolchain_pins[0]!.path = 'src/.node-version'
+        await writeFile(configPath, stringify(config))
+        const sibling = join(estate.root, 'app')
+        await mkdir(join(sibling, 'src/module'), { recursive: true })
+        await writeFile(join(sibling, 'src/.node-version'), service.toolchain_pins[0]!.pinned)
+        const outcome = await syncGeneratedEnvironment({ configPath })
+        if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome.diagnostics))
+        const application = outcome.result.application
+        const harness = await generatedRuntime(root, application)
+        const authority = projectGeneratedApplicationRuntimeAuthority(application, harness)
+        if (!authority) throw new Error('generated runtime authority unavailable')
+        const envelope = inspectGeneratedRuntimeAuthority(authority)!
+        expect(projectGeneratedRuntimeAuthority({ rendered: envelope.rendered, ...harness })).toBeUndefined()
+        const injectedRoots = { ...harness, hostInputRoots: envelope.hostInputRoots }
+        expect(projectGeneratedApplicationRuntimeAuthority(application, injectedRoots)).toBeUndefined()
+        const boundInput = { rendered: envelope.rendered, ...harness }
+        expect(projectGeneratedRuntimeAuthority({ ...boundInput, hostInputRoots: {
+            ...envelope.hostInputRoots, undeclared: envelope.hostInputRoots.app!,
+        } })).toBeUndefined()
+        expect(projectGeneratedRuntimeAuthority({ ...boundInput, hostInputRoots: {
+            app: { ...envelope.hostInputRoots.app!, path: root },
+        } })).toBeUndefined()
+        const inputs: [string, string][] = hasMount ? [['mount:app:/workspace/source', 'src/module']] : []
+        inputs.push(['toolchain:app:src/.node-version', 'src/.node-version'])
+        for (const [id, source] of inputs) {
+            const observation = envelope.rendered.observations.find(candidate => candidate.id === id)!
+            expect(createGeneratedObservationExecution({ authority, observation: { ...observation, target: '../outside' } }))
+                .toMatchObject({ kind: 'unavailable' })
+            const execution = createGeneratedObservationExecution({ authority, observation })
+            if (execution.kind !== 'planned') throw new Error(execution.reason)
+            expect(await executeProbe(execution.step)).toMatchObject({ kind: 'complete' })
+            expect(execution.step.paths).toContain(join(sibling, source))
+            await rename(join(sibling, source), join(sibling, `${source}.saved`))
+            if (source === 'src/module') await mkdir(join(root, source), { recursive: true })
+            else {
+                await mkdir(join(root, 'src'), { recursive: true })
+                await writeFile(join(root, source), service.toolchain_pins[0]!.pinned)
+            }
+            const missing = await executeProbe(execution.step)
+            expect(missing).toMatchObject({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED', execution: { started: true } })
+            expect(missing.stderr.toString()).toContain('ENOENT')
+            await symlink(join(root, source), join(sibling, source))
+            const redirected = await executeProbe(execution.step)
+            expect(redirected).toMatchObject({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED', execution: { started: true } })
+            expect(redirected.stderr.toString()).toContain('generated host input is a symbolic entry')
+            await rm(join(sibling, source))
+            await rename(join(sibling, `${source}.saved`), join(sibling, source))
+        }
+        const mount = envelope.rendered.observations.find(candidate => candidate.id === (hasMount ? 'mount:app:/workspace/source' : 'toolchain:app:src/.node-version'))!
+        const execution = createGeneratedObservationExecution({ authority, observation: mount })
+        if (execution.kind !== 'planned') throw new Error(execution.reason)
+        await rename(join(sibling, 'src'), join(sibling, 'src.saved'))
+        await symlink(join(root, 'src'), join(sibling, 'src'))
+        const intermediate = await executeProbe(execution.step)
+        expect(intermediate).toMatchObject({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED', execution: { started: true } })
+        expect(intermediate.stderr.toString()).toContain('generated host input crosses a symbolic or non-directory entry')
+        await rm(join(sibling, 'src'))
+        await rename(join(sibling, 'src.saved'), join(sibling, 'src'))
+        await rename(sibling, `${sibling}.saved`)
+        await mkdir(sibling)
+        await mkdir(join(sibling, 'src/module'), { recursive: true })
+        await writeFile(join(sibling, 'src/.node-version'), service.toolchain_pins[0]!.pinned)
+        const replaced = await executeProbe(execution.step)
+        expect(replaced).toMatchObject({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED', execution: { started: true } })
+        expect(replaced.stderr.toString()).toContain('generated host input root changed')
+    })
+
+    it('binds topology sources to each service rather than only the global source set', async () => {
+        const { root, configPath } = await consumer('service-mount-binding')
+        const loaded = await loadCockpitConfig(configPath)
+        if (loaded.kind !== 'complete') throw new Error('fixture unavailable')
+        const config = structuredClone(loaded.result.config)
+        config.sibling.push({ ...config.sibling[0]!, slug: 'worker', dir: 'worker', var: 'WORKER_DIR' })
+        const service = structuredClone(config.environment.generated!.services[0]!)
+        service.id = 'worker'
+        service.sibling = 'worker'
+        service.ports = []
+        for (const operation of [service.image!.manifest_probe, service.image!.registry_auth_probe, service.health.probe, service.health.tool_probe]) {
+            if (operation) operation.service = 'worker'
+        }
+        config.environment.generated!.services.push(service)
+        await mkdir(join(root, 'worker'))
+        await writeFile(configPath, stringify(config))
+        const outcome = await syncGeneratedEnvironment({ configPath })
+        if (outcome.kind !== 'complete') throw new Error(JSON.stringify(outcome.diagnostics))
+        const application = outcome.result.application
+        const correct = await generatedRuntime(root, application)
+        expect(projectGeneratedApplicationRuntimeAuthority(application, correct)).toMatchObject({ kind: 'generated-runtime-authority' })
+        const sourceSets = Object.fromEntries(correct.topology.services.map(service => [service.id, service.bindMountSources]))
+        const swapped = await generatedRuntime(root, application, application.generation, { app: sourceSets.worker!, worker: sourceSets.app! })
+        expect([...new Set(swapped.topology.services.flatMap(service => service.bindMountSources))].sort())
+            .toEqual([...new Set(correct.topology.services.flatMap(service => service.bindMountSources))].sort())
+        expect(projectGeneratedApplicationRuntimeAuthority(application, swapped)).toBeUndefined()
+        const wrongCockpit = await generatedRuntime(root, application, application.generation, { app: [root, join(root, '.env')] })
+        expect(projectGeneratedApplicationRuntimeAuthority(application, wrongCockpit)).toBeUndefined()
     })
 
     it('refuses a newer ownership manifest by name without touching outputs', async () => {
