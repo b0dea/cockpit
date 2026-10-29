@@ -37,9 +37,11 @@ selects a work order. `programme` is `null` for standalone work or the declared 
 a programme also selects a work order. With both booleans false and `programme: null`, intake
 returns the fix route without reading a candidate or creating work-order files.
 
-Create the referenced upstream file before running the command; the examples use a synthetic cache
-repair. Replace its facts, paths and commands with inspected product facts before using it for real work.
-Run intake without `--candidate` first; proceed only when it reports the work-order route and capacity.
+Create the referenced upstream file before running the command. These examples adapt an existing
+product: each `read` source must already exist and have been inspected. Replace the synthetic cache
+facts and paths with inspected product facts, and each verification argument array with that
+product's actual runner and selectors. Run intake without `--candidate` first; proceed only when
+it reports the work-order route and capacity.
 
 ### Upstream task
 
