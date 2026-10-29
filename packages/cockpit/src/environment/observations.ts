@@ -13,7 +13,7 @@ import {
 import { loadCockpitConfig } from '../config/load.js'
 import { isStateObservation } from './state.js'
 import { checkoutId, stackId as deriveStackId, type StackVariant } from './identity.js'
-import { dirname, normalize } from 'node:path'
+import { dirname, isAbsolute, normalize, relative, sep } from 'node:path'
 import { realpath } from 'node:fs/promises'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -330,14 +330,17 @@ async function issueObservationPostures(
         || configuration.code !== ENVIRONMENT_CODES.CONFIG_STALE
         || configuration.observed.state !== 'available'
         || configuration.stackId !== expectedStackId
-        || dirname(configuration.source) !== canonicalCheckoutPath
         || observedAt > issuedAt
         || issuedAt - observedAt > 30_000) {
         throw new TypeError('resolved posture configuration source is malformed')
     }
+    const configurationRoot = relative(canonicalCheckoutPath, dirname(configuration.source))
+    if (configurationRoot === '..' || configurationRoot.startsWith(`..${sep}`) || isAbsolute(configurationRoot)) {
+        throw new TypeError('resolved posture configuration source is malformed')
+    }
     const loaded = await loadCockpitConfig(configuration.source)
     if (loaded.kind !== 'complete') throw new TypeError('resolved posture configuration source is unavailable')
-    if (loaded.result.source.sha256 !== configuration.observed.value) {
+    if (loaded.result.source.path !== configuration.source || loaded.result.source.sha256 !== configuration.observed.value) {
         throw new TypeError('resolved posture configuration changed after observation')
     }
     const previousWindow = previous === undefined ? undefined : postureRefreshWindows.get(previous)

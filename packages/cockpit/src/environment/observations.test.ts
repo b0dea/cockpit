@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { createServer } from 'node:net'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { spawn } from 'node:child_process'
@@ -327,19 +327,39 @@ describe('observation contract and applicability', () => {
     it('rejects stale or substituted configuration evidence for a stack', async () => {
         const checkoutPath = join(authorityRoot, 'first')
         const alternate = join(authorityRoot, 'alternate')
+        const adjacent = join(authorityRoot, 'first-neighbor')
         await mkdir(checkoutPath, { recursive: true })
         await mkdir(alternate, { recursive: true })
+        await mkdir(adjacent, { recursive: true })
         temporaryPaths.push(authorityRoot)
         await writeFile(join(checkoutPath, 'cockpit.toml'), validConfigSource)
         await writeFile(join(alternate, 'cockpit.toml'), validConfigSource.replace('mount = "always"', 'mount = "none"'))
+        await writeFile(join(adjacent, 'cockpit.toml'), validConfigSource)
+        await symlink(alternate, join(checkoutPath, 'redirected'), 'dir')
         const ancient = (await observeConfiguration({ stackId, observedAt: '2001-01-01T00:00:00.000Z', path: join(checkoutPath, 'cockpit.toml') }))[1]!
         await expect(resolveObservationPostures({
             configuration: ancient, cockpitId: authorityCockpitId, checkoutPath, variant: { kind: 'shared' },
         })).rejects.toThrow('configuration source')
-        const substituted = (await observeConfiguration({ stackId, observedAt: new Date().toISOString(), path: join(alternate, 'cockpit.toml') }))[1]!
+        for (const path of [
+            join(alternate, 'cockpit.toml'),
+            join(adjacent, 'cockpit.toml'),
+            [checkoutPath, '..', 'alternate', 'cockpit.toml'].join(sep),
+            join(checkoutPath, 'redirected', 'cockpit.toml'),
+        ]) {
+            const substituted = (await observeConfiguration({ stackId, observedAt: new Date().toISOString(), path }))[1]!
+            await expect(resolveObservationPostures({
+                configuration: substituted, cockpitId: authorityCockpitId, checkoutPath, variant: { kind: 'shared' },
+            }), path).rejects.toThrow('configuration source')
+        }
+        const nested = join(checkoutPath, 'control')
+        await mkdir(nested)
+        await writeFile(join(nested, 'cockpit.toml'), validConfigSource)
+        const observedBeforeRedirect = (await observeConfiguration({ stackId, observedAt: new Date().toISOString(), path: join(nested, 'cockpit.toml') }))[1]!
+        await rm(nested, { recursive: true })
+        await symlink(adjacent, nested, 'dir')
         await expect(resolveObservationPostures({
-            configuration: substituted, cockpitId: authorityCockpitId, checkoutPath, variant: { kind: 'shared' },
-        })).rejects.toThrow('configuration source')
+            configuration: observedBeforeRedirect, cockpitId: authorityCockpitId, checkoutPath, variant: { kind: 'shared' },
+        })).rejects.toThrow('configuration changed after observation')
     })
 
     it('rejects configuration evidence dated after posture authority issuance', async () => {

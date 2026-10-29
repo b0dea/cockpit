@@ -230,12 +230,15 @@ describe('production health adapter composition', () => {
         expect(result.result.checks.find(({ owner }) => owner === 'lifecycle-stage')?.measured).toBe(false)
     })
 
-    it('reports every declared template across siblings without duplicate-code producer failures', async () => {
+    it('observes sibling Git, schemas and every declared template from a nested configuration', async () => {
         const candidate = await fixture({ machineOnly: true })
-        const api = join(candidate.checkout, 'siblings/api')
-        const web = join(candidate.checkout, 'siblings/web')
-        await mkdir(web)
+        const cockpitRoot = join(candidate.checkout, 'control')
+        const configPath = join(cockpitRoot, 'cockpit.toml')
+        const api = join(candidate.checkout, 'repositories/api')
+        const web = join(candidate.checkout, 'repositories/web')
+        await Promise.all([mkdir(cockpitRoot), mkdir(api, { recursive: true }), mkdir(web, { recursive: true })])
         const declarations = [
+            'remote = "https://example.invalid/api.git"',
             'environment_files = [{ template = "first.template", instance = "first.instance" }, { template = "second.template", instance = "second.instance" }]',
             '',
             '[[sibling]]',
@@ -250,21 +253,40 @@ describe('production health adapter composition', () => {
             '',
         ].join('\n')
         const config = await readFile(candidate.configPath, 'utf8')
-        await writeFile(candidate.configPath, config.replace('[ports]', `${declarations}\n[ports]`))
+        await writeFile(configPath, config.replace('siblings_root = "siblings"', 'siblings_root = "../repositories"')
+            .replace('acquire = "none"', 'acquire = "manual"')
+            .replace('[ports]', `${declarations}\n[ports]`))
         await Promise.all([
+            writeFile(join(api, '.env.schema'), 'PUBLIC_NAME=\n'),
             writeFile(join(api, 'first.template'), 'FIRST=\n'),
             writeFile(join(api, 'first.instance'), 'FIRST=synthetic\n'),
             writeFile(join(api, 'second.template'), 'SECOND=\n'),
             writeFile(join(api, 'second.instance'), 'OTHER=synthetic\n'),
             writeFile(join(web, 'web.template'), 'WEB=\n'),
         ])
+        await run('git', ['init', '--quiet', '--initial-branch=main', api])
+        await run('git', ['-C', api, 'add', '--', '.env.schema', 'first.template', 'second.template'])
+        await run('git', ['-C', api, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture'])
+        await run('git', ['-C', api, 'remote', 'add', 'origin', 'https://example.invalid/api.git'])
+        await run('git', ['-C', api, 'update-ref', 'refs/remotes/origin/main', 'HEAD'])
+        await run('git', ['-C', api, 'branch', '--set-upstream-to=origin/main', 'main'])
+        await writeFile(join(candidate.root, 'varlock'), '#!/bin/sh\nprintf \'%s\\n\' \'{"config":{"PUBLIC_NAME":{}}}\'\n', { mode: 0o700 })
+        const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
-            configPath: candidate.configPath,
+            configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
             timeoutMs: 5_000,
-        }, executeProbe)
+        }, execute)
 
-        const observed = await runDoctor({ configPath: candidate.configPath }, adapters)
+        const observed = await runDoctor({ configPath }, adapters)
+        const siblingGit = execute.mock.calls.map(([step]) => step).find(({ id, labels }) =>
+            id === 'git-health' && labels.source === `${configPath}:api`)
+        expect(siblingGit).toMatchObject({ cwd: api, argv: expect.arrayContaining(['-C', api]) })
+        expect(siblingGit?.env).toEqual({})
+        expect(observed.result.comparisons).toContainEqual({ sibling: 'api', result: expect.objectContaining({ kind: 'complete', state: 'match' }) })
+        expect(observed.result.checks).toContainEqual(expect.objectContaining({
+            owner: 'env-schema-observation', verdict: 'pass', measured: [{ sibling: 'api', state: 'valid', keys: 1 }],
+        }))
         const checks = observed.result.checks.filter(({ owner }) => owner === 'environment-template-seeding')
         expect(observed.diagnostics).not.toEqual(expect.arrayContaining([expect.objectContaining({ target: 'templates' })]))
         expect(checks).toHaveLength(3)
@@ -277,7 +299,7 @@ describe('production health adapter composition', () => {
         expect(checks.find(({ code }) => code === 'ENVIRONMENT_FILE_NOT_FOUND')?.source).toContain('web.instance')
 
         await rm(web, { recursive: true })
-        const missing = await runDoctor({ configPath: candidate.configPath }, adapters)
+        const missing = await runDoctor({ configPath }, adapters)
         expect(missing.result.checks).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'SIBLING_MISSING', verdict: 'fail', source: expect.stringContaining('web') }),
         ]))

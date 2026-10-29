@@ -619,7 +619,7 @@ export function createHealthCommandAdapters(
             checkout: projection,
             configuration: loaded.result,
             preflight,
-            env: input.env,
+            env: gitObservationEnvironment(input.env),
             gitExecutable: git.value,
             timeoutMs: input.timeoutMs,
             producers: sourceProducers,
