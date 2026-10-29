@@ -21,6 +21,7 @@ import {
 } from './setup-observation.js'
 import { gitEnvironment } from './setup.js'
 import { syncGeneratedEnvironment } from './generated-application.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 
 const directoryResolutionControl = vi.hoisted(() => ({
     path: undefined as string | undefined,
@@ -641,6 +642,25 @@ describe('environment ignore observation', () => {
 })
 
 describe('setup checkout observation', () => {
+    it('explains how to inspect and initialize a new directory without creating a repository', async () => {
+        const root = join(workspaceForConfig(), "new checkout's docs")
+        await mkdir(root, { recursive: true })
+        const configPath = join(root, 'cockpit.toml')
+        await writeFile(configPath, configText())
+        await expect(run('git', ['-C', root, 'rev-parse', '--show-toplevel'])).rejects.toMatchObject({ code: 128 })
+
+        await expect(observeSetupCheckout(await checkoutAuthority(configPath))).resolves.toMatchObject({
+            state: 'failed',
+            code: 'SETUP_PATH_TYPE_INVALID',
+            reason: 'Git could not authenticate the current checkout; setup requires a Git working tree to bound repository writes. '
+                + `Inspect it with ${formatShellCommand(['git', '-C', root, 'rev-parse', '--show-toplevel'])}; `
+                + `if this is a new directory, initialize it with ${formatShellCommand(['git', '-C', root, 'init'])}, `
+                + `then retry ${formatShellCommand(['cockpit', 'setup', '--config', configPath])}`,
+        })
+        await expect(lstat(join(root, '.git'))).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(configPath, 'utf8')).toBe(configText())
+    })
+
     it('preserves exact generated checkout search aliases for resolution', async () => {
         const repository = await committedRepository()
         const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))

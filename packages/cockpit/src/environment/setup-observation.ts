@@ -5,6 +5,7 @@ import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:pat
 import { isProxy } from 'node:util/types'
 import { EnvironmentFile, type EnvironmentFile as EnvironmentFileValue } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
@@ -959,7 +960,10 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
         sourceChecks,
     )
     if (!current || !confined(current.topLevel, value.source.path)) {
-        return setupCheckoutFailure('Git could not authenticate the current checkout')
+        return setupCheckoutFailure('Git could not authenticate the current checkout; setup requires a Git working tree to bound repository writes. '
+            + `Inspect it with ${formatShellCommand(['git', '-C', startingDirectory.canonicalPath, 'rev-parse', '--show-toplevel'])}; `
+            + `if this is a new directory, initialize it with ${formatShellCommand(['git', '-C', startingDirectory.canonicalPath, 'init'])}, `
+            + `then retry ${formatShellCommand(['cockpit', 'setup', '--config', value.source.path])}`)
     }
     const currentDirectories = await Promise.all(
         [...new Set([current.topLevel, current.gitDirectory, current.commonDirectory])].map(canonicalDirectory),
@@ -1011,7 +1015,9 @@ export async function observeSetupCheckout(input: unknown): Promise<SetupCheckou
     const mainProbeRoot = separateMain ? current.topLevel : declaredMain
     const main = await gitIdentity('setup:observe:checkout-main', mainProbeRoot, value, currentChecks)
     if (!main || main.topLevel !== mainProbeRoot || main.commonDirectory !== current.commonDirectory) {
-        return setupCheckoutFailure('Git could not authenticate the main checkout')
+        return setupCheckoutFailure('Git could not authenticate the main checkout; setup requires its Git working-tree identity to bound repository writes. '
+            + `Inspect it with ${formatShellCommand(['git', '-C', mainProbeRoot, 'rev-parse', '--show-toplevel'])}, `
+            + `restore the intended checkout, then retry ${formatShellCommand(['cockpit', 'setup', '--config', value.source.path])}`)
     }
     if (current.topLevel !== main.topLevel) {
         const mainDotGit = await stableDirectory(resolve(main.topLevel, '.git'))

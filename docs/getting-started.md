@@ -259,6 +259,9 @@ the same accepted `init` command to resume verification.
 ## Bring the product up
 
 This is the canonical sequence. Every other page links here rather than repeating it.
+The directory containing `cockpit.toml` must be in a Git working tree so `setup` can bound its
+repository writes. In a new directory, run `git init` there first; for an existing checkout,
+inspect `git rev-parse --show-toplevel` and repair its Git metadata if that fails.
 
 ```sh
 ./node_modules/.bin/cockpit setup --config ./cockpit.toml
