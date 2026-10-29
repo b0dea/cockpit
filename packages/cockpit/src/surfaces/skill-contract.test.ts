@@ -394,11 +394,23 @@ describe('shipped skill contract', () => {
         expect(result.status).toBe(2)
     })
 
-    it('fails the rendered harness whose conditional skill exceeds the shared installed-set cap', async () => {
+    it('fails the rendered harness whose base or conditional skill exceeds the shared installed-set cap', async () => {
         const sources = await shippedSources()
         const accepted = await inspectSkillSet(input(sources))
         expect(accepted.kind).toBe('complete')
         if (accepted.kind !== 'complete') return
+        const largest = accepted.costs.reduce((left, right) => left.value >= right.value ? left : right)
+        const neutralDescriptionBytes = sources.filter(source => source.path.endsWith('/SKILL.md')).reduce((sum, source) => {
+            const match = /^description: "([^"]+)"$/m.exec(source.bytes)
+            return sum + Buffer.byteLength(match?.[1] ?? '')
+        }, 0)
+        expect(largest.value).toBeGreaterThan(neutralDescriptionBytes)
+        const baseRefusal = await inspectSkillSet(input(sources, { ...generousCaps, [largest.target]: largest.value - 1 }))
+        expect(baseRefusal).toMatchObject({
+            kind: 'refusal',
+            diagnostics: [{ code: 'SKILL_STANDING_COST_EXCEEDED', target: largest.target }],
+        })
+
         const claudecode = accepted.costs.find(cost => cost.target === 'claudecode')!
         const caps = { ...generousCaps, claudecode: claudecode.value + 230 }
         const bounded = await inspectSkillSet(input(sources, caps))
