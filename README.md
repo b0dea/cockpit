@@ -144,10 +144,12 @@ section.
 | Claude Code | `claudecode` | CLAUDE.md and .claude/ (skills, evaluator subagent, guard hook, permissions) |
 | Codex CLI | `codexcli` | AGENTS.md, .agents/skills/ and .codex/ (evaluator agent, guard hook, rules) |
 | OpenCode | `opencode` | opencode.jsonc and .opencode/ (skills, evaluator agent, guard plugin) |
+| Cursor | `cursor` | .cursor/ (rules, skills, MCP and permissions) |
+| Grok Build | `grokcli` | AGENTS.md and .grok/ (skills, MCP and permissions) |
 
-Each generated feature has a measured state: *enforced*, *instructed* or *unavailable*. Today
-every built-in cell is *instructed*; see [Status and limits](#status-and-limits) and the
-[capability matrix](docs/capability-matrix.md).
+Generation is separate from native enforcement. The [capability matrix](docs/capability-matrix.md)
+records each feature as *enforced*, *instructed* or *unavailable*; see
+[Status and limits](#status-and-limits) before relying on a generated control.
 
 ## Status and limits
 

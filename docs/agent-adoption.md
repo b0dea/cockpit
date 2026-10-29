@@ -250,7 +250,7 @@ Run from the directory that holds the repositories. Each step stops for the huma
    ```
 
    The run stops at the first field still unanswered, or at `configuration.defaults`. There,
-   `result.question.document` contains an incomplete review draft as an array of lines.
+   `result.question.document` contains the validated review draft as an array of lines.
    Joining them with `\n` reproduces the exact draft, including its final newline.
    Its provenance comments show every inferred and default value with its target and reason, and
    `result.question.expectedSha256` is the digest covering those values. The human output and

@@ -158,11 +158,12 @@ block and refuses an edited or ambiguous existing block.
 ## After upgrading cockpit
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
-applied silently.
+applied silently. For a read-only release plan before installing, follow
+[Review an upgrade](https://github.com/b0dea/cockpit/blob/main/docs/harness-surfaces.md#review-an-upgrade).
 
 1. Run `npm install --save-dev --save-exact @b0dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
-2. Preview without writing: `./node_modules/.bin/cockpit upgrade --config cockpit.toml` (a read-only plan) or
+2. Preview the generated changes without writing:
    `./node_modules/.bin/cockpit sync --dry-run --config cockpit.toml`.
 3. A human runs `./node_modules/.bin/cockpit sync --interactive --config cockpit.toml` in a terminal and approves the exact
    stale-removal digest when the upgrade renamed or retired an owned surface. The guard blocks an agent from
