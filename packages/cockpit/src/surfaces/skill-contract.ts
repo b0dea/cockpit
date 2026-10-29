@@ -28,7 +28,7 @@ export const mechanism = {
     id: 'skill-contract',
     module: 'packages/cockpit/src/surfaces/skill-contract.ts',
     exports: ['SHIPPED_SETUP_SKILL', 'inspectSkillSet', 'inspectRenderedSkillSet', 'isAdmittedSkillCollection',
-        'projectInspectedSkillOutputs', 'isInspectedBootstrapOutputs'],
+        'extendInspectedSkillStandingCosts', 'projectInspectedSkillOutputs', 'isInspectedBootstrapOutputs'],
 } as const
 
 export interface SkillContractDiagnostic {
@@ -84,6 +84,15 @@ export type SkillContractResult =
         diagnostics: readonly SkillContractDiagnostic[]
         files: readonly []
     }>
+
+export type SkillStandingExtensionResult = Readonly<{
+    kind: 'complete'
+    status: 0
+    diagnostics: readonly []
+    skills: readonly string[]
+    costs: readonly SkillStandingCost[]
+    inventorySha256: string
+}> | Extract<SkillContractResult, { kind: 'refusal' }>
 
 export type InspectedBootstrapOutputs = Readonly<{
     kind: 'complete'
@@ -426,6 +435,62 @@ function inspectRendered(
         target, Object.freeze([...expected[target]].sort()),
     ]))) as Readonly<Record<SurfaceTarget, readonly string[]>>)
     return result
+}
+
+export function extendInspectedSkillStandingCosts(
+    result: SkillContractResult,
+    additionalFiles: readonly RenderedSurfaceFile[],
+): SkillStandingExtensionResult {
+    if (result.kind !== 'complete' || !inspectedSkillResults.has(result)) {
+        return refusal('SKILL_PROJECTION_INVALID', 'skill standing-cost extension requires the exact issued inspection result')
+    }
+    const captured = snapshotJson(additionalFiles)
+    if (!Array.isArray(captured) || (captured.length > 0
+        && !bundleSurfaceFiles(captured as unknown as readonly RenderedSurfaceFile[]))) {
+        return refusal('SKILL_RENDER_INVALID', 'additional rendered skill files are malformed or unbounded')
+    }
+    const files = captured as unknown as readonly RenderedSurfaceFile[]
+    const additions = new Map<SurfaceTarget, number>(SURFACE_TARGETS.map(target => [target, 0]))
+    const additionalSkills = new Set<string>()
+    const targetSkills = new Set<string>()
+    for (const file of files) {
+        const prefix = `${TARGET_PATH_PREFIX[file.target]}/`
+        const match = file.path.startsWith(prefix) ? /^([^/]+)\/SKILL\.md$/.exec(file.path.slice(prefix.length)) : null
+        const parsed = parseEntryPoint(file.bytes)
+        const name = parsed?.frontmatter.name
+        if (!match || !parsed || parsed.body.length === 0 || typeof name !== 'string' || !NAME.test(name) || name !== match[1]) {
+            return refusal('SKILL_RENDER_INVALID', 'additional rendered skill frontmatter or path is invalid', `${file.target}:${file.path}`)
+        }
+        if (result.skills.includes(name)) {
+            return refusal('SKILL_NAME_DUPLICATE', 'additional rendered skill duplicates the admitted collection inventory', `${file.target}:${file.path}`)
+        }
+        const targetSkill = `${file.target}\0${name}`
+        if (targetSkills.has(targetSkill)) {
+            return refusal('SKILL_NAME_DUPLICATE', 'additional rendered skill names must be unique per target', `${file.target}:${file.path}`)
+        }
+        targetSkills.add(targetSkill)
+        additionalSkills.add(name)
+        additions.set(file.target, additions.get(file.target)! + Buffer.byteLength(parsed.rawFrontmatter))
+    }
+    const costs = result.costs.map(cost => {
+        const value = cost.value + additions.get(cost.target)!
+        return Object.freeze({ ...cost, value, status: value > cost.cap ? 'exceeded' as const : 'within_cap' as const })
+    })
+    const exceeded = costs.find(cost => cost.status === 'exceeded')
+    if (exceeded) return refusal('SKILL_STANDING_COST_EXCEEDED', `rendered ${exceeded.target} installed skill set exceeds its standing-cost cap`, exceeded.target)
+    const inventory = [...result.files, ...files].filter(file => file.path.endsWith('/SKILL.md'))
+        .map(({ target, path, sha256 }) => ({ target, path, sha256 }))
+        .sort((left, right) => {
+            const leftKey = `${left.target}\0${left.path}`
+            const rightKey = `${right.target}\0${right.path}`
+            return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+        })
+    return Object.freeze({
+        kind: 'complete', status: 0, diagnostics: Object.freeze([]) as readonly [],
+        skills: Object.freeze([...result.skills, ...additionalSkills].sort()),
+        costs: Object.freeze(costs),
+        inventorySha256: createHash('sha256').update(JSON.stringify(inventory)).digest('hex'),
+    })
 }
 
 export function projectInspectedSkillOutputs(

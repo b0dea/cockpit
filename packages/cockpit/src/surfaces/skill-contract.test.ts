@@ -10,7 +10,7 @@ import { commands } from '../command-table.js'
 
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
 import { generateSurfaceBatch } from './generator-adapter.js'
-import { inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs } from './skill-contract.js'
+import { extendInspectedSkillStandingCosts, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs } from './skill-contract.js'
 
 const surfaceRoot = join(dirname(fileURLToPath(import.meta.url)), '../../surfaces/skills')
 const generousCaps: Record<SurfaceTarget, number> = {
@@ -45,6 +45,13 @@ function changeEntry(
     return sources.map(source => source.path === 'skills/cockpit-setup/SKILL.md'
         ? { ...source, bytes: transform(source.bytes) }
         : source)
+}
+
+function additionalSkill(target: SurfaceTarget, bytes: string) {
+    const prefix: Record<SurfaceTarget, string> = {
+        claudecode: '.claude', codexcli: '.agents', opencode: '.opencode', cursor: '.cursor', grokcli: '.grok',
+    }
+    return { target, ...authenticated({ path: `${prefix[target]}/skills/cockpit-browser/SKILL.md`, bytes }) }
 }
 
 describe('shipped skill contract', () => {
@@ -247,6 +254,30 @@ describe('shipped skill contract', () => {
         expect(result.costs).toHaveLength(SURFACE_TARGETS.length)
         expect(new Set(result.costs.map(cost => cost.value)).size).toBeGreaterThan(1)
         expect(result.costs.every(cost => cost.metric === 'frontmatter_bytes' && cost.value > 0 && cost.value <= cost.cap)).toBe(true)
+        const browserBytes = (await readFile(join(surfaceRoot, 'cockpit-browser.skill.md'), 'utf8'))
+            .replace('{{browser}}', 'Use the authenticated browser transport.')
+        const browserFiles = (['claudecode', 'codexcli', 'opencode'] as const).map(target => additionalSkill(target, browserBytes))
+        const extended = extendInspectedSkillStandingCosts(result, browserFiles)
+        expect(extended).toMatchObject({
+            kind: 'complete',
+            skills: ['cockpit-browser', 'cockpit-explain', 'cockpit-fix', 'cockpit-setup', 'cockpit-work'],
+            costs: result.costs.map(cost => ({
+                ...cost,
+                value: cost.value + (['claudecode', 'codexcli', 'opencode'].includes(cost.target) ? 231 : 0),
+            })),
+            inventorySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        })
+        expect(extendInspectedSkillStandingCosts({ ...result }, browserFiles)).toMatchObject({ kind: 'refusal' })
+        expect(extendInspectedSkillStandingCosts(result, [{ ...browserFiles[0]!, sha256: '0'.repeat(64) }]))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVALID' }] })
+        expect(extendInspectedSkillStandingCosts(result, [browserFiles[0]!, browserFiles[0]!]))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVALID' }] })
+        expect(extendInspectedSkillStandingCosts(result, [{ ...browserFiles[0]!,
+            bytes: browserFiles[0]!.bytes.replace('name: cockpit-browser', 'name: wrong-name'),
+            sha256: createHash('sha256').update(browserFiles[0]!.bytes.replace('name: cockpit-browser', 'name: wrong-name')).digest('hex'),
+        }])).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_RENDER_INVALID' }] })
+        expect(extendInspectedSkillStandingCosts(result, [result.files.find(file => file.path.endsWith('/cockpit-setup/SKILL.md'))!]))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'SKILL_NAME_DUPLICATE' }] })
         const renderedProcedures = result.files.filter(file => file.path.endsWith('/procedures/onboarding.md'))
         expect(renderedProcedures).toHaveLength(SURFACE_TARGETS.length * 4)
         expect(renderedProcedures.every(file => file.bytes === procedure)).toBe(true)
@@ -363,24 +394,23 @@ describe('shipped skill contract', () => {
         expect(result.status).toBe(2)
     })
 
-    it('fails the rendered harness whose own installed-set cap is exceeded', async () => {
+    it('fails the rendered harness whose conditional skill exceeds the shared installed-set cap', async () => {
         const sources = await shippedSources()
         const accepted = await inspectSkillSet(input(sources))
         expect(accepted.kind).toBe('complete')
         if (accepted.kind !== 'complete') return
-        const largest = accepted.costs.reduce((left, right) => left.value >= right.value ? left : right)
-        const neutralDescriptionBytes = sources.filter(source => source.path.endsWith('/SKILL.md')).reduce((sum, source) => {
-            const match = /^description: "([^"]+)"$/m.exec(source.bytes)
-            return sum + Buffer.byteLength(match?.[1] ?? '')
-        }, 0)
-        expect(largest.value).toBeGreaterThan(neutralDescriptionBytes)
-        const caps = { ...generousCaps, [largest.target]: largest.value - 1 }
-
-        const refused = await inspectSkillSet(input(sources, caps))
+        const claudecode = accepted.costs.find(cost => cost.target === 'claudecode')!
+        const caps = { ...generousCaps, claudecode: claudecode.value + 230 }
+        const bounded = await inspectSkillSet(input(sources, caps))
+        expect(bounded.kind).toBe('complete')
+        if (bounded.kind !== 'complete') return
+        const browserBytes = (await readFile(join(surfaceRoot, 'cockpit-browser.skill.md'), 'utf8'))
+            .replace('{{browser}}', 'Use the authenticated browser transport.')
+        const refused = extendInspectedSkillStandingCosts(bounded, [additionalSkill('claudecode', browserBytes)])
 
         expect(refused).toMatchObject({
             kind: 'refusal',
-            diagnostics: [{ code: 'SKILL_STANDING_COST_EXCEEDED', target: largest.target }],
+            diagnostics: [{ code: 'SKILL_STANDING_COST_EXCEEDED', target: 'claudecode' }],
         })
     }, 240_000)
 })
