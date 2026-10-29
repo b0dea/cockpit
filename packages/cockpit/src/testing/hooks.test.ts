@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import { planSurfaceChanges } from '../surfaces/sync.js'
 import type { ExecutionStep } from '../environment/contract.js'
@@ -20,7 +20,11 @@ const manifest = encodeOwnershipManifest({ ...authority, generation: sha('genera
     owned: [{ path: 'hook-policy.txt', sha256: sha(policyBytes) }], surfaces: [] }).manifest
 const policy = { manifest, authority, declarations: [], path: 'hook-policy.txt', exists: true, bytes: policyBytes }
 const measurementDirectories: string[] = []
-afterEach(() => { for (const directory of measurementDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }) })
+const cleanupMeasurements = () => {
+    for (const directory of measurementDirectories.splice(0)) rmSync(directory, { recursive: true, force: true })
+}
+afterEach(cleanupMeasurements)
+afterAll(cleanupMeasurements)
 const prepareMeasurement = async (entry: NativeHookEntry) => {
     const directory = mkdtempSync(join(tmpdir(), 'cockpit-hook-cost-'))
     measurementDirectories.push(directory)
@@ -41,13 +45,23 @@ const prepareMeasurement = async (entry: NativeHookEntry) => {
 }
 const input = () => ({ cockpitId, harnesses: ['codexcli'], install: 'explicit-native' as const,
     budget: { prepareMeasurement, policy } })
+type CompleteNativeHookProjection = Extract<Awaited<ReturnType<typeof projectNativeHooks>>, { kind: 'complete' }>
+let authenticProjection: CompleteNativeHookProjection
+
+beforeAll(async () => {
+    const result = await projectNativeHooks(input())
+    if (result.kind !== 'complete') throw new Error(`hook projection refused: ${JSON.stringify(result)}`)
+    for (const entry of result.entries) Object.freeze(entry)
+    Object.freeze(result.entries)
+    authenticProjection = Object.freeze(result)
+})
 
 describe('native irreversible guards', () => {
     it('projects native desired entries with writer identity and a checked named budget, requiring explicit install', async () => {
         const inspect: NativeHookInput = { cockpitId, harnesses: input().harnesses, install: 'inspect' }
         expect((await projectNativeHooks(inspect)).kind).toBe('not-installed')
         expect(await projectNativeHooks({ ...input(), budget: { policy, measuredMs: 1 } } as unknown as Parameters<typeof projectNativeHooks>[0])).toMatchObject({ kind: 'refusal' })
-        const result = await projectNativeHooks(input())
+        const result = authenticProjection
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') throw new Error('hook projection refused')
         expect(result.activation).toEqual({ kind: 'explicit-native-install', hooksPath: '.githooks', mode: 0o755 })
@@ -76,8 +90,7 @@ describe('native irreversible guards', () => {
     }, 90000)
 
     it('composes the existing surface planner to refuse a foreign hook even when its bytes match', async () => {
-        const result = await projectNativeHooks(input())
-        if (result.kind !== 'complete') throw new Error('hook projection refused')
+        const result = authenticProjection
         const entry = result.entries[0]!
         const base = { configuredHarnesses: input().harnesses, desired: result.entries, priorOwned: [],
             observed: [{ path: entry.path, kind: 'file', bytes: entry.bytes, sha256: entry.sha256, identity: 'foreign-file' }] }
@@ -87,8 +100,7 @@ describe('native irreversible guards', () => {
     })
 
     it('runs only bounded ancestry guards and refuses deletion, force updates, malformed input and failed checks', async () => {
-        const result = await projectNativeHooks(input())
-        if (result.kind !== 'complete') throw new Error('hook projection refused')
+        const result = authenticProjection
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-native-hook-'))
         const hook = join(directory, 'pre-push')
         const git = join(directory, 'git')
