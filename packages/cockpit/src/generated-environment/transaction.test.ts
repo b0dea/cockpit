@@ -13,7 +13,7 @@ import { resolveGitExecutable } from '../environment/executable.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
-import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile,
+import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource,
     revalidateReferenceBootstrap, runPublicationPlan } from './transaction.js'
 
 const roots: string[] = []
@@ -436,9 +436,27 @@ async function compactPublication(options: { count?: number; segmentLength?: num
 }
 
 describe('portable publication names', () => {
+    it('preserves native source names while publishing a portable destination', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-native-publication-source-')))
+        roots.push(root)
+        const source = 'source:store/CON.txt'
+        const destination = 'adopted/source.txt'
+        const bytes = 'synthetic source\n'
+        await mkdir(dirname(join(root, source)), { recursive: true })
+        await writeFile(join(root, source), bytes)
+        const node = await nodeAuthority()
+        if (!node) throw new Error('Node authority unavailable')
+        const read = await readPersonaSource(root, source, node, { execute: executeProbe })
+        expect(read?.bytes.toString()).toBe(bytes)
+        await expect(relocateAnchoredFile(root, source, destination, 1024, digest(bytes), node, { execute: executeProbe }))
+            .resolves.toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, destination), 'utf8')).toBe(bytes)
+        await expect(lstat(join(root, source))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
     it('refuses nonportable authored names before creating any output', async () => {
         const outcomes: Array<{ segment: string; kind: string }> = []
-        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name']) {
+        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name', '.gıt', 'ınternal', 'node_moduleſ']) {
             const fixture = await compactPublication({ paths: [`.cursor/${segment}/SKILL.md`] })
             const admitted = await admitPublicationPlan(fixture.input, { execute: executeProbe })
             outcomes.push({ segment, kind: admitted.kind })

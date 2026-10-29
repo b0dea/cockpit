@@ -280,6 +280,10 @@ const path = require("node:path");
 const c = fs.constants;
 const limit = 16777216;
 const request = JSON.parse(process.argv[1]);
+const anchoredName = value => {
+  if (typeof value !== "string" || value.length === 0 || value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("\0")) throw new Error("name");
+  return value;
+};
 const name = value => {
   if (typeof value !== "string" || value.length === 0 || value.length > 255 || /[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) || /[. ]$/.test(value) || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)) throw new Error("nonportable-name");
   return value;
@@ -369,7 +373,7 @@ const walkNested = (expected, segments, created, chain) => {
 };
 const walkSource = (segments, chain = []) => {
   for (const raw of segments) {
-    const segment = name(raw); const before = fs.lstatSync(segment);
+    const segment = anchoredName(raw); const before = fs.lstatSync(segment);
     if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("directory");
     process.chdir(segment); const after = fs.lstatSync(".");
     if (!same(after, before)) throw new Error("walk");
@@ -377,10 +381,10 @@ const walkSource = (segments, chain = []) => {
   }
   return chain;
 };
-const walkExpected = chain => {
+const walkExpected = (chain, validate = name) => {
   const walked = [];
   for (const expected of chain) {
-    const segment = name(expected.name); const before = fs.lstatSync(segment);
+    const segment = validate(expected.name); const before = fs.lstatSync(segment);
     if (!same(before, expected)) throw new Error("directory-identity");
     process.chdir(segment); const after = fs.lstatSync(".");
     if (!same(after, expected)) throw new Error("walk-identity");
@@ -393,7 +397,7 @@ const verifySourceChain = (chain, start = request.identity) => {
     process.chdir("..");
     const parent = fs.lstatSync("."); const expected = index === 0 ? start : chain[index - 1];
     if (!same(parent, expected)) throw new Error("parent-identity");
-    const child = fs.lstatSync(name(chain[index].name));
+    const child = fs.lstatSync(anchoredName(chain[index].name));
     if (!same(child, chain[index])) throw new Error("child-identity");
   }
   const current = fs.lstatSync("."); if (!same(current, start)) throw new Error("start-identity");
@@ -475,7 +479,7 @@ const verifyEntries = (entries, start = currentDirectory()) => {
 };
 const respond = value => process.stdout.write(JSON.stringify({ version: 1, nonce: request.nonce, action: request.action, ...value }) + "\n");
 const readSource = entry => {
-  const chain = []; let before; const filename = name(entry.name);
+  const chain = []; let before; const filename = anchoredName(entry.name);
   try { walkSource(entry.segments, chain); before = fs.lstatSync(filename); }
   catch (error) { if (entry.action !== "read-persona" && error.code === "ENOENT") { verifySourceChain(chain); return { kind: "missing" }; } throw error; }
   if (entry.action === "read-entry" && before.isSymbolicLink()) {
@@ -522,14 +526,14 @@ try {
     const base = process.cwd(); const destinationChain = []; const sourceCapture = name(".cockpit-adopt-source-" + request.nonce); const destinationCapture = name(".cockpit-adopt-destination-" + request.nonce);
     let sourceCapturePath; let sourceMode; let sourceCaptured = false; let sourceRestored = false; let originalRetired = false; let destinationCreated = false; let destinationQuarantined = false; let destinationIdentity;
     const restoreSource = () => {
-      process.chdir(base); const chain = walkExpected(request.source.chain); const sourceName = name(request.source.name);
+      process.chdir(base); const chain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name);
       if (state(sourceName).kind !== "missing") throw new Error("source-recovery-occupied");
       fs.linkSync(sourceCapture, sourceName); const restored = fs.lstatSync(sourceName); const captured = fs.lstatSync(sourceCapture);
       if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error("source-recovery-identity");
       sourceRestored = true; syncDirectory(); verifySourceChain(chain);
     };
     const retireSourceCapture = (requireRestored, retired = () => {}) => {
-      process.chdir(base); const chain = walkExpected(request.source.chain); const sourceName = name(request.source.name); const captured = fs.lstatSync(sourceCapture);
+      process.chdir(base); const chain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name); const captured = fs.lstatSync(sourceCapture);
       if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== request.source.file.dev || captured.ino !== request.source.file.ino) throw new Error("source-retirement-identity");
       if (requireRestored) {
         const restored = fs.lstatSync(sourceName);
@@ -548,7 +552,7 @@ try {
       fs.unlinkSync(destinationCapture); destinationQuarantined = false; destinationCreated = false; syncDirectory(); verifySourceChain(chain);
     };
     try {
-      const sourceChain = walkExpected(request.source.chain); const sourceName = name(request.source.name);
+      const sourceChain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name);
       const sourceBefore = fs.lstatSync(sourceName);
       if (!sourceBefore.isFile() || sourceBefore.isSymbolicLink() || sourceBefore.dev !== request.source.file.dev || sourceBefore.ino !== request.source.file.ino) throw new Error("source-identity");
       if (state(sourceCapture).kind !== "missing") throw new Error("source-capture");
@@ -563,7 +567,7 @@ try {
       process.chdir(base); walk(safeSegments(request.destination.segments), destinationChain);
       const destinationName = name(request.destination.name);
       if (state(destinationName).kind !== "missing") throw new Error("destination-state");
-      process.chdir(base); const linkSourceChain = walkExpected(request.source.chain); const currentCapture = read(sourceCapturePath, request.source.maxBytes, request.source.file);
+      process.chdir(base); const linkSourceChain = walkExpected(request.source.chain, anchoredName); const currentCapture = read(sourceCapturePath, request.source.maxBytes, request.source.file);
       if (currentCapture.status.dev !== request.source.file.dev || currentCapture.status.ino !== request.source.file.ino
         || digest(currentCapture.bytes) !== request.source.sha256 || (currentCapture.status.mode & 511) !== sourceMode) throw new Error("source-capture-changed");
       verifySourceChain(linkSourceChain);
@@ -571,14 +575,14 @@ try {
       fs.linkSync(sourceCapturePath, destinationName); destinationCreated = true; destinationIdentity = { ...request.source.file };
       const destination = fs.lstatSync(destinationName);
       if (!destination.isFile() || destination.isSymbolicLink() || destination.dev !== destinationIdentity.dev || destination.ino !== destinationIdentity.ino) throw new Error("destination-linked-identity");
-      process.chdir(base); const linkedSourceChain = walkExpected(request.source.chain); const linkedCapture = fs.lstatSync(sourceCapture);
+      process.chdir(base); const linkedSourceChain = walkExpected(request.source.chain, anchoredName); const linkedCapture = fs.lstatSync(sourceCapture);
       if (!linkedCapture.isFile() || linkedCapture.isSymbolicLink() || linkedCapture.dev !== destinationIdentity.dev || linkedCapture.ino !== destinationIdentity.ino) throw new Error("source-linked-identity");
       verifySourceChain(linkedSourceChain);
       process.chdir(base); walkExpected(destinationChain);
       if (hash(destinationName) !== request.source.sha256 || (destination.mode & 511) !== sourceMode) throw new Error("destination-postimage");
       syncDirectory(); verifySourceChain(destinationChain);
 
-      process.chdir(base); const currentSourceChain = walkExpected(request.source.chain);
+      process.chdir(base); const currentSourceChain = walkExpected(request.source.chain, anchoredName);
       if (state(sourceName).kind !== "missing") throw new Error("source-postimage");
       const finalCapture = fs.lstatSync(sourceCapture);
       if (!finalCapture.isFile() || finalCapture.isSymbolicLink() || finalCapture.dev !== destinationIdentity.dev || finalCapture.ino !== destinationIdentity.ino) throw new Error("source-capture-identity");
@@ -1102,7 +1106,7 @@ export async function relocateAnchoredFile(
     }
     const sourceParts = relative(root, sourceTarget).split(sep)
     const destinationParts = relative(root, destinationTarget).split(sep)
-    if (sourceParts.some(part => !safePublicationSegment(part)) || destinationParts.some(part => !safePublicationSegment(part))) {
+    if (sourceParts.some(part => !safeAnchoredSegment(part)) || destinationParts.some(part => !safePublicationSegment(part))) {
         return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
     }
     const source = await readAnchoredFile(root, sourcePath, maxBytes, node, adapters)
@@ -1387,6 +1391,11 @@ export async function readPersonaSource(
     return read.kind === 'complete'
         ? Object.freeze({ bytes: read.bytes, sha256: read.sha256, identity: read.identity })
         : undefined
+}
+
+function safeAnchoredSegment(value: unknown): value is string {
+    return typeof value === 'string' && value.length > 0 && value !== '.' && value !== '..'
+        && !value.includes('/') && !value.includes('\\') && !value.includes('\0')
 }
 
 function safePublicationSegment(value: unknown): value is string {
@@ -1991,7 +2000,7 @@ function sameIdentity(left: PersonaSourceIdentity, right: PersonaSourceIdentity)
 function exactPath(root: string, path: string): boolean {
     return path.length <= 4096 && !/[\\\x00-\x1f\x7f*?\[\]{}]/.test(path)
         && path.split('/').every(part => safePublicationSegment(part)
-            && !['.git', 'internal', 'node_modules'].includes(part.toLowerCase())) && confined(root, path) !== undefined
+            && !['.GIT', 'INTERNAL', 'NODE_MODULES'].includes(part.normalize('NFC').toUpperCase().normalize('NFC'))) && confined(root, path) !== undefined
 }
 
 function classifyEntry(fact: GeneratedPathFact | undefined, current: AnchoredEntry): string | undefined {
