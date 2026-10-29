@@ -187,7 +187,26 @@ async function drive(
         ...(input.xdgStateHome === undefined ? {} : { xdgStateHome: input.xdgStateHome }),
         ...(input.resetAnswer === undefined ? {} : { resetAnswer: input.resetAnswer }),
     }
-    if (input.resetAnswer !== undefined) return application({ ...shared, accepted: false })
+    if (input.resetAnswer !== undefined) {
+        const resetPreview = { field: input.resetAnswer.field }
+        const direct = await application({ ...shared, resetAnswer: resetPreview, accepted: false })
+        if (direct.kind === 'pending' && direct.result?.resetAnswer?.field === input.resetAnswer.field) {
+            if (input.resetAnswer.acceptedPreviewSha256 === undefined) return direct
+            return application({ ...shared, accepted: false })
+        }
+        if (direct.kind !== 'refusal' || direct.diagnostics.length !== 1
+            || direct.diagnostics[0]?.code !== 'INIT_ANSWER_RESET_UNAVAILABLE') return direct
+        const { resetAnswer: _resetAnswer, ...discoveryInput } = shared
+        const discovery = await application({ ...discoveryInput, accepted: false })
+        const option = discovery.result?.cockpitRoot?.options.find(row => row.answer === 'dedicated')
+        if (!option || option.unavailable !== undefined) return direct
+        const routed = { ...shared, root: option.root,
+            cockpitRoot: { kind: 'dedicated' as const, firstSibling: option.firstSibling } }
+        const preview = await application({ ...routed, resetAnswer: resetPreview, accepted: false })
+        if (input.resetAnswer.acceptedPreviewSha256 === undefined || preview.kind !== 'pending'
+            || preview.result?.resetAnswer?.field !== input.resetAnswer.field) return preview
+        return application({ ...routed, accepted: false })
+    }
     const unattended = options.unattended
     const supplied = unattended ? answersByField(unattended.answers) : undefined
     if (supplied && supplied.unknown.length > 0) return refusal('INIT_ANSWER_FIELD_UNKNOWN',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { runInitOperatorCommand, type InitCommandIo } from './command.js'
-import type { InitApplicationOutcome } from '../environment/init-application.js'
+import type { InitApplicationInput, InitApplicationOutcome } from '../environment/init-application.js'
 
 const pending = (): InitApplicationOutcome => ({
     kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [],
@@ -138,6 +138,73 @@ describe('init operator command', () => {
             return input.greenfieldAnswer ? { ...question, kind: 'pending-dependency', status: 2 } : question
         })
         expect(calls).toEqual(['application:false', 'answer', 'application:true'])
+    })
+
+    it('returns a direct reset result or non-routing refusal without probing another root', async () => {
+        const reset = { field: 'environment.generated' }
+        const direct = { ...pending(), result: { ...pending().result!, resetAnswer: {
+            ...reset, revision: 1, invalidatedFields: [reset.field], previewSha256: 'e'.repeat(64),
+        } } }
+        const refusal: InitApplicationOutcome = { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+            diagnostics: [{ severity: 'error', code: 'STATE_RECORD_MALFORMED', message: 'state is malformed' }] }
+        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
+        for (const outcome of [direct, refusal]) {
+            let calls = 0
+            const returned = await runInitOperatorCommand({ root: '/work/app', target: 'codexcli', resetAnswer: reset },
+                { interactive: false, json: true }, io, async () => { calls += 1; return outcome })
+            expect(returned).toBe(outcome)
+            expect(calls).toBe(1)
+        }
+    })
+
+    it('routes an answer reset from the original product root to its accepted dedicated cockpit', async () => {
+        const product = '/work/app', dedicated = '/work/app-cockpit', resetDigest = 'e'.repeat(64)
+        const rootQuestion = { field: 'cockpit.root' as const, why: 'product repository', recommended: 'dedicated' as const, options: [
+            { answer: 'dedicated' as const, root: dedicated, creates: [dedicated], siblingsRoot: '..', firstSibling: product, tradeOff: 'clean' },
+            { answer: 'in-repo' as const, root: product, creates: [], siblingsRoot: '.', firstSibling: product, tradeOff: 'carries files' },
+        ] }
+        const calls: string[] = []
+        const application = async (input: InitApplicationInput): Promise<InitApplicationOutcome> => {
+            calls.push(`${input.root}:${input.cockpitRoot?.kind ?? 'none'}:${input.resetAnswer?.acceptedPreviewSha256 ?? (input.resetAnswer ? 'preview' : 'discover')}`)
+            if (input.resetAnswer === undefined) return { ...pending(), result: { ...pending().result!, cockpitRoot: rootQuestion } }
+            if (input.root === product) return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+                diagnostics: [{ severity: 'error', code: 'INIT_ANSWER_RESET_UNAVAILABLE', message: 'no recorded answers' }] }
+            if (input.resetAnswer.acceptedPreviewSha256 !== undefined
+                && input.resetAnswer.acceptedPreviewSha256 !== resetDigest) {
+                return { kind: 'refusal', status: 2, artifact: null, destination: null, result: null,
+                    diagnostics: [{ severity: 'error', code: 'INIT_ANSWER_RESET_STALE', message: 'reset preview changed' }] }
+            }
+            return { ...pending(), result: { ...pending().result!, root: dedicated, resetAnswer: {
+                field: input.resetAnswer.field, revision: 7, invalidatedFields: [input.resetAnswer.field], previewSha256: resetDigest,
+            } } }
+        }
+        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
+
+        const preview = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
+            field: 'environment.generated',
+        } }, { interactive: false, json: true }, io, application)
+
+        expect(preview).toMatchObject({ kind: 'pending', result: { root: dedicated, resetAnswer: {
+            field: 'environment.generated', previewSha256: resetDigest,
+        } } })
+        expect(calls).toEqual([
+            `${product}:none:preview`, `${product}:none:discover`, `${dedicated}:dedicated:preview`,
+        ])
+
+        calls.length = 0
+        const accepted = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
+            field: 'environment.generated', acceptedPreviewSha256: resetDigest,
+        } }, { interactive: false, json: true }, io, application)
+        expect(accepted).toMatchObject({ kind: 'pending', result: { root: dedicated } })
+        expect(calls).toEqual([
+            `${product}:none:preview`, `${product}:none:discover`,
+            `${dedicated}:dedicated:preview`, `${dedicated}:dedicated:${resetDigest}`,
+        ])
+
+        const stale = await runInitOperatorCommand({ root: product, target: 'codexcli', resetAnswer: {
+            field: 'environment.generated', acceptedPreviewSha256: 'f'.repeat(64),
+        } }, { interactive: false, json: true }, io, application)
+        expect(stale).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
     })
 
     it('keeps answering until the interview is done instead of stopping after three answers', async () => {

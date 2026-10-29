@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
 import { runInitApplication, type InitApplicationAdapters, type InitApplicationInput } from './init-application.js'
 import { deriveInferredFacts } from '../init/derive.js'
+import { runInitOperatorCommand, type InitCommandIo } from '../init/command.js'
 import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
@@ -245,6 +246,54 @@ describe('init application', () => {
         const resumedInRepo = await runInitApplication({ ...greenfield, accepted: false }, adapters)
         expect(resumedInRepo).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
         expect(observed).toEqual([{ root: f.root, rootIsRepository: true }])
+    })
+
+    it('accepts a dedicated answer reset from the original product root through the public driver', async () => {
+        const f = fixture()
+        const dedicated = resolve(f.root, '..', 'checkout-cockpit')
+        mkdirSync(dedicated)
+        let preparedRoot = f.root
+        const rooted = <T extends { kind: string; result: unknown }>(outcome: T, root: string): T => outcome.kind === 'complete'
+            ? { ...outcome, result: { ...outcome.result as object, root } } : outcome
+        const adapters: InitApplicationAdapters = {
+            ...f.adapters,
+            observeRoot: async ({ root }) => root === f.root ? 'product-repository' : 'cockpit-root',
+            prepareBootstrap: async input => {
+                preparedRoot = input.root
+                return rooted(await f.adapters.prepareBootstrap(input), input.root)
+            },
+            applyBootstrap: async authority => rooted(await f.adapters.applyBootstrap(authority), preparedRoot),
+            classifyEstate: async input => estate(input.root, 'one-sibling'),
+            document: interviewDocument(join(dedicated, 'cockpit.toml'), ['sibling', 'configuration.defaults']),
+        }
+        const application = (input: InitApplicationInput) => runInitApplication(input, adapters)
+        const accepted = { ...f.input, root: dedicated, registry: undefined,
+            cockpitRoot: { kind: 'dedicated' as const, firstSibling: f.root }, accepted: true,
+            acceptedPreviewSha256: digest('3') }
+        const question = await application(accepted)
+        expect(question).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
+        expect(await application({ ...accepted, greenfieldAnswer: {
+            questionId: question.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed',
+        } })).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
+
+        const io: InitCommandIo = { terminal: false, confirm: async () => undefined, writeArtifact: async () => undefined }
+        const command = (resetAnswer: NonNullable<InitApplicationInput['resetAnswer']>) => runInitOperatorCommand({
+            root: f.root, target: 'codexcli', sessionId: 'separate-public-invocation', platform: 'linux',
+            home: f.input.home, xdgStateHome: f.input.xdgStateHome, resetAnswer,
+        }, { interactive: false, json: true }, io, application)
+        const preview = await command({ field: 'sibling' })
+        expect(preview).toMatchObject({ kind: 'pending', result: { root: dedicated, resetAnswer: {
+            field: 'sibling', previewSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        } } })
+        const reset = preview.result!.resetAnswer!
+
+        expect(await command({ field: reset.field, acceptedPreviewSha256: digest('f') })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }],
+        })
+        expect(await command({ field: reset.field, acceptedPreviewSha256: reset.previewSha256 })).toMatchObject({
+            kind: 'pending', result: { root: dedicated, question: { field: 'sibling' },
+                resetAnswer: { previewSha256: reset.previewSha256 } },
+        })
     })
 
     it('resumes durable init state when init-created files make the root look like a product repository', async () => {
