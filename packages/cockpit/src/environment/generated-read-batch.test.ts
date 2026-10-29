@@ -24,6 +24,70 @@ import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 const roots: string[] = []
 const fixture = resolve('fixtures/registries/generated-environment.toml')
 
+async function explicitNativeHookFixture() {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-native-hook-outcome-')))
+    roots.push(root)
+    const configPath = join(root, 'cockpit.toml')
+    const policyPath = '.cockpit/guards/bash-guard.sh'
+    const policyBytes = 'native-hook-ms=1\n'
+    const policySha256 = createHash('sha256').update(policyBytes).digest('hex')
+    const source = `${(await readFile(fixture, 'utf8')).replace(
+        'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
+    )}
+[testing]
+stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]
+gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Synthetic focused change" }]
+native_hooks = { install = "explicit-native" }
+native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.stringify(policySha256)} }
+`
+    await writeFile(configPath, source)
+    await mkdir(join(root, 'app'), { recursive: true })
+    await mkdir(join(root, 'fixtures'), { recursive: true })
+    const personaBytes = '[{"id":"first"}]\n'
+    await writeFile(join(root, 'fixtures/personas.json'), personaBytes)
+    await mkdir(join(root, '.cockpit/guards'), { recursive: true })
+    await writeFile(join(root, policyPath), policyBytes)
+    const loaded = await loadCockpitConfig(configPath)
+    if (loaded.kind !== 'complete') throw new Error('native hook fixture configuration unavailable')
+    const currentCockpit = publicationCockpitId({ name: loaded.result.config.cockpit.name })
+    const ownership = encodeOwnershipManifest({ root, cockpitId: currentCockpit, configPath,
+        generation: createHash('sha256').update('synthetic native hook generation').digest('hex'),
+        sourceSha256: createHash('sha256').update(source).digest('hex'),
+        personaSource: { path: 'fixtures/personas.json', sha256: createHash('sha256').update(personaBytes).digest('hex') },
+        owned: [{ path: policyPath, sha256: policySha256 }], surfaces: [] })
+    const ownershipPath = join(root, '.cockpit/generated-environment-ownership.json')
+    await writeFile(ownershipPath, ownership.bytes)
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'config', 'user.name', 'Synthetic Fixture']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'config', 'user.email', 'fixture@example.invalid']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'add', 'cockpit.toml', 'fixtures/personas.json']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'commit', '--quiet', '-m', 'synthetic fixture']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'commit', '--quiet', '--allow-empty', '-m', 'synthetic parent']).status).toBe(0)
+    const revisions = spawnSync('git', ['-C', root, 'rev-list', '--max-count=2', 'HEAD'], { encoding: 'utf8' })
+    expect(revisions.status).toBe(0)
+    const [head, parent] = revisions.stdout.trim().split('\n')
+    const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+    if (git.state !== 'available') throw new Error('native hook fixture Git authority unavailable')
+    const bin = join(root, 'bin')
+    const calls = join(root, 'git-calls')
+    await mkdir(bin)
+    await writeFile(join(bin, 'git'), `#!/bin/sh
+if [ "$PWD" != '${root.replaceAll("'", "'\\''")}' ]; then
+    printf 'unexpected synthetic git working directory\\n' >&2; exit 64
+fi
+if [ "$#" -eq 3 ] && [ "$1" = rev-list ] && [ "$2" = --max-count=2 ] && [ "$3" = HEAD ]; then
+    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
+    printf '%s\\n' '${head}' '${parent}'
+elif [ "$#" -eq 4 ] && [ "$1" = merge-base ] && [ "$2" = --is-ancestor ] && [ "$3" = '${parent}' ] && [ "$4" = '${head}' ]; then
+    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
+    exit 0
+else
+    exec '${git.value.canonicalPath.replaceAll("'", "'\\''")}' "$@"
+fi
+`, { mode: 0o700 })
+    return { root, configPath, policyPath, ownership, ownershipPath, bin, calls, head, parent }
+}
+
 afterEach(async () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -469,66 +533,7 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
     }, 120_000)
 
     it('refuses an explicit native hook that must move to CI before publication', async () => {
-        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-native-hook-outcome-')))
-        roots.push(root)
-        const configPath = join(root, 'cockpit.toml')
-        const policyPath = '.cockpit/guards/bash-guard.sh'
-        const policyBytes = 'native-hook-ms=1\n'
-        const policySha256 = createHash('sha256').update(policyBytes).digest('hex')
-        const source = `${(await readFile(fixture, 'utf8')).replace(
-            'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
-        )}
-[testing]
-stages = [{ id = "unit", command = ["npm", "test"], requires_stack = false }]
-gates = [{ id = "focused", tier = "targeted", stages = ["unit"], changes = "Synthetic focused change" }]
-native_hooks = { install = "explicit-native" }
-native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.stringify(policySha256)} }
-`
-        await writeFile(configPath, source)
-        await mkdir(join(root, 'app'), { recursive: true })
-        await mkdir(join(root, 'fixtures'), { recursive: true })
-        const personaBytes = '[{"id":"first"}]\n'
-        await writeFile(join(root, 'fixtures/personas.json'), personaBytes)
-        await mkdir(join(root, '.cockpit/guards'), { recursive: true })
-        await writeFile(join(root, policyPath), policyBytes)
-        const loaded = await loadCockpitConfig(configPath)
-        if (loaded.kind !== 'complete') throw new Error('native hook fixture configuration unavailable')
-        const currentCockpit = publicationCockpitId({ name: loaded.result.config.cockpit.name })
-        const ownership = encodeOwnershipManifest({ root, cockpitId: currentCockpit, configPath,
-            generation: createHash('sha256').update('synthetic native hook generation').digest('hex'),
-            sourceSha256: createHash('sha256').update(source).digest('hex'),
-            personaSource: { path: 'fixtures/personas.json', sha256: createHash('sha256').update(personaBytes).digest('hex') },
-            owned: [{ path: policyPath, sha256: policySha256 }], surfaces: [] })
-        const ownershipPath = join(root, '.cockpit/generated-environment-ownership.json')
-        await writeFile(ownershipPath, ownership.bytes)
-        expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
-        expect(spawnSync('git', ['-C', root, 'config', 'user.name', 'Synthetic Fixture']).status).toBe(0)
-        expect(spawnSync('git', ['-C', root, 'config', 'user.email', 'fixture@example.invalid']).status).toBe(0)
-        expect(spawnSync('git', ['-C', root, 'add', 'cockpit.toml', 'fixtures/personas.json']).status).toBe(0)
-        expect(spawnSync('git', ['-C', root, 'commit', '--quiet', '-m', 'synthetic fixture']).status).toBe(0)
-        expect(spawnSync('git', ['-C', root, 'commit', '--quiet', '--allow-empty', '-m', 'synthetic parent']).status).toBe(0)
-        const revisions = spawnSync('git', ['-C', root, 'rev-list', '--max-count=2', 'HEAD'], { encoding: 'utf8' })
-        expect(revisions.status).toBe(0)
-        const [head, parent] = revisions.stdout.trim().split('\n')
-        const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
-        if (git.state !== 'available') throw new Error('native hook fixture Git authority unavailable')
-        const bin = join(root, 'bin')
-        const calls = join(root, 'git-calls')
-        await mkdir(bin)
-        await writeFile(join(bin, 'git'), `#!/bin/sh
-if [ "$PWD" != '${root.replaceAll("'", "'\\''")}' ]; then
-    printf 'unexpected synthetic git working directory\\n' >&2; exit 64
-fi
-if [ "$#" -eq 3 ] && [ "$1" = rev-list ] && [ "$2" = --max-count=2 ] && [ "$3" = HEAD ]; then
-    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
-    printf '%s\\n' '${head}' '${parent}'
-elif [ "$#" -eq 4 ] && [ "$1" = merge-base ] && [ "$2" = --is-ancestor ] && [ "$3" = '${parent}' ] && [ "$4" = '${head}' ]; then
-    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
-    exit 0
-else
-    exec '${git.value.canonicalPath.replaceAll("'", "'\\''")}' "$@"
-fi
-`, { mode: 0o700 })
+        const { root, configPath, ownership, ownershipPath, bin, calls, head, parent } = await explicitNativeHookFixture()
         const priorPath = process.env.PATH
         let result: Awaited<ReturnType<typeof syncGeneratedEnvironment>>
         try {
@@ -546,5 +551,51 @@ fi
         ])
         expect(await readFile(ownershipPath, 'utf8')).toBe(ownership.bytes)
         await expect(readFile(join(root, 'compose.generated.yml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    }, 120_000)
+
+    it('preserves ambiguous Windows executable search aliases before native hook dispatch', async () => {
+        const { root, configPath, policyPath, bin } = await explicitNativeHookFixture()
+        const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (!descriptor) throw new Error('process.platform descriptor is unavailable')
+        const priorPath = process.env.PATH
+        const priorPathAlias = process.env.Path
+        const priorPathExt = process.env.PATHEXT
+        let simulated = false
+        let nativeHookDispatches = 0
+        try {
+            process.env.PATH = bin
+            process.env.Path = bin
+            process.env.PATHEXT = '.EXE'
+            const result = await syncGeneratedEnvironment({ configPath }, {
+                execute: async step => {
+                    const outcome = await executeProbe(step)
+                    if (step.labels.action === 'native-hook-revisions' || step.labels.action === 'native-hook-cost') {
+                        nativeHookDispatches += 1
+                    }
+                    if (!simulated && step.cwd === root && step.labels.action === 'read-file' && outcome.kind === 'complete') {
+                        const request = JSON.parse(step.argv[3]!) as { segments: string[]; name: string }
+                        if ([...request.segments, request.name].join('/') === policyPath) {
+                            Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' })
+                            simulated = true
+                        }
+                    }
+                    return outcome
+                },
+            })
+            expect(simulated).toBe(true)
+            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'SURFACE_INPUT_INVALID', target: '.githooks/pre-push',
+                message: 'Executable search environment has ambiguous PATH spellings',
+            })] })
+            expect(nativeHookDispatches).toBe(0)
+        } finally {
+            Object.defineProperty(process, 'platform', descriptor)
+            if (priorPath === undefined) delete process.env.PATH
+            else process.env.PATH = priorPath
+            if (priorPathAlias === undefined) delete process.env.Path
+            else process.env.Path = priorPathAlias
+            if (priorPathExt === undefined) delete process.env.PATHEXT
+            else process.env.PATHEXT = priorPathExt
+        }
     }, 120_000)
 })

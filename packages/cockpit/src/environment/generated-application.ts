@@ -1927,8 +1927,12 @@ async function projectExplicitNativeHooks(
         exists: true,
         bytes: policyBytes,
     })
+    const source = Object.freeze({ path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity })
     const git = await resolveGitExecutable(process.env)
-    if (git.state !== 'available') return undefined
+    if (git.state !== 'available') return Object.freeze({
+        projection: Object.freeze({ kind: 'refusal' as const, reason: git.reason }),
+        source,
+    })
     const revisionStep = snapshotExecutionStep({
         id: 'native-hook-revisions',
         argv: [git.value.invocationPath, 'rev-list', '--max-count=2', 'HEAD'],
@@ -2003,7 +2007,7 @@ async function projectExplicitNativeHooks(
         })
         return Object.freeze({
             projection,
-            source: Object.freeze({ path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity }),
+            source,
         })
     } finally {
         if (scratch && scratchIdentity) {
@@ -3306,7 +3310,11 @@ async function checkCanonicalGeneratedEnvironment(
 
 // A cockpit running its own Compose files owns that topology, so check reads it as Compose resolves
 // it and reports what would break parallel stacks; a generated stack was rendered to avoid all of it.
-async function composeTopologyDiagnostics(configPath: string, sourceSha256: string): Promise<readonly Diagnostic[]> {
+async function composeTopologyDiagnostics(
+    configPath: string,
+    sourceSha256: string,
+    adapters: GeneratedEnvironmentCommandAdapters,
+): Promise<readonly Diagnostic[]> {
     const loaded = await loadCockpitConfig(configPath)
     if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== sourceSha256) return Object.freeze([{ severity: 'error' as const,
         code: 'GENERATED_SOURCE_CHANGED', message: 'the configuration changed while check was reading the Compose topology', target: configPath }])
@@ -3318,7 +3326,7 @@ async function composeTopologyDiagnostics(configPath: string, sourceSha256: stri
     const observed = docker.state !== 'available' ? Object.freeze({ kind: 'unavailable' as const, reason: docker.reason })
         : !node ? Object.freeze({ kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' })
             : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,
-                projectName: config.cockpit.name, docker: docker.value, node, env }, executeProbe)
+                projectName: config.cockpit.name, docker: docker.value, node, env }, adapters.execute)
     if (observed.kind !== 'complete') return Object.freeze([{ severity: 'error' as const, code: 'COMPOSE_TOPOLOGY_UNAVAILABLE',
         message: `check could not read the declared Compose topology, so its ports, healthchecks and images are unverified: ${observed.reason}`,
         target: config.environment.compose_files.join(', '),
@@ -3329,11 +3337,13 @@ async function composeTopologyDiagnostics(configPath: string, sourceSha256: stri
 export async function checkGeneratedEnvironment(
     input: GeneratedEnvironmentCommandInput,
     portLease?: PortLeaseProjection,
+    adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
 ): Promise<GeneratedEnvironmentCommandOutcome> {
-    const currentness = await prepareGeneratedEnvironmentCurrentness(input, {}, portLease)
+    const adapters = mergedAdapters(adapterOverrides)
+    const currentness = await prepareGeneratedEnvironmentCurrentness(input, adapters, portLease)
     const undecided = currentness.decisions
     const topology = currentness.outcome.kind === 'complete'
-        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256) : []
+        ? await composeTopologyDiagnostics(input.configPath, currentness.outcome.result.sourceSha256, adapters) : []
     const diagnostics = currentness.outcome.kind === 'complete' && undecided && undecided.undecided > 0
         ? Object.freeze([...currentness.outcome.diagnostics, {
             severity: 'info' as const, code: 'GENERATED_DECISIONS_UNDECIDED', target: undecided.path,
