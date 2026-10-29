@@ -4,4 +4,4 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Refuse `cockpit init` before bootstrap state work on hosts without supported state-root ownership. Native state-root support remains limited to macOS and Linux.
+Refuse `cockpit init` with an actionable diagnostic before bootstrap state work on hosts without supported state-root ownership. Native state-root support remains limited to macOS and Linux.

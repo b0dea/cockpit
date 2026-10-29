@@ -7,7 +7,7 @@ import {
     type EstateObservationInput,
 } from '../document/command.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
-import { snapshotJson } from './contract.js'
+import { ENVIRONMENT_CODES, snapshotJson } from './contract.js'
 import { bootstrapHolderId } from './identity.js'
 import {
     authenticateStatePublication,
@@ -25,7 +25,7 @@ import {
 export const mechanism = {
     id: 'init-application',
     module: 'packages/cockpit/src/environment/init-application.ts',
-    exports: ['runInitApplication'],
+    exports: ['unsupportedInitPlatformOutcome', 'runInitApplication'],
 } as const
 
 const DRAFT_BYTE_LIMIT = 262_144
@@ -229,6 +229,11 @@ function diagnostic(code: string, message: string, target?: string): Diagnostic 
 function refused(code: string, message: string, target?: string): InitApplicationOutcome {
     return { kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: [diagnostic(code, message, target)], result: null }
+}
+
+export function unsupportedInitPlatformOutcome(platform: string): InitApplicationOutcome {
+    return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host`)
 }
 
 function ownerRefusal(outcome: OwnerOutcome, stage: BootstrapStateRecord['value']['stage'], projection: BootstrapProjection): InitApplicationOutcome {
