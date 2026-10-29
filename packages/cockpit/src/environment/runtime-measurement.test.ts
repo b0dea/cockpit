@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
+import type { ExecutionStep } from './contract.js'
 import { runRuntimeMeasure, type RuntimeMeasureProbe } from './runtime-measurement.js'
 import type { RuntimeProbeVerdict } from './runtime-probe.js'
 
@@ -110,6 +111,33 @@ describe('runtime measurement recording', () => {
         expect(selections).toEqual([undefined, endpoint])
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
+
+    it.each(['npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
+        'passes the exact Windows pipe %s to the runtime observation boundary without dispatch', async (endpoint) => {
+            const host = await measuredHost()
+            const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+            if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+            const steps: ExecutionStep[] = []
+            let probeCalls = 0
+            try {
+                Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+                const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true,
+                    env: { ...host.env, DOCKER_HOST: endpoint } }, {
+                    execute: async (step) => { steps.push(step); throw new Error('stop before process dispatch') },
+                    probe: async (request) => { probeCalls += 1; return verdict(true, request.executable.sha256) },
+                })
+                expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+            } finally {
+                Object.defineProperty(process, 'platform', platform)
+            }
+            expect(steps).toHaveLength(1)
+            expect(steps[0]).toMatchObject({ id: 'runtime:docker-server-version', cwd: host.root,
+                argv: [expect.any(String), 'version', '--format', '{{.Server.Version}}'],
+                env: { PATH: host.env.PATH, DOCKER_HOST: endpoint },
+            })
+            expect(probeCalls).toBe(0)
+            expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        })
 
     it('refuses a Windows pipe on a POSIX host before runtime probing or daemon commands', async () => {
         const endpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
