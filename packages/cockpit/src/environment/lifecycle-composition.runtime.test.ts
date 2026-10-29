@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -88,10 +88,19 @@ afterEach(async () => {
 const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
 describe('production lifecycle adapter composition', () => {
-    it('loads authenticated context and supplies fresh runtime, stage, and acquired-port authorities', async () => {
+    it('loads nested configuration and supplies fresh runtime, stage, and acquired-port authorities', async () => {
         const candidate = await fixture()
+        const cockpitRoot = join(candidate.checkout, 'control')
+        await mkdir(cockpitRoot)
+        const configPath = join(cockpitRoot, 'cockpit.toml')
+        const composePath = join(cockpitRoot, 'compose.yml')
+        await rename(candidate.composePath, composePath)
+        await writeFile(configPath, (await readFile(candidate.configPath, 'utf8'))
+            .replace('siblings_root = "siblings"', 'siblings_root = "../repositories"'))
         let operatingSystemOutput = ''
+        let runtimeCwd: string | undefined
         const execute = async (step: ExecutionStep) => {
+            if (step.id.startsWith('runtime:docker-compose:topology:')) runtimeCwd = step.cwd
             const outcome = await executeProbe(step)
             if (step.id === 'runtime:docker-operating-system' && outcome.kind === 'complete') {
                 operatingSystemOutput = new TextDecoder().decode(outcome.stdout)
@@ -99,17 +108,17 @@ describe('production lifecycle adapter composition', () => {
             return outcome
         }
         const adapters = createLifecycleCommandAdapters({
-            configPath: candidate.configPath,
+            configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
             sessionId: 'cockpit-cli',
             timeoutMs: 5_000,
         }, execute)
 
-        const loaded = await adapters.load({ configPath: candidate.configPath })
+        const loaded = await adapters.load({ configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
-        await publishComposeOwnership(candidate.checkout, loaded.result)
-        await writeFile(candidate.composePath, [
+        await publishComposeOwnership(cockpitRoot, loaded.result)
+        await writeFile(composePath, [
             'services:',
             '  api:',
             '    labels:',
@@ -117,15 +126,15 @@ describe('production lifecycle adapter composition', () => {
             `      dev.b0dea.cockpit.config-sha256: ${loaded.result.source.sha256}`,
             '',
         ].join('\n'))
-        await publishComposeOwnership(candidate.checkout, loaded.result)
-        await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({
+        await publishComposeOwnership(cockpitRoot, loaded.result)
+        await writeFile(join(cockpitRoot, 'topology.json'), JSON.stringify({
             services: {
                 api: {
                     labels: {
                         'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
                         'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
                     },
-                    volumes: [{ type: 'bind', source: join(candidate.checkout, 'siblings', 'api'), target: '/api' }],
+                    volumes: [{ type: 'bind', source: join(candidate.checkout, 'repositories', 'api'), target: '/api' }],
                 },
             },
         }))
@@ -146,6 +155,7 @@ describe('production lifecycle adapter composition', () => {
         }
 
         expect(operatingSystemOutput).toBe('["Docker Desktop","docker-desktop","linux"]\n')
+        expect(runtimeCwd).toBe(cockpitRoot)
         expect(readiness).toEqual(expect.objectContaining({ topology: expect.objectContaining({
             stackId: loaded.result.stackId,
             configSha256: loaded.result.source.sha256,
@@ -513,17 +523,21 @@ describe('production lifecycle adapter composition', () => {
         await expect(adapters.withRuntimeReadiness(loaded.result, async (value) => value)).resolves.toBeUndefined()
     })
 
-    it('measures a machine-only floor through config-bound authority', async () => {
+    it('measures a machine-only floor from the nested configuration directory', async () => {
         const candidate = await fixture()
+        const cockpitRoot = join(candidate.checkout, 'control')
+        await mkdir(cockpitRoot)
+        const configPath = join(cockpitRoot, 'cockpit.toml')
         const source = await readFile(candidate.configPath, 'utf8')
-        await writeFile(candidate.configPath, source.replace('compose_files = ["compose.yml"]', 'compose_files = []'))
+        await writeFile(configPath, source.replace('compose_files = ["compose.yml"]', 'compose_files = []'))
+        const execute = vi.fn(executeProbe)
         const adapters = createLifecycleCommandAdapters({
-            configPath: candidate.configPath,
+            configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
             sessionId: 'machine-only',
             timeoutMs: 5_000,
-        }, executeProbe)
-        const loaded = await adapters.load({ configPath: candidate.configPath })
+        }, execute)
+        const loaded = await adapters.load({ configPath })
         expect(loaded.kind).toBe('complete')
         if (loaded.kind !== 'complete') return
 
@@ -534,6 +548,8 @@ describe('production lifecycle adapter composition', () => {
             expect.objectContaining({ code: 'MACHINE_CPU_BELOW_FLOOR', stackId: loaded.result.stackId }),
             expect.objectContaining({ code: 'MACHINE_DISK_BELOW_FLOOR', stackId: loaded.result.stackId }),
         ])
+        const diskStep = execute.mock.calls.map(([step]) => step).find(({ id }) => id === 'runtime:measure:free-disk')
+        expect(diskStep).toMatchObject({ cwd: cockpitRoot, argv: expect.arrayContaining(['-Pk', cockpitRoot]) })
     })
 
     it('bounds concurrent listener probes while observing every candidate family', async () => {

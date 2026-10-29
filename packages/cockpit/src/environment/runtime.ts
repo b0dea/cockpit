@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { platform } from 'node:os'
-import { isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
 import {
     authenticateGeneratedComposeArtifact,
@@ -504,7 +504,7 @@ export function issueMachineFloorAuthority(input: {
     const authority = Object.freeze({ kind: 'machine-floor-authority' as const })
     issuedMachineFloorAuthorities.set(authority, Object.freeze({
         stackId: deriveStackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } }),
-        checkoutPath: checkout.currentCheckoutPath,
+        checkoutPath: dirname(configuration.source.path),
         configSha256: configuration.source.sha256,
         floor: Object.freeze(floor),
     }))

@@ -484,7 +484,7 @@ export async function observeEnvironmentIgnore<T>(
     const environmentFile = sibling?.environment_files?.[input.environmentFileIndex]
     const expectedRoot = sibling ? resolve(input.siblingsRoot, sibling.dir) : undefined
     if (!sibling || sibling.slug !== input.siblingSlug || expectedRoot !== root.canonicalPath
-        || resolve(mainCheckout.canonicalPath, loaded.result.config.cockpit.siblings_root) !== siblingsDirectory.canonicalPath
+        || resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root) !== siblingsDirectory.canonicalPath
         || JSON.stringify(environmentFile) !== JSON.stringify(input.environmentFile)) return undefined
     const sanitizedInput = Object.freeze({ ...input, env: gitEnvironment(input.env) })
     const repositoryChecks = await ignoreRepositoryChecks(sanitizedInput, root)

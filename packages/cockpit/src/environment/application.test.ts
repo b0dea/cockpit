@@ -697,7 +697,7 @@ describe('pending guard policy construction', () => {
         const nestedConfig = join(cockpitRoot, 'cockpit.toml')
         renameSync(configPath, nestedConfig)
         const declaration = CockpitConfig.parse(parse(readFileSync(nestedConfig, 'utf8')))
-        declaration.cockpit.siblings_root = '.'
+        declaration.cockpit.siblings_root = '..'
         writeFileSync(nestedConfig, stringify(declaration))
         const loaded = await loadCockpitConfig(nestedConfig)
         if (loaded.kind !== 'complete') throw new Error('nested configuration did not load')

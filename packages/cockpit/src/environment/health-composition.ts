@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -150,7 +150,7 @@ function producers(input: {
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }): HealthObservationProducers {
     const observedAt = () => new Date().toISOString()
-    const siblingRoot = resolve(input.checkout.mainCheckoutPath, input.config.result.config.cockpit.siblings_root)
+    const siblingRoot = resolve(dirname(input.config.result.source.path), input.config.result.config.cockpit.siblings_root)
     const generated = input.config.result.config.environment.generated
     const configuredRuntime = generated !== undefined
         || input.config.result.config.environment.compose_files.length > 0

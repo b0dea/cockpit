@@ -472,8 +472,8 @@ export function createLifecycleCommandAdapters(
         if (!issued || issued.kind !== 'complete') return issued ?? refusal(loaded.result.source.path)
         bindings.set(issued.result, Object.freeze({
             config: loaded.result.config,
-            checkoutRoot: checkout.currentCheckoutPath,
-            siblingsRoot: resolve(checkout.mainCheckoutPath, loaded.result.config.cockpit.siblings_root),
+            checkoutRoot: dirname(loaded.result.source.path),
+            siblingsRoot: resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root),
             ...(projected && 'authority' in projected ? { machineFloorAuthority: projected.authority } : {}),
         }))
         return Object.freeze({ ...issued, diagnostics: loaded.diagnostics })

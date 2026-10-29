@@ -85,7 +85,10 @@ The three states of a harness feature. See
 ## Cockpit checkout root
 
 The directory that holds <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. It identifies one cockpit instance. Relative
-generated paths, local state and lifecycle commands all resolve from here.
+generated paths, `cockpit.siblings_root` and lifecycle commands all resolve from here, including
+when the configuration sits inside a Git checkout. This keeps sibling discovery and Compose
+paths aligned with the configuration you selected. Use `cockpit setup --config <path>` to set up
+that configuration's siblings. Git checkout identity still comes from its enclosing repository.
 
 ## Where the cockpit lives
 

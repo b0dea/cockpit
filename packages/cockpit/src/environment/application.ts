@@ -625,7 +625,7 @@ export async function prepareGuardEvaluationPolicy(
                 return path
             }
             const canonicalRoot = directory(dirname(loaded.source.path))
-            siblingsRoot = directory(resolve(checkout.mainCheckoutPath, config.cockpit.siblings_root))
+            siblingsRoot = directory(resolve(canonicalRoot, config.cockpit.siblings_root))
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
             for (const sibling of config.sibling) {
@@ -1052,7 +1052,7 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
         })
         issuedLifecycleRuns.add(context)
         lifecycleConfigurationSources.set(context, Object.freeze({ source: context.source,
-            siblingsRoot: resolve(checkout.mainCheckoutPath, loaded.config.cockpit.siblings_root) }))
+            siblingsRoot: resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root) }))
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch {
         return lifecycleContextRefusal()
@@ -1166,7 +1166,7 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             checkoutId: checkout.checkoutId,
             sessionId: input.sessionId,
         })
-        const expectedSiblingsRoot = resolve(checkout.mainCheckoutPath, loaded.config.cockpit.siblings_root)
+        const expectedSiblingsRoot = resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root)
         if (!sameSource(checkout.source, loaded.source)
             || loaded.config.cockpit.name !== checkout.cockpitName
             || input.observedAt !== checkout.observedAt
@@ -4367,7 +4367,7 @@ function issueHealthObservationSource(
             revision: loaded.source.sha256,
         })
         if (!preflight) return undefined
-        const siblingsRoot = resolve(checkout.mainCheckoutPath, loaded.config.cockpit.siblings_root)
+        const siblingsRoot = resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root)
         const comparisons = loaded.config.sibling.map((sibling) => {
             const checkoutRoot = resolve(siblingsRoot, sibling.dir)
             if (!confinedPath(siblingsRoot, checkoutRoot)) throw new TypeError('sibling checkout escapes its configured root')

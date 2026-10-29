@@ -317,10 +317,18 @@ describe('setup path observation', () => {
 })
 
 describe('environment ignore observation', () => {
-    it('authorizes one synchronous operation without exposing ignore facts or replay authority', async () => {
+    it('authorizes one synchronous operation with a configuration-relative sibling root', async () => {
         const root = await repository()
+        const cockpitRoot = join(root, 'control')
+        await mkdir(cockpitRoot)
+        const configPath = join(cockpitRoot, 'cockpit.toml')
+        const bytes = Buffer.from(configText().replace('siblings_root = "."', 'siblings_root = ".."'))
+        await writeFile(configPath, bytes)
+        const input = await authority(root)
         let calls = 0
-        const evidence = await observeEnvironmentIgnore(await authority(root), (...facts: unknown[]) => {
+        const evidence = await observeEnvironmentIgnore({ ...input, source: {
+            path: configPath, byteLength: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+        } }, (...facts: unknown[]) => {
             calls += 1
             expect(facts).toEqual([])
             return 'authorized'

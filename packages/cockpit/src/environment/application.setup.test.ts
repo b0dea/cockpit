@@ -351,17 +351,27 @@ describe('setup application choreography', () => {
         const cockpitRoot = join(context.mainCheckoutPath, 'control')
         mkdirSync(cockpitRoot)
         const nestedConfig = join(cockpitRoot, 'cockpit.toml')
-        writeFileSync(nestedConfig, readFileSync(configPath))
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.cockpit.siblings_root = '../repositories'
+        writeFileSync(nestedConfig, stringify(config))
         const loaded = await loadCockpitConfig(nestedConfig)
         if (loaded.kind !== 'complete') throw new Error('nested configuration did not load')
         const issued = await issueContext({ ...context, source: loaded.result.source, observedAt: new Date().toISOString() }, loaded.result,
             input => ({ ...input, writeInstructionPointers: true }))
         if (issued.kind !== 'complete') throw new Error('nested setup context was not issued')
+        const expectedSiblingsRoot = join(context.mainCheckoutPath, 'repositories')
+        expect(issued.result.siblingsRoot).toBe(expectedSiblingsRoot)
         adapters.load = async () => ({ kind: 'complete', status: 0, diagnostics: [], result: issued.result })
         adapters.observeSource = async () => ({ state: 'available', ...issued.result.source })
+        adapters.planGit = async ({ context: current, sibling }) => ({
+            kind: 'complete', status: 0, diagnostics: [], result: {
+                sibling: sibling.slug, target: resolve(current.siblingsRoot, sibling.dir),
+                observed: 'repository', action: 'report', changed: false,
+            },
+        })
         adapters.syncInstructionPointer = synchronizeInstructionPointer
-        const siblingRoot = resolve(context.siblingsRoot, 'api')
-        mkdirSync(siblingRoot)
+        const siblingRoot = join(expectedSiblingsRoot, 'api')
+        mkdirSync(siblingRoot, { recursive: true })
 
         const outcome = await runSetupSequence({ configPath: nestedConfig }, adapters)
 
