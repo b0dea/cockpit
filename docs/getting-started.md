@@ -252,8 +252,9 @@ about which host it points at, not as a host. Each is a proposal to confirm, not
 `interview.inferenceSkipped`. Compose files outside the cockpit directory are listed there too:
 `environment.compose_files` accepts confined paths inside the cockpit. Choose a generated
 environment, or place a reviewed Compose file inside the cockpit and rerun the same `init` command.
-A run that declares a runtime ends with `preflight`, which needs the Docker runtime named in
-[Install cockpit](#install-cockpit); without it the run stops there and resumes when you rerun.
+A run that declares a runtime ends with `preflight`, which requires a completed first bring-up;
+if it reports `STATE_UNSEEDED`, follow [Bring the product up](#bring-the-product-up), then rerun
+the same accepted `init` command to resume verification.
 
 ## Bring the product up
 

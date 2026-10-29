@@ -8,7 +8,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { runDoctor, runPreflight } from './application.js'
 import { recordLifecycleSeeded, recordLifecycleStarted } from './lifecycle-stage.js'
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
-import { selectStateRoot } from './state.js'
+import { lifecycleHistoryAddress, selectStateRoot } from './state.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
@@ -20,7 +20,7 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean } = {}) {
+async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean; readonly unseeded?: boolean } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-composition-')))
     roots.push(root)
     const checkout = join(root, 'checkout')
@@ -81,8 +81,10 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
     const selected = await selectStateRoot({ platform: process.platform, home, checkoutRoots: [checkout], cockpitId: cockpit })
     if (selected.kind !== 'complete') throw new Error('fixture state root was refused')
     const observedAt = new Date().toISOString()
-    await recordLifecycleStarted({ namespace: selected.value, stackId: stack, holderId: holder, observedAt })
-    await recordLifecycleSeeded({ namespace: selected.value, stackId: stack, holderId: holder, observedAt: new Date().toISOString() })
+    if (!options.unseeded) {
+        await recordLifecycleStarted({ namespace: selected.value, stackId: stack, holderId: holder, observedAt })
+        await recordLifecycleSeeded({ namespace: selected.value, stackId: stack, holderId: holder, observedAt: new Date().toISOString() })
+    }
     if (options.configuredRuntime || options.machineOnly) {
         const sourceSha256 = (await import('node:crypto')).createHash('sha256').update(await readFile(configPath)).digest('hex')
         if (options.configuredRuntime) await publishComposeOwnership(checkout, { stackId: stack, cockpitId: cockpit, source: { sha256: sourceSha256 } })
@@ -103,7 +105,7 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
         ].join('\n'), { mode: 0o700 })
         await chmod(dockerPath, 0o700)
     }
-    return { root, checkout, home, configPath, stack }
+    return { root, checkout, home, configPath, stack, namespace: selected.value }
 }
 
 async function surfaceOverrideFixture() {
@@ -138,6 +140,58 @@ sources = [
 }
 
 describe('production health adapter composition', () => {
+    it('explains an unseeded lifecycle before observing Docker', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const execute = vi.fn(executeProbe)
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, execute)
+
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+        const fix = `./node_modules/.bin/cockpit up --config ${candidate.configPath}`
+
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable', checks: [] } })
+        expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'unavailable', checks: [] } })
+        for (const outcome of [preflight, doctor]) {
+            expect(outcome.diagnostics).toContainEqual(expect.objectContaining({
+                severity: 'error', code: 'STATE_UNSEEDED', target: candidate.configPath,
+                message: expect.stringMatching(/bootstrap.*steady/),
+                fix,
+            }))
+            expect(outcome.diagnostics[0]?.message).toContain(`fix: ${fix}`)
+        }
+        expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
+    })
+
+    it('preserves a lifecycle owner refusal before observing Docker', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const history = lifecycleHistoryAddress(candidate.namespace, candidate.stack)
+        if (!history) throw new Error('fixture lifecycle history address is unavailable')
+        await writeFile(history.path, '{}\n')
+        const execute = vi.fn(executeProbe)
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, execute)
+
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+
+        for (const outcome of [preflight, doctor]) {
+            expect(outcome.result).toMatchObject({ verdict: 'unavailable', checks: [] })
+            expect(outcome.diagnostics).toContainEqual({
+                severity: 'error', code: 'STATE_RECORD_MALFORMED', target: history.path,
+                message: 'state record is malformed or does not match its address',
+                fix: 'inspect lifecycle state and history before explicit recovery or adoption',
+            })
+        }
+        expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
+    })
+
     it('inspects active surface overrides through an authenticated generated preview', async () => {
         const candidate = await surfaceOverrideFixture()
         const execute = vi.fn(executeProbe)

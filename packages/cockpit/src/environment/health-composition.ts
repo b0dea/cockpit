@@ -588,7 +588,15 @@ export function createHealthCommandAdapters(
                     stackId: currentStack,
                     observedAt,
                 })
-                if (stage.kind !== 'complete' || stage.authority.stage !== 'steady') return undefined
+                if (stage.kind !== 'complete') return refuse?.(stage.diagnostics)
+                if (stage.authority.stage !== 'steady') {
+                    const fix = formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', loaded.result.source.path])
+                    return refuse?.([{
+                        severity: 'error', code: ENVIRONMENT_CODES.STATE_UNSEEDED, target: loaded.result.source.path,
+                        message: `lifecycle is still in bootstrap — ordinary health checks require a steady lifecycle after the first bring-up; fix: ${fix}; then retry the command that stopped`,
+                        fix,
+                    }])
+                }
                 return Object.freeze({
                 authorities: Object.freeze([authority]),
                 stages: Object.freeze([stage.authority]),
