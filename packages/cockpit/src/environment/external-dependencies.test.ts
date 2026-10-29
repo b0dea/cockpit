@@ -161,42 +161,6 @@ async function authoritativeHarness(root: string, vendors = [vendor()]) {
         'dev.b0.cockpit.generation': generation,
         'dev.b0.cockpit.source-sha256': configSha256,
     }
-    writeFileSync(docker, `#!/usr/bin/env node
-import { existsSync, readFileSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
-const args = process.argv.slice(2)
-const stopped = existsSync('.backend-stopped')
-const labels = ${JSON.stringify(labels)}
-const container = ${JSON.stringify({ ID: containerId, Name: 'synthetic-app-1', Project: 'synthetic-stack', Service: 'app', State: 'running', Health: 'healthy', ExitCode: 0 })}
-if (args.includes('config') && args.includes('--no-env-resolution')) {
-  process.stdout.write(readFileSync('topology.yml', 'utf8'))
-} else if (args.includes('--progress') && args.includes('up')) {
-  process.exit(0)
-} else if (args.includes('ps') && args.includes('--format') && args.includes('json')) {
-  if (!stopped) process.stdout.write(JSON.stringify({ ...container, ID: container.ID.slice(0, 12), Labels: Object.entries(labels).map(([key, value]) => key + '=' + value).join(',') }))
-} else if (args.includes('ps') && args.includes('--quiet')) {
-  if (!stopped) process.stdout.write(container.ID + '\\n')
-} else if (args.includes('inspect')) {
-  if (!stopped) process.stdout.write(JSON.stringify({ ID: container.ID, State: container.State, Health: container.Health, Labels: labels }))
-  else process.exitCode = 7
-} else if (args.includes('exec')) {
-  const execIndex = args.indexOf('exec')
-  let cursor = execIndex + 1
-  let guarded = false
-  if (args[cursor] === '--env') {
-    guarded = args[cursor + 1] === 'ALLOW_SYNTHETIC_BACKEND=1'
-    cursor += 2
-  }
-  if (args[cursor] === '--workdir') cursor += 2
-  if (args[cursor] === '-T') cursor += 1
-  cursor += 1
-  const mode = args.at(-1)
-  if (mode === 'egress' && ${JSON.stringify(requiresGuard)} && !guarded) process.exit(9)
-  const result = spawnSync(args[cursor], args.slice(cursor + 1), { stdio: 'inherit', env: process.env })
-  process.exit(result.status ?? 8)
-} else process.exit(7)
-`)
-    chmodSync(docker, 0o700)
     const loaded = await loadCockpitConfig(resolve('fixtures/registries/generated-environment.toml'))
     if (loaded.kind !== 'complete' || !loaded.result.config.environment.generated) throw new Error('generated fixture unavailable')
     const declaration = structuredClone(loaded.result.config.environment.generated)
@@ -226,6 +190,46 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
         : volume)
     const expectedMountSources = resolvedVolumes.filter(({ type }) => type === 'bind').map(({ source }) => source).sort()
     const volumeRegistry = Object.fromEntries(Object.keys(parsedCompose.volumes ?? {}).map((source) => [source, { name: `synthetic_${source}` }]))
+    const inspectedMounts = resolvedVolumes.filter(({ type }) => type === 'bind').map(({ source, target }) => ({
+        Type: 'bind', Source: source, Destination: target,
+    }))
+    writeFileSync(docker, `#!/usr/bin/env node
+import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+const args = process.argv.slice(2)
+const stopped = existsSync('.backend-stopped')
+const labels = ${JSON.stringify(labels)}
+const mounts = ${JSON.stringify(inspectedMounts)}
+const container = ${JSON.stringify({ ID: containerId, Name: 'synthetic-app-1', Project: 'synthetic-stack', Service: 'app', State: 'running', Health: 'healthy', ExitCode: 0 })}
+if (args.includes('config') && args.includes('--no-env-resolution')) {
+  process.stdout.write(readFileSync('topology.yml', 'utf8'))
+} else if (args.includes('--progress') && args.includes('up')) {
+  process.exit(0)
+} else if (args.includes('ps') && args.includes('--format') && args.includes('json')) {
+  if (!stopped) process.stdout.write(JSON.stringify({ ...container, ID: container.ID.slice(0, 12), Labels: Object.entries(labels).map(([key, value]) => key + '=' + value).join(',') }))
+} else if (args.includes('ps') && args.includes('--quiet')) {
+  if (!stopped) process.stdout.write(container.ID + '\\n')
+} else if (args.includes('inspect')) {
+  if (!stopped) process.stdout.write(JSON.stringify({ ID: container.ID, State: container.State, Health: container.Health, Labels: labels, Mounts: mounts, Ports: {} }))
+  else process.exitCode = 7
+} else if (args.includes('exec')) {
+  const execIndex = args.indexOf('exec')
+  let cursor = execIndex + 1
+  let guarded = false
+  if (args[cursor] === '--env') {
+    guarded = args[cursor + 1] === 'ALLOW_SYNTHETIC_BACKEND=1'
+    cursor += 2
+  }
+  if (args[cursor] === '--workdir') cursor += 2
+  if (args[cursor] === '-T') cursor += 1
+  cursor += 1
+  const mode = args.at(-1)
+  if (mode === 'egress' && ${JSON.stringify(requiresGuard)} && !guarded) process.exit(9)
+  const result = spawnSync(args[cursor], args.slice(cursor + 1), { stdio: 'inherit', env: process.env })
+  process.exit(result.status ?? 8)
+} else process.exit(7)
+`)
+    chmodSync(docker, 0o700)
     const composePath = runtime.composeFiles[0]!.path
     const topologyPath = join(root, 'topology.yml')
     const topologySource = JSON.stringify({
