@@ -20,7 +20,6 @@ import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependenc
 import { observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection } from './generated-application.js'
 import { checkoutId, cockpitId } from './identity.js'
-import { projectGeneratedComposeRuntimeIdentity } from './generated-render.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
     observeDockerRuntime,
@@ -330,8 +329,6 @@ describe('production lifecycle adapter composition', () => {
             async ({ projection }) => adapters.prepareGeneratedEnvironment(loaded.result, projection))
         expect(generatedApplicationProjection(application)).toBe(application)
         if (!application) return
-        expect(application.generatedComposeAuthority && projectGeneratedComposeRuntimeIdentity(application.generatedComposeAuthority))
-            .toEqual({ cockpitId: loaded.result.cockpitId, stackId: loaded.result.stackId })
         expect(application).toMatchObject({ profiles: ['application'], generation: expect.stringMatching(/^[a-f0-9]{64}$/) })
         const project = `cockpit-${application.generation.slice(0, 12)}`
         await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({
@@ -381,6 +378,10 @@ describe('production lifecycle adapter composition', () => {
         await expect(adapters.withGeneratedRuntime(loaded.result, { ...readiness } as never, async (value) => value))
             .resolves.toBeUndefined()
         const topologyStep = steps.find((step) => step.id === 'runtime:docker-compose:topology:generated-environment')
+        expect(topologyStep?.env).toEqual(expect.objectContaining({
+            COCKPIT_OWNER_ID: loaded.result.cockpitId,
+            COCKPIT_STACK_ID: loaded.result.stackId,
+        }))
         expect(topologyStep?.argv).toEqual(expect.arrayContaining([
             join(candidate.checkout, 'generated/compose.yml'), '--profile', 'application',
         ]))
