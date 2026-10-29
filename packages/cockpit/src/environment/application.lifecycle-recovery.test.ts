@@ -728,7 +728,7 @@ describe('lifecycle application contracts', () => {
             return { canonicalPath: path, invocationPath: path, sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'staged' as const }
         }
         const docker = executable('docker', '#!/bin/sh\nprintf "1048576|1\\n"\n')
-        const disk = executable('disk-fixture', '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted-on\\nfixture 2048 0 2048 0%% /\\n"\n')
+        const disk = executable('disk-fixture', '#!/bin/sh\nprintf "2097152\\n"\n')
         const counts = { machine: 0, stage: 0, ports: 0, runtime: 0 }
         const topology = { services: [{ id: 'app' }] }
         const lease = { stackId: context.stackId, offset: 0, ports: { APP_HOST_PORT: 4100 } }

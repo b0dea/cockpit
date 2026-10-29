@@ -19,7 +19,7 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean; readonly malformedDisk?: boolean } = {}) {
+async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-composition-')))
     roots.push(root)
     const checkout = join(root, 'checkout')
@@ -101,11 +101,6 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
             '',
         ].join('\n'), { mode: 0o700 })
         await chmod(dockerPath, 0o700)
-        const diskPath = join(root, 'df')
-        await writeFile(diskPath, options.malformedDisk
-            ? '#!/bin/sh\nprintf "malformed disk evidence\\n"\n'
-            : '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\nsynthetic 2048 1536 512 75%% /\\n"\n', { mode: 0o700 })
-        await chmod(diskPath, 0o700)
     }
     return { root, checkout, home, configPath }
 }
@@ -404,9 +399,9 @@ describe('production health adapter composition', () => {
         expect(execute.mock.calls.map(([step]) => step)).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'runtime:measure:free-disk',
-                argv0: join(candidate.root, 'df'),
+                argv0: process.execPath,
                 consumedFiles: [expect.objectContaining({
-                    path: join(candidate.root, 'df'), executable: true,
+                    path: await realpath(process.execPath), executable: true,
                 })],
             }),
         ]))
@@ -426,9 +421,14 @@ describe('production health adapter composition', () => {
         ]))
     })
 
-    it('fails closed when machine-floor disk evidence is malformed', async () => {
-        const candidate = await fixture({ machineOnly: true, unmeasured: true, malformedDisk: true })
-        const execute = vi.fn(executeProbe)
+    it('fails closed when machine-floor disk execution output changes', async () => {
+        const candidate = await fixture({ machineOnly: true, unmeasured: true })
+        const execute = vi.fn(async (step: Parameters<typeof executeProbe>[0]) => {
+            const outcome = await executeProbe(step)
+            return step.id === 'runtime:measure:free-disk'
+                ? { ...outcome, stdout: Buffer.from('1\n') }
+                : outcome
+        })
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
             env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },

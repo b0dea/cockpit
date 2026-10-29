@@ -527,6 +527,18 @@ type OwnedMachineFloorPlanInput = {
 
 const MACHINE_FLOOR_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
+// Keep the filesystem query inside the bounded executor; a filesystem stall must not hold the CLI.
+const DISK_CAPACITY_COLLECTOR = `
+import { statfsSync } from 'node:fs'
+if (process.argv.length !== 2) throw new Error('Disk capacity requires one filesystem path')
+const status = statfsSync(process.argv[1], { bigint: true })
+const bytes = status.bsize * status.bavail
+if (status.bsize <= 0n || status.bavail < 0n || bytes > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Available filesystem capacity is outside the supported byte range')
+}
+process.stdout.write(bytes.toString() + '\\n')
+`
+
 function safeMachineFloorEnvironment(value: unknown): value is Readonly<Record<string, string>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
         && Object.entries(value).every(([name, item]) => MACHINE_FLOOR_ENV.has(name) && typeof item === 'string' && !item.includes('\0'))
@@ -884,7 +896,7 @@ export function createMachineFloorPlan(rawInput: MachineFloorPlanInput): Environ
     })
     const steps = Object.freeze([
         makeStep('runtime:measure:resources', [runtimeExecutable.canonicalPath, 'info', '--format', '{{json .MemTotal}}|{{json .NCPU}}'], runtimeExecutable),
-        makeStep('runtime:measure:free-disk', [diskExecutable.canonicalPath, '-Pk', input.cwd], diskExecutable),
+        makeStep('runtime:measure:free-disk', [diskExecutable.canonicalPath, '--input-type=module', '-e', DISK_CAPACITY_COLLECTOR, input.cwd], diskExecutable),
     ])
     const plan = snapshotExecutionPlan({ steps })
     if (plan === undefined) return refusal<null>(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'machine-floor collectors did not produce a valid execution plan', input.cwd)
@@ -912,15 +924,13 @@ export function collectMachineFloorEvidence(
     let diskText: string
     try {
         resourceText = new TextDecoder('utf-8', { fatal: true }).decode(resources.stdout).trim()
-        diskText = new TextDecoder('utf-8', { fatal: true }).decode(disk.stdout).trim()
+        diskText = new TextDecoder('utf-8', { fatal: true }).decode(disk.stdout)
     } catch { return undefined }
     const resourceMatch = resourceText.match(/^(\d+)\|(\d+(?:\.\d{1,3})?)$/)
-    const diskLines = diskText.split(/\r?\n/)
-    const diskColumns = diskLines.length === 2 ? diskLines[1]?.trim().split(/\s+/) : undefined
-    if (!resourceMatch || !diskColumns || diskColumns.length !== 6) return undefined
+    if (!resourceMatch || !/^(?:0|[1-9]\d{0,15})\n$/.test(diskText) || disk.stderr.byteLength !== 0) return undefined
     const memoryBytes = Number(resourceMatch[1])
     const cpuMillis = Number(resourceMatch[2]) * 1_000
-    const freeDiskBytes = Number(diskColumns[3]) * 1_024
+    const freeDiskBytes = Number(diskText)
     if (![memoryBytes, cpuMillis, freeDiskBytes].every((value) => Number.isSafeInteger(value) && value >= 0)) return undefined
     const evidence = Object.freeze({
         memoryBytes, cpuMillis, freeDiskBytes,

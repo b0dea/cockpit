@@ -965,7 +965,7 @@ export function createLifecycleCommandAdapters(
             })
             bindings.set(context, Object.freeze({ ...currentBinding, generatedRuntime }))
         }
-        const disk = await resolveDiskCapacityExecutable(env)
+        const disk = await resolveDiskCapacityExecutable()
         if (disk.state !== 'available') return undefined
         const floorPlan = createMachineFloorPlan({
             runtimePlan: runtime.plan,
@@ -1017,7 +1017,7 @@ export function createLifecycleCommandAdapters(
         const env = runtimeEnvironment(input.env)
         const [docker, disk] = await Promise.all([
             resolveDockerExecutable(env),
-            resolveDiskCapacityExecutable(env),
+            resolveDiskCapacityExecutable(),
         ])
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
         if (disk.state !== 'available') return refuse?.(runtimeUnavailable(disk.reason, context.stackId))

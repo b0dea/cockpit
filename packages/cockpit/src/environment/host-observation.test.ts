@@ -47,9 +47,9 @@ async function evidence(memoryBytes: number, cpus: number, freeBlocks: number, f
     const root = authorityCheckout
     await mkdir(root, { recursive: true })
     const dockerPath = join(root, 'docker')
-    const diskPath = join(root, 'df')
+    const diskPath = join(root, 'disk-observation')
     const dockerBody = `#!/bin/sh\nprintf '${memoryBytes}|${cpus}\\n'\n`
-    const diskBody = `#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted-on\\nfixture 100 1 ${freeBlocks} 1%% /\\n'\n`
+    const diskBody = `#!/bin/sh\nprintf '${freeBlocks * 1_024}\\n'\n`
     await writeFile(dockerPath, dockerBody); await writeFile(diskPath, diskBody)
     await chmod(dockerPath, 0o755); await chmod(diskPath, 0o755)
     const executable = (path: string, body: string) => resolvedExecutable({

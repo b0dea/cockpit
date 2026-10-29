@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statfsSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -16,6 +16,7 @@ import {
     classifyRuntimeProbe,
     classifyResolvedRuntimeLiterals,
     createMachineFloorPlan,
+    collectMachineFloorEvidence,
     createRuntimeAdapter,
     admitRuntimeServiceHealth,
     admitRuntimeServiceInspectFailure,
@@ -62,7 +63,7 @@ import { isInstallObservation, observeDependencyLoad, planInstall, verifyInstall
 import { reduceDrainOutcome, reserveDrain, reserveDrainAttempt } from './claims.js'
 import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
-import { resolveGitExecutable } from './executable.js'
+import { resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { readState, selectStateRoot, transactState } from './state.js'
 import type { CheckoutId, HolderId } from './contract.js'
@@ -565,7 +566,7 @@ describe('runtime plan construction', () => {
             if (binding) {
                 const floor = createMachineFloorPlan({
                     runtimePlan: admitted.plan,
-                    diskExecutable: { canonicalPath: '/bin/df', invocationPath: '/bin/df', sha256: sha('disk executable'), executionMode: 'staged' },
+                    diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'staged' },
                     timeoutMs: 10_000,
                     authority: binding.authority,
                 })
@@ -684,11 +685,64 @@ describe('runtime plan construction', () => {
 })
 
 describe('runtime measurement classification', () => {
+    it('measures available filesystem bytes with the authenticated Node runtime and no host disk utility', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-disk-capacity-')))
+        try {
+            const runtimePath = join(root, 'docker')
+            const runtimeBytes = '#!/bin/sh\nprintf "1048576|1\\n"\n'
+            writeFileSync(runtimePath, runtimeBytes, { mode: 0o700 })
+            const node = await resolveExecutablePath(process.execPath)
+            if (node.state !== 'available') throw new Error(node.reason)
+            const planned = createMachineFloorPlan({
+                runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimePath, sha256: sha(runtimeBytes), executionMode: 'staged' },
+                diskExecutable: node.value, cwd: root, env: {}, timeoutMs: 10_000,
+            })
+            expect(planned.kind).toBe('preview')
+            if (planned.kind !== 'preview') return
+            const outcomes = [await executeProbe(planned.plan.steps[0]!), await executeProbe(planned.plan.steps[1]!)] as const
+            const measured = collectMachineFloorEvidence(planned.plan, outcomes)
+            expect(measured, JSON.stringify(outcomes)).toEqual({
+                memoryBytes: 1_048_576, cpuMillis: 1_000,
+                freeDiskBytes: expect.any(Number), observedAt: expect.any(String),
+            })
+            const status = statfsSync(root, { bigint: true })
+            expect(measured!.freeDiskBytes).toBeGreaterThanOrEqual(0)
+            expect(BigInt(measured!.freeDiskBytes)).toBeLessThanOrEqual(status.blocks * status.bsize)
+            expect(measured!.freeDiskBytes % Number(status.bsize)).toBe(0)
+            expect(collectMachineFloorEvidence({ ...planned.plan }, outcomes)).toBeUndefined()
+        } finally { rmSync(root, { recursive: true, force: true }) }
+    })
+
+    it('admits only bounded decimal byte output from the exact disk collector execution', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-disk-output-')))
+        try {
+            const executable = (name: string, bytes: string) => {
+                const path = join(root, name)
+                writeFileSync(path, bytes, { mode: 0o700 })
+                return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'staged' as const }
+            }
+            const runtimeExecutable = executable('docker', '#!/bin/sh\nprintf "1048576|1\\n"\n')
+            for (const output of ['0\n', '123456789\n', `${Number.MAX_SAFE_INTEGER}\n`,
+                'malformed\n', '-1\n', '1.5\n', '9007199254740992\n', '1\n2\n', '1\n\n', '1 \n', '01\n', '1e3\n', '1']) {
+                const diskExecutable = executable('disk-observation', `#!/bin/sh\nprintf '%s' ${shellQuote(output)}\n`)
+                const planned = createMachineFloorPlan({ runtimeExecutable, diskExecutable, cwd: root, env: {}, timeoutMs: 10_000 })
+                if (planned.kind !== 'preview') throw new Error('disk observation fixture plan was refused')
+                const outcomes = [await executeProbe(planned.plan.steps[0]!), await executeProbe(planned.plan.steps[1]!)] as const
+                expect(outcomes.map(({ kind }) => kind)).toEqual(['complete', 'complete'])
+                const measured = collectMachineFloorEvidence(planned.plan, outcomes)
+                if (['0\n', '123456789\n', `${Number.MAX_SAFE_INTEGER}\n`].includes(output)) {
+                    expect(measured?.freeDiskBytes, output).toBe(Number(output))
+                    expect(collectMachineFloorEvidence(planned.plan, [outcomes[0], { ...outcomes[1], stdout: Buffer.from('1\n') }])).toBeUndefined()
+                } else expect(measured, output).toBeUndefined()
+            }
+        } finally { rmSync(root, { recursive: true, force: true }) }
+    })
+
     it('constructs exact bounded runtime-allocation and free-disk collectors', () => {
         const diskSha = sha('disk executable')
         const outcome = createMachineFloorPlan({
             runtimeExecutable: runtimeInput.executable,
-            diskExecutable: { canonicalPath: '/bin/df', invocationPath: '/bin/df', sha256: diskSha, executionMode: 'staged' },
+            diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: diskSha, executionMode: 'staged' },
             cwd: runtimeInput.cwd,
             env: runtimeInput.env,
             timeoutMs: 10_000,
@@ -703,8 +757,8 @@ describe('runtime measurement classification', () => {
                 filesystemChecks: [],
             },
             {
-                id: 'runtime:measure:free-disk', argv: ['/bin/df', '-Pk', runtimeInput.cwd],
-                consumedFiles: [{ path: '/bin/df', sha256: diskSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+                id: 'runtime:measure:free-disk', argv: ['/usr/local/bin/node', '--input-type=module', '-e', expect.any(String), runtimeInput.cwd],
+                consumedFiles: [{ path: '/usr/local/bin/node', sha256: diskSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
                 filesystemChecks: [],
             },
         ])
@@ -714,7 +768,7 @@ describe('runtime measurement classification', () => {
     it.each(['null', 'primitive', 'revoked', 'missing', 'extra', 'nested executable', 'environment', 'working directory', 'timeout', 'forged authority'])('refuses hostile machine-floor input: %s', (kind) => {
         const valid = {
             runtimeExecutable: runtimeInput.executable,
-            diskExecutable: { canonicalPath: '/bin/df', invocationPath: '/bin/df', sha256: sha('disk executable'), executionMode: 'staged' as const },
+            diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'staged' as const },
             cwd: runtimeInput.cwd,
             env: runtimeInput.env,
             timeoutMs: 10_000,

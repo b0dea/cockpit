@@ -179,29 +179,8 @@ export async function resolveGitExecutable(env: Readonly<Record<string, string>>
     return unavailable('Git executable was not found in the supplied search path')
 }
 
-export async function resolveDiskCapacityExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
-    let pathValue: unknown
-    try { pathValue = env.PATH } catch { return unavailable('Disk-capacity executable search path is not readable') }
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
-        return unavailable('Disk-capacity executable search path is missing or invalid')
-    }
-    const directories = pathValue.split(delimiter)
-    if (directories.length > PATH_ENTRY_LIMIT || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) {
-        return unavailable('Disk-capacity executable search path must contain bounded absolute directories')
-    }
-    for (const directory of directories) {
-        const invocationPath = join(directory, 'df')
-        let invocation
-        try { invocation = await lstat(invocationPath) } catch { continue }
-        if (!(invocation.isFile() || invocation.isSymbolicLink()) || (invocation.isFile() && (invocation.mode & 0o111) === 0)) continue
-        let canonicalPath: string
-        try { canonicalPath = await realpath(invocationPath) } catch { continue }
-        const sha256 = await digestRegularFile(canonicalPath)
-        if (sha256 === undefined) continue
-        const value = resolvedExecutable({ canonicalPath, invocationPath, sha256, executionMode: 'verified-path' })
-        if (value && basename(value.invocationPath) === 'df') return Object.freeze({ state: 'available', value })
-    }
-    return unavailable('Disk-capacity executable was not found in the supplied search path')
+export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolution> {
+    return resolveExecutablePath(process.execPath)
 }
 
 export async function resolveDockerExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {

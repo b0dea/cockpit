@@ -133,18 +133,13 @@ describe('resolved executable identity', () => {
         await expect(resolveExecutable('../comparison-tool', { PATH: root })).resolves.toEqual(expect.objectContaining({ state: 'unavailable' }))
     })
 
-    it('resolves the disk-capacity executable from its invocation identity', async () => {
-        const root = directory()
-        const canonicalPath = join(root, 'multicall-tool')
-        const invocationPath = join(root, 'df')
-        writeFileSync(canonicalPath, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
-        symlinkSync(canonicalPath, invocationPath)
-
-        const result = await resolveDiskCapacityExecutable({ PATH: root })
+    it('binds disk capacity to the current Node executable without searching PATH', async () => {
+        const result = await resolveDiskCapacityExecutable()
 
         expect(result).toEqual({
             state: 'available',
-            value: { canonicalPath: realpathSync(canonicalPath), invocationPath, sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'verified-path' },
+            value: { canonicalPath: realpathSync(process.execPath), invocationPath: process.execPath,
+                sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'verified-path' },
         })
     })
 
