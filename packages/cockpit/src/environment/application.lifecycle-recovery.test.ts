@@ -596,9 +596,16 @@ describe('lifecycle application contracts', () => {
         const { configPath, context } = await lifecycleContextFixture()
         const address = context.namespace.paths.lifecycle(context.stackId)
         const completedContainerId = 'c'.repeat(64)
+        const observedAt = new Date().toISOString()
+        expect(await recordLifecycleStarted({
+            namespace: context.namespace,
+            stackId: context.stackId,
+            holderId: context.holderId,
+            observedAt,
+        })).toMatchObject({ kind: 'complete' })
         await transactState(context.namespace, address, { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId,
-            subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),
+            subjectId: context.stackId, revision: 0, updatedAt: observedAt,
             value: {
                 holderId: context.holderId, workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
                 completedServices: [{ service: 'api', containerId: completedContainerId }],

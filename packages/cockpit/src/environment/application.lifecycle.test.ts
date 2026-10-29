@@ -728,10 +728,9 @@ describe('lifecycle application contracts', () => {
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
             kind: 'complete', value: { value: { holderId: context.holderId, completedServices: [{ service: 'api', containerId }] } },
         })
-        // Without setup, the first up's progress still carries durable history, so a resume reads
-        // its stage instead of refusing lifecycle data without history.
+        // Only a successful first up seeds durable history; a refused cold start remains bootstrap.
         expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))
-            .toMatchObject({ kind: 'complete', authority: { stage: 'bootstrap' } })
+            .toMatchObject({ kind: 'complete', authority: { stage: expectedKind === 'complete' ? 'steady' : 'bootstrap' } })
     })
 
     it.each([
