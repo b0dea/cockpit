@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
+import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveExecutablePath, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
 
 const digest = 'a'.repeat(64)
 const scratch: string[] = []
@@ -32,13 +32,13 @@ vi.mock('node:fs/promises', async importOriginal => {
         },
         realpath: async (...args: Parameters<typeof actual.realpath>) => {
             const path = String(args[0])
-            if (process.platform !== 'win32' || !path.includes('\\')) return actual.realpath(...args)
+            if (process.platform !== 'win32') return actual.realpath(...args)
             windowsFilesystem.identityPaths.push(path)
             throw new Error(`Windows candidate reached POSIX identity resolution: ${path}`)
         },
         open: async (...args: Parameters<typeof actual.open>) => {
             const path = String(args[0])
-            if (process.platform !== 'win32' || !path.includes('\\')) return actual.open(...args)
+            if (process.platform !== 'win32') return actual.open(...args)
             windowsFilesystem.identityPaths.push(path)
             throw new Error(`Windows candidate reached POSIX no-follow open: ${path}`)
         },
@@ -156,6 +156,43 @@ describe('resolved executable identity', () => {
             invocationPath: '/usr/local/bin/not-git',
             sha256: digest,
             executionMode: 'verified-path',
+        })).toBe(false)
+    })
+
+    it.each([
+        ['Git', 'GIT.EXE', 'verified-path', isResolvedGitExecutable],
+        ['Git', 'git.COM', 'verified-path', isResolvedGitExecutable],
+        ['Docker', 'DOCKER.EXE', 'staged', isResolvedDockerExecutable],
+        ['Docker', 'docker.COM', 'staged', isResolvedDockerExecutable],
+    ] as const)('classifies the Windows native %s suffix in a structural object: %s', async (_label, name, executionMode, classify) => {
+        const identity = {
+            canonicalPath: '/synthetic/runtime-tool', invocationPath: `/synthetic/${name}`, sha256: digest, executionMode,
+        }
+
+        expect(await withPlatform('win32', async () => classify(identity))).toBe(true)
+    })
+
+    it.each([
+        ['Git batch', 'git.CMD', 'verified-path', isResolvedGitExecutable],
+        ['Git unsupported', 'git.ps1', 'verified-path', isResolvedGitExecutable],
+        ['Git wrong name', 'not-git.EXE', 'verified-path', isResolvedGitExecutable],
+        ['Docker batch', 'docker.BAT', 'staged', isResolvedDockerExecutable],
+        ['Docker unsupported', 'docker.ps1', 'staged', isResolvedDockerExecutable],
+        ['Docker wrong name', 'not-docker.COM', 'staged', isResolvedDockerExecutable],
+    ] as const)('rejects %s from Windows specialized structural admission', async (_label, name, executionMode, classify) => {
+        const identity = {
+            canonicalPath: '/synthetic/runtime-tool', invocationPath: `/synthetic/${name}`, sha256: digest, executionMode,
+        }
+
+        expect(await withPlatform('win32', async () => classify(identity))).toBe(false)
+    })
+
+    it('keeps specialized POSIX invocation names exact and lowercase', () => {
+        expect(isResolvedGitExecutable({
+            canonicalPath: '/synthetic/runtime-tool', invocationPath: '/synthetic/GIT', sha256: digest, executionMode: 'verified-path',
+        })).toBe(false)
+        expect(isResolvedDockerExecutable({
+            canonicalPath: '/synthetic/runtime-tool', invocationPath: '/synthetic/DOCKER', sha256: digest, executionMode: 'staged',
         })).toBe(false)
     })
 
@@ -337,6 +374,31 @@ describe('resolved executable identity', () => {
             value: { canonicalPath: realpathSync(process.execPath), invocationPath: process.execPath,
                 sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'verified-path' },
         })
+    })
+
+    it('refuses direct-path authentication under the Windows host policy before POSIX identity reads', async () => {
+        const root = directory()
+        const path = join(root, 'direct-tool')
+        writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+
+        const result = await withPlatform('win32', () => resolveExecutablePath(path))
+
+        expect(result).toEqual({
+            state: 'unavailable', reason: expect.stringMatching(/Windows.*executable identity authority.*unavailable/i),
+        })
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it('keeps fixed disk and removal executable owners unavailable on Windows before POSIX identity reads', async () => {
+        const results = await withPlatform('win32', () => Promise.all([
+            resolveDiskCapacityExecutable(), resolvePathRemovalExecutable(),
+        ]))
+
+        expect(results).toEqual([
+            { state: 'unavailable', reason: expect.stringMatching(/Windows.*executable identity authority.*unavailable/i) },
+            { state: 'unavailable', reason: expect.stringMatching(/Windows.*executable identity authority.*unavailable/i) },
+        ])
+        expect(windowsFilesystem.identityPaths).toEqual([])
     })
 
     it('resolves Docker from its invocation while binding staged canonical bytes', async () => {
