@@ -9,8 +9,7 @@ import {
     isDrainActive,
     removeExactCoordinationHolder,
     releaseClaim,
-    readActiveStackInventory,
-    type CoordinationRecord,
+    readRootPortInventory,
     type HolderReleaseAuthority,
     type PortLeaseRecord,
 } from './claims.js'
@@ -35,6 +34,7 @@ import {
     readState,
     snapshotStateNamespace,
     transactState,
+    withStateRootPortLock,
     type StateNamespace,
     type StateRecord,
     type StateResult,
@@ -97,13 +97,14 @@ export async function observePortFamily(input: {
     readonly observedAt: string
     readonly leaseEvidence?: LeasePortFamilyResult
 }): Promise<EnvironmentObservation> {
-    const namespace = snapshotStateNamespace(input.namespace)
+    const namespace = authenticateStateNamespace(snapshotStateNamespace(input.namespace))
     if (!namespace || !/^stack:[a-f0-9]{64}$/.test(input.stackId) || !isCanonicalTimestamp(input.observedAt)) {
         throw new TypeError('port observation input is malformed')
     }
-    const inventory = await readActiveStackInventory(namespace)
+    const inventory = await readRootPortInventory(namespace)
     const refusal = inventory.kind === 'refusal' ? inventory.diagnostics[0] : undefined
-    const record = inventory.kind === 'complete' ? inventory.value.find(({ stackId }) => stackId === input.stackId)?.record : undefined
+    const cockpitId = namespace.paths.coordination(input.stackId).cockpitId
+    const record = inventory.kind === 'complete' ? inventory.value.find((item) => item.cockpitId === cockpitId && item.stackId === input.stackId)?.record : undefined
     const occupied = new Set<number>()
     let collision = false
     if (inventory.kind === 'complete') {
@@ -358,6 +359,16 @@ export async function observeRetainedPortFamily(supplied: {
         || !sameValues(value.lease.declaration.bases, config.bases)) {
         return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'active port lease declaration changed during execution', stackId)
     }
+    const inventory = await readRootPortInventory(namespace)
+    if (inventory.kind !== 'complete') return inventory
+    const cockpitId = address.cockpitId
+    const ports = new Set(Object.values(value.lease.ports))
+    if (inventory.value.some((item) => (item.cockpitId !== cockpitId || item.stackId !== stackId)
+        && item.record.lease !== null && !item.record.lease.released
+        && Object.values(item.record.lease.ports).some((port) => ports.has(port)))) {
+        return refuse(ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, 'retained port family intersects another active state-root reservation', stackId,
+            'stop and release the conflicting stack through its owning cockpit before retrying')
+    }
     const result = Object.freeze({
         kind: 'complete' as const,
         holderId,
@@ -511,7 +522,7 @@ function refuse(code: EnvironmentCode, message: string, target: string, fix?: st
     return { kind: 'refusal', diagnostics: [diagnostic('error', code, message, target, fix)] }
 }
 
-function stateRefusal(result: Exclude<StateResult<StateRecord>, { kind: 'complete' | 'missing' }>): PortRefusal {
+function stateRefusal(result: Exclude<StateResult<unknown>, { kind: 'complete' | 'missing' }>): PortRefusal {
     return refuse(result.code, result.message, result.target, 'recovery' in result ? result.recovery : undefined)
 }
 
@@ -884,7 +895,7 @@ export async function leasePortFamily(supplied: {
     try {
         const namespaceProperty = Object.getOwnPropertyDescriptor(supplied, 'namespace')
         if (!namespaceProperty || !('value' in namespaceProperty)) throw new Error('invalid namespace property')
-        const namespace = snapshotStateNamespace(namespaceProperty.value as StateNamespace)
+        const namespace = authenticateStateNamespace(snapshotStateNamespace(namespaceProperty.value as StateNamespace))
         if (!namespace) throw new Error('invalid namespace')
         const stackId = supplied.stackId
         const holderId = supplied.holderId
@@ -950,7 +961,7 @@ export async function leasePortFamily(supplied: {
         holderIds: readonly HolderId[]
         record: StateRecord
     }>
-    const transaction = await transactLease<PortRefusal | LeaseTransactionComplete>(input.namespace, input.stackId, input.holderId, async (current) => {
+    const allocateFamily = () => transactLease<PortRefusal | LeaseTransactionComplete>(input.namespace, input.stackId, input.holderId, async (current) => {
         const currentValue = decodeCoordinationRecord(current, input.stackId)
         if (!currentValue) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
         if (isDrainActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId))
@@ -958,13 +969,14 @@ export async function leasePortFamily(supplied: {
         if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', input.holderId))
         const currentLease = currentValue.lease
 
-        const inventoryResult = await readActiveStackInventory(input.namespace)
+        const inventoryResult = await readRootPortInventory(input.namespace)
         if (inventoryResult.kind !== 'complete') return abortStateTransaction(inventoryResult)
+        const cockpitId = input.namespace.paths.coordination(input.stackId).cockpitId
         const active = inventoryResult.value
-            .filter(({ stackId }) => stackId !== input.stackId)
-            .map(({ record }) => record.lease)
-            .filter((lease): lease is PortLeaseRecord => lease !== null && !lease.released)
-        if ((!currentLease || currentLease.released) && active.length >= input.config.count) {
+            .filter((item) => item.cockpitId !== cockpitId || item.stackId !== input.stackId)
+            .flatMap((item) => item.record.lease !== null && !item.record.lease.released
+                ? [{ cockpitId: item.cockpitId, lease: item.record.lease }] : [])
+        if ((!currentLease || currentLease.released) && active.filter((item) => item.cockpitId === cockpitId).length >= input.config.count) {
             return abortStateTransaction(refuse(
                 ENVIRONMENT_CODES.PORT_LEASE_EXHAUSTED,
                 `maximum ${input.config.count} concurrent stacks is already active`,
@@ -988,7 +1000,7 @@ export async function leasePortFamily(supplied: {
                 ))
             }
         }
-        const occupied = new Set(active.flatMap((lease) => Object.values(lease.ports)))
+        const occupied = new Set(active.flatMap(({ lease }) => Object.values(lease.ports)))
         // While a holder retains the lease, its ports are published by the stack's own runtime, so a
         // listener there is the stack itself. Probing them refused every repeated `up` and every
         // co-tenant joining a running stack with PORT_FAMILY_COLLISION on its own ports. A lease no
@@ -1049,6 +1061,10 @@ export async function leasePortFamily(supplied: {
             'release an inactive stack, stop the named host listener, or extend the declared candidate range',
         ))
     })
+    const locked = await withStateRootPortLock(input.namespace, { ownerId: input.holderId, contentionTimeoutMs: 2_000 }, allocateFamily)
+    if (locked.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'root port transaction returned no result', locked.path)
+    if (locked.kind !== 'complete') return stateRefusal(locked)
+    const transaction = locked.value
 
     if ('leaseResult' in transaction) return issueLeaseResult(transaction.leaseResult, input.now, transaction.holderIds, input.namespace, transaction.record)
     if ('diagnostics' in transaction) return transaction

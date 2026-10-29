@@ -48,6 +48,7 @@ import {
     settleRuntimeDrainSuccess,
     settleInterruptedDrainRepair,
     readActiveStackInventory,
+    readRootPortInventory,
     type ClaimHolder,
     type DrainReservationRequest,
     type DrainReservation,
@@ -82,10 +83,18 @@ const coordinationCommitGate = vi.hoisted(() => ({
     continuation: undefined as Promise<void> | undefined,
 }))
 
+const inventoryReadControl = vi.hoisted(() => ({ paths: [] as string[], opened: [] as string[] }))
+
 vi.mock('node:fs/promises', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs/promises')>()
     return {
         ...actual,
+        open: async (...args: Parameters<typeof actual.open>) => {
+            if (typeof args[0] === 'string' && inventoryReadControl.paths.includes(args[0]) && typeof args[1] === 'number') {
+                inventoryReadControl.opened.push(args[0])
+            }
+            return actual.open(...args)
+        },
         lstat: async (...args: unknown[]) => {
             let result: Awaited<ReturnType<typeof actual.lstat>>
             try {
@@ -126,6 +135,8 @@ const roots: string[] = []
 
 afterEach(async () => {
     vi.useRealTimers()
+    inventoryReadControl.paths = []
+    inventoryReadControl.opened = []
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -137,12 +148,12 @@ async function namespace(): Promise<StateNamespace> {
     return selected.value
 }
 
-async function reissueNamespace(state: StateNamespace): Promise<StateNamespace> {
+async function reissueNamespace(state: StateNamespace, identity = cockpitId): Promise<StateNamespace> {
     const selected = await selectStateRoot({
         platform: 'linux',
         home: undefined,
         xdgStateHome: dirname(dirname(state.root)),
-        cockpitId,
+        cockpitId: identity,
     })
     if (selected.kind !== 'complete') throw new Error(`state root unavailable: ${selected.kind}`)
     return selected.value
@@ -238,7 +249,7 @@ async function seedCoordination(
         state,
         state.paths.coordination(stackId),
         { ownerId: holderA },
-        () => claimRecord(holders),
+        () => ({ ...claimRecord(holders), cockpitId: state.paths.coordination(stackId).cockpitId }),
     )
     if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
 }
@@ -1014,6 +1025,7 @@ async function mutateInventoryAfterIdentity(
     state: StateNamespace,
     directory: string,
     mutate: () => Promise<void>,
+    read = () => readActiveStackInventory(state),
 ) {
     let releaseInspection: () => void = () => undefined
     let reportInspection: () => void = () => undefined
@@ -1023,7 +1035,7 @@ async function mutateInventoryAfterIdentity(
     inventoryIdentityGate.reached = reportInspection
     inventoryIdentityGate.continuation = continueInspection
     try {
-        const reading = readActiveStackInventory(state)
+        const reading = read()
         await inspectionReached
         await mutate()
         releaseInspection()
@@ -1037,6 +1049,92 @@ async function mutateInventoryAfterIdentity(
 }
 
 describe('active stack inventory', () => {
+    it('qualifies equal stack IDs by cockpit in root port inventory while preserving local claim inventory', async () => {
+        const state = await namespace()
+        const otherId = `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId
+        const other = await reissueNamespace(state, otherId)
+        for (const current of [state, other]) {
+            await seedCoordination(current, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' }])
+        }
+        expect(await readActiveStackInventory(state)).toMatchObject({ kind: 'complete', value: [{ stackId }] })
+        const inventory = await readRootPortInventory(state)
+        if (inventory.kind !== 'complete') throw new Error(JSON.stringify(inventory))
+        expect(inventory.value.map((row) => [row.cockpitId, row.stackId])).toEqual([[cockpitId, stackId], [otherId, stackId]])
+        expect(await readRootPortInventory({ ...state })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
+        })
+    })
+
+    it.each(['rewritten record', 'new namespace'] as const)('rejects a %s after an earlier cockpit was captured by root port inventory', async (mutation) => {
+        const state = await namespace()
+        const other = await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)
+        for (const current of [state, other]) {
+            await seedCoordination(current, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' }])
+        }
+        const result = await mutateInventoryAfterIdentity(state, dirname(other.paths.coordination(stackId).path), async () => {
+            if (mutation === 'rewritten record') {
+                const path = state.paths.coordination(stackId).path
+                const before = JSON.parse(await readFile(path, 'utf8'))
+                await writeFile(path, JSON.stringify({ ...before, revision: before.revision + 1 }))
+            } else {
+                const added = await reissueNamespace(state, `cockpit:coordination-c3:${'c'.repeat(64)}` as CockpitId)
+                await mkdir(added.cockpitRoot, { mode: 0o700 })
+            }
+        }, () => readRootPortInventory(state))
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, message: expect.stringContaining('changed during observation'),
+        }] })
+    })
+
+    it('bounds inactive coordination entries across multiple cockpit stores in root port inventory', async () => {
+        const state = await namespace()
+        const other = await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)
+        const value = decodeCoordinationRecord(null, stackId)!
+        for (const current of [state, other]) {
+            await mkdir(dirname(current.paths.coordination(stackId).path), { recursive: true, mode: 0o700 })
+            for (let start = 0; start < STRUCTURED_INPUT_ENTRY_LIMIT / 2; start += 64) {
+                await Promise.all(Array.from({ length: 64 }, async (_, index) => {
+                    const identity = `stack:${(start + index).toString(16).padStart(64, '0')}` as StackId
+                    const record = coordinationStateRecord(current, identity, null, '2026-09-07T12:00:00.000Z', value)
+                    await writeFile(current.paths.coordination(identity).path, JSON.stringify(record), { mode: 0o600 })
+                }))
+            }
+        }
+        expect(await readRootPortInventory(state)).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, message: expect.stringContaining('aggregate entry boundary'),
+        }] })
+    })
+
+    it('bounds aggregate record bytes across individually bounded foreign records', async () => {
+        const state = await namespace()
+        const other = await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)
+        for (const current of [state, other]) {
+            await seedCoordination(current, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' }])
+            const path = current.paths.coordination(stackId).path
+            const bytes = await readFile(path, 'utf8')
+            await writeFile(path, bytes.padEnd(600_000, ' '))
+        }
+        expect(await readRootPortInventory(state)).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, message: expect.stringContaining('aggregate byte boundary'),
+        }] })
+    })
+
+    it('stops aggregate reads when a previously captured foreign record grows', async () => {
+        const state = await namespace()
+        const other = await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)
+        for (const current of [state, other]) await seedCoordination(current)
+        const paths = [state.paths.coordination(stackId).path, other.paths.coordination(stackId).path]
+        inventoryReadControl.paths = paths
+        const result = await mutateInventoryAfterIdentity(state, dirname(paths[1]!), async () => {
+            for (const path of paths) {
+                const bytes = await readFile(path, 'utf8')
+                await writeFile(path, bytes.padEnd(600_000, ' '))
+            }
+        }, () => readRootPortInventory(state))
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
+        expect(inventoryReadControl.opened).toEqual([paths[0]])
+    })
+
     it('treats only an initially absent coordination directory as empty', async () => {
         const state = await namespace()
 

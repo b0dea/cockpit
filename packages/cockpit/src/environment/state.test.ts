@@ -21,6 +21,7 @@ import {
     snapshotBootstrapStateNamespace,
     transactState,
     withStateScopedLock,
+    withStateRootPortLock,
     type BootstrapStateAddress,
     type BootstrapStateNamespace,
     type BootstrapStateRecord,
@@ -732,6 +733,56 @@ describe('readState', () => {
 })
 
 describe('transactState', () => {
+    it('serialises root port operations across issued cockpit namespaces before local transactions', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const other = await selectStateRoot({ platform: 'linux', home: undefined,
+            xdgStateHome: dirname(dirname(namespace.root)), cockpitId: `cockpit:other:${'f'.repeat(64)}` as CockpitId })
+        if (other.kind !== 'complete') throw new Error('expected another issued namespace')
+        let entered!: () => void
+        let release!: () => void
+        const acquired = new Promise<void>((resolve) => { entered = resolve })
+        const held = new Promise<void>((resolve) => { release = resolve })
+        const first = withStateRootPortLock(namespace, { ownerId: holderA }, async () => {
+            const published = await transactState(namespace, address, { ownerId: holderA }, async () => {
+                expect(JSON.parse(await readFile(join(namespace.root, 'locks', 'ports', 'state.lock', 'owner.json'), 'utf8')))
+                    .toMatchObject({ ownerId: holderA, pid: process.pid })
+                expect(JSON.parse(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')))
+                    .toMatchObject({ ownerId: holderA, pid: process.pid })
+                entered()
+                await held
+                return lifecycleRecord(0, 1)
+            })
+            return published
+        })
+        await acquired
+        const forbidden = vi.fn(() => 'overlap')
+        try {
+            await expect(withStateRootPortLock(other.value, { ownerId: holderB, contentionTimeoutMs: 0 }, forbidden))
+                .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
+            await expect(withStateRootPortLock({ ...namespace }, { ownerId: holderB }, forbidden))
+                .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+            expect(forbidden).not.toHaveBeenCalled()
+        } finally { release() }
+        await expect(first).resolves.toMatchObject({ kind: 'complete', value: { kind: 'complete', value: lifecycleRecord(0, 1) } })
+        await expect(withStateRootPortLock(other.value, { ownerId: holderB, contentionTimeoutMs: 0 }, () => 'later'))
+            .resolves.toEqual({ kind: 'complete', value: 'later' })
+    })
+
+    it('preserves a committed record and owner evidence when the root port lock release fails', async () => {
+        const { namespace, address } = await selectedNamespace()
+        const result = await withStateRootPortLock(namespace, { ownerId: holderA,
+            beforeRelease: async () => { throw new Error('injected root release failure') },
+        }, () => transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 1)))
+        expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
+            value: { kind: 'complete', value: lifecycleRecord(0, 1) }, recovery: expect.stringContaining('lock') })
+        expect(await readState(address)).toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 1) })
+        if (result.kind !== 'indeterminate') throw new Error('expected retained root lock evidence')
+        expect(JSON.parse(await readFile(join(result.target, 'owner.json'), 'utf8')))
+            .toMatchObject({ ownerId: holderA, pid: process.pid })
+        await expect(withStateRootPortLock(namespace, { ownerId: holderB, contentionTimeoutMs: 0 }, () => 'unsafe'))
+            .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
+    })
+
     it('holds the same issued scope exclusively while allowing a different scope concurrently', async () => {
         const { namespace } = await selectedNamespace()
         const firstScope = issueStateScopedLock(namespace, { owner: 'browser-worker', identity: 'a'.repeat(64) })!

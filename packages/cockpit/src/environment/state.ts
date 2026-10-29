@@ -1,11 +1,12 @@
-import { access, link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync } from 'node:fs'
+import { access, link, lstat, mkdir, open, opendir, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, type BigIntStats } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { z } from 'zod'
 import { loadCockpitConfig } from '../config/load.js'
+import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { checkoutId as deriveCheckoutId, type BootstrapLockOwnerId } from './identity.js'
 import { redactSensitiveText } from './sensitive.js'
@@ -25,7 +26,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -35,6 +36,7 @@ export const observationDeclarations = Object.freeze([
 
 const issuedObservations = new WeakMap<object, number>()
 const issuedNamespaces = new WeakSet<object>()
+const issuedNamespacePaths = new WeakMap<object, StateNamespace>()
 const issuedBootstrapNamespaces = new WeakSet<object>()
 const issuedScopedLocks = new WeakMap<object, Readonly<{ namespace: StateNamespace; path: string }>>()
 const issuedBootstrapAnswerResets = new WeakSet<object>()
@@ -563,6 +565,7 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     })
     const value: StateNamespace = Object.freeze({ root, cockpitRoot, paths })
     issuedNamespaces.add(value)
+    issuedNamespacePaths.set(paths.coordination, value)
     return value
 }
 
@@ -612,6 +615,111 @@ export function issueStateScopedLock(namespace: StateNamespace, input: Readonly<
     issuedScopedLocks.set(scope, Object.freeze({ namespace: authenticated,
         path: join(authenticated.cockpitRoot, 'locks', 'scoped', `${captured.owner}-${captured.identity}`, 'state.lock') }))
     return scope
+}
+
+export async function withStateRootPortLock<T>(value: StateNamespace,
+    options: Pick<StateTransactionOptions, 'ownerId' | 'observeHolder' | 'contentionTimeoutMs' | 'beforeRelease' | 'beforeLockMetadata'>,
+    operation: () => T | Promise<T>): Promise<StateResult<T>> {
+    const authenticated = authenticateStateNamespace(value)
+    if (!authenticated) return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'root port lock requires an issued state namespace', 'root port lock')
+    const scope = Object.freeze({ kind: 'state-scoped-lock' as const })
+    issuedScopedLocks.set(scope, Object.freeze({ namespace: authenticated, path: join(authenticated.root, 'locks', 'ports', 'state.lock') }))
+    return withStateScopedLock(authenticated, scope, options, operation)
+}
+
+// The callback only reads coordination records. Revalidate the entire read set before returning:
+// a per-cockpit scan alone misses a replacement made after that cockpit has already been visited.
+export async function withStateNamespaceInventory<T>(value: StateNamespace,
+    operation: (namespaces: readonly StateNamespace[]) => T | Promise<T>): Promise<StateResult<T>> {
+    const authenticated = authenticateStateNamespace(value)
+    if (!authenticated || typeof operation !== 'function') {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory requires issued authority and a read operation', 'state namespace inventory')
+    }
+    const snapshots = new Map<string, BigIntStats | undefined>()
+    const namespaces: StateNamespace[] = []
+    let entries = 0
+    let bytes = 0n
+    let target = join(authenticated.root, 'cockpits')
+    const inspect = async (path: string, kind: 'directory' | 'file', optional = false): Promise<boolean> => {
+        target = path
+        let status: BigIntStats
+        try { status = await lstat(path, { bigint: true }) }
+        catch (error) {
+            if (!optional || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            snapshots.set(path, undefined)
+            const parent = dirname(path)
+            if (!snapshots.has(parent)) await inspect(parent, 'directory', true)
+            return false
+        }
+        if (status.isSymbolicLink() || (kind === 'directory' ? !status.isDirectory() : !status.isFile())
+            || status.uid !== BigInt(process.getuid?.() ?? -1) || (status.mode & 0o022n) !== 0n) {
+            throw new Error('state inventory entry is not safely owned')
+        }
+        snapshots.set(path, status)
+        return true
+    }
+    const names = async (path: string): Promise<readonly string[]> => {
+        target = path
+        const found: string[] = []
+        const handle = await opendir(path)
+        for await (const entry of handle) {
+            if (++entries > STRUCTURED_INPUT_ENTRY_LIMIT) throw new Error('state inventory exceeds its aggregate entry boundary')
+            found.push(entry.name)
+        }
+        return found.sort()
+    }
+    try {
+        await inspect(authenticated.root, 'directory', true)
+        const directory = join(authenticated.root, 'cockpits')
+        if (await inspect(directory, 'directory', true)) {
+            for (const name of await names(directory)) {
+                const id = name.replaceAll('_', ':')
+                target = join(directory, name)
+                if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new Error('state inventory contains an invalid cockpit namespace')
+                const candidate = namespace(authenticated.root, id as CockpitId)
+                await inspect(candidate.cockpitRoot, 'directory')
+                const records = join(candidate.cockpitRoot, 'records')
+                const coordination = join(records, 'coordination')
+                await inspect(records, 'directory', true)
+                if (await inspect(coordination, 'directory', true)) {
+                    for (const entry of await names(coordination)) {
+                        const path = join(coordination, entry)
+                        target = path
+                        if (!parseCoordinationStateEntry(entry)) throw new Error('coordination store contains an unexpected entry')
+                        await inspect(path, 'file')
+                        bytes += snapshots.get(path)!.size
+                        if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new Error('coordination inventory exceeds its aggregate byte boundary')
+                    }
+                }
+                namespaces.push(candidate)
+            }
+        }
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+            `state namespace inventory could not be read safely: ${(error as Error).message}`, target,
+            'inspect the named state entry and retry after all coordination writers finish')
+    }
+    const result = await operation(Object.freeze(namespaces))
+    try {
+        for (const [path, before] of snapshots) {
+            target = path
+            let after: BigIntStats
+            try { after = await lstat(path, { bigint: true }) }
+            catch (error) {
+                if (!before && (error as NodeJS.ErrnoException).code === 'ENOENT') continue
+                throw error
+            }
+            if (!before || after.isSymbolicLink() || after.dev !== before.dev || after.ino !== before.ino
+                || after.mode !== before.mode || after.uid !== before.uid || after.size !== before.size
+                || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
+                throw new Error('state inventory changed during observation')
+            }
+        }
+    } catch {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory changed during observation', target,
+            'retry after all coordination writers finish; inspect the named state entry if the refusal persists')
+    }
+    return { kind: 'complete', value: result }
 }
 
 export function lifecycleHistoryAddress(value: StateNamespace, stackId: StackId): StateAddress | undefined {
@@ -665,6 +773,12 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             || typeof cache !== 'function'
             || typeof baseline !== 'function'
         ) return undefined
+        // Recover captured authority only from its original path functions and exact namespace fields.
+        const issued = issuedNamespacePaths.get(coordination)
+        if (issued && root === issued.root && cockpitRoot === issued.cockpitRoot
+            && lifecycle === issued.paths.lifecycle && dataOutcome === issued.paths.dataOutcome
+            && stateLock === issued.paths.stateLock && installLock === issued.paths.installLock
+            && cache === issued.paths.cache && baseline === issued.paths.baseline) return issued
         return Object.freeze({
             root,
             cockpitRoot,

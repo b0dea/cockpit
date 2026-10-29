@@ -95,6 +95,18 @@ The example produces `https://app.sample.localhost:<leased-port>/`. Omitting `ho
 URLs. These declarations do not export application environment variables: configure the
 product's public origin and callback settings to match the returned address.
 
+Independent cockpits reserve whole port families together when they use the same user and
+canonical state root, preventing duplicate allocation before either stack starts listening.
+Each cockpit's declared stack count applies only to its own stacks; another cockpit's active
+lease still occupies its numeric ports. Retained leases keep their original family and refuse
+conflicting reservations. Other users and separate state roots, including different Linux
+`XDG_STATE_HOME` selections, are outside this coordination.
+
+IPv4 loopback listener checks observe availability; they do not reserve a socket or detect an
+IPv6-only listener. Another process can bind after the check. If startup reports a bind failure,
+inspect the conflicting process and rerun `cockpit up --config cockpit.toml` after resolving it.
+The lease remains owned until authenticated cleanup, even when its holder is no longer running.
+
 Names must be lowercase DNS subdomains of `.localhost`, with ordinary letter, digit and hyphen
 labels. Arbitrary suffixes, bare `localhost`, wildcard names and embedded ports are refused.
 The `.localhost` namespace is reserved for loopback by [RFC 6761](https://www.rfc-editor.org/rfc/rfc6761.html#section-6.3);

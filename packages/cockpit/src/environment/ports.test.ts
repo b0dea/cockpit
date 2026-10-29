@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENTRYPOINT_KINDS } from '../entrypoint-kinds.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type EntrypointDerivative } from '../schema.js'
-import { acquireClaim, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
+import { acquireClaim, coordinationStateRecord, decodeCoordinationRecord, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
 import {
     ENVIRONMENT_CODES,
     type CheckoutId,
@@ -20,6 +20,7 @@ import {
     consumePortLeaseProjection,
     inspectPortLeaseProjection,
     leasePortFamily as decidePortFamily,
+    observePortFamily,
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
     projectPortLeaseResult,
@@ -27,6 +28,28 @@ import {
     type PortListenerEvidenceInput,
 } from './ports.js'
 import { readState, selectStateRoot, transactState, type StateNamespace } from './state.js'
+
+const publicationGate = vi.hoisted(() => ({
+    prefix: undefined as string | undefined,
+    reached: undefined as (() => void) | undefined,
+    continuation: undefined as Promise<void> | undefined,
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    return {
+        ...actual,
+        open: async (...args: Parameters<typeof actual.open>) => {
+            if (typeof args[0] === 'string' && publicationGate.prefix
+                && args[0].startsWith(publicationGate.prefix) && args[0].endsWith('.tmp')) {
+                publicationGate.prefix = undefined
+                publicationGate.reached?.()
+                await publicationGate.continuation
+            }
+            return actual.open(...args)
+        },
+    }
+})
 
 // These cases own lease decisions, while observations.test.ts exercises the real loopback
 // corroboration against an ephemeral listening server. Keep unrelated host services from choosing
@@ -47,6 +70,7 @@ vi.mock('node:net', async () => {
 })
 
 const cockpitId = `cockpit:ports-a1:${'a'.repeat(64)}` as CockpitId
+const otherCockpitId = `cockpit:ports-b2:${'b'.repeat(64)}` as CockpitId
 const checkoutId = `checkout:${'b'.repeat(64)}` as CheckoutId
 const holderA = `holder:${'c'.repeat(64)}:session` as HolderId
 const holderB = `holder:${'d'.repeat(64)}:session` as HolderId
@@ -57,6 +81,9 @@ const now = '2026-09-07T12:00:00.000Z'
 const config = { step: 100, count: 3, bases: { WEB: 3000, API: 4000 } }
 
 afterEach(async () => {
+    publicationGate.prefix = undefined
+    publicationGate.reached = undefined
+    publicationGate.continuation = undefined
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -66,6 +93,17 @@ async function namespace(): Promise<StateNamespace> {
     const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
     if (selected.kind !== 'complete') throw new Error(`state root unavailable: ${selected.kind}`)
     return selected.value
+}
+
+async function independentNamespaces() {
+    const home = await mkdtemp(join(tmpdir(), 'cockpit-ports-'))
+    roots.push(home)
+    const states = await Promise.all([cockpitId, otherCockpitId].map(async (identity) => {
+        const selected = await selectStateRoot({ platform: 'linux', home, cockpitId: identity })
+        if (selected.kind !== 'complete') throw new Error(`state root unavailable: ${selected.kind}`)
+        return selected.value
+    }))
+    return { home, left: states[0]!, right: states[1]! }
 }
 
 async function interceptDirectorySync(directoryPath: string, intercept: () => Promise<void> | void) {
@@ -138,6 +176,8 @@ function runLease(input: {
     home: string
     stackId: StackId
     holderId: HolderId
+    cockpitId?: CockpitId
+    ready?: () => Promise<void>
 }): Promise<void> {
     const portsFixtureModule = fileURLToPath(new URL('../../test-support/port-lease-fixture.ts', import.meta.url))
     const stateModule = fileURLToPath(new URL('./state.ts', import.meta.url))
@@ -147,6 +187,8 @@ function runLease(input: {
         const [home, cockpitId, stackId, holderId, checkoutId] = process.argv.slice(1)
         const selected = await selectStateRoot({ platform: 'linux', home, cockpitId })
         if (selected.kind !== 'complete') throw new Error(JSON.stringify(selected))
+        process.send('ready')
+        await new Promise((resolve) => process.once('message', resolve))
         const lease = await leasePortFamilyFixture({
             namespace: selected.value, stackId, holderId, checkoutId,
             config: ${JSON.stringify(config)}, now: ${JSON.stringify(now)}, listenerTimeoutMs: 100,
@@ -160,15 +202,242 @@ function runLease(input: {
     return new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [
             '--import', 'tsx', '--input-type=module', '--eval', source,
-            input.home, cockpitId, input.stackId, input.holderId, checkoutId,
-        ], { stdio: ['ignore', 'ignore', 'pipe'] })
+            input.home, input.cockpitId ?? cockpitId, input.stackId, input.holderId, checkoutId,
+        ], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
         let stderr = ''
+        child.once('error', reject)
+        if (!child.stderr) {
+            child.kill()
+            reject(new Error('lease subprocess stderr was not piped'))
+            return
+        }
         child.stderr.setEncoding('utf8')
         child.stderr.on('data', (chunk: string) => { stderr += chunk })
-        child.once('error', reject)
+        child.once('message', async () => {
+            try {
+                await input.ready?.()
+                child.send('allocate')
+                child.disconnect()
+            } catch (error) {
+                child.kill()
+                reject(error)
+            }
+        })
         child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(stderr || `child exited ${code}`)))
     })
 }
+
+describe('independent cockpits sharing a state root', () => {
+    it('never publishes a duplicate foreign reservation while another publication is paused', async () => {
+        const { left, right } = await independentNamespaces()
+        let prepared!: () => void
+        let release!: () => void
+        const preparing = new Promise<void>((resolve) => { prepared = resolve })
+        publicationGate.prefix = join(dirname(left.paths.coordination(stackA).path), '.')
+        publicationGate.reached = prepared
+        publicationGate.continuation = new Promise<void>((resolve) => { release = resolve })
+        const first = leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
+        let second: Awaited<ReturnType<typeof leasePortFamily>>
+        try {
+            await preparing
+            second = await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: noListeners })
+        } finally { release() }
+        const accepted = await first
+        if (accepted.kind !== 'complete') throw new Error(JSON.stringify(accepted))
+        if (second.kind === 'refusal') {
+            expect(second.diagnostics).toMatchObject([{ code: ENVIRONMENT_CODES.STATE_LOCKED }])
+            second = await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: noListeners })
+        }
+        expect(second).toMatchObject({ kind: 'complete' })
+        if (second.kind !== 'complete') throw new Error(JSON.stringify(second))
+        const secondPorts = Object.values(second.lease.ports)
+        expect(Object.values(accepted.lease.ports).every((port) => !secondPorts.includes(port))).toBe(true)
+    })
+
+    it('serialises concurrent equal-stack requests before any listener starts', async () => {
+        const { left, right } = await independentNamespaces()
+        expect(left.root).toBe(right.root)
+        let arrivals = 0
+        let release!: () => void
+        const bothReady = new Promise<void>((resolve) => { release = resolve })
+        const observe = () => {
+            let first = true
+            return async (ports: readonly number[]) => {
+                if (first) {
+                    first = false
+                    if (++arrivals === 2) release()
+                    await bothReady
+                }
+                return noListeners(ports)
+            }
+        }
+        const leases = await Promise.all([
+            leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: observe() }),
+            leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: observe() }),
+        ])
+        expect(leases.map(({ kind }) => kind)).toEqual(['complete', 'complete'])
+        if (leases[0]!.kind !== 'complete' || leases[1]!.kind !== 'complete') throw new Error('expected both independent leases')
+        expect(new Set(leases.flatMap((lease) => lease.kind === 'complete' ? Object.values(lease.lease.ports) : [])).size).toBe(4)
+        expect(leases[0]!.lease.offset).not.toBe(leases[1]!.lease.offset)
+    })
+
+    it('preserves disjoint reservations across independent processes with equal stack IDs', async () => {
+        const { home, left, right } = await independentNamespaces()
+        let arrivals = 0
+        let release!: () => void
+        const bothReady = new Promise<void>((resolve) => { release = resolve })
+        const ready = async () => {
+            if (++arrivals === 2) release()
+            await bothReady
+        }
+        await Promise.all([
+            runLease({ home, cockpitId, stackId: stackA, holderId: holderA, ready }),
+            runLease({ home, cockpitId: otherCockpitId, stackId: stackA, holderId: holderB, ready }),
+        ])
+        const records = await Promise.all([readState(left.paths.coordination(stackA)), readState(right.paths.coordination(stackA))])
+        const ports = records.map((record) => {
+            if (record.kind !== 'complete') throw new Error('expected both published coordination records')
+            const value = decodeCoordinationRecord(record.value, stackA)
+            if (!value?.lease) throw new Error('expected both published leases')
+            return Object.values(value.lease.ports)
+        })
+        expect(ports[0]!.every((port) => !ports[1]!.includes(port))).toBe(true)
+    })
+
+    it('refuses a foreign no-listener reservation when the only family is occupied', async () => {
+        const { left, right } = await independentNamespaces()
+        const oneFamily = { ...config, count: 1 }
+        expect(await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config: oneFamily, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
+        expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config: oneFamily, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_LEASE_EXHAUSTED }],
+        })
+        expect(await readState(right.paths.coordination(stackA))).toMatchObject({ kind: 'missing' })
+    })
+
+    it('counts only local stacks when foreign families do not overlap', async () => {
+        const { left, right } = await independentNamespaces()
+        const foreignConfig = { ...config, count: 1, bases: { WEB: 7000, API: 8000 } }
+        const localConfig = { ...config, count: 1, bases: { WEB: 9000, API: 10000 } }
+        expect(await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config: foreignConfig, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete' })
+        expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config: localConfig, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
+        expect(await leasePortFamily({ namespace: right, stackId: stackB, holderId: holderA, checkoutId, config: localConfig, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_LEASE_EXHAUSTED }],
+        })
+    })
+
+    it('retains compensated foreign reservations and reuses only released families', async () => {
+        const { left, right } = await independentNamespaces()
+        const first = await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
+        const second = await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
+        expect(first).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
+        expect(second).toMatchObject({ kind: 'complete', lease: { offset: 100 } })
+        if (first.kind !== 'complete' || second.kind !== 'complete') throw new Error('expected both independent leases')
+        const before = await readFile(right.paths.coordination(stackA).path)
+        expect(await compensateAcquiredPortHolder({ namespace: right, leaseResult: first, now })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID }],
+        })
+        expect(await releasePortFamily({ namespace: right, stackId: stackA, requesterId: holderA, holderId: holderB, now })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }],
+        })
+        expect(await readFile(right.paths.coordination(stackA).path)).toEqual(before)
+        expect(await compensateAcquiredPortHolder({ namespace: left, leaseResult: first, now })).toMatchObject({
+            kind: 'complete', change: 'compensated', remainingHolderIds: [],
+        })
+        expect(await readState(left.paths.coordination(stackA))).toMatchObject({
+            kind: 'complete', value: { value: { holders: [], lease: { offset: 0, released: false } } },
+        })
+        expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', change: 'unchanged', lease: { offset: 100 } })
+        expect(await readFile(right.paths.coordination(stackA).path)).toEqual(before)
+        expect(await leasePortFamily({ namespace: left, stackId: stackB, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', lease: { offset: 200 } })
+        expect(await transactState(left, left.paths.coordination(stackA), { ownerId: holderA }, (current) => {
+            const value = decodeCoordinationRecord(current, stackA)
+            if (!value?.lease || value.holders.length !== 0) throw new Error('expected an unheld retained reservation fixture')
+            return coordinationStateRecord(left, stackA, current, now, { ...value, lease: { ...value.lease, released: true } })
+        })).toMatchObject({ kind: 'complete' })
+        expect(await leasePortFamily({ namespace: right, stackId: stackB, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', lease: { offset: 0 } })
+        expect(await readFile(right.paths.coordination(stackA).path)).toEqual(before)
+    })
+
+    it.each(['retained acquisition', 'retained observation', 'health observation'] as const)('refuses a persisted foreign collision during %s', async (boundary) => {
+        const { left, right } = await independentNamespaces()
+        const first = await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
+        expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete' })
+        if (first.kind !== 'complete') throw new Error('expected initial lease')
+        expect(await transactState(right, right.paths.coordination(stackA), { ownerId: holderB }, (current) => {
+            const value = decodeCoordinationRecord(current, stackA)
+            if (!value?.lease) throw new Error('expected foreign lease')
+            return coordinationStateRecord(right, stackA, current, now, {
+                ...value, lease: { ...value.lease, offset: first.lease.offset, ports: { ...first.lease.ports } },
+            })
+        })).toMatchObject({ kind: 'complete' })
+        const before = await readFile(left.paths.coordination(stackA).path)
+        if (boundary === 'retained acquisition') {
+            expect(await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({
+                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_LEASE_EXHAUSTED }],
+            })
+        } else if (boundary === 'retained observation') {
+            expect(await observeRetainedPortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config })).toMatchObject({
+                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION }],
+            })
+        } else {
+            expect(await observePortFamily({ namespace: left, stackId: stackA, observedAt: now, leaseEvidence: first })).toMatchObject({
+                observed: { state: 'available', value: false },
+            })
+        }
+        expect(await readFile(left.paths.coordination(stackA).path)).toEqual(before)
+    })
+
+    it.each(['malformed JSON', 'wrong cockpit identity', 'linked record', 'linked namespace', 'unsafe record mode', 'publication residue'] as const)(
+        'refuses foreign %s instead of treating its reservation as absent', async (damage) => {
+            const { home, left, right } = await independentNamespaces()
+            expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete' })
+            const path = right.paths.coordination(stackA).path
+            if (damage === 'malformed JSON') await writeFile(path, '{')
+            if (damage === 'wrong cockpit identity') {
+                const record = JSON.parse(await readFile(path, 'utf8'))
+                await writeFile(path, JSON.stringify({ ...record, cockpitId }))
+            }
+            if (damage === 'linked record') {
+                const moved = join(home, 'foreign-record.json')
+                await rename(path, moved)
+                await symlink(moved, path)
+            }
+            if (damage === 'linked namespace') {
+                const moved = join(home, 'foreign-store')
+                await rename(right.cockpitRoot, moved)
+                await symlink(moved, right.cockpitRoot)
+            }
+            if (damage === 'unsafe record mode') await chmod(path, 0o666)
+            if (damage === 'publication residue') {
+                await writeFile(join(dirname(path), `.stack_${'f'.repeat(64)}.11111111-1111-4111-8111-111111111111.tmp`), '{}', { mode: 0o600 })
+            }
+            expect(await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({
+                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
+            })
+            expect(await readState(left.paths.coordination(stackA))).toMatchObject({ kind: 'missing' })
+        },
+    )
+})
 
 describe('whole-family port leases', () => {
     it.each(['sleep', 'down', 'reset'] as const)('blocks claim and lease acquisition and every release during a %s drain', async (purpose) => {
@@ -625,6 +894,30 @@ describe('whole-family port leases', () => {
         await expect(readState(first.paths.coordination(stackA))).resolves.toMatchObject({ kind: 'complete' })
         await expect(readState(second.paths.coordination(stackA))).resolves.toMatchObject({ kind: 'missing' })
     })
+
+    it.each(['altered root', 'unissued coordination function', 'mixed issued paths'] as const)(
+        'refuses a captured namespace with %s', async (mutation) => {
+            const first = await namespace()
+            const second = await namespace()
+            const supplied = { ...first, paths: { ...first.paths } }
+            if (mutation === 'altered root') supplied.root = second.root
+            else if (mutation === 'unissued coordination function') {
+                supplied.paths.coordination = (stack) => first.paths.coordination(stack)
+            } else supplied.paths.lifecycle = second.paths.lifecycle
+
+            await expect(decidePortFamily({
+                namespace: supplied, stackId: stackA, holderId: holderA, checkoutId,
+                config: { ...config, count: 1 }, now, listenerTimeoutMs: 100,
+                listenerEvidence: [{ ports: [3000, 4000], observation: {
+                    state: 'available', value: [], observedAt: now, producer: 'listener-probe',
+                } }],
+            })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{
+                code: ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, message: 'port lease input is invalid',
+            }] })
+            await expect(readState(first.paths.coordination(stackA))).resolves.toMatchObject({ kind: 'missing' })
+            await expect(readState(second.paths.coordination(stackA))).resolves.toMatchObject({ kind: 'missing' })
+        },
+    )
 
     it.each([
         ['lease', () => {

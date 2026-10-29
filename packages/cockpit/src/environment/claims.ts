@@ -39,8 +39,10 @@ import {
     inspectStateLock,
     parseCoordinationStateEntry,
     readState,
+    SERIALIZED_RECORD_BYTE_LIMIT,
     snapshotStateNamespace,
     transactState,
+    withStateNamespaceInventory,
     type StateNamespace,
     type StateAddress,
     type StateRecord,
@@ -54,7 +56,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/claims.ts',
     exports: [
         'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
-        'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
+        'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
         'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
@@ -893,6 +895,14 @@ export async function readActiveStackInventory(
     namespace: StateNamespace,
     options: Pick<StateTransactionOptions, 'observeHolder'> = {},
 ): Promise<ActiveStackInventoryResult> {
+    return readCoordinationInventory(namespace, options)
+}
+
+async function readCoordinationInventory(
+    namespace: StateNamespace,
+    options: Pick<StateTransactionOptions, 'observeHolder'>,
+    budget?: { entries: number; bytes: number },
+): Promise<ActiveStackInventoryResult> {
     const ownedNamespace = snapshotStateNamespace(namespace)
     if (!ownedNamespace) return refuse(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state namespace is malformed', 'state namespace')
     namespace = ownedNamespace
@@ -911,11 +921,22 @@ export async function readActiveStackInventory(
                 if (names.length >= STRUCTURED_INPUT_ENTRY_LIMIT) {
                     return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination store exceeds its entry boundary', directory)
                 }
+                if (budget && ++budget.entries > STRUCTURED_INPUT_ENTRY_LIMIT) {
+                    return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination inventory exceeds its aggregate entry boundary', directory)
+                }
                 names.push(entry.name)
             }
         } finally { await handle.close().catch(() => undefined) }
         const records: { stackId: StackId; record: CoordinationRecord }[] = []
         for (const name of names.sort()) {
+            if (budget) {
+                const path = join(directory, name)
+                const status = await lstat(path)
+                if (!status.isFile() || status.isSymbolicLink() || !Number.isSafeInteger(status.size)
+                    || (budget.bytes += status.size) > SERIALIZED_RECORD_BYTE_LIMIT) {
+                    return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination inventory exceeds its aggregate byte boundary or contains an unsafe entry', path)
+                }
+            }
             const entry = parseCoordinationStateEntry(name)
             if (entry?.kind === 'temporary') {
                 const lock = await inspectStateLock(namespace, options.observeHolder)
@@ -983,6 +1004,29 @@ export async function readActiveStackInventory(
         }
         return refuse(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'coordination store could not be inspected', directory)
     }
+}
+
+export async function readRootPortInventory(
+    namespace: StateNamespace,
+    options: Pick<StateTransactionOptions, 'observeHolder'> = {},
+): Promise<
+    | { readonly kind: 'complete'; readonly value: readonly { cockpitId: CockpitId; stackId: StackId; record: CoordinationRecord }[] }
+    | ClaimMutationRefusal
+> {
+    const result = await withStateNamespaceInventory(namespace, async (namespaces) => {
+        const records: { cockpitId: CockpitId; stackId: StackId; record: CoordinationRecord }[] = []
+        const budget = { entries: namespaces.length, bytes: 0 }
+        for (const candidate of namespaces) {
+            const inventory = await readCoordinationInventory(candidate, options, budget)
+            if (inventory.kind !== 'complete') return inventory
+            const cockpitId = candidate.paths.coordination(`stack:${'0'.repeat(64)}` as StackId).cockpitId
+            records.push(...inventory.value.map((record) => ({ cockpitId, ...record })))
+        }
+        return { kind: 'complete' as const, value: records }
+    })
+    if (result.kind === 'complete') return result.value
+    if (result.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory disappeared during observation', result.path)
+    return refuse(result.code, result.message, result.target, result.recovery)
 }
 
 function validIdentity(value: string, pattern: RegExp): boolean {
