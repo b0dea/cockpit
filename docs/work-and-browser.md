@@ -144,6 +144,11 @@ selection above records that inspection found no applicable skill; it is not per
 inspection or the source audit. Semantic applicability is instructed and human-reviewed. A generated
 skill inventory or a byte hash alone does not prove discovery or applicability.
 
+Both `skills.auditor` and each skill row's `reference` must start with an ASCII letter or digit,
+then contain only ASCII letters, digits, `.`, `_` or `-`, within the
+[audit reader's length bound](../packages/cockpit/src/work-orders/composition.ts); use identifiers
+such as `reviewer-name` and `planning`.
+
 Each optional row has `scope` (`repository` or `user`), a logical `reference`, `category`
 (`thinking`, `research`, `specification`, `planning` or `other`), boolean `applicable`, a nonempty
 `reason`, and `sourceIds` naming contract sources produced or informed by that skill. An applicable
