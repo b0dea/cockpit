@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, realpath } from 'node:fs/promises'
 import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
-import { parseLocalDockerEndpoint } from './docker-endpoint.js'
+import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import {
@@ -522,7 +522,7 @@ export function createDockerSelectionSteps(rawInput: DockerSelectionProbeInput):
     const env = safeEnvironment(input.env)
     const host = input.host
     if (executable === undefined || env === undefined || !DOCKER_SELECTOR.test(input.context)
-        || host !== undefined && (parseLocalDockerEndpoint(host) === undefined || input.context !== 'default')
+        || host !== undefined && (admitLocalDockerEndpoint(host) === undefined || input.context !== 'default')
         || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
     // Only the selection reads DOCKER_HOST; discovery and actions address the admitted endpoint
     // with --host, so the rest of the plan keeps a daemon-free environment.
@@ -579,7 +579,7 @@ export function admitDockerSelection(
         const [context] = rows
         if (context === undefined || !exactKeys(context, ['context', 'endpoint'])
             || context.context !== plan.context
-            || typeof context.endpoint !== 'string' || parseLocalDockerEndpoint(context.endpoint) === undefined
+            || typeof context.endpoint !== 'string' || admitLocalDockerEndpoint(context.endpoint) === undefined
             || plan.host !== undefined && context.endpoint !== plan.host
             || !isCanonicalTimestamp(startedAt) || !isCanonicalTimestamp(finishedAt)
             || Date.parse(finishedAt) < Date.parse(startedAt) || Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined

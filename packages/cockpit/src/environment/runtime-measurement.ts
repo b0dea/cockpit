@@ -12,7 +12,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parseLocalDockerEndpoint } from './docker-endpoint.js'
+import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
@@ -179,7 +179,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         dockerHost = endpoint.text
         endpointSource = `docker context ${context.kind === 'complete' ? context.text : ''}`
     }
-    if (parseLocalDockerEndpoint(dockerHost) === undefined) {
+    if (admitLocalDockerEndpoint(dockerHost) === undefined) {
         return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             `the Docker endpoint from ${endpointSource} is not a local Docker endpoint; only a local runtime can be measured. Select a local context with docker context use <name> or set a local DOCKER_HOST`, endpointSource)
     }

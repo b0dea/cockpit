@@ -290,9 +290,6 @@ describe('runtime logs', () => {
             { PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic/docker.sock' },
             { PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic home/docker.sock' },
             { PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic/docker%23?#.sock' },
-            { PATH: '/usr/bin', DOCKER_HOST: 'npipe:////./pipe/docker_engine' },
-            { PATH: '/usr/bin', DOCKER_HOST: 'npipe:////./pipe/dockerDesktopLinuxEngine' },
-            { PATH: '/usr/bin', DOCKER_HOST: `npipe:////./pipe/${'x'.repeat(247)}` },
             { PATH: '/usr/bin', DOCKER_CONTEXT: 'synthetic' },
         ] as Readonly<Record<string, string>>[]) {
             const result = planLogs({ ...input, env })
@@ -301,21 +298,51 @@ describe('runtime logs', () => {
         }
     })
 
+    it('admits endpoint syntax only at its system platform boundary before planning logs', () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+        try {
+            for (const hostPlatform of ['darwin', 'linux', 'win32', 'freebsd']) {
+                Object.defineProperty(process, 'platform', { ...platform, value: hostPlatform })
+                for (const endpoint of ['unix:///synthetic home/docker%23?#.sock', 'npipe:////./pipe/docker_engine',
+                    'npipe:////./pipe/dockerDesktopLinuxEngine', `npipe:////./pipe/${'x'.repeat(247)}`]) {
+                    const env = { PATH: '/usr/bin', DOCKER_HOST: endpoint }
+                    const result = planLogs({ ...input, env })
+                    const admitted = endpoint.startsWith('npipe:') ? hostPlatform === 'win32'
+                        : hostPlatform === 'darwin' || hostPlatform === 'linux'
+                    expect(result.kind, `${hostPlatform}: ${endpoint}`).toBe(admitted ? 'planned' : 'unavailable')
+                    if (result.kind === 'planned') expect(result.step.env).toEqual(env)
+                }
+            }
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+    })
+
     it('refuses remote, ambiguous and malformed Docker endpoints before planning logs', () => {
-        for (const endpoint of [
-            'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid',
-            'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////localhost/pipe/docker_engine',
-            'npipe://./pipe/docker_engine', 'npipe:////./pipe/', 'npipe:////./pipe/docker_engine/extra',
-            'npipe:////./pipe/../docker_engine', 'npipe:////./pipe/%64ocker_engine',
-            'npipe:////./pipe/docker_engine?query', 'npipe:////./pipe/docker_engine#fragment',
-            'npipe:////./pipe/docker_engine ', 'npipe:////./pipe/docker_engine\\extra',
-            'npipe:////./pipe/C:docker_engine', 'C:\\pipe\\docker_engine',
-            `npipe:////./pipe/${'x'.repeat(248)}`,
-            'unix://synthetic.invalid/socket', 'unix:////synthetic.invalid/socket', 'unix:///',
-            'unix:///tmp/docker.sock\0', 'unix:///tmp/docker.sock\n',
-        ]) {
-            expect(planLogs({ ...input, env: { PATH: '/usr/bin', DOCKER_HOST: endpoint } }), endpoint)
-                .toMatchObject({ kind: 'unavailable' })
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+        try {
+            for (const hostPlatform of ['darwin', 'linux', 'win32']) {
+                Object.defineProperty(process, 'platform', { ...platform, value: hostPlatform })
+                for (const endpoint of [
+                    'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid',
+                    'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////localhost/pipe/docker_engine',
+                    'npipe://./pipe/docker_engine', 'npipe:////./pipe/', 'npipe:////./pipe/docker_engine/extra',
+                    'npipe:////./pipe/../docker_engine', 'npipe:////./pipe/%64ocker_engine',
+                    'npipe:////./pipe/docker_engine?query', 'npipe:////./pipe/docker_engine#fragment',
+                    'npipe:////./pipe/docker_engine ', 'npipe:////./pipe/docker_engine\\extra',
+                    'npipe:////./pipe/C:docker_engine', 'C:\\pipe\\docker_engine',
+                    `npipe:////./pipe/${'x'.repeat(248)}`,
+                    'unix://synthetic.invalid/socket', 'unix:////synthetic.invalid/socket', 'unix:///',
+                    'unix:///tmp/docker.sock\0', 'unix:///tmp/docker.sock\n',
+                ]) {
+                    expect(planLogs({ ...input, env: { PATH: '/usr/bin', DOCKER_HOST: endpoint } }), endpoint)
+                        .toMatchObject({ kind: 'unavailable' })
+                }
+            }
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
         }
     })
 

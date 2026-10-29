@@ -3,7 +3,7 @@ import { open, readFile, readdir, realpath, rm, mkdir, writeFile } from 'node:fs
 import { arch, platform } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parseLocalDockerEndpoint } from './docker-endpoint.js'
+import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type StackId } from './contract.js'
 import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
@@ -451,7 +451,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         // A remote daemon's behaviour says nothing about this machine. Keep the selected endpoint
         // exact so a host override cannot borrow a different context's runtime evidence.
         const dockerHost = input.env.DOCKER_HOST
-        if (dockerHost !== undefined && parseLocalDockerEndpoint(dockerHost) === undefined) {
+        if (dockerHost !== undefined && admitLocalDockerEndpoint(dockerHost) === undefined) {
             fail('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket or Windows named pipe')
         }
         await Promise.all([
@@ -468,6 +468,13 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const runtimeEnvironment = Object.freeze(Object.fromEntries(Object.entries(input.env).filter(([name]) =>
             ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT'].includes(name),
         )))
+        dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
+        const endpoint = dockerContext === '' ? undefined
+            : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
+        checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && admitLocalDockerEndpoint(endpoint) !== undefined
+            && (dockerHost === undefined || endpoint === dockerHost)
+        if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
+
         const runtime = await observeDockerRuntime({
             executable: input.executable, cwd: input.cwd, env: runtimeEnvironment,
             timeoutMs: Math.min(input.timeoutMs, 30_000),
@@ -476,12 +483,6 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         if (!versionAtLeast(runtime.composeVersion, input.composeFloor)) throw new RuntimeProbeFailure('the required Compose version is unavailable')
         runtimeVersion = runtime.runtime.version
         composeVersion = runtime.composeVersion
-        dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
-        const endpoint = dockerContext === '' ? undefined
-            : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
-        checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && parseLocalDockerEndpoint(endpoint) !== undefined
-            && (dockerHost === undefined || endpoint === dockerHost)
-        if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
 
         pre = await inventory(execute.run, 'pre', probeScope)
         if (!pre || Object.values(pre).some((ids) => ids.length > 0)) fail('the disposable namespace collided with pre-existing runtime state')

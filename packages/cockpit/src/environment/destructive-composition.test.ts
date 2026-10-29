@@ -22,7 +22,7 @@ afterEach(async () => {
 })
 
 describe('destructive command composition', () => {
-    it.each(['unix:///synthetic home/docker.sock', 'npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
+    it.each(['unix:///synthetic home/docker.sock'])(
         'forwards the exact local host %s and controlled-runtime authority to the lifecycle owner', (host) => {
             const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
             const profiles = ['runtime_probe']
@@ -71,6 +71,7 @@ describe('destructive command composition', () => {
     // host beside an explicit context, or a TLS override can diverge from the selected daemon.
     it.each([
         ['a remote host', { DOCKER_HOST: 'tcp://127.0.0.1:2375' }, 'default'],
+        ['a Windows pipe on a POSIX host', { DOCKER_HOST: 'npipe:////./pipe/docker_engine' }, 'default'],
         ['a remote pipe server', { DOCKER_HOST: 'npipe:////synthetic.invalid/pipe/docker_engine' }, 'default'],
         ['a pipe traversal', { DOCKER_HOST: 'npipe:////./pipe/../docker_engine' }, 'default'],
         ['a pipe beside an explicit context', { DOCKER_HOST: 'npipe:////./pipe/docker_engine', DOCKER_CONTEXT: 'synthetic' }, 'synthetic'],

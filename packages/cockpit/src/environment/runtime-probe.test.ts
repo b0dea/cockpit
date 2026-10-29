@@ -290,13 +290,14 @@ describe('installed container-runtime capability promotion', () => {
         expect(verdict.operatorAction?.reason).toBe('runtime probe input is malformed or contains an unsafe environment')
     })
 
-    it('refuses a remote DOCKER_HOST before any runtime command', () => {
-        const verdict = installedChildProbe(request({ env: { ...runtimeEnvironment(), DOCKER_HOST: 'tcp://127.0.0.1:2375' } }))
-        expect(verdict.status).toBe('unavailable')
-        expect(verdict.operatorAction?.reason).toBe('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket or Windows named pipe')
-        expect(verdict.evidence?.runtimeVersion).toBeNull()
-        expect(readdirSync(liveDirectory)).toEqual([])
-    })
+    it.each(['tcp://127.0.0.1:2375', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
+        'refuses an unavailable host transport %s before any runtime command', (host) => {
+            const verdict = installedChildProbe(request({ env: { ...runtimeEnvironment(), DOCKER_HOST: host } }))
+            expect(verdict.status).toBe('unavailable')
+            expect(verdict.operatorAction?.reason).toBe('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket or Windows named pipe')
+            expect(verdict.evidence?.runtimeVersion).toBeNull()
+            expect(readdirSync(liveDirectory)).toEqual([])
+        })
 
     it('rejects a caller-added package digest at the installed-child boundary', () => {
         const verdict = installedChildProbe({ ...request(), packageArtifactSha256: 'f'.repeat(64) })

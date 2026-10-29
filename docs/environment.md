@@ -233,14 +233,15 @@ host paths. Normal and JSON reset calls do not delete anything. Interactive rese
 human terminal outside CI; approval remains in the process that showed the preview and is
 revalidated before an action. Set `DOCKER_CONTEXT` explicitly for destructive commands, or a local
 `DOCKER_HOST` with `DOCKER_CONTEXT` unset, so discovery and deletion address the same Docker
-daemon. Local endpoint syntax admits an absolute `unix://` socket path or
-`npipe:////./pipe/<name>` with a single pipe name containing letters, digits, underscores, dots or
-hyphens and beginning with a letter or digit. Only the dot server denotes a local named pipe.
+daemon. Endpoint admission requires a transport for the current host: an absolute `unix://`
+socket path on macOS or Linux, or `npipe:////./pipe/<name>` on Windows with a single pipe name
+containing letters, digits, underscores, dots or hyphens and beginning with a letter or digit. Only
+the dot server denotes a local named pipe.
 Named-pipe endpoints refuse remote servers, encoded aliases and traversal. Conflicting selections
-are refused. Unix socket paths retain literal internal spaces and punctuation. Cockpit preserves the exact endpoint
-spelling when binding the context and issuing discovery or deletion commands. Native Windows
-lifecycle remains unsupported; named-pipe syntax admission does not implement its ownership or
-execution primitives. A TLS override is refused.
+are refused. Unix socket paths retain literal internal spaces and punctuation. Cockpit preserves
+the exact endpoint spelling when binding the context and issuing discovery or deletion commands.
+Native Windows lifecycle remains unsupported; named-pipe syntax admission does not implement its
+ownership or execution primitives. A TLS override is refused.
 
 Every destructive action starts behind a durable execution fence. If cockpit itself is interrupted,
 the detached supervisor retains that exact attempt identity. The next `sleep`, `down`, or approved

@@ -8,7 +8,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
-import { parseLocalDockerEndpoint } from './environment/docker-endpoint.js'
+import { admitLocalDockerEndpoint } from './environment/docker-endpoint.js'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
@@ -452,7 +452,7 @@ const defaultSetupAdapters: SetupCommandAdapters = {
 // the generic authority refusal an empty context selection produced.
 function destructiveDaemonSelectionRefusal(runtime: CliRuntime): CommandOutcome | undefined {
     const env = runtime.env ?? process.env
-    if (env.DOCKER_HOST !== undefined && parseLocalDockerEndpoint(env.DOCKER_HOST) === undefined) {
+    if (env.DOCKER_HOST !== undefined && admitLocalDockerEndpoint(env.DOCKER_HOST) === undefined) {
         return usageOutcome('CLI_USAGE_INVALID',
             'down and reset require a local Docker endpoint so deletion cannot target a remote daemon; fix: unset DOCKER_HOST and set DOCKER_CONTEXT, or set DOCKER_HOST to a local Unix socket or Windows named pipe',
             'DOCKER_HOST')

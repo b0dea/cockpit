@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { parseLocalDockerEndpoint } from './docker-endpoint.js'
+import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load.js'
 import {
@@ -124,7 +124,7 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
         // A local DOCKER_HOST is selected through Docker's `default` context, which reports that
         // endpoint; dropping it addressed whatever the default context named instead. TLS and
         // remote hosts stay refused.
-        if (env.DOCKER_HOST !== undefined && (parseLocalDockerEndpoint(env.DOCKER_HOST) === undefined
+        if (env.DOCKER_HOST !== undefined && (admitLocalDockerEndpoint(env.DOCKER_HOST) === undefined
                 || dockerContext !== 'default' || env.DOCKER_CONTEXT !== undefined)
             || env.DOCKER_TLS_VERIFY !== undefined || env.DOCKER_CERT_PATH !== undefined
             || env.DOCKER_CONTEXT !== undefined && env.DOCKER_CONTEXT !== dockerContext) return undefined

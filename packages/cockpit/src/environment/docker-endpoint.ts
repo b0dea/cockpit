@@ -17,3 +17,11 @@ export function parseLocalDockerEndpoint(value: unknown): Readonly<{ transport: 
     return pipe !== null && `\\\\.\\pipe\\${pipe[1]!}`.length <= 256
         ? Object.freeze({ transport: 'npipe', endpoint: value }) : undefined
 }
+
+/** Admits transport syntax for this process without granting native execution or state authority. */
+export function admitLocalDockerEndpoint(value: unknown): ReturnType<typeof parseLocalDockerEndpoint> {
+    const endpoint = parseLocalDockerEndpoint(value)
+    const transport = process.platform === 'win32' ? 'npipe'
+        : process.platform === 'darwin' || process.platform === 'linux' ? 'unix' : undefined
+    return endpoint?.transport === transport ? endpoint : undefined
+}

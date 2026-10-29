@@ -93,11 +93,11 @@ describe('runtime measurement recording', () => {
         }])
     })
 
-    it('passes the exact local pipe selection to the runtime probe without changing endpoint identity', async () => {
-        const endpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+    it('passes the exact local Unix selection to the runtime probe without changing endpoint identity', async () => {
+        const endpoint = 'unix:///synthetic home/docker%23?#.sock'
         const host = await measuredHost(endpoint)
         const selections: (string | undefined)[] = []
-        for (const env of [host.env, { ...host.env, DOCKER_HOST: endpoint }]) {
+        for (const env of [host.env, { ...host.env, DOCKER_HOST: endpoint }] as Readonly<Record<string, string>>[]) {
             const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: false, env }, {
                 execute: executeProbe,
                 probe: async (request) => {
@@ -108,6 +108,24 @@ describe('runtime measurement recording', () => {
             expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
         }
         expect(selections).toEqual([undefined, endpoint])
+        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+    })
+
+    it('refuses a Windows pipe on a POSIX host before runtime probing or daemon commands', async () => {
+        const endpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+        const host = await measuredHost(endpoint)
+        for (const env of [host.env, { ...host.env, DOCKER_HOST: endpoint }] as Readonly<Record<string, string>>[]) {
+            const steps: string[][] = []
+            let calls = 0
+            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env }, {
+                execute: async (step) => { steps.push([...step.argv]); return executeProbe(step) },
+                probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
+            })
+            expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+            expect(calls).toBe(0)
+            expect(steps.every((argv) => argv[1] === 'context')).toBe(true)
+            if (env.DOCKER_HOST !== undefined) expect(steps).toEqual([])
+        }
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
 

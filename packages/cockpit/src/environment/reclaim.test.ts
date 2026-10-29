@@ -549,7 +549,7 @@ describe('runtime discovery authority', () => {
             await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: 'changed-context', endpoint: dockerEndpoint })}\n`)
             expect((await observe()).authority).toBeUndefined()
             for (const endpoint of [
-                'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid',
+                'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid', 'npipe:////./pipe/docker_engine',
                 'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////./pipe/../docker_engine',
                 'npipe:////./pipe/docker_engine ', 'unix:///tmp/docker.sock\0',
             ]) {
@@ -562,10 +562,16 @@ describe('runtime discovery authority', () => {
         }
     })
 
+    it('refuses a Windows pipe on a POSIX host before Docker selection dispatch', () => {
+        expect(createDockerSelectionSteps({
+            executable: { ...executable('/tmp/docker'), executionMode: 'staged' }, cwd: '/tmp',
+            env: { PATH: '/usr/bin' }, timeoutMs: 1_000, context: 'default',
+            host: 'npipe:////./pipe/dockerDesktopLinuxEngine',
+        })).toBeUndefined()
+    })
+
     it.each([
         'unix:///tmp/synthetic-rootless.sock',
-        'npipe:////./pipe/docker_engine',
-        'npipe:////./pipe/dockerDesktopLinuxEngine',
     ])('selects the exact local DOCKER_HOST %s through the default context', async (host) => {
         const root = await canonicalTemp('cockpit-selection-host-')
         try {

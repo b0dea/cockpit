@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { isAbsolute, normalize } from 'node:path'
-import { parseLocalDockerEndpoint } from './docker-endpoint.js'
+import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
@@ -106,7 +106,7 @@ function logRequest(value: unknown): LogRequest | undefined {
 // Logs must read the daemon the lifecycle started, so they accept the same local selection: a named
 // context, Unix socket or local Windows named pipe. TLS and remote endpoints stay refused.
 function localDockerSelection(name: string, value: string): boolean {
-    return name === 'DOCKER_HOST' ? parseLocalDockerEndpoint(value) !== undefined
+    return name === 'DOCKER_HOST' ? admitLocalDockerEndpoint(value) !== undefined
         : name === 'DOCKER_CONTEXT' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
 }
 

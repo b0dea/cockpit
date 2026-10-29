@@ -67,19 +67,21 @@ describe('lifecycle CLI composition', () => {
         })
     })
 
-    it.each(['down', 'reset'] as const)('admits local endpoint syntax and refuses remote pipe hosts for %s', async (verb) => {
-        for (const host of ['unix:///synthetic home/docker.sock', 'npipe:////./pipe/dockerDesktopLinuxEngine']) {
+    it.each(['down', 'reset'] as const)('admits Unix endpoint syntax and refuses Windows pipe dispatch on POSIX for %s', async (verb) => {
+        for (const host of ['unix:///synthetic home/docker.sock']) {
             const capture = captureIo()
             expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {},
                 { env: { DOCKER_HOST: host } })).toBe(2)
             expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{ code: 'CONFIG_NOT_FOUND' }] })
         }
-        const capture = captureIo()
-        expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {},
-            { env: { DOCKER_HOST: 'npipe:////synthetic.invalid/pipe/docker_engine' } })).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{
-            code: 'CLI_USAGE_INVALID', target: 'DOCKER_HOST', message: expect.stringContaining('local Docker endpoint'),
-        }] })
+        for (const host of ['npipe:////./pipe/dockerDesktopLinuxEngine', 'npipe:////synthetic.invalid/pipe/docker_engine']) {
+            const capture = captureIo()
+            expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {},
+                { env: { DOCKER_HOST: host } })).toBe(2)
+            expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{
+                code: 'CLI_USAGE_INVALID', target: 'DOCKER_HOST', message: expect.stringContaining('local Docker endpoint'),
+            }] })
+        }
     })
 
     it('opens the production reset session only from the interactive branch', async () => {
