@@ -2690,9 +2690,12 @@ async function prepareSurfaces(
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom }
     const surfaceSelftest = Object.freeze({ ...payload, manifestSha256: sha256(JSON.stringify(payload)) })
     const skillInventory = Object.freeze(surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
-        entry.kind === 'file' && entry.path.endsWith('/SKILL.md')).flatMap(entry => entry.harnesses.map(target =>
-        Object.freeze({ target, path: entry.path, sha256: entry.sha256 })))
-        .sort((left, right) => compareCodeUnits(`${left.target}\0${left.path}`, `${right.target}\0${right.path}`)))
+        entry.kind === 'file').flatMap(entry => entry.harnesses.flatMap(target => {
+        if (!SURFACE_TARGETS.includes(target as SurfaceTarget)) return []
+        const prefix = `${harnessFact(target as SurfaceTarget).outputs.skills}/`
+        if (!entry.path.startsWith(prefix) || !/^[^/]+\/SKILL\.md$/.test(entry.path.slice(prefix.length))) return []
+        return [Object.freeze({ target, path: entry.path, sha256: entry.sha256 })]
+    })).sort((left, right) => compareCodeUnits(`${left.target}\0${left.path}`, `${right.target}\0${right.path}`)))
     const installedSkillTargets = new Set(skillInventory.map(({ target }) => target))
     const installedSkillCosts = installedSkillInspection.costs.filter(({ target }) => installedSkillTargets.has(target))
     if (installedSkillCosts.length !== installedSkillTargets.size) {

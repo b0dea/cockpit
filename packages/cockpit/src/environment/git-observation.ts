@@ -275,9 +275,10 @@ interface ComparisonBinding extends GitBinding {
 }
 
 const issuedComparisonRefs = new WeakMap<object, ComparisonBinding>()
-const issuedComparisonUrls = new WeakMap<object, ComparisonBinding & { readonly remoteName: string }>()
+const issuedComparisonUrls = new WeakMap<object, ComparisonBinding & { readonly remoteName: string; readonly upstreamRef: string }>()
 const issuedComparisonRevalidations = new WeakMap<object, ComparisonBinding & {
     readonly remoteName: string
+    readonly upstreamRef: string
     readonly state: 'match' | 'mismatch'
 }>()
 declare const gitAncestryObservationBrand: unique symbol
@@ -384,11 +385,14 @@ export function createComparisonRemoteRefStep(input: {
     if (upstream === null || branch === '(detached)') {
         return comparisonUnavailable(`comparison upstream is unavailable for sibling ${input.sibling}`)
     }
+    if (git.evidence.adjacency !== 'aligned') {
+        return comparisonUnavailable(`comparison upstream is ${git.evidence.adjacency} for sibling ${input.sibling}`)
+    }
     const binding = Object.freeze({ ...git, sibling: input.sibling, expected: expected.identity, branch, revision, upstream })
     const step = comparisonStep({
         id: `git:${input.sibling}:comparison-ref`, binding, env: input.env, timeoutMs: input.timeoutMs,
         argv: [executable.canonicalPath, '-C', input.checkoutRoot, 'for-each-ref',
-            '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)',
+            '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
             '--count=1', '--', `refs/heads/${branch}`],
     })
     if (!step) return comparisonUnavailable(`comparison ref probe is unavailable for sibling ${input.sibling}`)
@@ -397,18 +401,19 @@ export function createComparisonRemoteRefStep(input: {
     return stage
 }
 
-function decodeComparisonRef(bytes: Buffer, binding: ComparisonBinding): string | undefined {
+function decodeComparisonRef(bytes: Buffer, binding: ComparisonBinding): Readonly<{ remoteName: string; upstreamRef: string }> | undefined {
     if (bytes.byteLength === 0 || bytes.byteLength > COMPARISON_OUTPUT_LIMIT) return undefined
     let value: string
     try { value = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { return undefined }
     const lines = value.replace(/\n$/, '').split(/\r?\n/)
     if (lines.length !== 1) return undefined
     const fields = lines[0].split('\0')
-    if (fields.length !== 4) return undefined
-    const [revision, ref, upstream, remoteName] = fields
+    if (fields.length !== 5) return undefined
+    const [revision, ref, upstream, remoteName, upstreamRef] = fields
     if (revision !== binding.revision || ref !== `refs/heads/${binding.branch}` || upstream !== binding.upstream
-        || !safeRemoteName(remoteName)) return undefined
-    return remoteName
+        || !safeRemoteName(remoteName) || !/^refs\/(?:heads|remotes)\/[^\x00-\x20\x7f]+$/.test(upstreamRef)
+        || Buffer.byteLength(upstreamRef) > 1_024) return undefined
+    return Object.freeze({ remoteName, upstreamRef })
 }
 
 export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outcome: ExecuteProbeOutcome): ComparisonRemoteUrlStage {
@@ -418,15 +423,16 @@ export function observeComparisonRemoteRef(stage: ComparisonRemoteRefStage, outc
     if (!authenticated || authenticated.kind !== 'complete') {
         return comparisonUnavailable(`comparison ref evidence is unavailable for sibling ${binding.sibling}`)
     }
-    const remoteName = decodeComparisonRef(authenticated.stdout, binding)
-    if (!remoteName) return comparisonUnavailable(`comparison upstream is unavailable for sibling ${binding.sibling}`)
+    const decoded = decodeComparisonRef(authenticated.stdout, binding)
+    if (!decoded) return comparisonUnavailable(`comparison upstream is unavailable for sibling ${binding.sibling}`)
+    const { remoteName, upstreamRef } = decoded
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-url`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
         argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'remote', 'get-url', '--', remoteName],
     })
     if (!step) return comparisonUnavailable(`comparison remote probe is unavailable for sibling ${binding.sibling}`, remoteName)
     const next = Object.freeze({ kind: 'probe' as const, step, remoteName })
-    issuedComparisonUrls.set(next, Object.freeze({ ...binding, remoteName }))
+    issuedComparisonUrls.set(next, Object.freeze({ ...binding, remoteName, upstreamRef }))
     return next
 }
 
@@ -455,8 +461,8 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
     const step = comparisonStep({
         id: `git:${binding.sibling}:comparison-revalidate`, binding, env: stage.step.env, timeoutMs: stage.step.timeoutMs,
         argv: [binding.executable.canonicalPath, '-C', binding.checkoutRoot, 'for-each-ref',
-            '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)',
-            '--count=1', '--', `refs/heads/${binding.branch}`],
+            '--format=%(objectname)%00%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream)',
+            '--', `refs/heads/${binding.branch}`, binding.upstreamRef],
     })
     if (!step) return comparisonUnavailable(`comparison revalidation probe is unavailable for sibling ${binding.sibling}`, binding.remoteName)
     const next = Object.freeze({ kind: 'probe' as const, step, remoteName: binding.remoteName })
@@ -473,8 +479,21 @@ export function observeComparisonRemoteRevalidation(
         return comparisonUnavailable('comparison revalidation evidence is unavailable or unauthenticated')
     }
     const authenticated = authenticatedExecutionOutcome(outcome, stage.step)
-    if (!authenticated || authenticated.kind !== 'complete'
-        || decodeComparisonRef(authenticated.stdout, binding) !== binding.remoteName) {
+    let stable = false
+    if (authenticated?.kind === 'complete' && authenticated.stdout.byteLength <= COMPARISON_OUTPUT_LIMIT) {
+        let raw: string
+        try { raw = new TextDecoder('utf-8', { fatal: true }).decode(authenticated.stdout) } catch {
+            return comparisonUnavailable(`comparison upstream changed while authenticating sibling ${binding.sibling}`, binding.remoteName)
+        }
+        const lines = raw.replace(/\n$/, '').split(/\r?\n/)
+        const branch = lines.filter(line => line.split('\0')[1] === `refs/heads/${binding.branch}`)
+        const upstream = lines.filter(line => line.split('\0')[1] === binding.upstreamRef)
+        const current = branch.length === 1 ? decodeComparisonRef(Buffer.from(branch[0]), binding) : undefined
+        stable = lines.length === 2 && upstream.length === 1
+            && upstream[0].split('\0').length === 5 && upstream[0].split('\0')[0] === binding.revision
+            && current?.remoteName === binding.remoteName && current.upstreamRef === binding.upstreamRef
+    }
+    if (!stable) {
         return comparisonUnavailable(`comparison upstream changed while authenticating sibling ${binding.sibling}`, binding.remoteName)
     }
     return binding.state === 'match'

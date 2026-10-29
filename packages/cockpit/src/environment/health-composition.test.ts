@@ -191,7 +191,7 @@ describe('production health adapter composition', () => {
         expect(changed.result.checks).toContainEqual(expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'unavailable' }))
     })
 
-    it('brings up a compose-first stack and checks current runtime identities without changing lifecycle state', async () => {
+    it.each(['config', 'lifecycle', 'lease'] as const)('checks a compose-first stack and rejects %s changes during comparison probes', async (authority) => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         await rm(join(candidate.checkout, COMPOSE_OWNERSHIP_FILE))
         const listener = createServer()
@@ -201,6 +201,8 @@ describe('production health adapter composition', () => {
         const port = address.port
         await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()))
         const config = (await readFile(candidate.configPath, 'utf8')).replace('61230', String(port))
+            .replace('dir = "api"', 'dir = "api"\nremote = "https://example.invalid/synthetic/api.git"')
+            .replace('acquire = "none"', 'acquire = "manual"')
         await writeFile(candidate.configPath, config)
         const image = `example.invalid/synthetic@sha256:${'a'.repeat(64)}`
         await writeFile(join(candidate.checkout, 'compose.yml'), `services:
@@ -216,6 +218,10 @@ describe('production health adapter composition', () => {
         const api = join(candidate.checkout, 'siblings/api')
         await run('git', ['init', '--quiet', api])
         await run('git', ['-C', api, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'fixture'])
+        await run('git', ['-C', api, 'remote', 'add', 'origin', 'https://example.invalid/synthetic/api.git'])
+        await run('git', ['-C', api, 'update-ref', 'refs/remotes/origin/main', 'HEAD'])
+        const branch = (await run('git', ['-C', api, 'branch', '--show-current'])).stdout.trim()
+        await run('git', ['-C', api, 'branch', '--set-upstream-to=origin/main', branch])
         const digest = createHash('sha256').update(config).digest('hex')
         const docker = join(candidate.root, 'docker')
         await writeFile(docker, `#!${process.execPath}
@@ -244,8 +250,14 @@ else process.exit(64)
         await run('git', ['-C', candidate.checkout, 'add', 'cockpit.toml', 'compose.yml', '.gitignore'])
         await run('git', ['-C', candidate.checkout, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'publish synthetic runtime'])
         let listening = false
+        let changeDuringComparison: (() => Promise<void>) | undefined
         const execute = vi.fn(async (step: Parameters<typeof executeProbe>[0]) => {
             const result = await executeProbe(step)
+            if (step.id === 'git:api:comparison-url' && changeDuringComparison) {
+                const change = changeDuringComparison
+                changeDuringComparison = undefined
+                await change()
+            }
             if (step.argv.includes('up') && !listening) {
                 await new Promise<void>(resolve => listener.listen(Number(step.env.APP_PORT ?? port), '127.0.0.1', resolve))
                 listening = true
@@ -272,6 +284,21 @@ else process.exit(64)
             expect(doctor, JSON.stringify(doctor)).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'pass' } })
             expect(await readFile(statePath, 'utf8')).toBe(before)
             expect(execute.mock.calls.some(([step]) => step.argv.includes('up') || step.argv.includes('stop'))).toBe(false)
+            const authorityPath = authority === 'config' ? candidate.configPath
+                : authority === 'lifecycle' ? statePath : candidate.namespace.paths.coordination(candidate.stack).path
+            const authorityBytes = await readFile(authorityPath)
+            let changed = false
+            changeDuringComparison = async () => {
+                await writeFile(authorityPath, authority === 'config' ? `${config}\n# changed during comparison\n` : '{}\n')
+                changed = true
+            }
+            try {
+                const raced = await runPreflight({ configPath: candidate.configPath }, adapters)
+                expect(changed).toBe(true)
+                expect(raced, JSON.stringify(raced)).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable' } })
+            } finally {
+                await writeFile(authorityPath, authorityBytes)
+            }
             await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()))
             listening = false
             const stopped = await runPreflight({ configPath: candidate.configPath }, adapters)

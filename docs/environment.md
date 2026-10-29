@@ -553,8 +553,9 @@ comparison; its evidence reports that absence. Once an upstream is selected, it 
 and aligned; a missing or diverged selected upstream blocks the gate.
 
 Surface health checks current publication against its ownership manifest and existing guide-line
-and skill caps. This proves generated files are current; native harness enforcement remains in the
-[capability matrix](capability-matrix.md). Missing or edited publication blocks health; run
+and built-in harness skill caps. Custom outputs and plugin bundle copies remain publication-checked;
+they do not imply a native standing-cost cap. This proves generated files are current; native
+harness enforcement remains in the [capability matrix](capability-matrix.md). Missing or edited publication blocks health; run
 `cockpit sync --config cockpit.toml`, then retry. Directory grants and registry authentication are
 required only when the current declarations select grants or registry probes. A runtime with no
 bind mounts passes an exact empty mount comparison; declared binds require exact current mounts.

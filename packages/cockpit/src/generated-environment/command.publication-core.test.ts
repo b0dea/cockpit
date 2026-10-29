@@ -86,7 +86,7 @@ describe('generated environment command', () => {
         expect(guideValue?.state === 'available' ? guideValue.value : 0)
             .toBe(rootGuide.region.bytes.trimEnd().split('\n').length)
         expect(surfaceObservations?.find(({ code }) => code === 'SKILL_BUDGET_UNAVAILABLE')).toMatchObject({
-            observed: { state: 'available', value: { collectionSha256: expect.stringMatching(/^[a-f0-9]{64}$/), costs: expect.arrayContaining([
+            observed: { state: 'available', value: { coreCollectionSha256: expect.stringMatching(/^[a-f0-9]{64}$/), costs: expect.arrayContaining([
                 expect.objectContaining({ metric: 'frontmatter_bytes', value: expect.any(Number), cap: expect.any(Number) }),
             ]) } },
         })

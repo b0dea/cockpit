@@ -4481,16 +4481,22 @@ async function evaluateApplicationHealth(
     const observations = produced.map((result) => result.status === 'fulfilled'
         ? result.value
         : Object.freeze([]) as readonly EnvironmentObservation[])
-    const refreshed = boundPreflightContext(await input.refreshPreflight(input.preflight), input.expectedPreflight)
-    if (!refreshed || refreshed.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
+    // Reject unauthenticated observations before comparison probes cross the process boundary.
+    const initial = boundPreflightContext(await input.refreshPreflight(input.preflight), input.expectedPreflight)
+    if (!initial || initial.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
         throw new TypeError('health preflight authority could not preserve its observation window')
     }
-    const preflight = aggregateObservations(observations, refreshed)
+    aggregateObservations(observations, initial)
     const comparisons: ComparisonRemoteEvaluation[] = []
     for (const comparisonInput of input.comparisons) {
         const result = await observeComparisonRemote(comparisonInput, adapters)
         comparisons.push(Object.freeze({ sibling: comparisonInput.sibling, result }))
     }
+    const refreshed = boundPreflightContext(await input.refreshPreflight(initial), input.expectedPreflight)
+    if (!refreshed || refreshed.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
+        throw new TypeError('health preflight authority could not preserve its observation window')
+    }
+    const preflight = aggregateObservations(observations, refreshed)
     const frozenComparisons = Object.freeze(comparisons)
     const observedVerdict = combinedVerdict(preflight.verdict, frozenComparisons)
     return Object.freeze({

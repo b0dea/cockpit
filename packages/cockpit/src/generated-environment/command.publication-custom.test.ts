@@ -13,6 +13,7 @@ import { CockpitConfig } from '../schema.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
     generatedApplicationProjection,
+    observeGeneratedApplicationSurfaces,
     type GeneratedStaleRemovalApprovalRequest,
 } from '../environment/generated-application.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
@@ -27,8 +28,8 @@ afterEach(cleanup)
 describe('generated environment command', () => {
 describe('public surface publication transaction', () => {
         it('confines custom check writes to scratch for a self-contained module', async () => {
-            const fixture = await surfaceConsumer('custom-read-only', { custom: customHarness('adapters/synthetic.mjs') })
-            const output = [{ path: 'custom/rules.md', bytes: 'custom/rules.md\nscratch verified\n' }]
+            const fixture = await surfaceConsumer('custom-read-only', { custom: customHarness('adapters/synthetic.mjs', 'renderRules', 'custom/alpha/SKILL.md') })
+            const output = [{ path: 'custom/alpha/SKILL.md', bytes: 'custom/alpha/SKILL.md\nscratch verified\n' }]
             const modulePath = join(fixture.root, await writeCustomModule(fixture.root, output))
             const original = await readFile(modulePath, 'utf8')
             await writeFile(modulePath, `import { writeFile, readFile } from 'node:fs/promises'
@@ -41,7 +42,18 @@ ${original.replace('  return {', `  await writeFile('scratch-proof', marker)
                 if (step.id.startsWith('custom-surface-')) steps.push(step)
                 return executeProbe(step)
             } }
-            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)).toMatchObject({ kind: 'complete' })
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath }, adapters)
+            expect(synced, JSON.stringify(synced)).toMatchObject({ kind: 'complete' })
+            if (synced.kind !== 'complete') throw new Error('custom publication unavailable')
+            const skills = observeGeneratedApplicationSurfaces(synced.result.application)
+                ?.find(row => row.code === 'SKILL_BUDGET_UNAVAILABLE')
+            expect(skills).toMatchObject({ observed: { state: 'available', value: {
+                inventory: expect.any(Array), costs: expect.any(Array),
+            } } })
+            expect(JSON.stringify(skills)).not.toContain('custom/alpha/SKILL.md')
+            expect(synced.result.application.surfaceSelftest.entries).toContainEqual(expect.objectContaining({
+                path: 'custom/alpha/SKILL.md', sha256: digest(output[0].bytes),
+            }))
             expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, dryRun: true }, adapters)).toMatchObject({ kind: 'complete' })
             expect(await checkGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
             expect(steps).toHaveLength(2)
@@ -212,6 +224,12 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
 
             const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
             expect(synced).toMatchObject({ kind: 'complete' })
+            if (synced.kind !== 'complete') throw new Error('plugin publication unavailable')
+            const skills = observeGeneratedApplicationSurfaces(synced.result.application)
+                ?.find(row => row.code === 'SKILL_BUDGET_UNAVAILABLE')
+            expect(skills).toMatchObject({ observed: { state: 'available', value: { inventory: expect.any(Array) } } })
+            expect(JSON.stringify(skills)).not.toContain(bundleRoot)
+            expect(synced.result.application.surfaceSelftest.entries).toContainEqual(expect.objectContaining({ path: skill }))
             expect(JSON.parse(await readFile(join(fixture.root, manifest), 'utf8'))).toEqual({
                 name: 'cockpit-surfaces',
                 description: 'Generated cockpit agent surfaces.',

@@ -347,8 +347,8 @@ describe('comparison remote identity evidence', () => {
         try {
             execFileSync('git', ['remote', 'add', 'origin', 'https://code.invalid/other/service.git'], { cwd: root })
             execFileSync('git', ['remote', 'add', 'upstream', 'ssh://git@code.invalid/team/service.git'], { cwd: root })
-            execFileSync('git', ['update-ref', 'refs/remotes/upstream/trunk', 'HEAD'], { cwd: root })
-            execFileSync('git', ['branch', '--set-upstream-to=upstream/trunk', 'main'], { cwd: root })
+            execFileSync('git', ['update-ref', 'refs/remotes/upstream/trunk-α', 'HEAD'], { cwd: root })
+            execFileSync('git', ['branch', '--set-upstream-to=upstream/trunk-α', 'main'], { cwd: root })
 
             expect(await compare({ root, executable, declaredRemote: 'https://CODE.INVALID:443/team/service.git' })).toEqual({
                 kind: 'complete', code: 'GIT_COMPARISON_REMOTE_MISMATCH', state: 'match', remoteName: 'upstream',
@@ -436,6 +436,52 @@ describe('comparison remote identity evidence', () => {
                 kind: 'unavailable', code: 'GIT_COMPARISON_REMOTE_MISMATCH',
                 reason: 'comparison upstream is unavailable for sibling service',
             })
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it.each(['ahead', 'behind', 'diverged'] as const)('refuses a selected matching remote with %s adjacency', async (adjacency) => {
+        const { root, executable } = await fixture()
+        try {
+            const git = (args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+            const base = git(['rev-parse', 'HEAD'])
+            const child = (message: string) => git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                'commit-tree', 'HEAD^{tree}', '-p', base, '-m', message])
+            const local = child('local')
+            const remote = child('remote')
+            git(['remote', 'add', 'origin', 'https://code.invalid/team/service.git'])
+            git(['update-ref', 'refs/heads/main', adjacency === 'behind' ? base : local])
+            git(['update-ref', 'refs/remotes/origin/main', adjacency === 'ahead' ? base : remote])
+            git(['branch', '--set-upstream-to=origin/main', 'main'])
+            expect(await status(root, executable)).toMatchObject({ evidence: { adjacency } })
+            expect(await compare({ root, executable, declaredRemote: 'https://code.invalid/team/service.git' }))
+                .toMatchObject({ kind: 'unavailable', code: 'GIT_COMPARISON_REMOTE_MISMATCH',
+                    reason: expect.stringContaining(adjacency) })
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('rejects an upstream tip changed after URL selection without changing local HEAD', async () => {
+        const { root, executable } = await fixture()
+        try {
+            const gitCommand = (args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+            const originalHead = gitCommand(['rev-parse', 'HEAD'])
+            const next = gitCommand(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                'commit-tree', 'HEAD^{tree}', '-p', originalHead, '-m', 'new upstream'])
+            gitCommand(['remote', 'add', 'origin', 'https://code.invalid/team/service.git'])
+            gitCommand(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+            gitCommand(['branch', '--set-upstream-to=origin/main', 'main'])
+            const git = await status(root, executable)
+            const started = createComparisonRemoteRefStep({ executable, checkoutRoot: root, env: {}, timeoutMs: 10_000,
+                stackId, checkoutId, source: root, sibling: 'service', acquire: 'manual',
+                declaredRemote: 'https://code.invalid/team/service.git', git })
+            if (started.kind !== 'probe') throw new Error('comparison ref unavailable')
+            const selected = observeComparisonRemoteRef(started, await executeProbe(started.step))
+            if (selected.kind !== 'probe') throw new Error('comparison URL unavailable')
+            const revalidation = observeComparisonRemoteUrl(selected, await executeProbe(selected.step))
+            if (revalidation.kind !== 'probe') throw new Error('comparison revalidation unavailable')
+            gitCommand(['update-ref', 'refs/remotes/origin/main', next])
+            expect(gitCommand(['rev-parse', 'HEAD'])).toBe(originalHead)
+            expect(observeComparisonRemoteRevalidation(revalidation, await executeProbe(revalidation.step)))
+                .toMatchObject({ kind: 'unavailable', reason: 'comparison upstream changed while authenticating sibling service' })
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
