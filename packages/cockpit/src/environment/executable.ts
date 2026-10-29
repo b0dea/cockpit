@@ -93,7 +93,7 @@ type SearchEnvironmentSelection = Readonly<{ kind: 'selected'; path: unknown; pa
     | Readonly<{ kind: 'ambiguous'; name: 'PATH' | 'PATHEXT' }>
     | Readonly<{ kind: 'unreadable' }>
 
-function selectSearchEnvironment(env: Readonly<Record<string, string>>, host: HostPolicy): SearchEnvironmentSelection {
+function selectSearchEnvironment(env: Readonly<Record<string, string | undefined>>, host: HostPolicy): SearchEnvironmentSelection {
     let pathName = 'PATH'
     let pathExtName: string | undefined
     if (host === 'windows') {
@@ -143,7 +143,11 @@ async function inspectWindowsCandidate(path: string, kind: 'native' | 'batch'): 
     }
 }
 
-async function selectWindowsCandidate(name: string, env: Readonly<Record<string, string>>, host: HostPolicy): Promise<WindowsCandidate> {
+async function selectWindowsCandidate(
+    name: string,
+    env: Readonly<Record<string, string | undefined>>,
+    host: HostPolicy,
+): Promise<WindowsCandidate> {
     if (Buffer.byteLength(name) > 4_096 || name.includes('\0')) {
         return { kind: 'invalid', reason: 'Windows executable name is invalid' }
     }
@@ -265,7 +269,7 @@ export async function resolveExecutablePath(path: string): Promise<ExecutableRes
     return value ? Object.freeze({ state: 'available', value }) : unavailable(`Executable identity is invalid: ${path}`)
 }
 
-export async function resolveExecutable(name: string, env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+export async function resolveExecutable(name: string, env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
     if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) return unavailable('Executable name is invalid')
     const host = currentHostPolicy()
     if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate(name, env, host), name)
@@ -289,7 +293,7 @@ export async function resolveExecutable(name: string, env: Readonly<Record<strin
     return unavailable(`Executable was not found in the supplied search path: ${name}`)
 }
 
-export async function resolveGitExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+export async function resolveGitExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
     const host = currentHostPolicy()
     if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate('git', env, host), 'git')
     const selected = selectSearchEnvironment(env, host)
@@ -327,7 +331,7 @@ export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolut
     return resolveExecutablePath(process.execPath)
 }
 
-export async function resolveDockerExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
+export async function resolveDockerExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
     const host = currentHostPolicy()
     if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate('docker', env, host), 'docker')
     const selected = selectSearchEnvironment(env, host)

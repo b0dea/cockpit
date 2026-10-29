@@ -1927,7 +1927,7 @@ async function projectExplicitNativeHooks(
         exists: true,
         bytes: policyBytes,
     })
-    const git = await resolveGitExecutable(Object.freeze({ PATH: process.env.PATH ?? '' }))
+    const git = await resolveGitExecutable(process.env)
     if (git.state !== 'available') return undefined
     const revisionStep = snapshotExecutionStep({
         id: 'native-hook-revisions',
@@ -3314,7 +3314,7 @@ async function composeTopologyDiagnostics(configPath: string, sourceSha256: stri
     if (declaredRuntime(config.environment) !== 'compose') return Object.freeze([])
     const env = { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST, DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
         DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY, DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH }
-    const [docker, node] = await Promise.all([resolveDockerExecutable({ PATH: env.PATH ?? '' }), nodeAuthority()])
+    const [docker, node] = await Promise.all([resolveDockerExecutable(process.env), nodeAuthority()])
     const observed = docker.state !== 'available' ? Object.freeze({ kind: 'unavailable' as const, reason: docker.reason })
         : !node ? Object.freeze({ kind: 'unavailable' as const, reason: 'the current Node executable could not be authenticated' })
             : await observeComposeTopology({ root: dirname(loaded.result.source.path), references: config.environment.compose_files,

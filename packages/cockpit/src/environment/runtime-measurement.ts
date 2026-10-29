@@ -155,7 +155,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
             'DOCKER_CONTEXT overrides the selected Docker context; select it with `docker context use <name>` and unset DOCKER_CONTEXT', 'DOCKER_CONTEXT')
     }
     const path = input.env.PATH ?? ''
-    const [docker, git] = await Promise.all([resolveDockerExecutable({ PATH: path }), resolveGitExecutable({ PATH: path })])
+    const [docker, git] = await Promise.all([resolveDockerExecutable(input.env), resolveGitExecutable(input.env)])
     if (docker.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, docker.reason, 'docker')
     if (git.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, git.reason, 'git')
     const cwd = dirname(configPath)

@@ -1,7 +1,7 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import type { ExecutionStep } from './contract.js'
@@ -69,20 +69,34 @@ function verdict(passed: boolean, runtimeExecutableSha256: string): RuntimeProbe
     }
 }
 
+async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+    if (descriptor === undefined) throw new Error('process.platform descriptor is unavailable')
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
+}
+
 describe('runtime measurement recording', () => {
     it('appends exactly one supported row for the identified runtime, which then admits it', async () => {
         const host = await measuredHost()
+        const executionEnvironments: Readonly<Record<string, string>>[] = []
         const probe: RuntimeMeasureProbe = async (request) => {
             // The selected context stays the probe's to resolve; only an operator's own DOCKER_HOST passes through.
             expect(request.env.DOCKER_HOST).toBeUndefined()
+            expect(request.env).toEqual({ PATH: host.env.PATH })
             expect(request.image).toEqual({ reference: IMAGE_ID, id: IMAGE_ID })
             return verdict(true, request.executable.sha256)
         }
 
         const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env: host.env },
-            { execute: executeProbe, probe })
+            { execute: async step => {
+                executionEnvironments.push(step.env)
+                return executeProbe(step)
+            }, probe })
 
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        expect(executionEnvironments.length).toBeGreaterThan(0)
+        for (const env of executionEnvironments) expect(env).toEqual({ PATH: host.env.PATH })
         const written = await readFile(host.configPath, 'utf8')
         expect(written.startsWith(CONFIG)).toBe(true)
         const loaded = await loadCockpitConfig(host.configPath)
@@ -226,5 +240,26 @@ describe('runtime measurement recording', () => {
             code: 'CONFIG_PARSE_INVALID', message: expect.stringContaining('{ runtime = "orbstack", compose_floor = "5.1.2"'),
         }] })
         expect(await readFile(host.configPath, 'utf8')).toBe(inline)
+    })
+
+    it.each([
+        ['PATH aliases', 'PATH', { PATH: String.raw`C:\Tools`, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
+        ['PATHEXT aliases', 'PATHEXT', { Path: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: '.EXE' }],
+        ['an undefined PATH alias', 'PATH', { PATH: undefined, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
+    ] as const)('preserves ambiguous Windows %s for refusal before dispatch', async (_label, name, env) => {
+        const host = await measuredHost()
+        const execute = vi.fn()
+        const probe = vi.fn()
+
+        const outcome = await withPlatform('win32', () => runRuntimeMeasure({
+            configPath: host.configPath, image: 'node:22-alpine', write: false, env,
+        }, { execute, probe }))
+
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{
+            code: 'RUNTIME_UNAVAILABLE', target: 'docker',
+            message: `Executable search environment has ambiguous ${name} spellings`,
+        }] })
+        expect(execute).not.toHaveBeenCalled()
+        expect(probe).not.toHaveBeenCalled()
     })
 })
