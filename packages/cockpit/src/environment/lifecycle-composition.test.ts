@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -15,7 +14,7 @@ import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage
 import { createHealthCommandAdapters } from './health-composition.js'
 import { readState } from './state.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
-import { observeDependencyLoad } from './installs.js'
+import { deriveCacheKey, observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection } from './generated-application.js'
 import { checkoutId } from './identity.js'
 import {
@@ -246,11 +245,14 @@ describe('production lifecycle adapter composition', () => {
             'dependency:worker:load',
             'dependency:worker:stamp',
         ]))
-        const lockfileSha256 = createHash('sha256').update('{"lockfileVersion":3}\n').digest('hex')
+        const lockfileBytes = Buffer.from('{"lockfileVersion":3}\n')
         const appCheckout = checkoutId({ checkoutPath: join(passed.candidate.checkout, 'app') })
         const workerCheckout = checkoutId({ checkoutPath: join(passed.candidate.checkout, 'worker') })
-        const appStamp = passed.context.namespace.paths.cache(appCheckout, lockfileSha256).path
-        const workerStamp = passed.context.namespace.paths.cache(workerCheckout, lockfileSha256).path
+        const project = `cockpit-${passed.generation.slice(0, 12)}`
+        const appIdentity = deriveCacheKey({ checkoutId: appCheckout, lockfileBytes, physicalVolume: `${project}_dependencies` })
+        const workerIdentity = deriveCacheKey({ checkoutId: workerCheckout, lockfileBytes, physicalVolume: `${project}_worker-dependencies` })
+        const appStamp = passed.context.namespace.paths.cache(appCheckout, appIdentity.cacheId).path
+        const workerStamp = passed.context.namespace.paths.cache(workerCheckout, workerIdentity.cacheId).path
         expect(appStamp).not.toBe(workerStamp)
         await expect(readFile(appStamp, 'utf8')).resolves.toContain(`"checkoutId":"${appCheckout}"`)
         await expect(readFile(workerStamp, 'utf8')).resolves.toContain(`"checkoutId":"${workerCheckout}"`)

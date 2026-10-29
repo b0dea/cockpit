@@ -281,12 +281,14 @@ describe('dependency cache identity', () => {
         await expect(observeDependencyInstall({ ...({ planned, options: { execute: executeProbe }, stackId: observation.stackId, observedAt: observation.observed.observedAt }) }))
             .resolves.toMatchObject({ observed: { state: 'failed' } })
     })
-    it('uses only canonical checkout identity and exact lockfile bytes', () => {
-        const first = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('one') })
-        const same = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('one') })
-        const changed = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('two') })
+    it('uses canonical checkout identity, exact lockfile bytes, and the physical volume', () => {
+        const first = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('one'), physicalVolume: 'synthetic_dependencies' })
+        const same = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('one'), physicalVolume: 'synthetic_dependencies' })
+        const changed = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('two'), physicalVolume: 'synthetic_dependencies' })
+        const changedVolume = deriveCacheKey({ checkoutId, lockfileBytes: Buffer.from('one'), physicalVolume: 'synthetic_other_dependencies' })
         expect(first).toEqual(same)
         expect(changed.cacheId).not.toBe(first.cacheId)
+        expect(changedVolume.cacheId).not.toBe(first.cacheId)
     })
 
     it('derives cache and lock authority without accepting caller paths', async () => {
@@ -298,7 +300,7 @@ describe('dependency cache identity', () => {
         } })
         expect(planned.kind).toBe('complete')
         if (planned.kind !== 'complete') return
-        expect(planned.stampPath).toBe(input.state.paths.cache(input.checkoutId, planned.identity.lockfileSha256).path)
+        expect(planned.stampPath).toBe(input.state.paths.cache(input.checkoutId, planned.identity.cacheId).path)
         expect(planned.lock?.path).toBe(input.state.paths.installLock(planned.identity.cacheId))
         expect(helperSteps.length).toBeGreaterThan(0)
         expect(helperSteps[0]?.argv).toHaveLength(3)
@@ -356,7 +358,7 @@ describe('dependency cache identity', () => {
             runtime: { variant: 'one', source: 'other-dependencies', volume: 'synthetic_other_dependencies' } as unknown as DependencyRuntimeBinding,
         }, { execute: executeProbe })
         expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.INSTALL_STALE_PATH })
-        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath) })
+        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath), physicalVolume: 'dependencies' })
         await expect(lstat(input.state.paths.installLock(identity.cacheId))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
@@ -424,7 +426,7 @@ describe('dependency cache identity', () => {
         const input = await fixture()
         const result = await planInstall(alter(input), { execute: executeProbe })
         expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.INSTALL_LOCK_INVALID })
-        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath) })
+        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath), physicalVolume: 'dependencies' })
         await expect(lstat(input.state.paths.installLock(identity.cacheId))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 })
@@ -512,7 +514,7 @@ describe('install serialization', () => {
 
     it('refuses ownerless residue and preserves its evidence path', async () => {
         let input = await fixture()
-        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath) })
+        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath), physicalVolume: 'dependencies' })
         const lockPath = input.state.paths.installLock(identity.cacheId)
         await mkdir(lockPath, { recursive: true })
         const result = await planInstall(input, { execute: executeProbe })
@@ -522,7 +524,7 @@ describe('install serialization', () => {
 
     it.each(['extra', 'invalid-utf8', 'symlink', 'hardlink'] as const)('refuses %s owner evidence without deleting it', async (kind) => {
         const input = await fixture()
-        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath) })
+        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath), physicalVolume: 'dependencies' })
         const lockPath = input.state.paths.installLock(identity.cacheId)
         const ownerPath = join(lockPath, 'owner.json')
         await mkdir(lockPath, { recursive: true })
@@ -553,7 +555,7 @@ describe('install serialization', () => {
         ['invalid token', '2020-01-01T00:00:00.000Z', 'token'],
     ])('rejects owner evidence with %s before asking for liveness', async (_label, acquiredAt, token) => {
         const input = await fixture()
-        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath) })
+        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath), physicalVolume: 'dependencies' })
         const lockPath = input.state.paths.installLock(identity.cacheId)
         await mkdir(lockPath, { recursive: true })
         await writeFile(join(lockPath, 'owner.json'), `${JSON.stringify({
@@ -567,7 +569,7 @@ describe('install serialization', () => {
 
     it('requires the exact canonical owner record bytes', async () => {
         const input = await fixture()
-        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath) })
+        const identity = deriveCacheKey({ checkoutId, lockfileBytes: await readFile(input.lockfilePath), physicalVolume: 'dependencies' })
         const lockPath = input.state.paths.installLock(identity.cacheId)
         await mkdir(lockPath, { recursive: true })
         await writeFile(join(lockPath, 'owner.json'), JSON.stringify({

@@ -528,7 +528,7 @@ export function createLifecycleCommandAdapters(
         if (!node) return reject('generated-dependencies', 'generated dependency executable authority is unavailable')
         const executables = await resolveInstallExecutables(node)
         if (executables.kind !== 'complete') {
-            return reject(executables.target, executables.message)
+            return reject(executables.target, executables.message, executables.code)
         }
         for (const sibling of dependencies) {
             const serviceMatches = generated.services.filter(({ sibling: owner }) => owner === sibling.slug)
@@ -598,7 +598,7 @@ export function createLifecycleCommandAdapters(
                     stderrLimitBytes: 65_536,
                 },
             }, { execute })
-            if (planned.kind !== 'complete') return reject(planned.target, planned.message)
+            if (planned.kind !== 'complete') return reject(planned.target, planned.message, planned.code)
             const observation = await observeDependencyInstall({
                 planned,
                 options: { execute },

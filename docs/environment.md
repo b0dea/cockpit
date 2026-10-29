@@ -382,8 +382,11 @@ Runtime admission binds the stack ID, configuration and source digests, generati
 project, and Compose files. A dependency result also binds the sibling checkout and lockfile,
 logical install policy, physical volume and target mount, container image, architecture, ABI,
 install receipt, load-probe receipt, and durable stamp. Each sibling keeps its own cache identity,
-even when two lockfiles contain the same bytes. A stamp by itself does not prove that the current
-runtime can load the installed dependencies. `DEPENDENCY_RUNTIME_STALE`,
+even when two lockfiles contain the same bytes. That identity also includes the authenticated
+physical volume: a new generated volume gets a fresh install, current same-mount load probe, and
+separate stamp. Changed compatibility within the same volume refuses instead of replacing its
+stamp. A stamp by itself does not prove that the current runtime can load the installed dependencies.
+`DEPENDENCY_RUNTIME_STALE`,
 `DEPENDENCY_RUNTIME_UNMOUNTED`, and `DEPENDENCY_RUNTIME_INCOMPATIBLE` identify which part of that
 binding failed; `DEPENDENCY_RUNTIME_UNAVAILABLE` means current authenticated evidence could not
 be obtained.

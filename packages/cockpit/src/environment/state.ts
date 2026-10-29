@@ -244,7 +244,7 @@ export interface StateNamespace {
         readonly dataOutcome: (stackId: StackId) => StateAddress
         readonly stateLock: string
         readonly installLock: (cacheId: string) => string
-        readonly cache: (checkoutId: CheckoutId, lockfileSha256: string) => StateAddress
+        readonly cache: (checkoutId: CheckoutId, cacheIdentitySha256: string) => StateAddress
         readonly baseline: (stackId: StackId) => StateAddress
     }
 }
@@ -506,7 +506,7 @@ function identitySegment(identity: string): string {
 }
 
 function checkedDigest(value: string): string {
-    if (!digest.test(value)) throw new TypeError('lockfile digest must be 64 lowercase hexadecimal characters')
+    if (!digest.test(value)) throw new TypeError('cache identity digest must be 64 lowercase hexadecimal characters')
     return value
 }
 
@@ -538,9 +538,9 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
         dataOutcome: (stackId) => stackAddress('data-outcome', stackId),
         stateLock: join(cockpitRoot, 'locks', 'state.lock'),
         installLock: (cacheId) => join(cockpitRoot, 'locks', 'install', `cache-${checkedSegment(cacheId, 'cache id')}.lock`),
-        cache: (checkoutId, lockfileSha256) => {
+        cache: (checkoutId, cacheIdentitySha256) => {
             const subjectId = checkedIdentity(checkoutId, checkoutIdentity, 'checkout id')
-            const checksum = checkedDigest(lockfileSha256)
+            const checksum = checkedDigest(cacheIdentitySha256)
             return address(
                 join(cockpitRoot, 'cache', identitySegment(subjectId), `${checksum}.json`),
                 root,

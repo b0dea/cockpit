@@ -8,8 +8,9 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
-import { decodeLifecycleRecord, runDoctor, runSession, runSleep, runUp } from './application.js'
+import { decodeLifecycleRecord, runDoctor, runDown, runSession, runSleep, runUp } from './application.js'
 import type { ExecutionStep } from './contract.js'
+import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
@@ -17,8 +18,8 @@ import { createReadCommandAdapters } from './read-composition.js'
 import { planLogs } from './logs.js'
 import { readState } from './state.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
-import { observeDependencyLoad } from './installs.js'
-import { generatedApplicationProjection } from './generated-application.js'
+import { deriveCacheKey, observeDependencyLoad } from './installs.js'
+import { generatedApplicationProjection, syncGeneratedEnvironment } from './generated-application.js'
 import { checkoutId, cockpitId } from './identity.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
@@ -87,6 +88,68 @@ afterEach(async () => {
 const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
 describe('production lifecycle adapter composition', () => {
+    it('installs and stamps each generated physical dependency volume after authenticated teardown', async () => {
+        const first = await runGeneratedScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = {
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000,
+        }
+        const dependencyCheckout = checkoutId({ checkoutPath: join(first.candidate.checkout, 'app') })
+        const lockfileBytes = await readFile(join(first.candidate.checkout, 'app/package-lock.json'))
+        const firstVolume = `cockpit-${first.generation.slice(0, 12)}_dependencies`
+        const firstIdentity = deriveCacheKey({ checkoutId: dependencyCheckout, lockfileBytes, physicalVolume: firstVolume })
+        const firstStamp = first.context.namespace.paths.cache(dependencyCheckout, firstIdentity.cacheId).path
+        const firstStampBytes = await readFile(firstStamp)
+        const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({
+            ...input, dockerContext: 'default',
+        }, executeProbe))
+        expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        const source = await readFile(input.configPath, 'utf8')
+        await writeFile(input.configPath, source.replace(
+            'reason = "Pinned synthetic runtime"', 'reason = "Pinned synthetic runtime after configuration review"'))
+        const synced = await syncGeneratedEnvironment({ configPath: input.configPath })
+        expect(synced, JSON.stringify(synced)).toMatchObject({ kind: 'complete', status: 0 })
+
+        const steps: ExecutionStep[] = []
+        const adapters = createLifecycleCommandAdapters(input, async step => {
+            steps.push(step)
+            return executeProbe(step)
+        })
+        const loaded = await adapters.load({ configPath: input.configPath })
+        expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        expect(generation).not.toBe(first.generation)
+        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        listenerProbeControl.enabled = true
+
+        const result = await runUp({ configPath: input.configPath }, adapters)
+
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(steps.filter(({ id }) => id === 'dependency-runtime:install:app')).toHaveLength(1)
+        expect(steps.filter(({ id }) => id === 'dependency-runtime:load:app')).toHaveLength(1)
+        const nextVolume = `cockpit-${generation.slice(0, 12)}_dependencies`
+        const nextIdentity = deriveCacheKey({ checkoutId: dependencyCheckout, lockfileBytes, physicalVolume: nextVolume })
+        const nextStamp = loaded.result.namespace.paths.cache(dependencyCheckout, nextIdentity.cacheId).path
+        expect(nextStamp).not.toBe(firstStamp)
+        await expect(readFile(nextStamp, 'utf8')).resolves.toContain(`"cacheId":"${nextIdentity.cacheId}"`)
+        await expect(readFile(firstStamp)).resolves.toEqual(firstStampBytes)
+
+        const secondDown = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({
+            ...input, dockerContext: 'default',
+        }, executeProbe))
+        expect(secondDown, JSON.stringify(secondDown)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        await writeFile(nextStamp, '{"unsafe":true}\n')
+        const refused = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
+        expect(refused, JSON.stringify(refused)).toMatchObject({
+            kind: 'refusal', status: 2,
+            diagnostics: [expect.objectContaining({ code: 'INSTALL_STALE_PATH', target: nextStamp })],
+        })
+        await expect(readFile(firstStamp)).resolves.toEqual(firstStampBytes)
+    })
+
     it('completes the generated lifecycle and log preparation from a nested configuration through real owner callbacks', async () => {
         const passed = await runGeneratedScenario({ layout: 'nested' })
         expect(passed.result, JSON.stringify(passed.result)).toMatchObject({

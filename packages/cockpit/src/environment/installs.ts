@@ -160,6 +160,7 @@ const HOLDER_ID = /^holder:[a-f0-9]{64}:session$/
 const SHA256 = /^[a-f0-9]{64}$/
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const VOLUME = /^[a-z0-9][a-z0-9_.-]*$/
+const PHYSICAL_VOLUME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const STAMP_NAME = '.cockpit-install.json'
 const LOCK_FORMAT = 'cockpit-install-lock/v1'
 const FILE_LIMIT = 536_870_912
@@ -258,10 +259,19 @@ interface Authority {
 const issuedPlans = new WeakMap<PlannedInstall, Authority>()
 const consumedPlans = new WeakSet<PlannedInstall>()
 
-export function deriveCacheKey(input: { readonly checkoutId: CheckoutId; readonly lockfileBytes: Uint8Array }): CacheIdentity {
+export function deriveCacheKey(input: {
+    readonly checkoutId: CheckoutId
+    readonly lockfileBytes: Uint8Array
+    readonly physicalVolume: string
+}): CacheIdentity {
     if (!CHECKOUT_ID.test(input.checkoutId)) throw new TypeError('checkout id is not canonical')
+    if (!PHYSICAL_VOLUME.test(input.physicalVolume)) throw new TypeError('physical volume is not canonical')
     const lockfileSha256 = createHash('sha256').update(input.lockfileBytes).digest('hex')
-    const cacheId = createHash('sha256').update(input.checkoutId).update('\0').update(lockfileSha256).digest('hex')
+    const cacheId = createHash('sha256')
+        .update(input.checkoutId).update('\0')
+        .update(lockfileSha256).update('\0')
+        .update(input.physicalVolume)
+        .digest('hex')
     return Object.freeze({ checkoutId: input.checkoutId, lockfileSha256, cacheId })
 }
 
@@ -543,7 +553,6 @@ export async function planInstall(input: PlanInstallInput, options: ExecutionOpt
     const lockfile = await stableFileSnapshot(request.lockfilePath)
     if (!lockfile) return refuse(ENVIRONMENT_CODES.INSTALL_STALE_PATH, 'install lockfile is not a stable independent regular file', request.lockfilePath)
     const lockfileBytes = lockfile.bytes
-    const identity = deriveCacheKey({ checkoutId: request.checkoutId, lockfileBytes })
     const dependency = createDependencyExecutionPlan({
         binding: request.runtime,
         install: request.policy.install,
@@ -558,13 +567,18 @@ export async function planInstall(input: PlanInstallInput, options: ExecutionOpt
     if (request.policy.volume !== dependency.compatibility.source) {
         return refuse(ENVIRONMENT_CODES.INSTALL_STALE_PATH, 'dependency policy volume does not match the admitted runtime source', request.policy.volume)
     }
+    const identity = deriveCacheKey({
+        checkoutId: request.checkoutId,
+        lockfileBytes,
+        physicalVolume: dependency.compatibility.volume,
+    })
     const fingerprint = policyFingerprint(request, dependency.compatibility)
     const expectedStamp = stampBytes(identity, request.policy.volume, fingerprint, dependency.compatibility)
     let lockPath: string
     let stampPath: string
     try {
         lockPath = request.state.paths.installLock(identity.cacheId)
-        stampPath = request.state.paths.cache(identity.checkoutId, identity.lockfileSha256).path
+        stampPath = request.state.paths.cache(identity.checkoutId, identity.cacheId).path
     } catch {
         return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'state namespace could not derive install authority', request.state.root)
     }
