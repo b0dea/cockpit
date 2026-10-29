@@ -623,17 +623,18 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
             const configPath = resolve(input.configPath)
             const sessionId = input.sessionId
-            const childEnv = Object.freeze({ ...concreteEnvironment(env), COCKPIT_SESSION_ID: sessionId })
+            const sessionEnvironment = Object.freeze({ ...env, COCKPIT_SESSION_ID: sessionId })
+            const childEnv = concreteEnvironment(sessionEnvironment)
             const adapters = createLifecycleCommandAdapters({
                 configPath,
-                env: childEnv,
+                env: sessionEnvironment,
                 sessionId,
                 timeoutMs: 10_000,
             }, executeProbe)
             return runSessionApplication({ ...input, configPath, cwd: process.cwd(), env: childEnv }, {
                 up: (request) => runUpApplication(request, adapters),
                 sleep: (request) => runSleepApplication(request, adapters),
-                resolveExecutable,
+                resolveExecutable: (name) => resolveExecutable(name, sessionEnvironment),
                 executeForeground: executeForegroundProcess,
                 ...(runtime.signal ? { signal: runtime.signal } : {}),
             })
