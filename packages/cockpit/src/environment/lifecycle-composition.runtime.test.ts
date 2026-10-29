@@ -13,6 +13,7 @@ import type { ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
+import { createReadCommandAdapters } from './read-composition.js'
 import { readState } from './state.js'
 import { readActiveStackInventory } from './claims.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
@@ -32,6 +33,33 @@ import { publishComposeOwnership } from '../../test-support/compose-ownership-fi
 
 const run = promisify(execFile)
 const roots: string[] = []
+
+const stableReadPlatformControl = vi.hoisted(() => ({
+    armed: false,
+    switched: false,
+    descriptor: undefined as PropertyDescriptor | undefined,
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    return { ...actual, open: async (...arguments_: Parameters<typeof actual.open>) => {
+        const handle = await actual.open(...arguments_)
+        if (stableReadPlatformControl.armed && !stableReadPlatformControl.switched) {
+            const descriptor = stableReadPlatformControl.descriptor
+            if (!descriptor?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+            Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' })
+            stableReadPlatformControl.switched = true
+        }
+        return handle
+    } }
+})
+
+async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+    if (!descriptor?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
+}
 
 const listenerProbeControl = vi.hoisted(() => ({
     enabled: false,
@@ -76,6 +104,12 @@ vi.mock('node:net', async (importOriginal) => {
 })
 
 afterEach(async () => {
+    if (stableReadPlatformControl.switched && stableReadPlatformControl.descriptor) {
+        Object.defineProperty(process, 'platform', stableReadPlatformControl.descriptor)
+    }
+    stableReadPlatformControl.armed = false
+    stableReadPlatformControl.switched = false
+    stableReadPlatformControl.descriptor = undefined
     expect(listenerProbeControl.active, 'listener probes must settle before fixture cleanup').toBe(0)
     listenerProbeControl.enabled = false
     listenerProbeControl.active = 0
@@ -531,9 +565,10 @@ describe('production lifecycle adapter composition', () => {
         const source = await readFile(candidate.configPath, 'utf8')
         await writeFile(configPath, source.replace('compose_files = ["compose.yml"]', 'compose_files = []'))
         const execute = vi.fn(executeProbe)
+        const path = `${candidate.root}:/usr/bin:/bin`
         const adapters = createLifecycleCommandAdapters({
             configPath,
-            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            env: { PATH: path, Path: path, PATHEXT: '.EXE', UNRELATED_VALUE: 'must-not-reach-children', HOME: candidate.home },
             sessionId: 'machine-only',
             timeoutMs: 5_000,
         }, execute)
@@ -549,8 +584,100 @@ describe('production lifecycle adapter composition', () => {
             expect.objectContaining({ code: 'MACHINE_DISK_BELOW_FLOOR', stackId: loaded.result.stackId }),
         ])
         const diskStep = execute.mock.calls.map(([step]) => step).find(({ id }) => id === 'runtime:measure:free-disk')
-        expect(diskStep).toMatchObject({ cwd: cockpitRoot, argv: expect.arrayContaining(['-Pk', cockpitRoot]) })
+        expect(diskStep).toMatchObject({ cwd: cockpitRoot, argv: [
+            process.execPath, '--input-type=module', '-e', expect.stringContaining('statfsSync'), cockpitRoot,
+        ] })
+        expect(execute.mock.calls.map(([step]) => step).filter(({ id }) => id.startsWith('runtime:measure:'))
+            .map(({ env }) => env)).toEqual([{ PATH: path }, { PATH: path }])
     })
+
+    it('refuses ambiguous Windows executable search names before runtime readiness dispatch', async () => {
+        const candidate = await fixture()
+        const path = `${candidate.root}:/usr/bin:/bin`
+        const execute = vi.fn(executeProbe)
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: path, Path: path, PATHEXT: '.EXE', HOME: candidate.home },
+            sessionId: 'runtime-search-inputs',
+            timeoutMs: 5_000,
+        }, execute)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind).toBe('complete')
+        if (loaded.kind !== 'complete') return
+
+        const diagnostics = await withPlatform('win32', () => adapters.withRuntimeReadiness<unknown>(
+            loaded.result,
+            async (value) => value,
+            undefined,
+            (value) => value,
+        ))
+
+        expect(diagnostics).toEqual([expect.objectContaining({
+            code: 'RUNTIME_UNAVAILABLE',
+            message: 'Executable search environment has ambiguous PATH spellings',
+            target: loaded.result.stackId,
+        })])
+        expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('refuses ambiguous Windows executable search names before machine-floor dispatch', async () => {
+        const candidate = await fixture()
+        const path = `${candidate.root}:/usr/bin:/bin`
+        const execute = vi.fn(executeProbe)
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: path, Path: path, PATHEXT: '.EXE', HOME: candidate.home },
+            sessionId: 'machine-search-inputs',
+            timeoutMs: 5_000,
+        }, execute)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        expect(loaded.kind).toBe('complete')
+        if (loaded.kind !== 'complete') return
+
+        const diagnostics = await withPlatform('win32', () => adapters.withMachineFloorReadiness<unknown>(
+            loaded.result,
+            async (value) => value,
+            (value) => value,
+        ))
+
+        expect(diagnostics).toEqual([expect.objectContaining({
+            code: 'RUNTIME_UNAVAILABLE',
+            message: 'Executable search environment has ambiguous PATH spellings',
+            target: loaded.result.stackId,
+        })])
+        expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('preserves ambiguous Windows search names through stable read revalidation', async () => {
+        const passed = await runGeneratedScenario({ layout: 'nested' })
+        expect(passed.result.kind, JSON.stringify(passed.result)).toBe('complete')
+        const path = `${passed.candidate.root}:/usr/bin:/bin`
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+        stableReadPlatformControl.descriptor = platform
+        const postFlipSteps: string[] = []
+        const execute = async (step: ExecutionStep, options?: { readonly signal?: AbortSignal }) => {
+            if (stableReadPlatformControl.switched) postFlipSteps.push(step.id)
+            const outcome = await executeProbe(step, options)
+            if (step.id === 'runtime:measure:free-disk') stableReadPlatformControl.armed = true
+            return outcome
+        }
+        try {
+            const reads = createReadCommandAdapters({
+                configPath: passed.candidate.configPath,
+                env: { PATH: path, Path: path, PATHEXT: '.EXE', HOME: passed.candidate.home },
+                sessionId: 'generated-production', timeoutMs: 5_000,
+            }, execute)
+
+            await expect(reads.logs.observe({ configPath: passed.candidate.configPath, service: 'app' }))
+                .rejects.toThrow('runtime executable authority changed: Executable search environment has ambiguous PATH spellings')
+            expect(stableReadPlatformControl.switched).toBe(true)
+            expect(postFlipSteps).toEqual([])
+        } finally {
+            if (stableReadPlatformControl.switched) Object.defineProperty(process, 'platform', platform)
+            stableReadPlatformControl.switched = false
+        }
+    }, 120_000)
 
     it('bounds concurrent listener probes while observing every candidate family', async () => {
         const candidate = await fixture(20)

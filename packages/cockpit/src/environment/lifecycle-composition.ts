@@ -834,7 +834,7 @@ export function createLifecycleCommandAdapters(
                 'environment.machine'))
         }
         const env = runtimeEnvironment(input.env)
-        const docker = await resolveDockerExecutable(env)
+        const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
         let probeAuthority: RuntimeMeasurementProbeAuthority | undefined
         if (input.runtimeMeasurementProbeAuthority !== undefined) {
@@ -1016,7 +1016,7 @@ export function createLifecycleCommandAdapters(
         if (!input || !binding?.machineFloorAuthority || !binding.config.environment.machine) return undefined
         const env = runtimeEnvironment(input.env)
         const [docker, disk] = await Promise.all([
-            resolveDockerExecutable(env),
+            resolveDockerExecutable(input.env),
             resolveDiskCapacityExecutable(),
         ])
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))

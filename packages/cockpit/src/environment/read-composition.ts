@@ -386,8 +386,11 @@ export function createReadCommandAdapters(
             profiles: generatedApplication.profiles, mounts: generatedApplication.mounts,
         })) throw new TypeError('generated lifecycle replay authority changed')
         const env = runtimeEnvironment(input.env)
-        const executable = await resolveDockerExecutable(env)
-        if (executable.state !== 'available' || executable.value.sha256 !== readiness.topology.executableSha256) {
+        const executable = await resolveDockerExecutable(input.env)
+        if (executable.state !== 'available') {
+            throw new TypeError(`runtime executable authority changed: ${executable.reason}`)
+        }
+        if (executable.value.sha256 !== readiness.topology.executableSha256) {
             throw new TypeError('runtime executable authority changed')
         }
         const confirmedComposeFiles = await composeArtifacts(checkoutRoot, references)
