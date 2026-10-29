@@ -869,6 +869,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                               "maximum": 65535
                             },
                             "host_ip": {
+                              "default": "127.0.0.1",
                               "type": "string",
                               "enum": [
                                 "127.0.0.1",
@@ -4644,6 +4645,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                           "maximum": 65535
                         },
                         "host_ip": {
+                          "default": "127.0.0.1",
                           "type": "string",
                           "enum": [
                             "127.0.0.1",
