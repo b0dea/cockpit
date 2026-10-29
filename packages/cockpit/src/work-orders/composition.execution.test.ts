@@ -1,19 +1,39 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ExecutionStep } from '../environment/contract.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../generated-environment/command.js'
 import { runWorkApplication } from './application.js'
 import { createConfiguredWorkApplicationComposition } from './composition.js'
 import { parseWorkOrder } from './contract.js'
 import { createWorkCompositionFixtureSupport, reidentifyWorkOrder } from '../../test-support/work-composition-fixture.js'
 
+const executionBoundary = vi.hoisted(() => ({ steps: [] as ExecutionStep[] }))
+vi.mock('../environment-exec/execute.js', async importOriginal => {
+    const actual = await importOriginal<typeof import('../environment-exec/execute.js')>()
+    return { ...actual, executeProbe: async (step: ExecutionStep) => {
+        executionBoundary.steps.push(step)
+        return actual.executeProbe(step)
+    } }
+})
+
 const roots: string[] = []
-afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))))
+afterEach(async () => {
+    executionBoundary.steps.length = 0
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
 
 const { configuredFixture } = createWorkCompositionFixtureSupport(roots)
+
+async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+    if (!descriptor) throw new Error('process.platform descriptor is unavailable')
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
+}
 
 describe('configured durable work application composition', () => {
     it('executes an authenticated symlinked configured tool with only the bounded configured PATH', async () => {
@@ -30,7 +50,30 @@ describe('configured durable work application composition', () => {
         const result = await runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical' }, configured.composition)
         if (result.kind !== 'complete') throw new Error(`configured symlinked tool refused: ${result.kind === 'refusal' ? result.reason : result.kind}`)
         expect(result).toMatchObject({ kind: 'complete', operation: 'test-run', value: { verdict: 'PASS', satisfiesGate: true } })
+        const execution = executionBoundary.steps.find(step => step.labels.owner === 'work-application' && step.argv0 === target)
+        expect(execution?.consumedFiles).toContainEqual(expect.objectContaining({
+            path: target,
+            maxBytes: (await lstat(target)).size,
+            executable: true,
+            executionMode: 'verified-path',
+        }))
     }, 120_000)
+
+    it('refuses Windows work execution with the native identity reason before tool dispatch', async () => {
+        const fixture = await configuredFixture()
+        const dispatched = join(fixture.root, '.windows-tool-dispatched')
+        await writeFile(join(fixture.root, 'tools/npm'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(dispatched)}, 'dispatched\\n')\n`)
+
+        const result = await withPlatform('win32', () => runWorkApplication({
+            operation: 'test-run', gate: 'focused', mode: 'canonical',
+        }, fixture.composition))
+
+        expect(result).toMatchObject({
+            kind: 'refusal',
+            reason: expect.stringContaining('Windows direct-path executable identity authority is unavailable'),
+        })
+        await expect(readFile(dispatched)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
 
     it('keeps non-browser work available without an active configured browser lease', async () => {
         const fixture = await configuredFixture()

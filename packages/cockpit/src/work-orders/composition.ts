@@ -230,7 +230,6 @@ interface TransactionRecord {
 const issuedCompositions = new WeakSet<object>()
 const MAX_DOCUMENT_BYTES = 8 * 1_048_576
 const MAX_PRIVATE_BYTES = 8 * 1_048_576
-const MAX_EXECUTABLE_BYTES = 536_870_912
 const MAX_REPOSITORY_PATHS = 4_096
 const MAX_REPOSITORY_FILE_BYTES = 8 * 1_048_576
 const MAX_REPOSITORY_AGGREGATE_BYTES = 64 * 1_048_576
@@ -473,21 +472,25 @@ async function durableFile(path: string, bytes: Uint8Array | string): Promise<vo
     if (!readback.equals(Buffer.from(bytes))) throw new Error('durable readback differs from staged bytes')
 }
 
-async function executable(directories: readonly string[], name: string): Promise<Readonly<{ path: string; sha256: string; bytes: number }> | undefined> {
+type WorkExecutable = Readonly<{ path: string; sha256: string; bytes: number }>
+type WorkExecutableResolution = Readonly<{ state: 'available'; value: WorkExecutable }>
+    | Readonly<{ state: 'unavailable'; reason: string }>
+
+async function executable(directories: readonly string[], name: string): Promise<WorkExecutableResolution> {
+    let unavailableReason = `Executable ${name} is unavailable`
     for (const directory of directories) {
         if (!isAbsolute(directory)) continue
         const candidate = join(directory, name)
-        try {
-            const resolved = await resolveExecutablePath(candidate)
-            if (resolved.state !== 'available') continue
-            const canonical = resolved.value.canonicalPath
-            const stat = lstatSync(canonical)
-            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_EXECUTABLE_BYTES
-                || (stat.mode & 0o111) === 0 || realpathSync(canonical) !== canonical) continue
-            return Object.freeze({ path: canonical, sha256: resolved.value.sha256, bytes: stat.size })
-        } catch { continue }
+        const resolved = await resolveExecutablePath(candidate)
+        if (resolved.state !== 'available') { unavailableReason = resolved.reason; continue }
+        let bytes: number
+        try { bytes = lstatSync(resolved.value.canonicalPath).size }
+        catch { unavailableReason = `Executable ${name} is unavailable`; continue }
+        return Object.freeze({ state: 'available' as const, value: Object.freeze({
+            path: resolved.value.canonicalPath, sha256: resolved.value.sha256, bytes,
+        }) })
     }
-    return undefined
+    return Object.freeze({ state: 'unavailable', reason: unavailableReason })
 }
 
 async function executeBounded(root: string, argv: readonly string[], directories = DEFAULT_EXECUTABLE_DIRECTORIES, timeoutMs = 30_000): Promise<VerificationObservation> {
@@ -500,8 +503,9 @@ async function executeBounded(root: string, argv: readonly string[], directories
         || Buffer.byteLength(directories.join(delimiter)) > 65_536) {
         return { kind: 'error', reason: 'Execution requires a bounded executable search path' }
     }
-    const resolved = await (isAbsolute(argv[0]) ? executable([dirname(argv[0])], basename(argv[0])) : executable(directories, argv[0]))
-    if (!resolved) return { kind: 'unavailable', reason: `Executable ${argv[0]} is unavailable` }
+    const resolution = await (isAbsolute(argv[0]) ? executable([dirname(argv[0])], basename(argv[0])) : executable(directories, argv[0]))
+    if (resolution.state !== 'available') return { kind: 'unavailable', reason: resolution.reason }
+    const resolved = resolution.value
     const consumedFile: ConsumedFile = Object.freeze({ path: resolved.path, sha256: resolved.sha256, maxBytes: resolved.bytes,
         argvIndexes: Object.freeze([0]), executable: true, executionMode: 'verified-path' })
     const filesystemCheck: FilesystemCheck = Object.freeze({ path: root, expected: 'directory' })
@@ -1642,9 +1646,15 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             } catch { return { kind: 'never-ran', reason: 'Authenticated evaluator source is unavailable' } }
         }
         const executableDirectories = evaluator.executableDirectories ?? authorities.executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES
-        const evaluatorExecutable = evaluator.executable ?? await executable(executableDirectories, 'codex')
-        const observedCli = evaluatorExecutable && await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
-        if (!evaluatorExecutable || !observedCli || JSON.stringify(observedCli) !== JSON.stringify(evaluatorExecutable)) {
+        const evaluatorResolution = evaluator.executable
+            ? Object.freeze({ state: 'available' as const, value: evaluator.executable })
+            : await executable(executableDirectories, 'codex')
+        if (evaluatorResolution.state !== 'available') {
+            return { kind: 'never-ran', reason: 'Installed native evaluator executable is unavailable or changed' }
+        }
+        const evaluatorExecutable = evaluatorResolution.value
+        const observedCli = await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
+        if (observedCli.state !== 'available' || JSON.stringify(observedCli.value) !== JSON.stringify(evaluatorExecutable)) {
             return { kind: 'never-ran', reason: 'Installed native evaluator executable is unavailable or changed' }
         }
         const cli = evaluatorExecutable
@@ -2139,15 +2149,18 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
         }
         const executableDirectories = executableDirectoriesFromEnvironment(captured.env)
         const resolveEvaluator = async (): Promise<EvaluatorAuthority> => {
-            const evaluatorExecutable = await executable(executableDirectories, 'codex')
-            if (!evaluatorExecutable) throw new Error('installed native evaluator executable is unavailable')
+            const evaluatorResolution = await executable(executableDirectories, 'codex')
+            if (evaluatorResolution.state !== 'available') throw new Error('installed native evaluator executable is unavailable')
+            const evaluatorExecutable = evaluatorResolution.value
             const version = await executeBounded(config.cockpitRoot, [evaluatorExecutable.path, '--version'], executableDirectories)
             const help = await executeBounded(config.cockpitRoot, [evaluatorExecutable.path, 'exec', '--help'], executableDirectories)
+            const observedEvaluator = await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))
             if (version.kind !== 'executed' || version.exitCode !== 0 || !version.stdout.trim()
                 || help.kind !== 'executed' || help.exitCode !== 0
                 || ['--ephemeral', '--ignore-user-config', '--sandbox', '--cd', '--json', '--output-schema', '--output-last-message']
                     .some(flag => !help.stdout.includes(flag))
-                || JSON.stringify(await executable([dirname(evaluatorExecutable.path)], basename(evaluatorExecutable.path))) !== JSON.stringify(evaluatorExecutable)) {
+                || observedEvaluator.state !== 'available'
+                || JSON.stringify(observedEvaluator.value) !== JSON.stringify(evaluatorExecutable)) {
                 throw new Error('installed native evaluator capability or executable identity is unavailable')
             }
             return Object.freeze({ path: authority.evaluator.path, bytes: authority.evaluator.bytes, sha256: authority.evaluator.sha256,
