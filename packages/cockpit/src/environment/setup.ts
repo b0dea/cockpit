@@ -61,7 +61,7 @@ const NONE_POSTURE_CODES = {
     repository: ENVIRONMENT_CODES.SETUP_NONE_REPOSITORY,
 } as const satisfies Record<Exclude<ObservedPathKind, 'symlink'>, string>
 
-export function gitEnvironment(ambient: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+export function gitEnvironment(ambient: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
     const approved: Record<string, string> = {}
     for (const name of APPROVED_GIT_ENVIRONMENT) {
         const value = ambient[name]

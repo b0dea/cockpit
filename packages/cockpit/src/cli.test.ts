@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import { win32 } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PassThrough, Readable } from 'node:stream'
@@ -950,6 +951,26 @@ describe('setup process contract', () => {
         return { io, output: () => ({ stdout, stderr }) }
     }
 
+    async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+        const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+        Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+        try { return await action() }
+        finally { Object.defineProperty(process, 'platform', descriptor) }
+    }
+
+    function setupRuntimeFixture() {
+        const testRoot = mkdtempSync(join(tmpdir(), 'cockpit-cli-setup-search-'))
+        scratch.push(testRoot)
+        const checkout = join(testRoot, 'checkout')
+        const home = join(testRoot, 'home')
+        mkdirSync(checkout)
+        mkdirSync(home)
+        execFileSync('git', ['init', '--quiet', checkout])
+        const configPath = join(checkout, 'cockpit.toml')
+        writeFileSync(configPath, renderSetupConfig())
+        return { testRoot, checkout, home, configPath }
+    }
+
     function setupOutcome(step?: ExecutionStep): Exclude<EnvironmentCommandOutcome<{
         source: { path: string; byteLength: number; sha256: string }
         siblings: readonly SetupResult[]
@@ -1012,6 +1033,114 @@ describe('setup process contract', () => {
         })
         expect(result.stderr).toBe('')
         expect(result.stdout).not.toContain(irrelevantSecret)
+    })
+
+    it('preserves case-insensitive setup search names until Windows Git classification refuses native authority', async () => {
+        const { testRoot, checkout, home, configPath } = setupRuntimeFixture()
+        const selected = win32.join(String.raw`C:\Tools`, 'git.EXE')
+        const originalDirectory = process.cwd()
+        const originalConfig = readFileSync(configPath)
+        process.chdir(testRoot)
+        const capture = captureIo()
+        try {
+            writeFileSync(selected, 'synthetic native candidate\n')
+            const status = await withPlatform('win32', () => runCli(
+                ['setup', '--config', configPath, '--json'],
+                capture.io,
+                {},
+                { env: { Path: String.raw`C:\Tools`, PathExt: '.EXE', HOME: home } },
+            ))
+            const response = JSON.parse(capture.output().stdout)
+
+            expect(status).toBe(2)
+            expect(response).toEqual({
+                invocation: jsonInvocation(capture.output().stdout, status, 'setup', resolve(configPath)),
+                result: null,
+                diagnostics: [{
+                    severity: 'error',
+                    code: 'SETUP_PATH_TYPE_INVALID',
+                    message: `Windows native executable identity authority is unavailable: ${selected}`,
+                    target: realpathSync(configPath),
+                }],
+            })
+            expect(readFileSync(configPath)).toEqual(originalConfig)
+            expect(existsSync(join(checkout, 'assets'))).toBe(false)
+            expect(response).not.toHaveProperty('evidence')
+            expect(capture.output().stderr).toBe('')
+        } finally {
+            process.chdir(originalDirectory)
+        }
+    })
+
+    it.each([
+        ['defined PATH aliases', 'PATH', { PATH: String.raw`C:\Tools`, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
+        ['undefined PATH alias', 'PATH', { PATH: undefined, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
+        ['defined PATHEXT aliases', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: '.EXE' }],
+        ['undefined PATHEXT alias', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: undefined, PathExt: '.EXE' }],
+    ] as const)('refuses %s before setup target mutation', async (_label, ambiguousName, searchEnvironment) => {
+        const { checkout, home, configPath } = setupRuntimeFixture()
+        const originalConfig = readFileSync(configPath)
+        const capture = captureIo()
+
+        const status = await withPlatform('win32', () => runCli(
+            ['setup', '--config', configPath, '--json'],
+            capture.io,
+            {},
+            { env: { ...searchEnvironment, HOME: home } },
+        ))
+        const response = JSON.parse(capture.output().stdout)
+
+        expect(status).toBe(2)
+        expect(response.diagnostics).toEqual([{
+            severity: 'error',
+            code: 'SETUP_PATH_TYPE_INVALID',
+            message: `Executable search environment has ambiguous ${ambiguousName} spellings`,
+            target: realpathSync(configPath),
+        }])
+        expect(readFileSync(configPath)).toEqual(originalConfig)
+        expect(existsSync(join(checkout, 'assets'))).toBe(false)
+        expect(response).not.toHaveProperty('evidence')
+        expect(capture.output().stderr).toBe('')
+    })
+
+    it('reads only relevant setup search aliases and reports an unreadable alias', async () => {
+        const { checkout, home, configPath } = setupRuntimeFixture()
+        const readPath = vi.fn(() => { throw new Error('relevant-search-canary') })
+        const readIrrelevant = vi.fn(() => { throw new Error('irrelevant-secret-canary') })
+        const environment = new Proxy({
+            Path: String.raw`C:\Tools`,
+            PathExt: '.EXE',
+            HOME: home,
+            COCKPIT_TEST_UNREADABLE: 'present',
+        } as Readonly<Record<string, string | undefined>>, {
+            get(target, property, receiver) {
+                if (property === 'Path') return readPath()
+                if (property === 'COCKPIT_TEST_UNREADABLE') return readIrrelevant()
+                return Reflect.get(target, property, receiver)
+            },
+        })
+        const capture = captureIo()
+
+        const status = await withPlatform('win32', () => runCli(
+            ['setup', '--config', configPath, '--json'],
+            capture.io,
+            {},
+            { env: environment },
+        ))
+        const response = JSON.parse(capture.output().stdout)
+
+        expect(status).toBe(2)
+        expect(response.diagnostics).toEqual([{
+            severity: 'error',
+            code: 'SETUP_PATH_TYPE_INVALID',
+            message: 'Executable search environment is not readable',
+            target: realpathSync(configPath),
+        }])
+        expect(readPath).toHaveBeenCalledOnce()
+        expect(readIrrelevant).not.toHaveBeenCalled()
+        expect(existsSync(join(checkout, 'assets'))).toBe(false)
+        expect(capture.output().stdout).not.toContain('canary')
+        expect(capture.output().stderr).toBe('')
     })
 
     it.each([

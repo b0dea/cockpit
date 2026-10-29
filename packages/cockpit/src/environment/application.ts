@@ -1089,7 +1089,7 @@ function lifecycleContextRefusal(
 export interface SetupCommandInput {
     configPath: string
     writeInstructionPointers?: boolean
-    env?: Readonly<Record<string, string>>
+    env?: Readonly<Record<string, string | undefined>>
     gitExecutable?: ResolvedExecutable
 }
 
@@ -1274,11 +1274,13 @@ function exactEnvironment(input: unknown): Readonly<Record<string, string>> | un
     return Object.freeze({ ...snapshot } as Readonly<Record<string, string>>)
 }
 
-export function setupEnvironment(input?: Readonly<Record<string, string>>): Readonly<Record<string, string>> | undefined {
+export function setupEnvironment(
+    input?: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> | undefined {
     let projected: Readonly<Record<string, string>>
     try {
         const source = input === undefined
-            ? process.env as Readonly<Record<string, string>>
+            ? process.env
             : input
         const git = gitEnvironment(source)
         const xdgStateHome = source.XDG_STATE_HOME

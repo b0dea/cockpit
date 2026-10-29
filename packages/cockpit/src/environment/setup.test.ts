@@ -292,6 +292,23 @@ describe('setup planner', () => {
     })
 
     it('builds a minimal Git environment and excludes ambient redirects and secrets', async () => {
+        const childEnvironment = gitEnvironment({
+            PATH: process.env.PATH ?? '',
+            HOME: '/tmp/synthetic-home',
+            Path: '/case-preserved-search-only',
+            PathExt: '.EXE',
+            PATHEXT: undefined,
+            UNRELATED_SECRET: 'secret-canary',
+        })
+        expect(childEnvironment).toEqual({
+            GIT_CONFIG_GLOBAL: '/dev/null',
+            GIT_CONFIG_NOSYSTEM: '1',
+            GIT_CONFIG_SYSTEM: '/dev/null',
+            GIT_TERMINAL_PROMPT: '0',
+            HOME: '/tmp/synthetic-home',
+            PATH: process.env.PATH ?? '',
+        })
+
         const outcome = await planSetup({
             siblingsRoot: root(),
             sibling: sibling(),
@@ -321,6 +338,7 @@ describe('setup planner', () => {
         })
         expect(JSON.stringify(outcome)).not.toContain('secret-canary')
         expect(JSON.stringify(outcome)).not.toContain('redirected.git')
+        expect(JSON.stringify(outcome)).not.toContain('case-preserved-search-only')
     })
 
     it('executes only the digest-bound Git bytes when PATH cannot resolve Git', async () => {

@@ -641,6 +641,28 @@ describe('setup application choreography', () => {
         expect(JSON.stringify(outcome)).not.toContain(irrelevantValue)
     })
 
+    it('projects only exact approved uppercase values into the setup child environment', () => {
+        const outcome = setupEnvironment({
+            PATH: '/synthetic/bin',
+            HOME: '/tmp/synthetic-home',
+            Path: '/case-preserved-search-only',
+            PathExt: '.EXE',
+            PATHEXT: undefined,
+            COCKPIT_TEST_SECRET: 'secret-canary',
+        })
+
+        expect(outcome).toEqual({
+            GIT_CONFIG_GLOBAL: '/dev/null',
+            GIT_CONFIG_NOSYSTEM: '1',
+            GIT_CONFIG_SYSTEM: '/dev/null',
+            GIT_TERMINAL_PROMPT: '0',
+            HOME: '/tmp/synthetic-home',
+            PATH: '/synthetic/bin',
+        })
+        expect(JSON.stringify(outcome)).not.toContain('case-preserved-search-only')
+        expect(JSON.stringify(outcome)).not.toContain('secret-canary')
+    })
+
     it('does not read an environment property outside the setup allow-list', async () => {
         const env = { HOME: '/tmp/synthetic-home' } as Record<string, string>
         const readIrrelevant = vi.fn(() => {

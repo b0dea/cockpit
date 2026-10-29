@@ -255,16 +255,17 @@ function setupRefusal(
 
 async function loadSetupContext(input: SetupCommandInput): Promise<EnvironmentCommandOutcome<SetupRunContext>> {
     let configPath: string
-    let suppliedEnvironment: Readonly<Record<string, string>> | undefined
+    let searchEnvironment: Readonly<Record<string, string | undefined>>
     let suppliedExecutable: unknown
     try {
         configPath = input.configPath
-        suppliedEnvironment = input.env
+        const suppliedEnvironment = input.env
+        searchEnvironment = suppliedEnvironment === undefined ? process.env : suppliedEnvironment
         suppliedExecutable = input.gitExecutable
     } catch {
         return setupRefusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, 'setup input is not readable', 'setup')
     }
-    const ambient = setupEnvironment(suppliedEnvironment)
+    const ambient = setupEnvironment(searchEnvironment)
     if (!ambient) {
         return setupRefusal(
             ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
@@ -276,7 +277,7 @@ async function loadSetupContext(input: SetupCommandInput): Promise<EnvironmentCo
     if (loaded.kind === 'refusal') return loaded
     const supplied = suppliedExecutable === undefined ? undefined : resolvedGitExecutable(suppliedExecutable)
     const executable = suppliedExecutable === undefined
-        ? await resolveGitExecutable(ambient)
+        ? await resolveGitExecutable(searchEnvironment)
         : supplied
             ? { state: 'available' as const, value: supplied }
             : { state: 'unavailable' as const, reason: 'Git executable identity is invalid' }
@@ -580,7 +581,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             preflight: ({ configPath }) => runPreflightApplication({ configPath }, healthAdapters(configPath)),
         }),
         'registry-resolve': registryResolveCommand,
-        setup: (input) => setupCommand(input, defaultSetupAdapters),
+        setup: (input) => setupCommand({ ...input, env }, defaultSetupAdapters),
         sync: async ({ authorizeStaleRemoval, adopt, ...input }) => {
             const initialized = await initializeTeamMetadata(input.configPath, { dryRun: input.dryRun })
             if (initialized.kind === 'refusal') return teamMetadataOutcome(initialized)
