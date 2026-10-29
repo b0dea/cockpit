@@ -2023,7 +2023,8 @@ fi
             InspectOutput: JSON.stringify(inspected),
         }])
         if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
-        const plan = createRuntimeServicePlan({ topology: result.admitted.topology, service: 'api' })
+        const topology = result.admitted.topology
+        const plan = createRuntimeServicePlan({ topology, service: 'api' })
         if (plan.kind !== 'planned') throw new Error(plan.reason)
         const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
         if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
@@ -2033,7 +2034,7 @@ fi
         if (service.kind !== 'complete') throw new Error(service.reason)
 
         expect(observeRuntimeMountMaterialization({
-            topology: result.admitted.topology,
+            topology,
             services: [service.evidence],
             observedAt: service.evidence.observedAt,
         })).toMatchObject({
@@ -2041,10 +2042,44 @@ fi
             observed: { state: 'available', value: true },
         })
         expect(observeRuntimeMountMaterialization({
-            topology: result.admitted.topology,
+            topology,
             services: [{ ...service.evidence } as never],
             observedAt: service.evidence.observedAt,
         })).toMatchObject({ observed: { state: 'unavailable' } })
+        expect(() => observeRuntimeMountMaterialization({
+            topology: { ...topology } as never,
+            services: [service.evidence],
+            observedAt: service.evidence.observedAt,
+        })).toThrow('runtime mount evidence is not authentic')
+    })
+
+    it('refuses an unexpected published UDP binding instead of omitting it from current runtime evidence', async () => {
+        const inspected = {
+            ID: containerId,
+            State: 'running',
+            Health: '',
+            Labels: {
+                'com.docker.compose.project': 'synthetic',
+                'com.docker.compose.service': 'api',
+                'dev.b0dea.cockpit.config-sha256': configSha256,
+                'dev.b0dea.cockpit.stack-id': stack,
+            },
+            Mounts: [],
+            Ports: { '5353/udp': [{ HostIp: '127.0.0.1', HostPort: '5353' }] },
+        }
+        const result = await topologyEvidence({ services: { api: {} } }, [{
+            ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
+            InspectOutput: JSON.stringify(inspected),
+        }])
+        if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
+        const plan = createRuntimeServicePlan({ topology: result.admitted.topology, service: 'api' })
+        if (plan.kind !== 'planned') throw new Error(plan.reason)
+        const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
+        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
+
+        const outcome = await executeProbe(healthPlan.step)
+        expect(outcome.kind).toBe('complete')
+        expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('unavailable')
     })
 
     it('issues port health only from the exact lease, publication, listeners, and fresh service reread', async () => {
@@ -2112,6 +2147,10 @@ fi
                 return service.evidence
             }
             const service = await observeService(false)
+            await expect(observeRuntimePortFamily({ topology: { ...topology } as never, services: [service],
+                namespace: namespace.value, listenerTimeoutMs: 1_000, revalidate: async () => [service] })).rejects.toThrow(
+                'runtime port evidence is not authentic',
+            )
             await expect(observeRuntimePortFamily({ topology, services: [service],
                 namespace: namespace.value, listenerTimeoutMs: 1_000,
                 revalidate: async () => [await observeService(true)] })).resolves.toMatchObject({

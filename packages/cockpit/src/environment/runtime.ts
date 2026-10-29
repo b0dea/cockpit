@@ -2623,7 +2623,7 @@ function inspectedPublishedPorts(value: unknown): readonly RuntimePublishedPort[
         if (!match || Number(match[1]) > 65_535) return undefined
         if (bindings === null) continue
         if (!Array.isArray(bindings) || bindings.length > MAX_TOPOLOGY_EDGES) return undefined
-        if (match[2] !== 'tcp') continue
+        if (match[2] !== 'tcp') return undefined
         for (const binding of bindings) {
             if (binding === null || typeof binding !== 'object' || Array.isArray(binding)) return undefined
             const row = binding as Record<string, unknown>
