@@ -86,15 +86,23 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
     return { root, checkout, home, configPath, composePath, dockerPath }
 }
 
-async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dataMode?: 'empty' | 'seeded' | 'restored' }> = {}) {
+async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dataMode?: 'empty' | 'seeded' | 'restored'; layout?: 'root' | 'nested' | 'worktree' }> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-lifecycle-generated-')))
     roots.push(root)
-    const checkout = join(root, 'checkout')
+    const mainCheckout = join(root, 'checkout')
+    const gitCheckout = options.layout === 'worktree' ? join(root, 'linked') : mainCheckout
+    const checkout = options.layout && options.layout !== 'root' ? join(gitCheckout, 'cockpit') : gitCheckout
     const home = join(root, 'home')
-    await Promise.all([mkdir(checkout), mkdir(home)])
+    await Promise.all([mkdir(mainCheckout), mkdir(home)])
+    await run('git', ['init', '--quiet', mainCheckout])
+    if (options.layout === 'worktree') {
+        await run('git', ['-C', mainCheckout, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.invalid',
+            'commit', '--quiet', '--allow-empty', '-m', 'Initialize synthetic checkout'])
+        await run('git', ['-C', mainCheckout, 'worktree', 'add', '--quiet', '--detach', gitCheckout])
+    }
+    await mkdir(checkout, { recursive: true })
     await Promise.all([mkdir(join(checkout, 'fixtures')), mkdir(join(checkout, 'app')),
         ...(options.secondSibling ? [mkdir(join(checkout, 'worker'))] : [])])
-    await run('git', ['init', '--quiet', checkout])
     let base = (await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8'))
         .replace('compose_file = "compose.generated.yml"', 'compose_file = "generated/compose.yml"')
         .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
@@ -214,7 +222,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
         '',
     ].join('\n'), { mode: 0o700 })
     await chmod(dockerPath, 0o700)
-    return { root, checkout, home, configPath, dockerPath }
+    return { root, checkout, mainCheckout, gitCheckout, home, configPath, dockerPath }
 }
 
 async function configureGeneratedDocker(
@@ -401,7 +409,7 @@ exit 64
     return { containerId }
 }
 
-async function runGeneratedScenario(options: Readonly<{ portOffset?: number; failNeedle?: string; dependencyLoadOnly?: boolean; secondSibling?: boolean; forgedProgress?: boolean; failedVendorEvidence?: boolean; dataMode?: 'empty' | 'seeded' | 'restored' }> = {}) {
+async function runGeneratedScenario(options: Readonly<{ portOffset?: number; failNeedle?: string; dependencyLoadOnly?: boolean; secondSibling?: boolean; forgedProgress?: boolean; failedVendorEvidence?: boolean; dataMode?: 'empty' | 'seeded' | 'restored'; layout?: 'root' | 'nested' | 'worktree' }> = {}) {
     const candidate = await generatedFixture(options)
     const steps: ExecutionStep[] = []
     const adapters = createLifecycleCommandAdapters({

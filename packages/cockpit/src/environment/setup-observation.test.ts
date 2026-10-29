@@ -14,6 +14,8 @@ import {
     observeEnvironmentIgnore,
     observeSetupPath,
     observeSetupCheckout,
+    observeGeneratedCheckoutIdentity,
+    revalidateGeneratedCheckoutIdentity,
     withSetupCheckoutProjection,
     type SetupCheckoutProjection,
 } from './setup-observation.js'
@@ -617,6 +619,22 @@ describe('setup checkout observation', () => {
                 checkoutId: checkoutId({ checkoutPath: current }),
                 observedAt: input.observedAt,
             })
+            const generated = await observeGeneratedCheckoutIdentity({
+                source: input.source, cockpitName: input.cockpitName, env: input.env,
+            })
+            expect(generated).toMatchObject({ state: 'available', kind: 'checkout',
+                mainCheckoutPath: repository.main, currentCheckoutPath: current,
+                cockpitId: evidence?.cockpitId, checkoutId: evidence?.checkoutId })
+            if (generated.state !== 'available') throw new Error(generated.reason)
+            expect(await revalidateGeneratedCheckoutIdentity({ ...generated })).toBe(false)
+            await expect(withSetupCheckoutProjection(generated, {
+                source: input.source, cockpitName: input.cockpitName, evaluatedAt: Date.parse(input.observedAt),
+            }, consumeSetupCheckoutProjection)).resolves.toBeUndefined()
+            await writeFile(join(current, 'published-instructions.md'), 'Synthetic generated instructions.\n')
+            expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(true)
+            const gitConfig = join(repository.main, '.git/config')
+            await writeFile(gitConfig, `${await readFile(gitConfig, 'utf8')}\n# changed administrative authority\n`)
+            expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(false)
         }
     })
 
@@ -632,6 +650,9 @@ describe('setup checkout observation', () => {
             currentCheckoutPath: repository.main,
             mainCheckoutPath: repository.main,
         })
+        await expect(observeGeneratedCheckoutIdentity({ source: mainInput.source, cockpitName: mainInput.cockpitName, env: mainInput.env }))
+            .resolves.toMatchObject({ state: 'available', kind: 'checkout',
+                currentCheckoutPath: repository.main, mainCheckoutPath: repository.main })
 
         const linked = join(repository.root, 'linked')
         await run('git', ['-C', repository.main, 'worktree', 'add', '--quiet', '--detach', linked])
@@ -640,6 +661,32 @@ describe('setup checkout observation', () => {
             state: 'failed',
             code: 'SETUP_PATH_TYPE_INVALID',
         })
+        await expect(observeGeneratedCheckoutIdentity({ source: linkedInput.source, cockpitName: linkedInput.cockpitName, env: linkedInput.env }))
+            .resolves.toMatchObject({ state: 'failed', code: 'SETUP_PATH_TYPE_INVALID' })
+    })
+
+    it.each(['backwards', 'expired', 'refreshed'] as const)('validates %s publication time after asynchronous identity validation', async (clockChange) => {
+        const repository = await committedRepository()
+        const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))
+        const bin = join(repository.root, 'bin')
+        await mkdir(bin)
+        const git = join(bin, 'git')
+        await symlink(input.gitExecutable.canonicalPath, git)
+        const generated = await observeGeneratedCheckoutIdentity({
+            source: input.source, cockpitName: input.cockpitName, env: { PATH: bin },
+        })
+        if (generated.state !== 'available') throw new Error(generated.reason)
+        const now = Date.now()
+        vi.useFakeTimers({ toFake: ['Date'] })
+        try {
+            vi.setSystemTime(now)
+            const pending = revalidateGeneratedCheckoutIdentity(generated)
+            vi.setSystemTime(now + (clockChange === 'backwards' ? -60_001 : 60_001))
+            if (clockChange === 'expired') await rename(git, join(bin, 'git-held'))
+            expect(await pending).toBe(clockChange === 'refreshed')
+        } finally {
+            vi.useRealTimers()
+        }
     })
 
     it('rejects copied, replayed, stale, mismatched, aliased, and replaced authority', async () => {
@@ -661,12 +708,18 @@ describe('setup checkout observation', () => {
         await expect(withSetupCheckoutProjection(mismatch, { ...context, cockpitName: 'other' }, () => 'used'))
             .resolves.toBeUndefined()
 
+        const generated = await observeGeneratedCheckoutIdentity({ source: input.source, cockpitName: input.cockpitName, env: input.env })
+        if (generated.state !== 'available') throw new Error(generated.reason)
         const now = Date.now()
         vi.useFakeTimers()
         vi.setSystemTime(now)
         await expect(observeSetupCheckout(await checkoutAuthority(configPath, new Date(now - 60_001).toISOString())))
             .resolves.toMatchObject({ state: 'failed' })
+        vi.setSystemTime(now - 60_001)
+        expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(false)
         vi.useRealTimers()
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(Number.NaN)
+        try { expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(false) } finally { clock.mockRestore() }
 
         const alias = join(repository.root, 'alias.toml')
         await symlink(configPath, alias)

@@ -88,7 +88,13 @@ The directory that holds <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.tom
 generated paths, `cockpit.siblings_root` and lifecycle commands all resolve from here, including
 when the configuration sits inside a Git checkout. This keeps sibling discovery and Compose
 paths aligned with the configuration you selected. Use `cockpit setup --config <path>` to set up
-that configuration's siblings. Git checkout identity still comes from its enclosing repository.
+that configuration's siblings.
+
+Runtime cockpit identity comes from the main Git checkout, and checkout identity comes from the
+current Git checkout, so linked worktrees share cockpit identity while keeping their own checkout
+identity. Generated files and relative configuration paths still belong to the configuration
+directory. Use `cockpit sync --config <path>` to publish there. A standalone directory can publish
+before Git exists; setup and lifecycle operations still require an authenticated Git checkout.
 
 ## Where the cockpit lives
 

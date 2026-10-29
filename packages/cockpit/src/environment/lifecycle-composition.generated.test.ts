@@ -13,11 +13,14 @@ import type { ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
+import { createReadCommandAdapters } from './read-composition.js'
+import { planLogs } from './logs.js'
 import { readState } from './state.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection } from './generated-application.js'
-import { checkoutId } from './identity.js'
+import { checkoutId, cockpitId } from './identity.js'
+import { projectGeneratedComposeRuntimeIdentity } from './generated-render.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
     observeDockerRuntime,
@@ -85,8 +88,8 @@ afterEach(async () => {
 const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
 describe('production lifecycle adapter composition', () => {
-    it('completes the generated lifecycle through real owner callbacks', async () => {
-        const passed = await runGeneratedScenario()
+    it('completes the generated lifecycle and log preparation from a nested configuration through real owner callbacks', async () => {
+        const passed = await runGeneratedScenario({ layout: 'nested' })
         expect(passed.result, JSON.stringify(passed.result)).toMatchObject({
             kind: 'complete',
             status: 0,
@@ -136,6 +139,15 @@ describe('production lifecycle adapter composition', () => {
             expect.objectContaining({ owner: 'environment-data-plane' }),
             expect.objectContaining({ owner: 'external-dependency-boundary' }),
         ]))
+        const reads = createReadCommandAdapters({
+            configPath: passed.candidate.configPath,
+            env: { PATH: `${passed.candidate.root}:/usr/bin:/bin`, HOME: passed.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000,
+        }, executeProbe)
+        const logs = await reads.logs.observe({ configPath: passed.candidate.configPath, service: 'app' })
+        expect(logs.request.stackId).toBe(passed.context.stackId)
+        expect(logs.request.cwd).toBe(passed.candidate.checkout)
+        expect(planLogs({ ...logs.request, since: '5m', tail: 20, follow: false }, logs.generatedComposeAuthority)).toMatchObject({ kind: 'planned' })
     }, 120_000)
 
     it.each(['bind', 'environment-file', 'build-context', 'default-dockerfile', 'explicit-dockerfile'] as const)(
@@ -290,8 +302,8 @@ describe('production lifecycle adapter composition', () => {
         expect(failed.steps.filter(({ id }) => id === 'external:messages:route')).toHaveLength(routeStepsBeforeReplay + 1)
     })
 
-    it('synchronizes and replays the exact generated application for runtime readiness', async () => {
-        const candidate = await generatedFixture()
+    it.each(['root', 'nested', 'worktree'] as const)('synchronizes and replays the exact generated application for runtime readiness in a %s configuration', async layout => {
+        const candidate = await generatedFixture({ layout })
         const steps: ExecutionStep[] = []
         const executions: Array<{ id: string; kind: string; code?: string }> = []
         const adapters = createLifecycleCommandAdapters({
@@ -312,10 +324,14 @@ describe('production lifecycle adapter composition', () => {
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
+        expect(loaded.result.cockpitId).toBe(cockpitId({ name: 'generated-environment', mainCheckoutPath: candidate.mainCheckout }))
+        expect(loaded.result.checkoutId).toBe(checkoutId({ checkoutPath: candidate.gitCheckout }))
         const application = await adapters.withAcquiredPorts(loaded.result,
             async ({ projection }) => adapters.prepareGeneratedEnvironment(loaded.result, projection))
         expect(generatedApplicationProjection(application)).toBe(application)
         if (!application) return
+        expect(application.generatedComposeAuthority && projectGeneratedComposeRuntimeIdentity(application.generatedComposeAuthority))
+            .toEqual({ cockpitId: loaded.result.cockpitId, stackId: loaded.result.stackId })
         expect(application).toMatchObject({ profiles: ['application'], generation: expect.stringMatching(/^[a-f0-9]{64}$/) })
         const project = `cockpit-${application.generation.slice(0, 12)}`
         await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({

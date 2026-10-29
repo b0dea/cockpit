@@ -18,7 +18,7 @@ import {
 } from './contract.js'
 import type { SetupObservation, SetupPathEvidence } from './setup.js'
 import { gitEnvironment } from './setup.js'
-import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { resolveGitExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 import { cockpitId as deriveCockpitId } from './identity.js'
 
@@ -30,6 +30,8 @@ export const mechanism = {
         'observeSetupCheckout',
         'withSetupCheckoutProjection',
         'consumeSetupCheckoutProjection',
+        'observeGeneratedCheckoutIdentity',
+        'revalidateGeneratedCheckoutIdentity',
         'observeEnvironmentIgnore',
     ],
 } as const
@@ -594,7 +596,7 @@ interface SetupCheckoutInput {
     readonly gitExecutable: ResolvedExecutable
 }
 
-function setupCheckoutFailure(reason: string): SetupCheckoutObservation {
+function setupCheckoutFailure(reason: string): Extract<SetupCheckoutObservation, { state: 'failed' }> {
     return Object.freeze({
         state: 'failed',
         producer: mechanism.id,
@@ -1135,18 +1137,7 @@ export async function withSetupCheckoutProjection<T>(
         || !sameSource(binding.source, context.source) || binding.cockpitName !== context.cockpitName
         || context.evaluatedAt !== Date.parse(binding.observedAt) || context.evaluatedAt > now
         || now > Date.parse(binding.validThrough)) return undefined
-    const source = await stableFile(binding.source.path)
-    if (!source || !sameFileIdentity(source.identity, binding.sourceIdentity)
-        || source.byteLength !== binding.source.byteLength || source.sha256 !== binding.source.sha256) return undefined
-    for (const [path, identity] of Object.entries(binding.directoryIdentities)) {
-        const current = await stableDirectory(path)
-        if (!current || !sameDirectoryIdentity(current.identity, identity)) return undefined
-    }
-    for (const [path, identity] of Object.entries(binding.fileIdentities)) {
-        const current = await stableFile(path)
-        if (!current || !sameFileIdentity(current.identity, identity.identity)
-            || current.byteLength !== identity.byteLength || current.sha256 !== identity.sha256) return undefined
-    }
+    if (!await checkoutBindingCurrent(binding)) return undefined
     const consumed: ConsumedSetupCheckoutObservation = Object.freeze({
         source: binding.source,
         cockpitName: binding.cockpitName,
@@ -1171,6 +1162,25 @@ export async function withSetupCheckoutProjection<T>(
     }
 }
 
+async function checkoutBindingCurrent(binding: SetupCheckoutBinding, publication = false): Promise<boolean> {
+    const source = await stableFile(binding.source.path)
+    if (!source || !sameFileIdentity(source.identity, binding.sourceIdentity)
+        || source.byteLength !== binding.source.byteLength || source.sha256 !== binding.source.sha256) return false
+    for (const [path, identity] of Object.entries(binding.directoryIdentities)) {
+        const current = await stableDirectory(path)
+        // Publishing files changes checkout directory timestamps, but never its inode or Git administration.
+        const matches = current && (publication && (path === binding.currentCheckoutPath || path === binding.mainCheckoutPath)
+            ? sameDirectoryNode(current.identity, identity) : sameDirectoryIdentity(current.identity, identity))
+        if (!matches) return false
+    }
+    for (const [path, identity] of Object.entries(binding.fileIdentities)) {
+        const current = await stableFile(path)
+        if (!current || !sameFileIdentity(current.identity, identity.identity)
+            || current.byteLength !== identity.byteLength || current.sha256 !== identity.sha256) return false
+    }
+    return true
+}
+
 export function consumeSetupCheckoutProjection(
     projection: SetupCheckoutProjection,
 ): ConsumedSetupCheckoutObservation | undefined {
@@ -1183,6 +1193,152 @@ export function consumeSetupCheckoutProjection(
     } catch {
         return undefined
     }
+}
+
+export interface GeneratedCheckoutIdentity {
+    readonly state: 'available'
+    readonly kind: 'checkout' | 'standalone'
+    readonly cockpitId: CockpitId
+    readonly checkoutId: CheckoutId
+    readonly currentCheckoutPath: string
+    readonly mainCheckoutPath: string
+}
+
+interface GeneratedCheckoutBinding {
+    readonly source: SourceProvenance
+    readonly sourceIdentity: FileIdentity
+    readonly cockpitName: string
+    readonly env: Readonly<Record<string, string>>
+    readonly directories: ReadonlyMap<string, DirectoryIdentity>
+    readonly absentGitEntries: readonly string[]
+    readonly checkout?: SetupCheckoutBinding
+    readonly observedAt: number
+}
+
+const issuedGeneratedCheckoutIdentities = new WeakMap<object, GeneratedCheckoutBinding>()
+
+function sameDirectoryNode(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
+    return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
+}
+
+async function pathAbsent(path: string): Promise<boolean> {
+    try { await lstat(path); return false } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'ENOENT'
+    }
+}
+
+export async function observeGeneratedCheckoutIdentity(input: {
+    readonly source: SourceProvenance
+    readonly cockpitName: string
+    readonly env: Readonly<Record<string, string>>
+}): Promise<GeneratedCheckoutIdentity | Extract<SetupCheckoutObservation, { state: 'failed' }>> {
+    const captured = snapshotJson(input)
+    const value = captured && typeof captured === 'object' && !Array.isArray(captured)
+        ? captured as Record<string, unknown> : undefined
+    if (!value || Object.keys(value).sort().join('\0') !== ['cockpitName', 'env', 'source'].join('\0')
+        || !validSource(value.source) || typeof value.cockpitName !== 'string' || !COCKPIT_NAME.test(value.cockpitName)
+        || !value.env || typeof value.env !== 'object' || Array.isArray(value.env)
+        || Object.entries(value.env).some(([name, entry]) => !name || /[\0=]/.test(name) || typeof entry !== 'string' || entry.includes('\0'))) {
+        return setupCheckoutFailure('generated checkout identity input is malformed')
+    }
+    const source = value.source
+    const sourceFile = await stableFile(source.path)
+    if (!sourceFile || sourceFile.sha256 !== source.sha256 || sourceFile.byteLength !== source.byteLength) {
+        return setupCheckoutFailure('generated checkout configuration source is unavailable or changed')
+    }
+    const root = dirname(source.path)
+    const directories = new Map<string, DirectoryIdentity>()
+    const absentGitEntries: string[] = []
+    let candidate = root
+    let hasCheckout = false
+    for (;;) {
+        if (directories.size >= 256) return setupCheckoutFailure('generated checkout ancestor discovery exceeds its bound')
+        const directory = await stableDirectory(candidate)
+        if (!directory) return setupCheckoutFailure('generated checkout ancestor cannot be authenticated')
+        directories.set(candidate, directory.identity)
+        const gitEntry = resolve(candidate, '.git')
+        try {
+            await lstat(gitEntry)
+            hasCheckout = true
+            break
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return setupCheckoutFailure('generated checkout Git entry cannot be observed')
+        }
+        absentGitEntries.push(gitEntry)
+        const parent = dirname(candidate)
+        if (parent === candidate) break
+        candidate = parent
+    }
+    const env = Object.freeze({ ...(value.env as Record<string, string>) })
+    const observedAt = Date.now()
+    if (!Number.isSafeInteger(observedAt)) return setupCheckoutFailure('generated checkout observation time is invalid')
+    let checkout: SetupCheckoutBinding | undefined
+    let consumed: ConsumedSetupCheckoutObservation | undefined
+    if (hasCheckout) {
+        const git = await resolveGitExecutable(env)
+        if (git.state !== 'available') return setupCheckoutFailure(git.reason)
+        const observation = await observeSetupCheckout({ source, cockpitName: value.cockpitName,
+            env, gitExecutable: git.value, observedAt: new Date(observedAt).toISOString() })
+        if (observation.state === 'failed') return observation
+        checkout = issuedSetupCheckoutObservations.get(observation)
+        consumed = await withSetupCheckoutProjection(observation, {
+            source, cockpitName: value.cockpitName, evaluatedAt: observedAt,
+        }, consumeSetupCheckoutProjection)
+        if (!checkout || !consumed) return setupCheckoutFailure('generated checkout observation changed before consumption')
+    }
+    const identity: GeneratedCheckoutIdentity = Object.freeze({
+        state: 'available', kind: consumed ? 'checkout' : 'standalone',
+        cockpitId: consumed?.cockpitId ?? deriveCockpitId({ name: value.cockpitName, mainCheckoutPath: root }),
+        checkoutId: consumed?.checkoutId ?? deriveCheckoutId({ checkoutPath: root }),
+        currentCheckoutPath: consumed?.currentCheckoutPath ?? root,
+        mainCheckoutPath: consumed?.mainCheckoutPath ?? root,
+    })
+    const binding: GeneratedCheckoutBinding = Object.freeze({ source, sourceIdentity: sourceFile.identity,
+        cockpitName: value.cockpitName, env, directories, absentGitEntries: Object.freeze(absentGitEntries),
+        ...(checkout ? { checkout } : {}), observedAt })
+    const current = await generatedCheckoutBindingCurrent(binding)
+    const completedAt = Date.now()
+    if (!current || !Number.isSafeInteger(completedAt) || completedAt < observedAt
+        || completedAt - observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
+        return setupCheckoutFailure('generated checkout identity changed or expired during observation')
+    }
+    issuedGeneratedCheckoutIdentities.set(identity, binding)
+    return identity
+}
+
+async function generatedCheckoutBindingCurrent(binding: GeneratedCheckoutBinding): Promise<boolean> {
+    const source = await stableFile(binding.source.path)
+    if (!source || !sameFileIdentity(source.identity, binding.sourceIdentity)
+        || source.sha256 !== binding.source.sha256 || source.byteLength !== binding.source.byteLength) return false
+    for (const [path, expected] of binding.directories) {
+        const current = await stableDirectory(path)
+        if (!current || !sameDirectoryNode(current.identity, expected)) return false
+    }
+    for (const path of binding.absentGitEntries) if (!await pathAbsent(path)) return false
+    if (binding.checkout && !await checkoutBindingCurrent(binding.checkout, true)) return false
+    return true
+}
+
+export async function revalidateGeneratedCheckoutIdentity(identity: GeneratedCheckoutIdentity): Promise<boolean> {
+    const binding = identity && typeof identity === 'object' ? issuedGeneratedCheckoutIdentities.get(identity) : undefined
+    const now = Date.now()
+    if (!binding || !Number.isSafeInteger(now) || now < binding.observedAt
+        || !await generatedCheckoutBindingCurrent(binding)) return false
+    const completedAt = Date.now()
+    if (!Number.isSafeInteger(completedAt) || completedAt < binding.observedAt) return false
+    if (completedAt - binding.observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
+        const refreshed = await observeGeneratedCheckoutIdentity({ source: binding.source, cockpitName: binding.cockpitName, env: binding.env })
+        if (refreshed.state !== 'available' || refreshed.kind !== identity.kind
+            || refreshed.cockpitId !== identity.cockpitId || refreshed.checkoutId !== identity.checkoutId
+            || refreshed.mainCheckoutPath !== identity.mainCheckoutPath || refreshed.currentCheckoutPath !== identity.currentCheckoutPath) return false
+        const current = issuedGeneratedCheckoutIdentities.get(refreshed)
+        const refreshedAt = Date.now()
+        if (!current || !Number.isSafeInteger(refreshedAt) || refreshedAt < current.observedAt
+            || refreshedAt - current.observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) return false
+        issuedGeneratedCheckoutIdentities.set(identity, current)
+        issuedGeneratedCheckoutIdentities.delete(refreshed)
+    }
+    return true
 }
 
 function confined(root: string, candidate: string): boolean {

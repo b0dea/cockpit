@@ -118,6 +118,7 @@ import {
 import { TESTING_GUIDE_REGISTRY, createGateRegistry, renderTierGuide, type GateRegistry } from '../testing/gates.js'
 import { NATIVE_HOOK_COST_SCRIPT, projectNativeHooks, type NativeHookEntry, type NativeHookPolicy } from '../testing/hooks.js'
 import type { RuntimeTopologyEvidence } from './runtime.js'
+import { observeGeneratedCheckoutIdentity, revalidateGeneratedCheckoutIdentity, type GeneratedCheckoutIdentity } from './setup-observation.js'
 
 export const mechanism = {
     id: 'generated-environment-application',
@@ -199,7 +200,7 @@ interface OwnedBytes {
 interface PreparedEnvironment {
     readonly root: string
     readonly cockpitId: CockpitId
-    readonly runtimeCockpitId: CockpitId
+    readonly runtimeCheckout?: GeneratedCheckoutIdentity
     readonly configPath: string
     readonly sourceSha256: string
     readonly personaSource: Readonly<{ path: string; sha256: string }>
@@ -1265,21 +1266,20 @@ async function projectBrowserRunner(
 
 async function retainedPortLease(
     config: DerivedRegistry['config'],
-    root: string,
-    currentCockpit: ReturnType<typeof cockpitId>,
-    currentCheckout: ReturnType<typeof checkoutId>,
+    checkout: GeneratedCheckoutIdentity,
     currentStack: ReturnType<typeof stackId>,
 ): Promise<PortLeaseProjection | undefined> {
     if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined
     const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
-        xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoots: [root], cockpitId: currentCockpit })
+        xdgStateHome: process.env.XDG_STATE_HOME,
+        checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath], cockpitId: checkout.cockpitId })
     if (namespace.kind !== 'complete') return undefined
     const stored = await readState(namespace.value.paths.lifecycle(currentStack))
     if (stored.kind !== 'complete') return undefined
-    const lifecycle = decodeLifecycleRecord(stored.value, { cockpitId: currentCockpit, stackId: currentStack })
+    const lifecycle = decodeLifecycleRecord(stored.value, { cockpitId: checkout.cockpitId, stackId: currentStack })
     if (!lifecycle) return undefined
     const retained = await observeRetainedPortFamily({ namespace: namespace.value, stackId: currentStack,
-        holderId: lifecycle.value.holderId, checkoutId: currentCheckout, config: config.ports })
+        holderId: lifecycle.value.holderId, checkoutId: checkout.checkoutId, config: config.ports })
     if (retained.kind !== 'complete') return undefined
     const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: config.environment.entrypoint_derivatives })
     if (entrypoints.kind !== 'complete') return undefined
@@ -1320,9 +1320,15 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         'sibling',
     )
     const siblingRoots = authenticatedSiblings.roots
-    const currentCockpit = cockpitId({ name: config.cockpit.name, mainCheckoutPath: root })
+    const runtimeCheckout = declaration || workEnvironment.browser || config.environment.compose_files.length > 0
+        ? await observeGeneratedCheckoutIdentity({ source: loaded.result.source, cockpitName: config.cockpit.name,
+            env: Object.freeze({ PATH: process.env.PATH ?? '' }) }) : undefined
+    if (runtimeCheckout?.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
+        `generated checkout identity is unavailable: ${runtimeCheckout.reason}`, loaded.result.source.path,
+        'restore the configuration checkout and Git installation, then run cockpit sync --config <file>')
+    const currentCockpit = runtimeCheckout?.cockpitId ?? cockpitId({ name: config.cockpit.name, mainCheckoutPath: root })
     const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
-    const currentCheckout = checkoutId({ checkoutPath: root })
+    const currentCheckout = runtimeCheckout?.checkoutId ?? checkoutId({ checkoutPath: root })
     const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
     const suppliedPorts = portLease === undefined ? undefined : inspectPortLeaseProjection(portLease)
     if (portLease !== undefined && (!suppliedPorts || suppliedPorts.lease.stackId !== currentStack)) {
@@ -1339,8 +1345,8 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         ? await projectBrowserRunner(workEnvironment, declaration, config.ports.bases, root, node, adapters) : undefined
     if (browserRunner && 'kind' in browserRunner) return refuse('GENERATED_DECLARATION_INVALID', browserRunner.message, 'browser')
     const projectedRunner = browserRunner && !('kind' in browserRunner) ? browserRunner : undefined
-    const inspectedPorts = suppliedPorts ?? (projectedRunner
-        ? await retainedPortLease(config, root, currentCockpit, currentCheckout, currentStack)
+    const inspectedPorts = suppliedPorts ?? (projectedRunner && runtimeCheckout
+        ? await retainedPortLease(config, runtimeCheckout, currentStack)
         : undefined)
     if (projectedRunner && !inspectedPorts) return refuse(
         'GENERATED_INPUT_INVALID',
@@ -1473,7 +1479,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     return Object.freeze({
         root,
         cockpitId: publishedCockpit,
-        runtimeCockpitId: currentCockpit,
+        ...(runtimeCheckout ? { runtimeCheckout } : {}),
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
         personaSource: Object.freeze({ path: sourcePath, sha256: persona.source.sha256 }),
@@ -2130,6 +2136,8 @@ async function prepareSurfaces(
     let browser: ReturnType<typeof renderBrowserSurfaces> | null = null
     let browserAuthority: ConsumedWorkApplicationAuthorities['browser']
     if (prepared.workEnvironment.browser) {
+        const checkout = prepared.runtimeCheckout
+        if (!checkout) return refuse('SURFACE_INPUT_INVALID', 'browser checkout identity is unavailable', prepared.configPath)
         const browserConfiguration = prepared.workEnvironment.browser
         const playwright = declarations.filter(row => row.name === 'playwright')
         if (playwright.length !== 1 || !config.mcp.approved.includes('playwright')) {
@@ -2139,15 +2147,15 @@ async function prepareSurfaces(
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)
         }
         const observedAt = new Date().toISOString()
-        const currentStack = stackId({ cockpitId: prepared.runtimeCockpitId, checkoutId: checkoutId({ checkoutPath: prepared.root }), variant: { kind: 'shared' } })
+        const currentStack = stackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } })
         const configuration = (await observeConfiguration({ path: prepared.configPath, stackId: currentStack, observedAt }))
             .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)
         const namespace = await selectStateRoot({
             platform: process.platform,
             home: process.env.HOME,
             xdgStateHome: process.env.XDG_STATE_HOME,
-            checkoutRoots: [prepared.root],
-            cockpitId: prepared.runtimeCockpitId,
+            checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath],
+            cockpitId: checkout.cockpitId,
         })
         if (!configuration) {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture authority could not be observed', prepared.configPath)
@@ -2158,8 +2166,8 @@ async function prepareSurfaces(
         try {
             const authority = await resolveObservationPostures({
                 configuration,
-                cockpitId: prepared.runtimeCockpitId,
-                checkoutPath: prepared.root,
+                cockpitId: checkout.cockpitId,
+                checkoutPath: checkout.currentCheckoutPath,
                 variant: { kind: 'shared' },
             })
             const stage = await resolveLifecycleStage({ namespace: namespace.value, stackId: currentStack, observedAt })
@@ -2586,6 +2594,7 @@ async function inputSourcesCurrent(
 ): Promise<boolean> {
     try {
         if (deadline !== undefined && Date.now() >= deadline) return false
+        if (prepared.runtimeCheckout && !await revalidateGeneratedCheckoutIdentity(prepared.runtimeCheckout)) return false
         if (!await siblingRootsCurrent(prepared.siblingRoots)) return false
         if (prepared.guardHandler) {
             const handler = prepared.guardHandler

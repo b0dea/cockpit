@@ -1,4 +1,4 @@
-import type { BigIntStats, PathLike, StatOptions, Stats } from 'node:fs'
+import { constants, type BigIntStats, type PathLike, type StatOptions, type Stats } from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { readFile, readdir, rm, stat, symlink, writeFile, mkdir, rename, lstat, open } from 'node:fs/promises'
@@ -9,13 +9,44 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { observeConfigSource } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
+import { applyGeneratedEnvironmentRepair, checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness, syncGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
 const { roots, cleanup, publicationGroups, consumer, digest, ownership, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
 
 describe('generated environment command', () => {
+    it('publishes a standalone directory without Git and refuses invalid enclosing Git metadata', async () => {
+        const { root, configPath } = await consumer('standalone-identity')
+        const previousPath = process.env.PATH
+        process.env.PATH = root
+        try {
+            expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+            expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+            if (previousPath === undefined) delete process.env.PATH
+            else process.env.PATH = previousPath
+            await writeFile(join(root, '.git'), 'gitdir: missing-administration\n')
+            const refused = await syncGeneratedEnvironment({ configPath })
+            expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'GENERATED_INPUT_INVALID', message: expect.stringContaining('checkout identity'),
+            })] })
+        } finally {
+            if (previousPath === undefined) delete process.env.PATH
+            else process.env.PATH = previousPath
+        }
+    })
+
+    it('refuses a prepared publication when an enclosing Git anchor appears', async () => {
+        const { root, configPath } = await consumer('identity-changed')
+        const prepared = await prepareGeneratedEnvironmentCurrentness({ configPath })
+        if (!prepared.repairAuthority) throw new Error('generated repair authority unavailable')
+        await writeFile(join(root, '.git'), 'gitdir: missing-administration\n')
+        expect(await applyGeneratedEnvironmentRepair(prepared.repairAuthority)).toMatchObject({
+            kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED' })],
+        })
+        await expect(lstat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
     it('rejects proxy command inputs without evaluating traps', async () => {
         let traps = 0
         const input = new Proxy({ configPath: 'unused.toml' }, {
@@ -160,6 +191,7 @@ describe('generated environment command', () => {
                 ...payload, integrity: digest(JSON.stringify(payload)),
             }))
             const originalLstat = fsPromises.lstat
+            const originalOpen = fsPromises.open
             let swapped = false
             let aliasCheckStarted = false
             let preparations = 0
@@ -167,7 +199,6 @@ describe('generated environment command', () => {
             function swappingLstat(path: PathLike, options: StatOptions & { bigint: true }): Promise<BigIntStats>
             function swappingLstat(path: PathLike, options?: StatOptions): Promise<Stats | BigIntStats>
             async function swappingLstat(path: PathLike, options?: StatOptions): Promise<Stats | BigIntStats> {
-                if (path === root && options?.bigint === true) aliasCheckStarted = true
                 if (!aliasCheckStarted || swapped || path !== configPath) return originalLstat(path, options)
                 swapped = true
                 const held = swap === 'input' ? `${configPath}.held` : `${root}-held`
@@ -183,6 +214,11 @@ describe('generated environment command', () => {
                 }
             }
             const spy = vi.spyOn(fsPromises, 'lstat').mockImplementation(swappingLstat)
+            const opening = vi.spyOn(fsPromises, 'open').mockImplementation(async (...arguments_) => {
+                const [path, flags] = arguments_
+                if (path === root && typeof flags === 'number' && (flags & constants.O_DIRECTORY) !== 0) aliasCheckStarted = true
+                return originalOpen(...arguments_)
+            })
             syncBuiltinESMExports()
             try {
                 const result = await syncGeneratedEnvironment({ configPath }, {
@@ -198,6 +234,7 @@ describe('generated environment command', () => {
                 expect(await bytes(root, initial.result.paths)).toEqual(before)
             } finally {
                 spy.mockRestore()
+                opening.mockRestore()
                 syncBuiltinESMExports()
             }
         })

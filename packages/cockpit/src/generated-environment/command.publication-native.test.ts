@@ -143,11 +143,28 @@ describe('public surface publication transaction', () => {
         })
 
         it.each([
-            { name: 'preapproved remote', remote: true, preapproved: true, serialized: false, openCode: true },
-            { name: 'remote without preapproval', remote: true, preapproved: false, serialized: true, openCode: false },
-            { name: 'local fallback', remote: false, preapproved: true, serialized: false, openCode: true },
+            { name: 'preapproved remote in a nested configuration', layout: 'nested', remote: true, preapproved: true, serialized: false, openCode: true },
+            { name: 'remote without preapproval in a linked worktree', layout: 'worktree', remote: true, preapproved: false, serialized: true, openCode: false },
+            { name: 'local fallback in a standalone directory', layout: 'standalone', remote: false, preapproved: true, serialized: false, openCode: true },
         ])('publishes source-bound browser and testing surfaces through the canonical transaction ($name)', async variant => {
-            const fixture = await surfaceConsumer('browser-testing')
+            let mainCheckout: string | undefined
+            let currentCheckoutPath: string | undefined
+            if (variant.layout !== 'standalone') {
+                const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-checkouts-')))
+                roots.push(estate)
+                mainCheckout = join(estate, 'main')
+                expect(spawnSync('git', ['init', '--quiet', mainCheckout]).status).toBe(0)
+                currentCheckoutPath = mainCheckout
+                if (variant.layout === 'worktree') {
+                    expect(spawnSync('git', ['-C', mainCheckout, '-c', 'user.name=Synthetic Maintainer',
+                        '-c', 'user.email=maintainer@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'Initialize synthetic checkout']).status).toBe(0)
+                    currentCheckoutPath = join(estate, 'linked')
+                    expect(spawnSync('git', ['-C', mainCheckout, 'worktree', 'add', '--quiet', '--detach', currentCheckoutPath]).status).toBe(0)
+                }
+            }
+            const fixture = await surfaceConsumer('browser-testing', { parentDirectory: currentCheckoutPath })
+            mainCheckout ??= fixture.root
+            currentCheckoutPath ??= fixture.root
             const lockBytes = JSON.stringify({ lockfileVersion: 3, packages: {
                 '': { dependencies: { '@playwright/test': '1.2.3' } }, 'node_modules/@playwright/test': { version: '1.2.3' },
             } }) + '\n'
@@ -221,12 +238,12 @@ native_hooks = { install = "inspect" }
             process.env.HOME = stateHome
             process.env.XDG_STATE_HOME = join(stateHome, 'state')
             try {
-                const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: fixture.root })
-                const currentCheckout = checkoutId({ checkoutPath: fixture.root })
+                const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: mainCheckout })
+                const currentCheckout = checkoutId({ checkoutPath: currentCheckoutPath })
                 const currentStack = stackId({ cockpitId: currentCockpit, checkoutId: currentCheckout, variant: { kind: 'shared' } })
                 if (process.platform !== 'darwin' && process.platform !== 'linux') throw new Error('browser port platform unavailable')
                 const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
-                    xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoots: [fixture.root], cockpitId: currentCockpit })
+                    xdgStateHome: process.env.XDG_STATE_HOME, checkoutRoots: [mainCheckout, currentCheckoutPath], cockpitId: currentCockpit })
                 if (namespace.kind !== 'complete') throw new Error('browser port state unavailable')
                 const currentHolder = `holder:${'c'.repeat(64)}:session` as HolderId
                 const observedAt = new Date().toISOString()
