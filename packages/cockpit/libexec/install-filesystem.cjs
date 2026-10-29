@@ -18,10 +18,15 @@ const {
 } = require('node:fs')
 const { basename, dirname, isAbsolute, join, normalize, relative, sep } = require('node:path')
 
-const SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/
+const SEGMENT = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const MAX_REQUEST_BYTES = 65_536
 const MAX_FILE_BYTES = 1_048_576
+
+function portableSegment(value) {
+    return typeof value === 'string' && value.length <= 255 && SEGMENT.test(value) && !value.endsWith('.')
+        && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value)
+}
 
 function exactKeys(value, expected) {
     const actual = Object.keys(value).sort()
@@ -48,7 +53,7 @@ function checkedRoot(value) {
 }
 
 function checkedSegments(value) {
-    if (!Array.isArray(value) || value.length < 1 || value.length > 32 || value.some((segment) => typeof segment !== 'string' || !SEGMENT.test(segment))) {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 32 || value.some((segment) => !portableSegment(segment))) {
         throw new Error('invalid path segments')
     }
     return value
@@ -91,7 +96,7 @@ function writeAll(descriptor, bytes) {
 }
 
 function atomicFile(directoryPath, name, bytes, requestId) {
-    if (!SEGMENT.test(name) || basename(name) !== name || bytes.length > MAX_FILE_BYTES) throw new Error('invalid file publication')
+    if (!portableSegment(name) || basename(name) !== name || bytes.length > MAX_FILE_BYTES) throw new Error('invalid file publication')
     const temporary = `.${name}.${requestId}.tmp`
     const temporaryPath = join(directoryPath, temporary)
     const target = join(directoryPath, name)
@@ -160,7 +165,8 @@ function release(request) {
     if (!exactKeys(request, ['version', 'requestId', 'operation', 'root', 'segments', 'dev', 'ino', 'ownerBase64', 'quarantine'])) throw new Error('invalid release request')
     const root = checkedRoot(request.root)
     const segments = checkedSegments(request.segments)
-    if (typeof request.quarantine !== 'string' || !/^\.release-[a-zA-Z0-9._:-]+$/.test(request.quarantine)) throw new Error('invalid quarantine name')
+    if (typeof request.quarantine !== 'string' || request.quarantine.length > 255
+        || !request.quarantine.startsWith('.release-') || !portableSegment(request.quarantine.slice(1))) throw new Error('invalid quarantine name')
     const lockPath = child(root, segments)
     const parentPath = join(root, ...segments.slice(0, -1))
     const status = directory(lockPath)

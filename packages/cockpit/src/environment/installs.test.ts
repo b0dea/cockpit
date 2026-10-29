@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
-import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -968,6 +968,41 @@ describe('install verification', () => {
 })
 
 describe('filesystem helper protocol', () => {
+    it('refuses nonportable directory and stamp names before publication', async () => {
+        const outcomes: Array<{ name: string; directoryStatus: number | null; stampStatus: number | null }> = []
+        for (const name of ['CON', 'aux.txt', 'COM1', 'lpt9.json', 'cache:stream', 'trailing.']) {
+            const root = await mkdtemp(join(tmpdir(), 'cockpit-helper-portable-'))
+            scratch.push(root)
+            await mkdir(join(root, 'stamps'))
+            const directory = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'ensure-directory', root, segments: [name] })
+            const stamp = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'stamp', root,
+                segments: ['stamps'], name, bytesBase64: Buffer.from('synthetic stamp').toString('base64') })
+            outcomes.push({ name, directoryStatus: directory.status, stampStatus: stamp.status })
+            expect(await readdir(join(root, 'stamps')), name).toEqual([])
+            await expect(lstat(join(root, name))).rejects.toMatchObject({ code: 'ENOENT' })
+        }
+        expect(outcomes).toEqual(outcomes.map(({ name }) => ({ name, directoryStatus: 2, stampStatus: 2 })))
+    })
+
+    it('keeps the exact lock when a release quarantine name is nonportable', async () => {
+        const outcomes: Array<{ quarantine: string; status: number | null }> = []
+        for (const quarantine of ['.release-lock:stream', '.release-trailing.']) {
+            const root = await mkdtemp(join(tmpdir(), 'cockpit-helper-portable-release-'))
+            scratch.push(root)
+            const ownerBase64 = Buffer.from('synthetic owner').toString('base64')
+            const acquired = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'acquire', root,
+                segments: ['locks', 'selected.lock'], ownerBase64 })
+            expect(acquired.status).toBe(0)
+            const lock = JSON.parse(acquired.stdout).lock as { path: string; dev: number; ino: number }
+            const released = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'release', root,
+                segments: ['locks', 'selected.lock'], dev: lock.dev, ino: lock.ino, ownerBase64, quarantine })
+            outcomes.push({ quarantine, status: released.status })
+            expect(await readFile(join(lock.path, 'owner.json'), 'utf8')).toBe('synthetic owner')
+            await expect(lstat(join(root, 'locks', quarantine))).rejects.toMatchObject({ code: 'ENOENT' })
+        }
+        expect(outcomes).toEqual(outcomes.map(({ quarantine }) => ({ quarantine, status: 2 })))
+    })
+
     it('accepts one harmless request and rejects a malformed control', async () => {
         const root = await mkdtemp(join(tmpdir(), 'cockpit-helper-'))
         scratch.push(root)
