@@ -984,6 +984,28 @@ describe('filesystem helper protocol', () => {
         expect(outcomes).toEqual(outcomes.map(({ name }) => ({ name, directoryStatus: 2, stampStatus: 2 })))
     })
 
+    it('admits 255-character directory and stamp names and refuses 256 before publication', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-helper-portable-length-'))
+        scratch.push(root)
+        await mkdir(join(root, 'stamps'))
+        const maximum = 'm'.repeat(255)
+        const overlong = 'o'.repeat(256)
+        const directory = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'ensure-directory', root,
+            segments: [maximum] })
+        const stamp = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'stamp', root,
+            segments: ['stamps'], name: maximum, bytesBase64: Buffer.from('maximum stamp').toString('base64') })
+        const refusedDirectory = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'ensure-directory', root,
+            segments: [overlong] })
+        const refusedStamp = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'stamp', root,
+            segments: ['stamps'], name: overlong, bytesBase64: Buffer.from('overlong stamp').toString('base64') })
+        expect({ directory: directory.status, stamp: stamp.status, refusedDirectory: refusedDirectory.status,
+            refusedStamp: refusedStamp.status }).toEqual({ directory: 0, stamp: 0, refusedDirectory: 2, refusedStamp: 2 })
+        expect((await lstat(join(root, maximum))).isDirectory()).toBe(true)
+        expect(await readFile(join(root, 'stamps', maximum), 'utf8')).toBe('maximum stamp')
+        expect(await readdir(root)).toEqual([maximum, 'stamps'].sort())
+        expect(await readdir(join(root, 'stamps'))).toEqual([maximum])
+    })
+
     it('keeps the exact lock when a release quarantine name is nonportable', async () => {
         const outcomes: Array<{ quarantine: string; status: number | null }> = []
         for (const quarantine of ['.release-lock:stream', '.release-trailing.']) {
@@ -1001,6 +1023,28 @@ describe('filesystem helper protocol', () => {
             await expect(lstat(join(root, 'locks', quarantine))).rejects.toMatchObject({ code: 'ENOENT' })
         }
         expect(outcomes).toEqual(outcomes.map(({ quarantine }) => ({ quarantine, status: 2 })))
+    })
+
+    it('admits a 255-character release quarantine and refuses 256 without moving the lock', async () => {
+        const outcomes: Array<{ length: number; status: number | null }> = []
+        for (const length of [255, 256]) {
+            const root = await mkdtemp(join(tmpdir(), 'cockpit-helper-portable-release-length-'))
+            scratch.push(root)
+            const ownerBase64 = Buffer.from('synthetic owner').toString('base64')
+            const acquired = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'acquire', root,
+                segments: ['locks', 'selected.lock'], ownerBase64 })
+            expect(acquired.status).toBe(0)
+            const lock = JSON.parse(acquired.stdout).lock as { path: string; dev: number; ino: number }
+            const prefix = '.release-'
+            const quarantine = `${prefix}${'q'.repeat(length - prefix.length)}`
+            const released = await helperProcess(root, { version: 1, requestId: randomUUID(), operation: 'release', root,
+                segments: ['locks', 'selected.lock'], dev: lock.dev, ino: lock.ino, ownerBase64, quarantine })
+            outcomes.push({ length, status: released.status })
+            expect(await readdir(join(root, 'locks'))).not.toContain(quarantine)
+            if (length === 255) await expect(lstat(lock.path)).rejects.toMatchObject({ code: 'ENOENT' })
+            else expect(await readFile(join(lock.path, 'owner.json'), 'utf8')).toBe('synthetic owner')
+        }
+        expect(outcomes).toEqual([{ length: 255, status: 0 }, { length: 256, status: 2 }])
     })
 
     it('accepts one harmless request and rejects a malformed control', async () => {

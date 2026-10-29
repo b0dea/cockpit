@@ -97,7 +97,8 @@ function writeAll(descriptor, bytes) {
 
 function atomicFile(directoryPath, name, bytes, requestId) {
     if (!portableSegment(name) || basename(name) !== name || bytes.length > MAX_FILE_BYTES) throw new Error('invalid file publication')
-    const temporary = `.${name}.${requestId}.tmp`
+    // Keep the temporary component independent of the target so a maximum portable name remains publishable.
+    const temporary = `.${requestId}.tmp`
     const temporaryPath = join(directoryPath, temporary)
     const target = join(directoryPath, name)
     const descriptor = openSync(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
