@@ -1,12 +1,56 @@
 import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isResolvedDockerExecutable, isResolvedExecutable, isResolvedGitExecutable, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveExecutable, resolveGitExecutable, resolvePathRemovalExecutable } from './executable.js'
 
 const digest = 'a'.repeat(64)
 const scratch: string[] = []
-afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
+const windowsFilesystem = vi.hoisted(() => ({
+    files: new Set<string>(),
+    lstatPaths: [] as string[],
+    identityPaths: [] as string[],
+}))
+
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    return {
+        ...actual,
+        lstat: async (...args: Parameters<typeof actual.lstat>) => {
+            const path = String(args[0])
+            if (process.platform !== 'win32' || !path.includes('\\')) return actual.lstat(...args)
+            windowsFilesystem.lstatPaths.push(path)
+            if (!windowsFilesystem.files.has(path)) {
+                throw Object.assign(new Error(`synthetic Windows candidate is absent: ${path}`), { code: 'ENOENT' })
+            }
+            return {
+                isFile: () => true,
+                isSymbolicLink: () => false,
+                mode: 0o700,
+                size: 1,
+            }
+        },
+        realpath: async (...args: Parameters<typeof actual.realpath>) => {
+            const path = String(args[0])
+            if (process.platform !== 'win32' || !path.includes('\\')) return actual.realpath(...args)
+            windowsFilesystem.identityPaths.push(path)
+            throw new Error(`Windows candidate reached POSIX identity resolution: ${path}`)
+        },
+        open: async (...args: Parameters<typeof actual.open>) => {
+            const path = String(args[0])
+            if (process.platform !== 'win32' || !path.includes('\\')) return actual.open(...args)
+            windowsFilesystem.identityPaths.push(path)
+            throw new Error(`Windows candidate reached POSIX no-follow open: ${path}`)
+        },
+    }
+})
+
+afterEach(() => {
+    for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
+    windowsFilesystem.files.clear()
+    windowsFilesystem.lstatPaths.length = 0
+    windowsFilesystem.identityPaths.length = 0
+})
 
 function directory(): string {
     const path = mkdtempSync(join(tmpdir(), 'cockpit-executable-'))
@@ -148,21 +192,123 @@ describe('resolved executable identity', () => {
             .resolves.toEqual({ state: 'unavailable', reason: 'Executable search path is missing or invalid' })
     })
 
-    it.each(searchResolvers)('uses the single case-insensitive PATH spelling for %s resolution on Windows', async (_label, name, resolve) => {
-        const root = directory()
-        const invocationPath = join(root, name)
-        writeFileSync(invocationPath, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+    it('uses Windows directory then PATHEXT order without manufacturing executable identity', async () => {
+        const selected = String.raw`D:\Tools\comparison-tool.EXE`
+        windowsFilesystem.files.add(selected)
 
-        const result = await withPlatform('win32', () => resolve({ Path: root }))
+        const result = await withPlatform('win32', () => resolveExecutable('comparison-tool', {
+            Path: String.raw`C:\Program Files\Tools;D:\Tools`,
+            PathExt: '.CMD;.EXE',
+        }))
 
+        expect(windowsFilesystem.lstatPaths).toEqual([
+            String.raw`C:\Program Files\Tools\comparison-tool.CMD`,
+            String.raw`C:\Program Files\Tools\comparison-tool.EXE`,
+            String.raw`D:\Tools\comparison-tool.CMD`,
+            selected,
+        ])
         expect(result).toEqual({
-            state: 'available',
-            value: {
-                canonicalPath: realpathSync(invocationPath), invocationPath,
-                sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-                executionMode: name === 'docker' ? 'staged' : 'verified-path',
-            },
+            state: 'unavailable',
+            reason: expect.stringMatching(/native executable identity authority.*D:\\Tools\\comparison-tool\.EXE/i),
         })
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it('stops at a selected Windows batch shim instead of falling through to a native candidate', async () => {
+        const batch = String.raw`C:\Tools\comparison-tool.CMD`
+        windowsFilesystem.files.add(batch)
+        windowsFilesystem.files.add(String.raw`D:\Tools\comparison-tool.EXE`)
+
+        const result = await withPlatform('win32', () => resolveExecutable('comparison-tool', {
+            PATH: String.raw`C:\Tools;D:\Tools`, PATHEXT: '.CMD;.EXE',
+        }))
+
+        expect(windowsFilesystem.lstatPaths).toEqual([batch])
+        expect(result).toEqual({
+            state: 'unavailable',
+            reason: expect.stringMatching(/authenticated command interpreter.*C:\\Tools\\comparison-tool\.CMD/i),
+        })
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it('requires PATHEXT only for suffix expansion and keeps explicit Windows suffixes closed', async () => {
+        await expect(withPlatform('win32', () => resolveExecutable('comparison-tool', { PATH: String.raw`C:\Tools` })))
+            .resolves.toEqual({ state: 'unavailable', reason: expect.stringMatching(/PATHEXT.*missing/i) })
+        expect(windowsFilesystem.lstatPaths).toEqual([])
+
+        const native = String.raw`C:\Tools\comparison-tool.exe`
+        windowsFilesystem.files.add(native)
+        const nativeResult = await withPlatform('win32', () => resolveExecutable('comparison-tool.exe', { PATH: String.raw`C:\Tools` }))
+        expect(nativeResult).toEqual({
+            state: 'unavailable', reason: expect.stringMatching(/native executable identity authority.*comparison-tool\.exe/i),
+        })
+
+        windowsFilesystem.lstatPaths.length = 0
+        const batch = String.raw`C:\Tools\comparison-tool.bat`
+        windowsFilesystem.files.add(batch)
+        const batchResult = await withPlatform('win32', () => resolveExecutable('comparison-tool.bat', { PATH: String.raw`C:\Tools` }))
+        expect(batchResult).toEqual({
+            state: 'unavailable', reason: expect.stringMatching(/authenticated command interpreter.*comparison-tool\.bat/i),
+        })
+        expect(windowsFilesystem.lstatPaths).toEqual([batch])
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it.each([
+        ['empty entry', String.raw`C:\Tools;;D:\Tools`],
+        ['drive-relative entry', String.raw`C:Tools`],
+        ['root-relative entry', String.raw`\Tools`],
+        ['UNC entry', String.raw`\\server\share\Tools`],
+        ['device entry', String.raw`\\?\C:\Tools`],
+        ['NUL', `C:\\Tools\0;D:\\Tools`],
+        ['too many entries', Array.from({ length: 257 }, (_, index) => `C:\\Tools${index}`).join(';')],
+        ['oversized value', `C:\\${'x'.repeat(65_535)}`],
+    ])('refuses a Windows PATH with %s before filesystem access', async (_label, path) => {
+        const result = await withPlatform('win32', () => resolveExecutable('comparison-tool', { PATH: path, PATHEXT: '.EXE' }))
+
+        expect(result).toEqual(expect.objectContaining({ state: 'unavailable' }))
+        expect(windowsFilesystem.lstatPaths).toEqual([])
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it.each([
+        ['unsupported PATHEXT entry', 'comparison-tool', { PATH: String.raw`C:\Tools`, PATHEXT: '.PS1;.EXE' }],
+        ['unsupported explicit suffix', 'comparison-tool.ps1', { PATH: String.raw`C:\Tools` }],
+    ] as const)('refuses %s before Windows filesystem access', async (_label, name, env) => {
+        const result = await withPlatform('win32', () => resolveExecutable(name, env))
+
+        expect(result).toEqual(expect.objectContaining({ state: 'unavailable' }))
+        expect(windowsFilesystem.lstatPaths).toEqual([])
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it.each([
+        ['Git', 'git.com', resolveGitExecutable],
+        ['Docker', 'docker.exe', resolveDockerExecutable],
+    ] as const)('admits the actual Windows %s native name only as an unauthenticated candidate', async (_label, name, resolve) => {
+        const selected = `C:\\Tools\\${name}`
+        windowsFilesystem.files.add(selected)
+
+        const result = await withPlatform('win32', () => resolve({ PATH: String.raw`C:\Tools`, PATHEXT: '.com;.exe' }))
+
+        expect(windowsFilesystem.lstatPaths).toContain(selected)
+        expect(result).toEqual({
+            state: 'unavailable', reason: expect.stringMatching(new RegExp(`native executable identity authority.*${name.replace('.', '\\.')}\\b`, 'i')),
+        })
+        expect(windowsFilesystem.identityPaths).toEqual([])
+    })
+
+    it('classifies an absolute Windows native name without treating it as a PATH entry', async () => {
+        const selected = String.raw`C:\Tools\comparison-tool.exe`
+        windowsFilesystem.files.add(selected)
+
+        const result = await withPlatform('win32', () => resolveExecutable(selected, {}))
+
+        expect(windowsFilesystem.lstatPaths).toEqual([selected])
+        expect(result).toEqual({
+            state: 'unavailable', reason: expect.stringMatching(/native executable identity authority.*comparison-tool\.exe/i),
+        })
+        expect(windowsFilesystem.identityPaths).toEqual([])
     })
 
     it.each(searchResolvers)('refuses ambiguous PATH spellings before %s resolution on Windows', async (_label, name, resolve) => {
