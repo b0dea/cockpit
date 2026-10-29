@@ -1325,7 +1325,7 @@ export async function revalidateGeneratedCheckoutIdentity(identity: GeneratedChe
     if (!binding || !Number.isSafeInteger(now) || now < binding.observedAt
         || !await generatedCheckoutBindingCurrent(binding)) return false
     const completedAt = Date.now()
-    if (!Number.isSafeInteger(completedAt) || completedAt < binding.observedAt) return false
+    if (!Number.isSafeInteger(completedAt) || completedAt < now) return false
     if (completedAt - binding.observedAt > SETUP_CHECKOUT_OBSERVATION_LIFETIME_MS) {
         const refreshed = await observeGeneratedCheckoutIdentity({ source: binding.source, cockpitName: binding.cockpitName, env: binding.env })
         if (refreshed.state !== 'available' || refreshed.kind !== identity.kind

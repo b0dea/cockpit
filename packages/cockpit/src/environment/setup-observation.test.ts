@@ -665,23 +665,24 @@ describe('setup checkout observation', () => {
             .resolves.toMatchObject({ state: 'failed', code: 'SETUP_PATH_TYPE_INVALID' })
     })
 
-    it.each(['backwards', 'expired', 'refreshed'] as const)('validates %s publication time after asynchronous identity validation', async (clockChange) => {
+    it.each(['backwards', 'expired', 'refreshed', 'reversed'] as const)('validates %s publication time after asynchronous identity validation', async (clockChange) => {
         const repository = await committedRepository()
         const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))
         const bin = join(repository.root, 'bin')
         await mkdir(bin)
         const git = join(bin, 'git')
         await symlink(input.gitExecutable.canonicalPath, git)
-        const generated = await observeGeneratedCheckoutIdentity({
-            source: input.source, cockpitName: input.cockpitName, env: { PATH: bin },
-        })
-        if (generated.state !== 'available') throw new Error(generated.reason)
         const now = Date.now()
         vi.useFakeTimers({ toFake: ['Date'] })
         try {
             vi.setSystemTime(now)
+            const generated = await observeGeneratedCheckoutIdentity({
+                source: input.source, cockpitName: input.cockpitName, env: { PATH: bin },
+            })
+            if (generated.state !== 'available') throw new Error(generated.reason)
+            if (clockChange === 'reversed') vi.setSystemTime(now + 61_000)
             const pending = revalidateGeneratedCheckoutIdentity(generated)
-            vi.setSystemTime(now + (clockChange === 'backwards' ? -60_001 : 60_001))
+            vi.setSystemTime(now + (clockChange === 'reversed' ? 59_000 : clockChange === 'backwards' ? -60_001 : 60_001))
             if (clockChange === 'expired') await rename(git, join(bin, 'git-held'))
             expect(await pending).toBe(clockChange === 'refreshed')
         } finally {
