@@ -25,7 +25,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'lifecycleHistoryAddress', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -498,6 +498,11 @@ function checkedIdentity(value: string, pattern: RegExp, label: string): string 
     return value
 }
 
+function identitySegment(identity: string): string {
+    // Canonical identities contain no underscores, so this preserves identity without Windows stream syntax.
+    return identity.replaceAll(':', '_')
+}
+
 function checkedDigest(value: string): string {
     if (!digest.test(value)) throw new TypeError('lockfile digest must be 64 lowercase hexadecimal characters')
     return value
@@ -517,25 +522,25 @@ function address(
 
 function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     const id = checkedIdentity(cockpitId, cockpitIdentity, 'cockpit id')
-    const cockpitRoot = join(root, 'cockpits', id)
+    const cockpitRoot = join(root, 'cockpits', identitySegment(id))
     const stackAddress = (
         kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome',
         stackId: StackId,
     ): StateAddress => {
         const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
-        return address(join(cockpitRoot, 'records', kind, `${subjectId}.json`), root, cockpitRoot, kind, cockpitId, subjectId)
+        return address(join(cockpitRoot, 'records', kind, `${identitySegment(subjectId)}.json`), root, cockpitRoot, kind, cockpitId, subjectId)
     }
     const paths: StateNamespace['paths'] = Object.freeze({
         coordination: (stackId) => stackAddress('coordination', stackId),
         lifecycle: (stackId) => stackAddress('lifecycle', stackId),
         dataOutcome: (stackId) => stackAddress('data-outcome', stackId),
         stateLock: join(cockpitRoot, 'locks', 'state.lock'),
-        installLock: (cacheId) => join(cockpitRoot, 'locks', 'install', `${checkedSegment(cacheId, 'cache id')}.lock`),
+        installLock: (cacheId) => join(cockpitRoot, 'locks', 'install', `cache-${checkedSegment(cacheId, 'cache id')}.lock`),
         cache: (checkoutId, lockfileSha256) => {
             const subjectId = checkedIdentity(checkoutId, checkoutIdentity, 'checkout id')
             const checksum = checkedDigest(lockfileSha256)
             return address(
-                join(cockpitRoot, 'cache', subjectId, `${checksum}.json`),
+                join(cockpitRoot, 'cache', identitySegment(subjectId), `${checksum}.json`),
                 root,
                 cockpitRoot,
                 'cache',
@@ -547,7 +552,7 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
         baseline: (stackId) => {
             const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
             return address(
-                join(cockpitRoot, 'evidence', 'baselines', `${subjectId}.json`),
+                join(cockpitRoot, 'evidence', 'baselines', `${identitySegment(subjectId)}.json`),
                 root,
                 cockpitRoot,
                 'baseline',
@@ -563,7 +568,7 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
 
 function bootstrapNamespace(root: string, checkoutRoot: string, checkoutId: CheckoutId, selectedTarget: SurfaceTarget): BootstrapStateNamespace {
     const id = checkedIdentity(checkoutId, checkoutIdentity, 'checkout id') as CheckoutId
-    const scopedRoot = join(root, 'checkouts', id)
+    const scopedRoot = join(root, 'checkouts', identitySegment(id))
     const bootstrap = (target: SurfaceTarget): BootstrapStateAddress => {
         if (!surfaceTargets.has(target) || target !== selectedTarget) throw new TypeError('surface target does not match the selected bootstrap target')
         return Object.freeze({
@@ -615,13 +620,22 @@ export function lifecycleHistoryAddress(value: StateNamespace, stackId: StackId)
     const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id') as StackId
     const lifecycle = authenticated.paths.lifecycle(subjectId)
     return address(
-        join(authenticated.cockpitRoot, 'records', 'lifecycle-history', `${subjectId}.json`),
+        join(authenticated.cockpitRoot, 'records', 'lifecycle-history', `${identitySegment(subjectId)}.json`),
         authenticated.root,
         authenticated.cockpitRoot,
         'lifecycle-history',
         lifecycle.cockpitId,
         subjectId,
     )
+}
+
+export function parseCoordinationStateEntry(name: string):
+Readonly<{ kind: 'record'; stackId: StackId } | { kind: 'temporary' }> | undefined {
+    if (/^\.stack_[a-f0-9]{64}\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(name)) {
+        return { kind: 'temporary' }
+    }
+    if (!/^stack_[a-f0-9]{64}\.json$/.test(name)) return undefined
+    return { kind: 'record', stackId: name.slice(0, -5).replace('_', ':') as StackId }
 }
 
 export function snapshotStateNamespace(value: StateNamespace): StateNamespace | undefined {
@@ -835,13 +849,12 @@ function expectedAddressPath(address: StateAddress | BootstrapStateAddress): str
         if (!isAbsolute(address.stateRoot) || !isAbsolute(address.checkoutRoot)
             || resolve(address.checkoutRoot) !== address.checkoutRoot || !checkoutIdentity.test(address.checkoutId)
             || !surfaceTargets.has(address.target)) return undefined
-        return join(address.stateRoot, 'checkouts', address.checkoutId, 'records', 'bootstrap', `${address.target}.json`)
+        return join(address.stateRoot, 'checkouts', identitySegment(address.checkoutId), 'records', 'bootstrap', `${address.target}.json`)
     }
     if (
-        !isAbsolute(address.stateRoot)
-        || address.cockpitRoot !== join(address.stateRoot, 'cockpits', address.cockpitId)
+        !isAbsolute(address.stateRoot) || !cockpitIdentity.test(address.cockpitId)
+        || address.cockpitRoot !== join(address.stateRoot, 'cockpits', identitySegment(address.cockpitId))
     ) return undefined
-    if (!cockpitIdentity.test(address.cockpitId)) return undefined
     const expectedSubject = address.kind === 'cache' ? checkoutIdentity : stackIdentity
     if (!expectedSubject.test(address.subjectId)) return undefined
     if (
@@ -850,23 +863,24 @@ function expectedAddressPath(address: StateAddress | BootstrapStateAddress): str
         || address.kind === 'coordination'
         || address.kind === 'data-outcome'
     ) {
-        return join(address.cockpitRoot, 'records', address.kind, `${address.subjectId}.json`)
+        return join(address.cockpitRoot, 'records', address.kind, `${identitySegment(address.subjectId)}.json`)
     }
     if (address.kind === 'baseline') {
-        return join(address.cockpitRoot, 'evidence', 'baselines', `${address.subjectId}.json`)
+        return join(address.cockpitRoot, 'evidence', 'baselines', `${identitySegment(address.subjectId)}.json`)
     }
     if (address.kind === 'cache' && address.qualifier && digest.test(address.qualifier)) {
-        return join(address.cockpitRoot, 'cache', address.subjectId, `${address.qualifier}.json`)
+        return join(address.cockpitRoot, 'cache', identitySegment(address.subjectId), `${address.qualifier}.json`)
     }
     return undefined
 }
 
 async function addressIsSafe(address: StateAddress | BootstrapStateAddress): Promise<boolean> {
     const expected = expectedAddressPath(address)
+    if (!expected) return false
     const scopedRoot = address.kind === 'bootstrap'
-        ? join(address.stateRoot, 'checkouts', address.checkoutId)
+        ? join(address.stateRoot, 'checkouts', identitySegment(address.checkoutId))
         : address.cockpitRoot
-    if (!expected || resolve(expected) !== resolve(address.path) || !confinedTo(scopedRoot, address.path)) return false
+    if (resolve(expected) !== resolve(address.path) || !confinedTo(scopedRoot, address.path)) return false
     return ownedPathIsSafe(address.stateRoot, address.path, 'file')
 }
 
@@ -1757,7 +1771,7 @@ async function publishRecord(
     beforeCommit?: StateTransactionOptions['beforeCommit'],
 ): Promise<'durable' | 'indeterminate' | StateTransactionAbort<unknown>> {
     await ensureDirectory(dirname(address.path), address.stateRoot)
-    const temporaryPath = join(dirname(address.path), `.${address.kind === 'bootstrap' ? address.target : address.subjectId}.${randomUUID()}.tmp`)
+    const temporaryPath = join(dirname(address.path), `.${address.kind === 'bootstrap' ? address.target : identitySegment(address.subjectId)}.${randomUUID()}.tmp`)
     const source = Buffer.from(`${JSON.stringify(record)}\n`, 'utf8')
     let temporaryExists = false
     let temporaryNode: { readonly dev: number; readonly ino: number } | undefined
@@ -1911,9 +1925,11 @@ export async function transactState<T>(
             && stableAddress.checkoutRoot === stableNamespace.checkoutRoot
             && stableAddress.checkoutId === stableNamespace.checkoutId
             && stableAddress.target === stableNamespace.target
-            && stableNamespace.paths.stateLock === join(stableNamespace.root, 'checkouts', stableAddress.checkoutId, 'locks', 'state.lock')
+            && checkoutIdentity.test(stableAddress.checkoutId)
+            && stableNamespace.paths.stateLock === join(stableNamespace.root, 'checkouts', identitySegment(stableAddress.checkoutId), 'locks', 'state.lock')
         : stableNamespace.scope === 'cockpit'
-            && stableNamespace.cockpitRoot === join(stableNamespace.root, 'cockpits', stableAddress.cockpitId)
+            && cockpitIdentity.test(stableAddress.cockpitId)
+            && stableNamespace.cockpitRoot === join(stableNamespace.root, 'cockpits', identitySegment(stableAddress.cockpitId))
             && stableAddress.cockpitRoot === stableNamespace.cockpitRoot
             && stableNamespace.paths.stateLock === join(stableNamespace.cockpitRoot, 'locks', 'state.lock')
     if (!isAbsolute(stableNamespace.root) || stableAddress.stateRoot !== stableNamespace.root

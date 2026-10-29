@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, symlinkSync, unlinkSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
@@ -118,6 +118,14 @@ async function selectedNamespace(): Promise<{ namespace: StateNamespace; address
     return { namespace: selected.value, address: selected.value.paths.lifecycle(stackId) }
 }
 
+function expectWindowsSafeStatePath(root: string, path: string): void {
+    for (const segment of relative(root, path).split(sep)) {
+        expect(segment).not.toMatch(/[<>:"/\\|?*\x00-\x1f]/)
+        expect(segment).not.toMatch(/[. ]$/)
+        expect(segment).not.toMatch(/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i)
+    }
+}
+
 async function interceptDirectorySync(
     directoryPath: string,
     intercept: (call: number) => Promise<void> | void,
@@ -142,6 +150,53 @@ async function interceptDirectorySync(
 }
 
 describe('selectStateRoot', () => {
+    it('keeps accepted cache identifiers out of Windows device-name aliases', async () => {
+        const { namespace } = await selectedNamespace()
+        for (const cacheId of ['con', 'nul.foo', 'com1', 'lpt9', 'cache.']) {
+            const path = namespace.paths.installLock(cacheId)
+            expectWindowsSafeStatePath(namespace.root, path)
+            expect(path).toBe(join(namespace.cockpitRoot, 'locks', 'install', `cache-${cacheId}.lock`))
+        }
+    })
+
+    it('round-trips logical identities through Windows-safe state filenames', async () => {
+        const { namespace } = await selectedNamespace()
+        const history = lifecycleHistoryAddress(namespace, stackId)
+        if (!history) throw new Error('expected lifecycle history address')
+        const addresses = [
+            namespace.paths.coordination(stackId), namespace.paths.lifecycle(stackId),
+            namespace.paths.dataOutcome(stackId), history, namespace.paths.baseline(stackId),
+            namespace.paths.cache(checkoutId, 'f'.repeat(64)),
+        ]
+        expectWindowsSafeStatePath(namespace.root, namespace.paths.stateLock)
+        expectWindowsSafeStatePath(namespace.root, namespace.paths.installLock('f'.repeat(64)))
+        for (const address of addresses) {
+            expectWindowsSafeStatePath(namespace.root, address.path)
+            const record: StateRecord = { ...lifecycleRecord(0, 1), kind: address.kind, subjectId: address.subjectId }
+            let temporaryObserved = false
+            const written = await transactState(namespace, address, { ownerId: holderA, beforePublish: async temporaryPath => {
+                temporaryObserved = true
+                expectWindowsSafeStatePath(namespace.root, temporaryPath)
+                expect(JSON.parse(await readFile(temporaryPath, 'utf8'))).toEqual(record)
+            } }, () => record)
+            expect(temporaryObserved).toBe(true)
+            expect(written).toEqual({ kind: 'complete', value: record })
+            expect(await readState(address)).toEqual({ kind: 'complete', value: record })
+            expect(JSON.parse(await readFile(address.path, 'utf8'))).toEqual(record)
+            const raw = { ...address,
+                cockpitRoot: join(namespace.root, 'cockpits', cockpitId),
+                path: join(namespace.root, relative(namespace.root, address.path).replaceAll('_', ':')),
+            }
+            await expect(readState(raw)).resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+            await expect(transactState(namespace, raw, { ownerId: holderA }, () => record))
+                .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+        }
+        expect(new Set(addresses.map(address => address.path)).size).toBe(addresses.length)
+        const otherStack = `stack:${'1'.repeat(64)}` as StackId
+        expect(namespace.paths.lifecycle(otherStack).path).not.toBe(namespace.paths.lifecycle(stackId).path)
+        expect(() => namespace.paths.lifecycle(stackId.replace(':', '_') as StackId)).toThrow('canonical environment identity')
+    })
+
     it.each([0o770, 0o777])('refuses state roots writable by another user (%s)', async (mode) => {
         const parent = await temporaryDirectory()
         const home = join(parent, 'home')
@@ -296,26 +351,47 @@ describe('selectStateRoot', () => {
         await mkdir(home)
         const result = await selectStateRoot({ platform: 'linux', home, cockpitId })
         if (result.kind !== 'complete') throw new Error('expected a selected state root')
-        const base = join(home, '.local', 'state', 'cockpit', 'v1', 'cockpits', cockpitId)
+        const base = join(home, '.local', 'state', 'cockpit', 'v1', 'cockpits', `cockpit_sample_${'a'.repeat(64)}`)
 
         expect(result.value.cockpitRoot).toBe(base)
         expect(Object.keys(result.value.paths).sort()).toEqual([
             'baseline', 'cache', 'coordination', 'dataOutcome', 'installLock', 'lifecycle', 'stateLock',
         ])
-        expect(result.value.paths.coordination(stackId).path).toBe(join(base, 'records', 'coordination', `${stackId}.json`))
-        expect(result.value.paths.lifecycle(stackId).path).toBe(join(base, 'records', 'lifecycle', `${stackId}.json`))
-        expect(result.value.paths.dataOutcome(stackId).path).toBe(join(base, 'records', 'data-outcome', `${stackId}.json`))
-        expect(lifecycleHistoryAddress(result.value, stackId)?.path).toBe(join(base, 'records', 'lifecycle-history', `${stackId}.json`))
+        expect(result.value.paths.coordination(stackId).path).toBe(join(base, 'records', 'coordination', `stack_${'b'.repeat(64)}.json`))
+        expect(result.value.paths.lifecycle(stackId).path).toBe(join(base, 'records', 'lifecycle', `stack_${'b'.repeat(64)}.json`))
+        expect(result.value.paths.dataOutcome(stackId).path).toBe(join(base, 'records', 'data-outcome', `stack_${'b'.repeat(64)}.json`))
+        expect(lifecycleHistoryAddress(result.value, stackId)?.path).toBe(join(base, 'records', 'lifecycle-history', `stack_${'b'.repeat(64)}.json`))
         expect(result.value.paths.stateLock).toBe(join(base, 'locks', 'state.lock'))
-        expect(result.value.paths.installLock('cache-a')).toBe(join(base, 'locks', 'install', 'cache-a.lock'))
+        expect(result.value.paths.installLock('cache-a')).toBe(join(base, 'locks', 'install', 'cache-cache-a.lock'))
         expect(result.value.paths.cache(checkoutId, 'a'.repeat(64)).path).toBe(
-            join(base, 'cache', checkoutId, `${'a'.repeat(64)}.json`),
+            join(base, 'cache', `checkout_${'c'.repeat(64)}`, `${'a'.repeat(64)}.json`),
         )
-        expect(result.value.paths.baseline(stackId).path).toBe(join(base, 'evidence', 'baselines', `${stackId}.json`))
+        expect(result.value.paths.baseline(stackId).path).toBe(join(base, 'evidence', 'baselines', `stack_${'b'.repeat(64)}.json`))
     })
 })
 
 describe('bootstrap state', () => {
+    it('round-trips bootstrap identity through Windows-safe state filenames', async () => {
+        const { namespace, address } = await selectedBootstrapNamespace()
+        const ownerId = bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'portable-state' })
+        const record = bootstrapRecord(address)
+        expectWindowsSafeStatePath(namespace.root, address.path)
+        expectWindowsSafeStatePath(namespace.root, namespace.paths.stateLock)
+        let temporaryObserved = false
+        const written = await transactState(namespace, address, { ownerId, beforePublish: async temporaryPath => {
+            temporaryObserved = true
+            expectWindowsSafeStatePath(namespace.root, temporaryPath)
+            expect(JSON.parse(await readFile(temporaryPath, 'utf8'))).toEqual(record)
+        } }, () => record)
+        expect(temporaryObserved).toBe(true)
+        expect(written).toEqual({ kind: 'complete', value: record })
+        expect(await readState(address)).toEqual({ kind: 'complete', value: record })
+        const raw = { ...address, path: join(namespace.root, relative(namespace.root, address.path).replaceAll('_', ':')) }
+        await expect(readState(raw)).resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+        await expect(transactState(namespace, raw, { ownerId }, () => record))
+            .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED })
+    })
+
     it('selects checkout-scoped state without cockpit or stack identity and refuses copied authority', async () => {
         const parent = await temporaryDirectory(); const home = join(parent, 'home'); const checkoutPath = join(parent, 'checkout')
         await Promise.all([mkdir(home), mkdir(checkoutPath)])
@@ -325,7 +401,7 @@ describe('bootstrap state', () => {
         const expectedCheckout = deriveCheckoutId({ checkoutPath: checkoutRoot })
         const address = selected.value.paths.bootstrap('codexcli')
         expect(address).toEqual({
-            path: join(selected.value.root, 'checkouts', expectedCheckout, 'records', 'bootstrap', 'codexcli.json'),
+            path: join(selected.value.root, 'checkouts', expectedCheckout.replace(':', '_'), 'records', 'bootstrap', 'codexcli.json'),
             stateRoot: selected.value.root, checkoutRoot: selected.value.checkoutRoot,
             kind: 'bootstrap', checkoutId: expectedCheckout, target: 'codexcli',
         })
@@ -600,7 +676,7 @@ describe('readState', () => {
         const { namespace, address } = await selectedNamespace()
         const outside = join(await temporaryDirectory(), 'outside')
         await mkdir(join(outside, 'records', 'lifecycle'), { recursive: true })
-        await writeFile(join(outside, 'records', 'lifecycle', `${stackId}.json`), `${JSON.stringify(lifecycleRecord(0, 7))}\n`)
+        await writeFile(join(outside, 'records', 'lifecycle', `stack_${'b'.repeat(64)}.json`), `${JSON.stringify(lifecycleRecord(0, 7))}\n`)
         await mkdir(join(namespace.root, 'cockpits'), { recursive: true })
         await symlink(outside, namespace.cockpitRoot)
 

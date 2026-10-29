@@ -76,8 +76,8 @@ const canonicalTemp = async (prefix: string) => realpath(await mkdtemp(join(tmpd
 
 const writeCoordination = async (root: string, record = stateRecord(root)) => {
     const stateRoot = join(root, 'state')
-    const cockpitRoot = join(stateRoot, 'cockpits', cockpitId)
-    const path = join(cockpitRoot, 'records', 'coordination', `${stackId}.json`)
+    const cockpitRoot = join(stateRoot, 'cockpits', cockpitId.replaceAll(':', '_'))
+    const path = join(cockpitRoot, 'records', 'coordination', `${stackId.replace(':', '_')}.json`)
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, `${JSON.stringify(record)}\n`)
     const address = { path, stateRoot, cockpitRoot, kind: 'coordination' as const, cockpitId, subjectId: stackId }

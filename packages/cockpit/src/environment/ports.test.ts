@@ -296,7 +296,7 @@ describe('whole-family port leases', () => {
 
     it('ignores unrelated record directories during allocation', async () => {
         const state = await namespace()
-        const path = join(state.cockpitRoot, 'records', 'leases', `${stackA}.json`)
+        const path = join(state.cockpitRoot, 'records', 'leases', `${stackA.replace(':', '_')}.json`)
         await mkdir(dirname(path), { recursive: true })
         await writeFile(path, JSON.stringify({
             format: 'cockpit-state/v1', kind: 'lease', cockpitId, subjectId: stackA,
@@ -717,8 +717,8 @@ describe('whole-family port leases', () => {
             kind: 'complete',
             value: { value: { holders: [{ holderId: holderA }], lease: { released: false } } },
         })
-        await expect(lstat(join(state.cockpitRoot, 'records', 'claims', `${stackA}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
-        await expect(lstat(join(state.cockpitRoot, 'records', 'leases', `${stackA}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(lstat(join(state.cockpitRoot, 'records', 'claims', `${stackA.replace(':', '_')}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(lstat(join(state.cockpitRoot, 'records', 'leases', `${stackA.replace(':', '_')}.json`))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('publishes neither holder nor lease when initial allocation refuses', async () => {

@@ -37,6 +37,7 @@ import {
     authenticateStateNamespace,
     authenticateStatePublication,
     inspectStateLock,
+    parseCoordinationStateEntry,
     readState,
     snapshotStateNamespace,
     transactState,
@@ -915,7 +916,8 @@ export async function readActiveStackInventory(
         } finally { await handle.close().catch(() => undefined) }
         const records: { stackId: StackId; record: CoordinationRecord }[] = []
         for (const name of names.sort()) {
-            if (/^\.stack:[a-f0-9]{64}\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(name)) {
+            const entry = parseCoordinationStateEntry(name)
+            if (entry?.kind === 'temporary') {
                 const lock = await inspectStateLock(namespace, options.observeHolder)
                 const residue = join(directory, name)
                 const [currentResidue, afterLockInspection] = await Promise.all([
@@ -951,10 +953,10 @@ export async function readActiveStackInventory(
                     `${lock.description}; ${lock.recovery}; remove the residue only after proving that no writer owns it`,
                 )
             }
-            if (!/^stack:[a-f0-9]{64}\.json$/.test(name)) {
+            if (!entry || entry.kind !== 'record') {
                 return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination store contains an unexpected entry', join(directory, name))
             }
-            const stackId = name.slice(0, -5) as StackId
+            const stackId = entry.stackId
             const result = await readState(namespace.paths.coordination(stackId))
             if (result.kind !== 'complete') {
                 return refuse(

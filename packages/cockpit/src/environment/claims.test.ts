@@ -1046,7 +1046,7 @@ describe('active stack inventory', () => {
     it('reads only the current coordination store', async () => {
         const state = await namespace()
         for (const directory of ['claims', 'leases']) {
-            const path = join(state.cockpitRoot, 'records', directory, `${stackId}.json`)
+            const path = join(state.cockpitRoot, 'records', directory, `${stackId.replace(':', '_')}.json`)
             await mkdir(dirname(path), { recursive: true })
             await writeFile(path, 'unrelated bytes')
         }
@@ -1147,7 +1147,7 @@ describe('active stack inventory', () => {
         const state = await namespace()
         const directory = dirname(state.paths.coordination(stackId).path)
         await mkdir(directory, { recursive: true })
-        const residue = join(directory, `.${stackId}.12345678-1234-4123-8123-123456789abc.tmp`)
+        const residue = join(directory, `.${stackId.replace(':', '_')}.12345678-1234-4123-8123-123456789abc.tmp`)
         await writeFile(residue, 'unverified bytes')
 
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -1174,7 +1174,7 @@ describe('active stack inventory', () => {
         const state = await namespace()
         const directory = dirname(state.paths.coordination(stackId).path)
         await mkdir(directory, { recursive: true })
-        const residue = join(directory, `.${stackId}.12345678-1234-4123-8123-123456789abc.tmp`)
+        const residue = join(directory, `.${stackId.replace(':', '_')}.12345678-1234-4123-8123-123456789abc.tmp`)
         await writeFile(residue, 'unverified bytes')
         await mkdir(state.paths.stateLock, { recursive: true })
         if (owner !== undefined) await writeFile(join(state.paths.stateLock, 'owner.json'), owner)
@@ -1194,7 +1194,7 @@ describe('active stack inventory', () => {
         const state = await namespace()
         const directory = dirname(state.paths.coordination(stackId).path)
         await mkdir(directory, { recursive: true })
-        const residue = join(directory, `.${stackId}.12345678-1234-4123-8123-123456789abc.tmp`)
+        const residue = join(directory, `.${stackId.replace(':', '_')}.12345678-1234-4123-8123-123456789abc.tmp`)
         await writeFile(residue, 'prepared bytes')
         await mkdir(state.paths.stateLock, { recursive: true })
         await writeFile(join(state.paths.stateLock, 'owner.json'), `${JSON.stringify({
@@ -1230,7 +1230,7 @@ describe('active stack inventory', () => {
         const state = await namespace()
         const directory = dirname(state.paths.coordination(stackId).path)
         await mkdir(directory, { recursive: true })
-        const residue = join(directory, `.${stackId}.12345678-1234-4123-8123-123456789abc.tmp`)
+        const residue = join(directory, `.${stackId.replace(':', '_')}.12345678-1234-4123-8123-123456789abc.tmp`)
         await writeFile(residue, 'prepared bytes')
         await mkdir(state.paths.stateLock, { recursive: true })
         await writeFile(join(state.paths.stateLock, 'owner.json'), `${JSON.stringify({
@@ -2652,7 +2652,7 @@ describe('session-aware claims', () => {
         let reportPrepared: () => void = () => undefined
         const prepared = new Promise<void>((resolve) => { reportPrepared = resolve })
         const commitContinuation = new Promise<void>((resolve) => { continueCommit = resolve })
-        coordinationCommitGate.temporaryPrefix = `${dirname(state.paths.coordination(stackId).path)}/.${stackId}.`
+        coordinationCommitGate.temporaryPrefix = `${dirname(state.paths.coordination(stackId).path)}/.${stackId.replace(':', '_')}.`
         coordinationCommitGate.reached = reportPrepared
         coordinationCommitGate.continuation = commitContinuation
         try {
@@ -2702,7 +2702,7 @@ describe('session-aware claims', () => {
         const result = await transactState(state, address, {
             ownerId: holderA,
             beforeCommit: () => {
-                const temporary = readdirSync(dirname(address.path)).find((name) => name.startsWith(`.${stackId}.`) && name.endsWith('.tmp'))
+                const temporary = readdirSync(dirname(address.path)).find((name) => name.startsWith(`.${stackId.replace(':', '_')}.`) && name.endsWith('.tmp'))
                 if (!temporary) throw new Error('expected prepared state file')
                 writeFileSync(join(dirname(address.path), temporary), `${JSON.stringify({
                     ...before.value,
@@ -2822,7 +2822,7 @@ describe('session-aware claims', () => {
         let continueCommit: () => void = () => undefined
         let reportPrepared: () => void = () => undefined
         const prepared = new Promise<void>((resolve) => { reportPrepared = resolve })
-        coordinationCommitGate.temporaryPrefix = `${dirname(state.paths.coordination(stackId).path)}/.${stackId}.`
+        coordinationCommitGate.temporaryPrefix = `${dirname(state.paths.coordination(stackId).path)}/.${stackId.replace(':', '_')}.`
         coordinationCommitGate.reached = reportPrepared
         coordinationCommitGate.continuation = new Promise<void>((resolve) => { continueCommit = resolve })
         try {

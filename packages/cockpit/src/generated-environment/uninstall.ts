@@ -9,7 +9,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { readActiveStackInventory } from '../environment/claims.js'
 import { ENVIRONMENT_CODES, snapshotGeneratedJson, type HolderId } from '../environment/contract.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from '../environment/identity.js'
-import { abortStateTransaction, snapshotStateNamespace, transactState, type StateNamespace } from '../environment/state.js'
+import { abortStateTransaction, authenticateStateNamespace, snapshotStateNamespace, transactState, type StateNamespace } from '../environment/state.js'
 import { observeGuardLocalRemoval, removeObservedGuardLocal } from '../guards/local-identity.js'
 import { SURFACE_FILE_MAX_BYTES } from '../surfaces/contract.js'
 import { SURFACE_PUBLICATION_ANCHORS } from '../surfaces/harness-registry.js'
@@ -76,9 +76,10 @@ async function remove(
     if (loaded.kind !== 'complete') return diagnosticsRefusal(loaded.diagnostics)
     const root = dirname(loaded.result.source.path)
     const cockpit = cockpitId({ name: loaded.result.config.cockpit.name, mainCheckoutPath: root })
-    const namespace = snapshotStateNamespace(context?.namespace)
-    if (!namespace || namespace.cockpitRoot !== join(namespace.root, 'cockpits', cockpit)) return refuse(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'removal requires the current cockpit coordination namespace', root)
+    const authenticatedNamespace = authenticateStateNamespace(context?.namespace)
+    const namespace = authenticatedNamespace && snapshotStateNamespace(authenticatedNamespace)
     const stack = stackId({ cockpitId: cockpit, checkoutId: checkoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
+    if (!namespace || namespace.paths.coordination(stack).cockpitId !== cockpit) return refuse(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'removal requires the current cockpit coordination namespace', root)
     const ownerId = context.ownerId
     const adapters = { execute: executeProbe, observeSource: observeConfigSource, ...overrides }
     // Hold the existing coordination lock through publication so a new claim cannot

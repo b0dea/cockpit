@@ -143,7 +143,7 @@ async function helperWithPreload(root: string, request: object, preload: string,
 }
 
 function namespace(stateRoot: string): StateNamespace {
-    const cockpitRoot = join(stateRoot, 'cockpits', `cockpit:${'4'.repeat(64)}`)
+    const cockpitRoot = join(stateRoot, 'cockpits', `cockpit_${'4'.repeat(64)}`)
     const unused = () => { throw new Error('unused state address') }
     return Object.freeze({
         root: stateRoot,
@@ -155,9 +155,9 @@ function namespace(stateRoot: string): StateNamespace {
             lifecycle: unused,
             dataOutcome: unused,
             stateLock: join(cockpitRoot, 'locks', 'state.lock'),
-            installLock: (cacheId: string) => join(cockpitRoot, 'locks', 'install', `${cacheId}.lock`),
+            installLock: (cacheId: string) => join(cockpitRoot, 'locks', 'install', `cache-${cacheId}.lock`),
             cache: (checkout: CheckoutId, lockfileSha256: string) => ({
-                path: join(cockpitRoot, 'cache', checkout, `${lockfileSha256}.json`),
+                path: join(cockpitRoot, 'cache', checkout.replace(':', '_'), `${lockfileSha256}.json`),
                 stateRoot,
                 cockpitRoot,
                 kind: 'cache',

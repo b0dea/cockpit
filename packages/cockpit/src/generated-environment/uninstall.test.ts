@@ -74,6 +74,21 @@ async function consumerWithGuide() {
 }
 
 describe('generated uninstall and forget', () => {
+    it('refuses copied, forged and foreign state namespace authority before removal', async () => {
+        const c = await consumer()
+        const foreign = await consumer()
+        const copied = { ...c.context.namespace }
+        const forged = { ...copied, paths: { ...copied.paths, coordination: () => {
+            throw new Error('forged namespace must not be consulted')
+        } } }
+        for (const namespace of [copied, forged, foreign.context.namespace]) {
+            expect(await uninstallGeneratedEnvironment({ configPath: c.configPath }, { ...c.context, namespace }))
+                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_ROOT_UNAVAILABLE' }] })
+            expect(await readFile(join(c.root, c.ownedPath), 'utf8')).toBe('owned')
+            expect(await readFile(join(c.root, ledgerPath), 'utf8')).toBe(c.ledger.bytes)
+        }
+    })
+
     it('removes only cockpit-owned machine-local guard state during uninstall', async () => {
         const c = await consumer()
         const identity = {

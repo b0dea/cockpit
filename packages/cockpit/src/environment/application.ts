@@ -1177,7 +1177,7 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
             || input.checkoutId !== checkout.checkoutId
             || input.stackId !== expectedStackId
             || input.holderId !== expectedHolderId
-            || namespace.cockpitRoot !== join(namespace.root, 'cockpits', checkout.cockpitId)) {
+            || namespace.paths.lifecycle(expectedStackId).cockpitId !== checkout.cockpitId) {
             return contextRefusal(checkout.source.path)
         }
         const config = loaded.config
