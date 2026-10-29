@@ -1322,7 +1322,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     const siblingRoots = authenticatedSiblings.roots
     const runtimeCheckout = declaration || workEnvironment.browser || config.environment.compose_files.length > 0
         ? await observeGeneratedCheckoutIdentity({ source: loaded.result.source, cockpitName: config.cockpit.name,
-            env: Object.freeze({ PATH: process.env.PATH ?? '' }) }) : undefined
+            env: process.env }) : undefined
     if (runtimeCheckout?.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
         `generated checkout identity is unavailable: ${runtimeCheckout.reason}`, loaded.result.source.path,
         'restore the configuration checkout and Git installation, then run cockpit sync --config <file>')

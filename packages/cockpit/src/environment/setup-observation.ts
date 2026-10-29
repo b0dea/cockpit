@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { constants, type BigIntStats } from 'node:fs'
 import { lstat, open, readFile, readdir, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { isProxy } from 'node:util/types'
 import { EnvironmentFile, type EnvironmentFile as EnvironmentFileValue } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
@@ -1226,7 +1227,7 @@ interface GeneratedCheckoutBinding {
     readonly source: SourceProvenance
     readonly sourceIdentity: FileIdentity
     readonly cockpitName: string
-    readonly env: Readonly<Record<string, string>>
+    readonly env: Readonly<Record<string, string | undefined>>
     readonly directories: ReadonlyMap<string, DirectoryIdentity>
     readonly absentGitEntries: readonly string[]
     readonly checkout?: SetupCheckoutBinding
@@ -1234,6 +1235,43 @@ interface GeneratedCheckoutBinding {
 }
 
 const issuedGeneratedCheckoutIdentities = new WeakMap<object, GeneratedCheckoutBinding>()
+
+function captureGeneratedCheckoutInput(input: unknown): Readonly<{
+    source: SourceProvenance
+    cockpitName: string
+    env: Readonly<Record<string, string | undefined>>
+}> | undefined {
+    try {
+        if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
+        const descriptors = Object.getOwnPropertyDescriptors(input)
+        const keys = ['cockpitName', 'env', 'source']
+        if (Reflect.ownKeys(descriptors).length !== keys.length
+            || keys.some(key => !descriptors[key] || !Object.hasOwn(descriptors[key]!, 'value'))) return undefined
+        const source = snapshotJson(descriptors.source!.value)
+        const cockpitName = descriptors.cockpitName!.value
+        const rawEnvironment = descriptors.env!.value
+        if (!validSource(source) || typeof cockpitName !== 'string' || !COCKPIT_NAME.test(cockpitName)
+            || rawEnvironment === null || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)
+            || isProxy(rawEnvironment)) return undefined
+        const environmentDescriptors = Object.getOwnPropertyDescriptors(rawEnvironment)
+        const environmentKeys = Reflect.ownKeys(environmentDescriptors)
+        if (environmentKeys.length > 4_096) return undefined
+        const env: Record<string, string | undefined> = {}
+        for (const key of environmentKeys) {
+            if (typeof key !== 'string') return undefined
+            if (!/^(?:PATH|PATHEXT)$/i.test(key)) continue
+            const descriptor = environmentDescriptors[key]!
+            if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')
+                || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
+                    || descriptor.value.includes('\0') || Buffer.byteLength(descriptor.value) > 65_536)) return undefined
+            env[key] = descriptor.value
+        }
+        return Object.freeze({ source: Object.freeze({ path: source.path, byteLength: source.byteLength, sha256: source.sha256 }),
+            cockpitName, env: Object.freeze(env) })
+    } catch {
+        return undefined
+    }
+}
 
 async function pathAbsent(path: string): Promise<boolean> {
     try { await lstat(path); return false } catch (error) {
@@ -1244,15 +1282,10 @@ async function pathAbsent(path: string): Promise<boolean> {
 export async function observeGeneratedCheckoutIdentity(input: {
     readonly source: SourceProvenance
     readonly cockpitName: string
-    readonly env: Readonly<Record<string, string>>
+    readonly env: Readonly<Record<string, string | undefined>>
 }): Promise<GeneratedCheckoutIdentity | Extract<SetupCheckoutObservation, { state: 'failed' }>> {
-    const captured = snapshotJson(input)
-    const value = captured && typeof captured === 'object' && !Array.isArray(captured)
-        ? captured as Record<string, unknown> : undefined
-    if (!value || Object.keys(value).sort().join('\0') !== ['cockpitName', 'env', 'source'].join('\0')
-        || !validSource(value.source) || typeof value.cockpitName !== 'string' || !COCKPIT_NAME.test(value.cockpitName)
-        || !value.env || typeof value.env !== 'object' || Array.isArray(value.env)
-        || Object.entries(value.env).some(([name, entry]) => !name || /[\0=]/.test(name) || typeof entry !== 'string' || entry.includes('\0'))) {
+    const value = captureGeneratedCheckoutInput(input)
+    if (!value) {
         return setupCheckoutFailure('generated checkout identity input is malformed')
     }
     const source = value.source
@@ -1283,14 +1316,15 @@ export async function observeGeneratedCheckoutIdentity(input: {
         if (parent === candidate) break
         candidate = parent
     }
-    const env = Object.freeze({ ...(value.env as Record<string, string>) })
+    const searchEnvironment = value.env
     const observedAt = Date.now()
     if (!Number.isSafeInteger(observedAt)) return setupCheckoutFailure('generated checkout observation time is invalid')
     let checkout: SetupCheckoutBinding | undefined
     let consumed: ConsumedSetupCheckoutObservation | undefined
     if (hasCheckout) {
-        const git = await resolveGitExecutable(env)
+        const git = await resolveGitExecutable(searchEnvironment)
         if (git.state !== 'available') return setupCheckoutFailure(git.reason)
+        const env = gitEnvironment(searchEnvironment)
         const observation = await observeSetupCheckout({ source, cockpitName: value.cockpitName,
             env, gitExecutable: git.value, observedAt: new Date(observedAt).toISOString() })
         if (observation.state === 'failed') return observation
@@ -1308,7 +1342,7 @@ export async function observeGeneratedCheckoutIdentity(input: {
         mainCheckoutPath: consumed?.mainCheckoutPath ?? root,
     })
     const binding: GeneratedCheckoutBinding = Object.freeze({ source, sourceIdentity: sourceFile.identity,
-        cockpitName: value.cockpitName, env, directories, absentGitEntries: Object.freeze(absentGitEntries),
+        cockpitName: value.cockpitName, env: searchEnvironment, directories, absentGitEntries: Object.freeze(absentGitEntries),
         ...(checkout ? { checkout } : {}), observedAt })
     const current = await generatedCheckoutBindingCurrent(binding)
     const completedAt = Date.now()
