@@ -233,6 +233,7 @@ interface PreparedEnvironment {
     readonly registry: DerivedRegistry
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
+    readonly hostInputs: readonly GeneratedHostInput[]
     readonly workEnvironment: ConsumedWorkEnvironmentConfig
     readonly workApplication?: WorkApplicationAuthorityRecord
     readonly browserRunner?: BrowserRunnerAuthority
@@ -533,10 +534,18 @@ const WORK_ASSETS = Object.freeze([
     'scripts/browser-runner.sh',
 ] as const)
 type SurfaceAssetPath = typeof RESTRICTION_ASSETS[number] | typeof EVALUATOR_ASSET | typeof SKILL_ASSETS[number] | typeof REFERENCE_ASSETS[number] | typeof WORK_ASSETS[number]
+interface GeneratedHostInput {
+    readonly root: GeneratedHostInputRoot
+    readonly source: string
+    readonly type: 'file' | 'directory'
+    readonly mount: boolean
+}
+
 interface GeneratedApplicationRecord {
     readonly root: string
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
+    readonly hostInputs: readonly GeneratedHostInput[]
     readonly rendered?: Extract<GeneratedEnvironmentResult, { kind: 'complete' }>
     readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
@@ -635,7 +644,7 @@ function complete(
         }),
     })
     issuedApplicationProjections.set(application, Object.freeze({
-        root: prepared.root, siblingRoots: prepared.siblingRoots, hostInputRoots: prepared.hostInputRoots,
+        root: prepared.root, siblingRoots: prepared.siblingRoots, hostInputRoots: prepared.hostInputRoots, hostInputs: prepared.hostInputs,
         ...(prepared.rendered && prepared.inspection ? { rendered: prepared.rendered, inspection: prepared.inspection } : {}),
         node: prepared.node,
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
@@ -955,25 +964,50 @@ export function projectGeneratedApplicationNodeExecutable(application: Generated
     return issuedApplicationProjections.get(application)?.node
 }
 
-export async function projectGeneratedApplicationMountSources(application: GeneratedApplicationProjection): Promise<readonly string[] | undefined> {
+interface GeneratedHostInputRefusal {
+    readonly kind: 'refusal'
+    readonly path: string
+    readonly expectedType: 'file' | 'directory'
+}
+
+export async function projectGeneratedApplicationMountSources(application: GeneratedApplicationProjection): Promise<readonly string[] | GeneratedHostInputRefusal | undefined> {
     const record = application !== null && typeof application === 'object' ? issuedApplicationProjections.get(application) : undefined
     if (!record?.rendered || !await siblingRootsCurrent(record.siblingRoots)) return undefined
+    const sources: string[] = []
+    const roots = new Set([...Object.values(record.hostInputRoots), ...record.hostInputs.map(input => input.root)])
     try {
-        for (const root of Object.values(record.hostInputRoots)) {
+        for (const root of roots) {
+            const status = await lstat(root.path)
+            if (await realpath(root.path) !== root.path || !status.isDirectory() || status.isSymbolicLink()
+                || status.dev !== root.dev || status.ino !== root.ino) return undefined
+        }
+        // The later generated observations diagnose running services. Admit the exact declared
+        // host inputs here so Compose cannot follow an existing link before those probes run.
+        for (const input of record.hostInputs) {
+            const root = input.root
+            const target = resolve(root.path, input.source)
+            const refusal: GeneratedHostInputRefusal = Object.freeze({ kind: 'refusal', path: target, expectedType: input.type })
+            if (!containedPath(root.path, target)) return refusal
+            const parts = relative(root.path, target).split(sep).filter(Boolean)
+            let current = root.path
+            if (parts.length === 0 && input.type !== 'directory') return refusal
+            try {
+                for (const [index, part] of parts.entries()) {
+                    current = resolve(current, part)
+                    const status = await lstat(current)
+                    const directory = index < parts.length - 1 || input.type === 'directory'
+                    if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())) return refusal
+                }
+                if (await realpath(target) !== target) return refusal
+            } catch { return refusal }
+            if (input.mount) sources.push(target)
+        }
+        for (const root of roots) {
             const status = await lstat(root.path)
             if (await realpath(root.path) !== root.path || !status.isDirectory() || status.isSymbolicLink()
                 || status.dev !== root.dev || status.ino !== root.ino) return undefined
         }
     } catch { return undefined }
-    const sources: string[] = []
-    for (const observation of record.rendered.observations) {
-        if (observation.kind !== 'mount-lstat') continue
-        const root = typeof observation.expected.service === 'string' ? record.hostInputRoots[observation.expected.service] : undefined
-        if (!root) return undefined
-        const target = resolve(root.path, observation.target)
-        if (!containedPath(root.path, target)) return undefined
-        sources.push(target)
-    }
     return Object.freeze([...new Set(sources)].sort())
 }
 
@@ -1326,6 +1360,21 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             'GENERATED_SIBLING_ROOT_INVALID', 'the browser input root is not a canonical ordinary directory', 'browser')
         hostInputRoots[projectedRunner.service.id] = Object.freeze({ path: root, dev: status.dev, ino: status.ino })
     }
+    const hostInputs: GeneratedHostInput[] = []
+    for (const service of [...declaration?.services ?? [], ...projectedRunner ? [projectedRunner.service] : []]) {
+        const sibling = siblingRoots.siblings.get(service.sibling)
+        const inputRoot = hostInputRoots[service.id] ?? (sibling ? Object.freeze({ path: sibling.root, ...sibling.identity }) : undefined)
+        if (!inputRoot) return refuse('GENERATED_SIBLING_ROOT_INVALID', 'a generated service names an unauthenticated sibling', service.id)
+        for (const mount of service.mounts) {
+            if (mount.kind !== 'volume') hostInputs.push(Object.freeze({
+                root: inputRoot, source: mount.source, type: mount.source_type!, mount: true,
+            }))
+        }
+        if ('build' in service && service.build) hostInputs.push(
+            Object.freeze({ root: inputRoot, source: service.build.context, type: 'directory', mount: false }),
+            Object.freeze({ root: inputRoot, source: join(service.build.context, service.build.dockerfile ?? 'Dockerfile'), type: 'file', mount: false }),
+        )
+    }
     const rendered = declaration ? renderGeneratedEnvironment({
         declaration,
         sourceSha256: loaded.result.source.sha256,
@@ -1449,6 +1498,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         registry: derived.result,
         siblingRoots,
         hostInputRoots: Object.freeze(hostInputRoots),
+        hostInputs: Object.freeze(hostInputs),
         workEnvironment,
         ...(projectedRunner ? { browserRunner: projectedRunner.authority } : {}),
         ...(inspectedPorts ? { portLease: inspectedPorts } : {}),

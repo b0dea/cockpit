@@ -91,6 +91,22 @@ files outside the cockpit. Browser-runner inputs, `generated_host_paths`, and ge
 destinations remain relative to the cockpit checkout. This keeps product input reads separate
 from cockpit-owned publication.
 
+Before Compose can build or start a generated service, cockpit checks each declared bind source,
+environment-file mount, build context, and Dockerfile from its authenticated input root. Each
+component must exist without symbolic links; bind sources must have their declared type, build
+contexts must be directories, and Dockerfiles must be regular files beneath the context. An
+omitted Dockerfile uses `Dockerfile` in that context. This prevents an existing link or wrong-type
+input from reaching Docker before readiness probes can diagnose it. Environment-file values are
+not read by this admission check. Toolchain pins remain diagnostic inputs, not build authority.
+
+Browser-runner inputs are checked after their generated files are published. Prepare the directory
+named by `browser.artifacts.runner` before the first `cockpit up`; for example, if the declaration
+uses `.browser/runner`, run `mkdir -p .browser/runner` from the cockpit checkout. Cockpit refuses
+missing or linked inputs instead of relying on Docker to create host directories. Restore the
+reported input as an ordinary file or directory, then rerun `cockpit up --config cockpit.toml`.
+These checks observe the declared paths at admission; they do not recursively inspect build
+context contents or lock the filesystem against later changes.
+
 Generated vendor templates must also lie inside the cockpit checkout. External sibling checkouts
 remain valid for mounted surfaces, but a vendor template outside the checkout is refused, and
 cockpit never substitutes a similarly named directory inside its own checkout. The

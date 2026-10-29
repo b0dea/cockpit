@@ -875,6 +875,9 @@ export function createLifecycleCommandAdapters(
             activeProfiles = generatedApplication.profiles
             const sources = await projectGeneratedApplicationMountSources(generatedApplication)
             if (!sources) return undefined
+            if ('kind' in sources) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
+                `generated host input must be an ordinary ${sources.expectedType} without symbolic-link components; missing, unreadable or wrong-type inputs cannot be handed to Docker; restore or create the declared input, then rerun cockpit up --config cockpit.toml`,
+                sources.path))
             expectedMountSources = sources
         } else {
             const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -137,6 +137,90 @@ describe('production lifecycle adapter composition', () => {
             expect.objectContaining({ owner: 'external-dependency-boundary' }),
         ]))
     }, 120_000)
+
+    it.each(['bind', 'environment-file', 'build-context', 'default-dockerfile', 'explicit-dockerfile'] as const)(
+        'checks every %s host input before Compose build or start', async (input) => {
+            const candidate = await generatedFixture()
+            const originalConfig = await readFile(candidate.configPath, 'utf8')
+            for (const defect of ['final-link', 'intermediate-link', 'wrong-type', 'missing', 'valid'] as const) {
+                const home = join(candidate.root, `home-${defect}`)
+                await mkdir(home)
+                await rm(join(candidate.checkout, 'app/inputs'), { recursive: true, force: true })
+                const directory = input === 'bind' || input === 'build-context'
+                const build = input.includes('dockerfile') || input === 'build-context'
+                const sourceDirectory = input === 'bind' ? 'inputs/source' : '.'
+                const environmentFile = input === 'environment-file' ? 'inputs/runtime' : '.env'
+                const buildDeclaration = build ? { context: 'inputs/context',
+                    ...(input === 'explicit-dockerfile' ? { dockerfile: 'recipe/Containerfile' } : {}) } : undefined
+                const source = input === 'bind' ? sourceDirectory : input === 'environment-file' ? environmentFile
+                    : input === 'build-context' ? 'inputs/context'
+                    : `inputs/context/${buildDeclaration?.dockerfile ?? 'Dockerfile'}`
+                const target = join(candidate.checkout, 'app', source)
+                const foreign = join(candidate.root, `foreign-${defect}`)
+                await mkdir(foreign)
+                const foreignFile = join(foreign, 'sentinel')
+                await writeFile(foreignFile, 'foreign input must remain unchanged\n')
+                const foreignBefore = await lstat(foreignFile)
+                const config = originalConfig
+                    .replace('kind = "bind"\nsource = "."', `kind = "bind"\nsource = "${sourceDirectory}"`)
+                    .replace('app:bind:.:/workspace/source', `app:bind:${sourceDirectory}:/workspace/source`)
+                    .replace('kind = "environment-file"\nsource = ".env"', `kind = "environment-file"\nsource = "${environmentFile}"`)
+                    .replace('app:environment-file:.env:/workspace/.env', `app:environment-file:${environmentFile}:/workspace/.env`)
+                await writeFile(candidate.configPath, buildDeclaration ? config.replace(
+                    /\[environment\.generated\.services\.image\][\s\S]*?(?=\[\[environment\.generated\.services\.ports\]\])/,
+                    `[environment.generated.services.build]\ncontext = "${buildDeclaration.context}"\n${buildDeclaration.dockerfile ? `dockerfile = "${buildDeclaration.dockerfile}"\n` : ''}\n`,
+                ) : config)
+                await mkdir(resolve(target, '..'), { recursive: true })
+                if (directory) await mkdir(target)
+                else await writeFile(target, input === 'environment-file' ? 'SYNTHETIC_SETTING=1\n' : 'FROM scratch\n')
+                if (buildDeclaration && input === 'build-context') await writeFile(join(target, 'Dockerfile'), 'FROM scratch\n')
+                if (defect === 'intermediate-link') {
+                    const intermediate = resolve(target, '..')
+                    await rm(intermediate, { recursive: true })
+                    await symlink(foreign, intermediate)
+                } else if (defect !== 'valid') {
+                    await rm(target, { recursive: true })
+                    if (defect === 'final-link') await symlink(directory ? foreign : foreignFile, target)
+                    if (defect === 'wrong-type') {
+                        if (directory) await writeFile(target, 'not a directory\n')
+                        else await mkdir(target)
+                    }
+                }
+                const steps: ExecutionStep[] = []
+                const adapters = createLifecycleCommandAdapters({
+                    configPath: candidate.configPath,
+                    env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: home },
+                    sessionId: 'generated-inputs', timeoutMs: 5_000,
+                }, async (step) => {
+                    steps.push(step)
+                    return executeProbe(step)
+                })
+                const loaded = await adapters.load({ configPath: candidate.configPath })
+                expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
+                if (loaded.kind !== 'complete') throw new Error('generated input configuration was refused')
+                const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+                await configureGeneratedDocker(candidate, loaded.result, generation, {
+                    sourceDirectory, environmentFile, ...(buildDeclaration ? { build: buildDeclaration } : {}),
+                })
+                listenerProbeControl.enabled = true
+                const result = await runUp({ configPath: candidate.configPath }, adapters)
+                const dispatches = steps.filter(({ id }) => /^runtime:docker-compose:(build|start):/.test(id))
+                if (defect === 'valid') expect(dispatches.length, JSON.stringify(result)).toBeGreaterThan(0)
+                else {
+                    expect(result.kind, `${input}:${defect}`).toBe('refusal')
+                    expect.soft(dispatches.map(({ id }) => id), `${input}:${defect}`).toEqual([])
+                    const contextLink = input === 'default-dockerfile' && defect === 'intermediate-link'
+                    expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
+                        code: 'GENERATED_ENVIRONMENT_UNAVAILABLE', target: contextLink ? resolve(target, '..') : target,
+                        message: expect.stringContaining(`ordinary ${directory || contextLink ? 'directory' : 'file'}`),
+                    })]))
+                    expect(result.diagnostics.some(({ message }) => message.includes('rerun cockpit up --config cockpit.toml'))).toBe(true)
+                }
+                const foreignAfter = await lstat(foreignFile)
+                expect({ dev: foreignAfter.dev, ino: foreignAfter.ino }).toEqual({ dev: foreignBefore.dev, ino: foreignBefore.ino })
+                expect(await readFile(foreignFile, 'utf8')).toBe('foreign input must remain unchanged\n')
+            }
+        }, 180_000)
 
     it('refuses a generated lifecycle with a wrong effective port', async () => {
         const broken = await runGeneratedScenario({ portOffset: 10 })

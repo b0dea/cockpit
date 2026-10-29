@@ -221,7 +221,7 @@ async function configureGeneratedDocker(
     candidate: Awaited<ReturnType<typeof generatedFixture>>,
     context: Readonly<{ stackId: string; source: Readonly<{ sha256: string }> }>,
     generation: string,
-    options: Readonly<{ portOffset?: number; failNeedle?: string; secondSibling?: boolean }> = {},
+    options: Readonly<{ portOffset?: number; failNeedle?: string; secondSibling?: boolean; sourceDirectory?: string; environmentFile?: string; build?: Readonly<{ context: string; dockerfile?: string }> }> = {},
 ) {
     const containerId = 'a'.repeat(64)
     const shortId = containerId.slice(0, 12)
@@ -251,7 +251,7 @@ async function configureGeneratedDocker(
             },
             services: Object.fromEntries(services.map((service) => [service, {
                 profiles: ['application'],
-                image,
+                ...(options.build ? { build: { ...options.build, context: join(candidate.checkout, service, options.build.context), dockerfile: options.build.dockerfile ?? 'Dockerfile' } } : { image }),
                 healthcheck: { test: ['CMD', 'true'] },
                 labels: {
                     'dev.b0dea.cockpit.stack-id': context.stackId,
@@ -262,8 +262,8 @@ async function configureGeneratedDocker(
                     'dev.b0.cockpit.source-sha256': context.source.sha256,
                 },
                 volumes: [
-                    { type: 'bind', source: join(candidate.checkout, service), target: '/workspace/source' },
-                    { type: 'bind', source: join(candidate.checkout, `${service}/.env`), target: '/workspace/.env' },
+                    { type: 'bind', source: join(candidate.checkout, service, options.sourceDirectory ?? '.'), target: '/workspace/source' },
+                    { type: 'bind', source: join(candidate.checkout, service, options.environmentFile ?? '.env'), target: '/workspace/.env' },
                     { type: 'volume', source: service === 'app' ? 'dependencies' : 'worker-dependencies', target: '/workspace/node_modules' },
                     { type: 'volume', source: 'product-data', target: '/workspace/data' },
                 ],

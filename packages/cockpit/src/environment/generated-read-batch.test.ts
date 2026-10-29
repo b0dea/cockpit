@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { appendFile, readFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { appendFile, readFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,6 +10,7 @@ import { parse as parseToml } from 'smol-toml'
 import { loadCockpitConfig } from '../config/load.js'
 import type { HolderId } from './contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { projectGeneratedApplicationMountSources } from './generated-application.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { nodeAuthority, readAnchoredBatches } from '../generated-environment/transaction.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
@@ -438,6 +439,26 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             expect(compose.services['cockpit-browser-runner'].healthcheck.start_period).toBe('15s')
             expect(compose.services['cockpit-browser-runner']).toMatchObject({ mem_limit: '1024m', cpus: 0.75 })
             expect(await readFile(join(root, 'docs/cockpit/environment-decisions.md'), 'utf8')).toContain('- Resource ceilings: cockpit-browser-runner: {"memory_mb":1024,"cpus":0.75,')
+            await writeFile(join(root, 'app/.env'), 'SYNTHETIC_SETTING=1\n')
+            const artifactDirectory = join(root, '.browser/runner')
+            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({
+                kind: 'refusal', path: artifactDirectory, expectedType: 'directory',
+            })
+            await mkdir(artifactDirectory, { recursive: true })
+            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toEqual(expect.arrayContaining([
+                join(root, '.cockpit/browser/runner.sh'), join(root, 'app/package.json'),
+                join(root, 'app/package-lock.json'), artifactDirectory,
+            ]))
+            await rm(artifactDirectory, { recursive: true })
+            await symlink(join(root, 'app'), artifactDirectory)
+            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({
+                kind: 'refusal', path: artifactDirectory, expectedType: 'directory',
+            })
+            await rm(artifactDirectory)
+            await writeFile(artifactDirectory, 'not an artifact directory\n')
+            await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({
+                kind: 'refusal', path: artifactDirectory, expectedType: 'directory',
+            })
         } finally {
             if (priorHome === undefined) delete process.env.HOME
             else process.env.HOME = priorHome
