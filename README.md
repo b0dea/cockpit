@@ -122,9 +122,9 @@ section.
   branches, edits to environment and secret files, and commands that reach declared hosted
   databases or vendor hosts. The capability matrix records whether each harness enforces its
   generated adapter.
-- **Work orders with independently routed grading.** Acceptance criteria, declared verification
-  commands and an evaluator surface keep authorship and review distinct. The capability matrix
-  records whether each harness enforces that separation.
+- **Work orders with evaluator guidance.** Acceptance criteria and declared verification commands
+  are rendered with an evaluator surface that instructs a separate grading role. Native role
+  separation is unverified; see [Subagents in the built-in capability matrix](docs/harness-surfaces.md#built-in-capability-matrix).
 - **Shared machines stay safe.** Port leases, holder tracking and `sleep` mean one agent cannot
   stop another agent's stack.
 - **Adopt what you already have.** `cockpit document` turns an existing shell-registry cockpit
