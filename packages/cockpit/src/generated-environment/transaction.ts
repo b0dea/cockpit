@@ -281,7 +281,7 @@ const c = fs.constants;
 const limit = 16777216;
 const request = JSON.parse(process.argv[1]);
 const name = value => {
-  if (typeof value !== "string" || value.length === 0 || value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("\0")) throw new Error("name");
+  if (typeof value !== "string" || value.length === 0 || value.length > 255 || /[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) || /[. ]$/.test(value) || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)) throw new Error("nonportable-name");
   return value;
 };
 const safeSegments = value => {
@@ -1390,8 +1390,26 @@ export async function readPersonaSource(
 }
 
 function safePublicationSegment(value: unknown): value is string {
-    return typeof value === 'string' && value.length > 0 && value !== '.' && value !== '..'
-        && !value.includes('/') && !value.includes('\\') && !value.includes('\0')
+    return typeof value === 'string' && value.length > 0 && value.length <= 255
+        && !/[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) && !/[. ]$/.test(value)
+        && !/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)
+}
+
+function portablePublicationPaths(paths: readonly string[]): boolean {
+    const prefixes = new Map<string, string>()
+    for (const path of paths) {
+        let prefix = ''
+        for (const segment of path.split('/')) {
+            if (!safePublicationSegment(segment)) return false
+            prefix = prefix ? `${prefix}/${segment}` : segment
+            // Missing parents have no inode to compare, so reject aliases before either spelling can be created.
+            const key = prefix.normalize('NFC').toLowerCase()
+            const prior = prefixes.get(key)
+            if (prior !== undefined && prior !== prefix) return false
+            prefixes.set(key, prefix)
+        }
+    }
+    return true
 }
 
 function helperChain(value: unknown): readonly HelperChainEntry[] | undefined {
@@ -1972,8 +1990,8 @@ function sameIdentity(left: PersonaSourceIdentity, right: PersonaSourceIdentity)
 
 function exactPath(root: string, path: string): boolean {
     return path.length <= 4096 && !/[\\\x00-\x1f\x7f*?\[\]{}]/.test(path)
-        && path.split('/').every(part => part !== '' && part !== '.' && part !== '..'
-            && !['.git', 'internal', 'node_modules'].includes(part)) && confined(root, path) !== undefined
+        && path.split('/').every(part => safePublicationSegment(part)
+            && !['.git', 'internal', 'node_modules'].includes(part.toLowerCase())) && confined(root, path) !== undefined
 }
 
 function classifyEntry(fact: GeneratedPathFact | undefined, current: AnchoredEntry): string | undefined {
@@ -2160,7 +2178,7 @@ async function admitBootstrapPlan(
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap publication contains an undeclared or non-exact operation', 'generated-environment')
     }
     const paths = desired.map(entry => entry.path)
-    if (mutations.some(row => !paths.includes(row.path))) {
+    if (!portablePublicationPaths(paths) || mutations.some(row => !paths.includes(row.path))) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap publication operation is outside the selected target output set', 'generated-environment')
     }
     const reads = await readAnchoredBatches(serializable.root,
@@ -2282,6 +2300,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     const references = captured.references ?? []
     if (!Array.isArray(references) || references.length !== 0) return refuse('GENERATED_PUBLICATION_FAILED', 'consumer publication cannot declare maintainer reference destinations', 'references')
     const mutations = [...captured.mutations]
+    if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun cockpit sync --dry-run', 'generated-environment')
     if (new Set(mutations.map(row => row.path)).size !== mutations.length
         || mutations.some(row => !exactPath(authority.root, row.path) || row.path === OWNERSHIP_PATH || row.phase === 'ledger'
             || !['desired', 'stale'].includes(row.phase) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(row.operation))
@@ -2289,6 +2308,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         return refuse('GENERATED_PUBLICATION_FAILED', 'publication contains an undeclared or non-exact operation', 'generated-environment')
     }
     const paths = mode === 'forget' ? [] : [...new Set([...(prior?.entries ?? []).map(row => row.path), ...(next?.entries ?? []).map(row => row.path)])].sort(compareCodeUnits)
+    if (!portablePublicationPaths(paths)) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun cockpit sync --dry-run', 'generated-environment')
     if (mutations.some(row => !paths.includes(row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'publication operation is absent from both ownership ledgers', 'generated-environment')
     // Sizes allocate bounded batches; anchored reads still authenticate every target and refuse growth.
     const maxBytes = await Promise.all(paths.map(async path => {

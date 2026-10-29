@@ -410,15 +410,15 @@ async function smallFilePublication() {
         ledgerExpected: { kind: 'file' as const, sha256: digest(ledger.bytes), identity: { dev, ino } } } }
 }
 
-async function compactPublication(options: { count?: number; segmentLength?: number; preexisting?: boolean } = {}) {
+async function compactPublication(options: { count?: number; segmentLength?: number; preexisting?: boolean; paths?: readonly string[] } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-compact-transaction-')))
     roots.push(root)
     await mkdir(join(root, '.cursor'))
     const authority = { root, cockpitId: 'synthetic-publication', configPath: join(root, 'cockpit.toml') }
     const sourceSha256 = digest('compact-source')
     const generation = digest('compact-generation')
-    const files = Array.from({ length: options.count ?? 61 }, (_, index) => ({
-        path: `.cursor/${(`skill-${String(index).padStart(3, '0')}`).padEnd(options.segmentLength ?? 9, 'x')}/SKILL.md`, bytes: `skill ${index}\n`,
+    const files = Array.from({ length: options.paths?.length ?? options.count ?? 61 }, (_, index) => ({
+        path: options.paths?.[index] ?? `.cursor/${(`skill-${String(index).padStart(3, '0')}`).padEnd(options.segmentLength ?? 9, 'x')}/SKILL.md`, bytes: `skill ${index}\n`,
     }))
     if (options.preexisting) await Promise.all(files.map(file => mkdir(dirname(join(root, file.path)), { recursive: true })))
     const ledger = encodeOwnershipManifest({ ...authority, generation, sourceSha256,
@@ -434,6 +434,37 @@ async function compactPublication(options: { count?: number; segmentLength?: num
             bytes: file.bytes, sha256: digest(file.bytes), expected: { kind: 'missing' as const }, compactAnchor: '.cursor' })),
     } }
 }
+
+describe('portable publication names', () => {
+    it('refuses nonportable authored names before creating any output', async () => {
+        const outcomes: Array<{ segment: string; kind: string }> = []
+        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name']) {
+            const fixture = await compactPublication({ paths: [`.cursor/${segment}/SKILL.md`] })
+            const admitted = await admitPublicationPlan(fixture.input, { execute: executeProbe })
+            outcomes.push({ segment, kind: admitted.kind })
+            expect(await readdir(join(fixture.root, '.cursor')), segment).toEqual([])
+            await expect(lstat(join(fixture.root, ledgerPath))).rejects.toMatchObject({ code: 'ENOENT' })
+        }
+        expect(outcomes).toEqual(outcomes.map(({ segment }) => ({ segment, kind: 'refusal' })))
+    }, 120_000)
+
+    it('refuses normalized and case-folded directory aliases while preserving distinct dotted outputs', async () => {
+        for (const paths of [
+            ['.cursor/Skills/one.md', '.cursor/skills/two.md'],
+            ['.cursor/café/one.md', '.cursor/cafe\u0301/two.md'],
+        ]) {
+            const fixture = await compactPublication({ paths })
+            await expect(admitPublicationPlan(fixture.input, { execute: executeProbe })).resolves.toMatchObject({ kind: 'refusal' })
+            expect(await readdir(join(fixture.root, '.cursor'))).toEqual([])
+        }
+        const control = await compactPublication({ paths: ['.cursor/skills.v2/one.test.md', '.cursor/skills.v2/two.md'] })
+        const admitted = await admitPublicationPlan(control.input, { execute: executeProbe })
+        expect(admitted).toMatchObject({ kind: 'complete' })
+        if (admitted.kind !== 'complete') throw new Error('valid dotted publication was refused')
+        await expect(runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true })).resolves.toMatchObject({ kind: 'complete' })
+        for (const file of control.files) expect(await readFile(join(control.root, file.path), 'utf8')).toBe(file.bytes)
+    }, 120_000)
+})
 
 async function referencePublication() {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-reference-transaction-')))

@@ -33,3 +33,8 @@ Generated ownership is the upgrade boundary. A later `sync` may replace authenti
 outputs and reports a changed overridden core declaration, but it does not adopt or overwrite
 beside files. Review `cockpit upgrade` before changing installed versions and retain product logic
 outside generated paths.
+
+Give generated outputs portable relative names so the same committed checkout can be shared across
+filesystems. Avoid reserved device names, stream syntax, trailing dots or spaces, and directory names
+that differ only by case or Unicode normalization. Rename an invalid overlay output, then review
+`cockpit sync --dry-run` before publishing it.
