@@ -657,7 +657,9 @@ it('resumes and normalizes an authenticated source install during installed init
         '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',
     ].join('\n'))
     const sourceArchive = join(packScratch, 'artifact', packedArtifact().filename)
-    const env = npmEnvironment()
+    const home = join(packScratch, 'source-install-home')
+    mkdirSync(home)
+    const env = { ...npmEnvironment(), HOME: home, XDG_STATE_HOME: join(home, 'state') }
     execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact', sourceArchive], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })
