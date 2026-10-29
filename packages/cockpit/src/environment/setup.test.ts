@@ -316,6 +316,8 @@ describe('setup planner', () => {
             env: {
                 PATH: process.env.PATH ?? '',
                 HOME: '/tmp/synthetic-home',
+                Path: '/case-preserved-search-only',
+                PathExt: '.EXE',
                 GIT_DIR: '/tmp/redirected.git',
                 GIT_WORK_TREE: '/tmp/redirected-tree',
                 GIT_CONFIG_COUNT: '1',
