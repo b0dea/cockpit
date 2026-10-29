@@ -451,6 +451,7 @@ describe('portable publication names', () => {
     it('refuses normalized and case-folded directory aliases while preserving distinct dotted outputs', async () => {
         for (const paths of [
             ['.cursor/Skills/one.md', '.cursor/skills/two.md'],
+            ['.cursor/Σ/one.md', '.cursor/ς/two.md'],
             ['.cursor/café/one.md', '.cursor/cafe\u0301/two.md'],
         ]) {
             const fixture = await compactPublication({ paths })

@@ -1403,7 +1403,7 @@ function portablePublicationPaths(paths: readonly string[]): boolean {
             if (!safePublicationSegment(segment)) return false
             prefix = prefix ? `${prefix}/${segment}` : segment
             // Missing parents have no inode to compare, so reject aliases before either spelling can be created.
-            const key = prefix.normalize('NFC').toLowerCase()
+            const key = prefix.normalize('NFC').toUpperCase().normalize('NFC')
             const prior = prefixes.get(key)
             if (prior !== undefined && prior !== prefix) return false
             prefixes.set(key, prefix)
