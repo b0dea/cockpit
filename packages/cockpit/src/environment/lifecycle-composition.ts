@@ -246,11 +246,10 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
                 || new Set(activeProfiles).size !== activeProfiles.length
                 || activeProfiles.some((profile) => typeof profile !== 'string' || !/^[a-z0-9][a-z0-9_.-]*$/.test(profile)))
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
-        const env: Record<string, string> = {}
+        const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
-            if (entry === undefined) continue
             if (name.length === 0 || name.includes('\0') || name.includes('=')
-                || typeof entry !== 'string' || entry.includes('\0')) return undefined
+                || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
         return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), sessionId, timeoutMs,
@@ -407,14 +406,16 @@ export function createLifecycleCommandAdapters(
         if (loaded.kind === 'refusal') return loaded
         if (declaresNothingToRun(loaded.result.config.environment)) return Object.freeze({ kind: 'refusal' as const,
             status: 2 as const, result: null, diagnostics: Object.freeze([runtimeNotDeclared(loaded.result.source.path)]) })
-        const git = await resolveGitExecutable(input.env as Readonly<Record<string, string>>)
+        const setupEnvironment = Object.freeze(Object.fromEntries(Object.entries(input.env)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
+        const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return refusal(loaded.result.source.path, git.reason)
         const observedAt = new Date().toISOString()
         const checkoutObservation = await observeSetupCheckout({
             source: loaded.result.source,
             cockpitName: loaded.result.config.cockpit.name,
             observedAt,
-            env: input.env as Readonly<Record<string, string>>,
+            env: setupEnvironment,
             gitExecutable: git.value,
         })
         const machineConfiguration = projectMachineFloorConfig(loaded.result)
@@ -453,7 +454,7 @@ export function createLifecycleCommandAdapters(
             source: loaded.result.source,
             cockpitName: loaded.result.config.cockpit.name,
             observedAt: confirmedAt,
-            env: input.env as Readonly<Record<string, string>>,
+            env: setupEnvironment,
             gitExecutable: git.value,
         })
         const issued = await withSetupCheckoutProjection(confirmed, {

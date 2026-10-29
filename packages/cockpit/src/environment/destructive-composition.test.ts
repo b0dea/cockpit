@@ -63,6 +63,21 @@ describe('destructive command composition', () => {
             expect(execute).not.toHaveBeenCalled()
         })
 
+    it.each([
+        ['PATH', { PATH: '/usr/bin:/bin', Path: undefined, PATHEXT: '.EXE' }],
+        ['PATHEXT', { PATH: '/usr/bin:/bin', PATHEXT: '.EXE', PathExt: undefined }],
+    ] as const)('preserves an undefined duplicate %s name for executable search policy', (_name, env) => {
+        const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
+        createDestructiveCommandAdapters({
+            configPath: '/tmp/cockpit.toml', env: { ...env, HOME: '/tmp' },
+            sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
+        }, vi.fn() as never)
+
+        expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
+            env: expect.objectContaining({ ...env, HOME: '/tmp' }),
+        }), expect.any(Function))
+    })
+
     it('rejects accessor-backed controlled-runtime authority without invoking it', async () => {
         const getter = vi.fn(() => Object.freeze({ kind: 'runtime-measurement-probe-authority' as const }))
         const execute = vi.fn()

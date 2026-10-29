@@ -87,7 +87,7 @@ function boundedExecutor(execute: Executor, concurrency: number): Executor {
 }
 
 type CapturedCompositionInput = Omit<DestructiveCompositionInput, 'env'> & {
-    readonly env: Readonly<Record<string, string>>
+    readonly env: Readonly<Record<string, string | undefined>>
 }
 
 function captureInput(value: DestructiveCompositionInput): CapturedCompositionInput | undefined {
@@ -114,11 +114,10 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
                 || new Set(activeProfiles).size !== activeProfiles.length
                 || activeProfiles.some((profile) => typeof profile !== 'string' || !/^[a-z0-9][a-z0-9_.-]*$/.test(profile)))
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
-        const env: Record<string, string> = {}
+        const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
-            if (entry === undefined) continue
             if (name.length === 0 || name.includes('\0') || name.includes('=')
-                || typeof entry !== 'string' || entry.includes('\0')) return undefined
+                || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
         // A local DOCKER_HOST is selected through Docker's `default` context, which reports that

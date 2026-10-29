@@ -82,7 +82,7 @@ type Executor = (
 
 interface CapturedInput {
     readonly configPath: string
-    readonly env: Readonly<Record<string, string>>
+    readonly env: Readonly<Record<string, string | undefined>>
     readonly sessionId: string
     readonly timeoutMs: number
     readonly outputLimitBytes: number
@@ -209,11 +209,10 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
             || typeof outputLimitBytes !== 'number' || !Number.isSafeInteger(outputLimitBytes) || outputLimitBytes < 1 || outputLimitBytes > 16_777_216
             || signal !== undefined && !(signal instanceof AbortSignal)
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
-        const env: Record<string, string> = {}
+        const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
-            if (entry === undefined) continue
             if (name.length === 0 || name.includes('\0') || name.includes('=')
-                || typeof entry !== 'string' || entry.includes('\0')) return undefined
+                || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
         return Object.freeze({
@@ -230,8 +229,9 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
     }
 }
 
-function runtimeEnvironment(env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
-    return Object.freeze(Object.fromEntries(Object.entries(env).filter(([name]) => SAFE_RUNTIME_ENV.has(name))))
+function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => SAFE_RUNTIME_ENV.has(entry[0]) && typeof entry[1] === 'string')))
 }
 
 function confined(root: string, path: string): boolean {

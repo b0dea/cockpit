@@ -591,13 +591,16 @@ describe('production lifecycle adapter composition', () => {
             .map(({ env }) => env)).toEqual([{ PATH: path }, { PATH: path }])
     })
 
-    it('refuses ambiguous Windows executable search names before runtime readiness dispatch', async () => {
+    it.each([
+        ['PATH', { Path: undefined }, 'Executable search environment has ambiguous PATH spellings'],
+        ['PATHEXT', { PathExt: undefined }, 'Executable search environment has ambiguous PATHEXT spellings'],
+    ] as const)('refuses an undefined duplicate Windows %s name before runtime readiness dispatch', async (_name, duplicate, message) => {
         const candidate = await fixture()
         const path = `${candidate.root}:/usr/bin:/bin`
         const execute = vi.fn(executeProbe)
         const adapters = createLifecycleCommandAdapters({
             configPath: candidate.configPath,
-            env: { PATH: path, Path: path, PATHEXT: '.EXE', HOME: candidate.home },
+            env: { PATH: path, PATHEXT: '.EXE', ...duplicate, HOME: candidate.home },
             sessionId: 'runtime-search-inputs',
             timeoutMs: 5_000,
         }, execute)
@@ -614,19 +617,22 @@ describe('production lifecycle adapter composition', () => {
 
         expect(diagnostics).toEqual([expect.objectContaining({
             code: 'RUNTIME_UNAVAILABLE',
-            message: 'Executable search environment has ambiguous PATH spellings',
+            message,
             target: loaded.result.stackId,
         })])
         expect(execute).not.toHaveBeenCalled()
     })
 
-    it('refuses ambiguous Windows executable search names before machine-floor dispatch', async () => {
+    it.each([
+        ['PATH', { Path: undefined }, 'Executable search environment has ambiguous PATH spellings'],
+        ['PATHEXT', { PathExt: undefined }, 'Executable search environment has ambiguous PATHEXT spellings'],
+    ] as const)('refuses an undefined duplicate Windows %s name before machine-floor dispatch', async (_name, duplicate, message) => {
         const candidate = await fixture()
         const path = `${candidate.root}:/usr/bin:/bin`
         const execute = vi.fn(executeProbe)
         const adapters = createLifecycleCommandAdapters({
             configPath: candidate.configPath,
-            env: { PATH: path, Path: path, PATHEXT: '.EXE', HOME: candidate.home },
+            env: { PATH: path, PATHEXT: '.EXE', ...duplicate, HOME: candidate.home },
             sessionId: 'machine-search-inputs',
             timeoutMs: 5_000,
         }, execute)
@@ -642,13 +648,16 @@ describe('production lifecycle adapter composition', () => {
 
         expect(diagnostics).toEqual([expect.objectContaining({
             code: 'RUNTIME_UNAVAILABLE',
-            message: 'Executable search environment has ambiguous PATH spellings',
+            message,
             target: loaded.result.stackId,
         })])
         expect(execute).not.toHaveBeenCalled()
     })
 
-    it('preserves ambiguous Windows search names through stable read revalidation', async () => {
+    it.each([
+        ['PATH', { Path: undefined }, 'Executable search environment has ambiguous PATH spellings'],
+        ['PATHEXT', { PathExt: undefined }, 'Executable search environment has ambiguous PATHEXT spellings'],
+    ] as const)('preserves an undefined duplicate Windows %s name through stable read revalidation', async (_name, duplicate, message) => {
         const passed = await runGeneratedScenario({ layout: 'nested' })
         expect(passed.result.kind, JSON.stringify(passed.result)).toBe('complete')
         const path = `${passed.candidate.root}:/usr/bin:/bin`
@@ -665,12 +674,12 @@ describe('production lifecycle adapter composition', () => {
         try {
             const reads = createReadCommandAdapters({
                 configPath: passed.candidate.configPath,
-                env: { PATH: path, Path: path, PATHEXT: '.EXE', HOME: passed.candidate.home },
+                env: { PATH: path, PATHEXT: '.EXE', ...duplicate, HOME: passed.candidate.home },
                 sessionId: 'generated-production', timeoutMs: 5_000,
             }, execute)
 
             await expect(reads.logs.observe({ configPath: passed.candidate.configPath, service: 'app' }))
-                .rejects.toThrow('runtime executable authority changed: Executable search environment has ambiguous PATH spellings')
+                .rejects.toThrow(`runtime executable authority changed: ${message}`)
             expect(stableReadPlatformControl.switched).toBe(true)
             expect(postFlipSteps).toEqual([])
         } finally {

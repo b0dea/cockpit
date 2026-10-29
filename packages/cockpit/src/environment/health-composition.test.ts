@@ -316,6 +316,24 @@ describe('production health adapter composition', () => {
         expect(execute).not.toHaveBeenCalled()
     })
 
+    it.each([
+        ['PATH', { PATH: process.env.PATH, Path: undefined }],
+        ['PATHEXT', { PATH: process.env.PATH, PATHEXT: '.EXE', PathExt: undefined }],
+    ] as const)('validates every captured environment name while preserving an undefined duplicate %s name', async (_name, env) => {
+        const candidate = await fixture({ machineOnly: true })
+        const execute = vi.fn(executeProbe)
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { ...env, 'INVALID=NAME': undefined, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, execute)
+
+        const result = await runDoctor({ configPath: candidate.configPath }, adapters)
+
+        expect(result).toMatchObject({ result: { verdict: 'unavailable' } })
+        expect(execute).not.toHaveBeenCalled()
+    })
+
     it('reports a malformed configuration from preflight and doctor instead of an unavailable source', async () => {
         const candidate = await fixture()
         await writeFile(candidate.configPath, '[cockpit\nname = "synthetic"\n')
@@ -593,7 +611,10 @@ describe('env schema health', () => {
         }
     })
 
-    it('does not dispatch varlock through ambiguous Windows search environment names', async () => {
+    it.each([
+        ['PATH', { Path: undefined }],
+        ['PATHEXT', { PathExt: undefined }],
+    ] as const)('does not dispatch varlock through an undefined duplicate Windows %s name', async (_name, duplicate) => {
         const candidate = await fixture({ machineOnly: true })
         await withVarlock(candidate, printing(report(), 0))
         const path = `${candidate.root}:/usr/bin:/bin`
@@ -605,7 +626,7 @@ describe('env schema health', () => {
             const observations = await observeEnvSchemas({
                 stackId: candidate.stack,
                 siblings: [{ slug: 'api', dir: 'api', root: join(candidate.checkout, 'siblings', 'api') }],
-                env: { PATH: path, Path: path, HOME: candidate.home },
+                env: { PATH: path, PATHEXT: '.EXE', ...duplicate, HOME: candidate.home },
                 timeoutMs: 5_000,
             }, { execute })
 

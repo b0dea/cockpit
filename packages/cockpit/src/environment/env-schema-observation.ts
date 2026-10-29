@@ -225,7 +225,7 @@ export async function observeEnvSchemas(
     input: {
         readonly stackId: StackId
         readonly siblings: readonly EnvSchemaSibling[]
-        readonly env: Readonly<Record<string, string>>
+        readonly env: Readonly<Record<string, string | undefined>>
         readonly timeoutMs: number
     },
     options: { readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome> },
@@ -235,7 +235,12 @@ export async function observeEnvSchemas(
     const needsBinary = adopted.some(({ unreadable }) => unreadable === undefined)
     const resolved = needsBinary ? await resolveExecutable('varlock', input.env) : undefined
     const executable = resolved?.state === 'available' ? resolved.value : undefined
-    const shared = { env: input.env, timeoutMs: input.timeoutMs, stackId: input.stackId }
+    const shared = {
+        env: Object.freeze(Object.fromEntries(Object.entries(input.env)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))),
+        timeoutMs: input.timeoutMs,
+        stackId: input.stackId,
+    }
     const statuses = await Promise.all(adopted.map(async ({ sibling, unreadable }): Promise<readonly [EnvSchemaSibling, SiblingStatus]> =>
         [sibling, unreadable !== undefined
             ? { state: 'unavailable', cause: unreadable }

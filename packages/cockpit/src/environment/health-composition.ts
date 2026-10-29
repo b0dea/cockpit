@@ -90,7 +90,7 @@ export type HealthCommandAdapterComposition = PreflightCommandAdapters & DoctorC
 
 interface CapturedInput {
     readonly configPath: string
-    readonly env: Readonly<Record<string, string>>
+    readonly env: Readonly<Record<string, string | undefined>>
     readonly timeoutMs: number
 }
 
@@ -107,11 +107,10 @@ function captureInput(value: HealthCommandCompositionInput): CapturedInput | und
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
-        const env: Record<string, string> = {}
+        const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
-            if (entry === undefined) continue
             if (name.length === 0 || name.includes('\0') || name.includes('=')
-                || typeof entry !== 'string' || entry.includes('\0')) return undefined
+                || entry !== undefined && (typeof entry !== 'string' || entry.includes('\0'))) return undefined
             env[name] = entry
         }
         return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), timeoutMs })
@@ -120,9 +119,10 @@ function captureInput(value: HealthCommandCompositionInput): CapturedInput | und
     }
 }
 
-function gitObservationEnvironment(env: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+function gitObservationEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
     return Object.freeze(Object.fromEntries(Object.entries(env)
-        .filter(([name]) => name === 'LANG' || name === 'LC_ALL' || name === 'TZ')))
+        .filter((entry): entry is [string, string] =>
+            (entry[0] === 'LANG' || entry[0] === 'LC_ALL' || entry[0] === 'TZ') && typeof entry[1] === 'string')))
 }
 
 function commandConfigPath(value: unknown): string | undefined {
@@ -145,7 +145,7 @@ function producers(input: {
     readonly namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value']
     readonly stack: ReturnType<typeof stackId>
     readonly git: Extract<Awaited<ReturnType<typeof resolveGitExecutable>>, { readonly state: 'available' }>['value']
-    readonly env: Readonly<Record<string, string>>
+    readonly env: Readonly<Record<string, string | undefined>>
     readonly timeoutMs: number
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }): HealthObservationProducers {
@@ -162,8 +162,9 @@ function producers(input: {
         const observed = await observeDockerRuntime({
             executable: docker.value,
             cwd: input.checkout.currentCheckoutPath,
-            env: Object.freeze(Object.fromEntries(Object.entries(input.env).filter(([name]) =>
-                ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(name),
+            env: Object.freeze(Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] =>
+                ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(entry[0])
+                && typeof entry[1] === 'string',
             ))),
             timeoutMs: input.timeoutMs,
         }, input.execute)
