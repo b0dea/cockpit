@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -62,7 +62,7 @@ import {
 import { executeProbe, repairFencedExecution } from '../environment-exec/execute.js'
 import { resolvedExecutable } from './executable.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
-import { abortStateTransaction, readState, selectStateRoot, transactState, type StateNamespace, type StateRecord } from './state.js'
+import { abortStateTransaction, readState, selectStateRoot, SERIALIZED_RECORD_BYTE_LIMIT, transactState, type StateNamespace, type StateRecord } from './state.js'
 import { checkoutId as deriveCheckoutId } from './identity.js'
 
 const inventoryIdentityGate = vi.hoisted(() => ({
@@ -830,10 +830,13 @@ describe('destructive drain recovery inspection', () => {
             consumedFiles: [], filesystemChecks: [], executionFence: repairable.fence, compensation: [],
         })
         expect(outcome.kind).toBe('complete')
+        expect(await readActiveStackInventory(state)).toMatchObject({ kind: 'complete', value: [{ stackId }] })
+        expect(await readRootPortInventory(state)).toMatchObject({ kind: 'complete', value: [{ cockpitId, stackId }] })
         const termination = await repairFencedExecution(repairable.fence)
         if (termination.kind !== 'complete') throw new Error('expected authenticated termination')
         const settled = await settleInterruptedDrainRepair({ authority: repairable.authority, evidence: termination.evidence })
         expect(settled).toMatchObject({ kind: 'complete', value: { value: { drain: { attempt: { status: 'failed' } } } } })
+        expect(await readActiveStackInventory(state)).toMatchObject({ kind: 'complete', value: [{ stackId }] })
         expect(await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' }))
             .toEqual({ kind: 'recoverable', request })
     })
@@ -1049,6 +1052,44 @@ async function mutateInventoryAfterIdentity(
 }
 
 describe('active stack inventory', () => {
+    it.each(['orphaned', 'stale', 'foreign attempt', 'symlink', 'linked', 'writable', 'oversized', 'unknown name'] as const)(
+        'refuses a %s executor marker without granting inventory authority', async (mutation) => {
+            const state = await namespace()
+            await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
+            const reserved = await reserveDrain({ namespace: state, request: {
+                purpose: 'down', stackId, holderId: holderA, requesterId: holderA,
+                configSha256: '2'.repeat(64), planDigest: '3'.repeat(64), operationBasis: '4'.repeat(64),
+                generation: '5'.repeat(64), targetIds: [stackId],
+                actions: [{ stage: 'runtime-stop', targetId: stackId, validForMs: 30_000 }], expectedCoordinationRevision: 0,
+            } })
+            if (reserved.kind !== 'complete') throw new Error(JSON.stringify(reserved))
+            const attempted = await reserveDrainAttempt({ namespace: state, authority: reserved.authority })
+            if (attempted.kind !== 'complete') throw new Error(JSON.stringify(attempted))
+            const inspected = await inspectDestructiveDrainRecovery({ namespace: state, stackId, holderId: holderA, purpose: 'down' })
+            if (inspected.kind !== 'repairable') throw new Error(JSON.stringify(inspected))
+            const marker = mutation === 'foreign attempt' ? inspected.fence.markerPath.replace(attempted.attempt.attemptId, '0'.repeat(64))
+                : mutation === 'unknown name' ? join(dirname(inspected.fence.markerPath), 'unknown.executor.json') : inspected.fence.markerPath
+            const outside = join(state.cockpitRoot, 'synthetic-marker')
+            if (mutation === 'symlink' || mutation === 'linked') {
+                await writeFile(outside, '{}', { mode: 0o600 })
+                await (mutation === 'symlink' ? symlink(outside, marker) : link(outside, marker))
+            } else await writeFile(marker, mutation === 'oversized' ? Buffer.alloc(SERIALIZED_RECORD_BYTE_LIMIT + 1) : '{}', { mode: 0o600 })
+            if (mutation === 'writable') await chmod(marker, 0o666)
+            if (mutation === 'orphaned') await rm(state.paths.coordination(stackId).path)
+            if (mutation === 'stale') {
+                const cleared = await transactState(state, state.paths.coordination(stackId), { ownerId: holderA }, current => {
+                    const value = decodeCoordinationRecord(current, stackId)
+                    if (!value) throw new Error('expected coordinated drain')
+                    return coordinationStateRecord(state, stackId, current, new Date().toISOString(), { ...value, drain: null })
+                })
+                if (cleared.kind !== 'complete') throw new Error(JSON.stringify(cleared))
+            }
+            for (const inventory of [await readActiveStackInventory(state), await readRootPortInventory(state)]) {
+                expect(inventory).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }] })
+            }
+        },
+    )
+
     it('qualifies equal stack IDs by cockpit in root port inventory while preserving local claim inventory', async () => {
         const state = await namespace()
         const otherId = `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId

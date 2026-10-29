@@ -960,6 +960,7 @@ describe('reset planning', () => {
         'completed-target-is-replaced', 'cold-prestart-retry', 'cold-changed-timeout', 'cold-added-target', 'cold-second-action-retry',
         'cold-second-completed-replacement', 'cold-second-remaining-replacement', 'cold-second-added-target',
         'cache-ancestor-replaced-before-redemption', 'redeemed-cache-target-replaced', 'redeemed-cache-ancestor-replaced',
+        'cold-absent-current', 'cold-absent-stale', 'cold-absent-forged', 'cold-absent-reappears', 'cold-absent-new-target',
     ] as const)(
         '%s stays bound to a committed teardown attempt', async (mode) => {
             const root = await canonicalTemp('cockpit-teardown-attempt-')
@@ -1096,7 +1097,8 @@ describe('reset planning', () => {
                 }
                 const execution = await redeemTeardownAction({ actionAuthority: planned.actionAuthority, attempt: reclaimAttempt.authority })
                 if (!execution) throw new Error('teardown execution unavailable')
-                const coldFirst = mode === 'cold-prestart-retry' || mode === 'cold-changed-timeout' || mode === 'cold-added-target'
+                const coldAbsent = mode.startsWith('cold-absent')
+                const coldFirst = mode === 'cold-prestart-retry' || mode === 'cold-changed-timeout' || mode === 'cold-added-target' || coldAbsent
                 const executableBytes = coldFirst ? await readFile(execution.step.argv[0]) : undefined
                 if (coldFirst) await writeFile(execution.step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
                 if (mode === 'redeemed-cache-target-replaced') {
@@ -1154,7 +1156,7 @@ describe('reset planning', () => {
                         purpose: 'down', planDigest: preview.discoveryDigest, completed: [],
                         current: { targetId: reclaimTargets![0] }, pending: [{ targetId: reclaimTargets![1] }],
                     })
-                    const coldResources = mode === 'cold-added-target'
+                    const coldResources = coldAbsent ? [remaining] : mode === 'cold-added-target'
                         ? [resource({ id: 'a-container', name: 'added-container' }), ...runtimeResources]
                         : runtimeResources
                     const coldDiscovery = await authenticatedDiscovery(root, coldResources, freshApi)
@@ -1166,13 +1168,45 @@ describe('reset planning', () => {
                         ...(mode === 'cold-changed-timeout' ? { timeoutMs: 29_000 } : {}),
                         coordinationAddress: selected.value.paths.coordination(stackId),
                     })
-                    if (mode !== 'cold-prestart-retry') {
+                    if (mode !== 'cold-prestart-retry' && !coldAbsent) {
                         expect(coldPlan).toMatchObject({ kind: 'refusal' })
                         return
                     }
                     if (coldPlan.kind !== 'complete' || !coldPlan.actionAuthority) throw new Error(`cold teardown action unavailable: ${JSON.stringify(coldPlan)}`)
+                    const beforeRetry = coldAbsent ? await authenticatedDiscovery(root, [remaining], freshApi) : undefined
                     const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, authority: coldReservation.authority })
                     if (coldAttempt.kind !== 'complete') throw new Error('cold teardown retry attempt unavailable')
+                    if (coldAbsent) {
+                        expect(freshReclaim.redeemAbsentReclaimAction({ actionAuthority: { ...coldPlan.actionAuthority }, attempt: coldAttempt.authority })).toBeUndefined()
+                        const absence = freshReclaim.redeemAbsentReclaimAction({ actionAuthority: coldPlan.actionAuthority, attempt: coldAttempt.authority })
+                        if (!absence) throw new Error('absent teardown reconciliation unavailable')
+                        expect(await freshReclaim.redeemTeardownAction({ actionAuthority: coldPlan.actionAuthority, attempt: coldAttempt.authority })).toBeUndefined()
+                        const post = mode === 'cold-absent-stale' ? beforeRetry! : await authenticatedDiscovery(root,
+                            mode === 'cold-absent-reappears' ? [first, remaining]
+                                : mode === 'cold-absent-new-target' ? [remaining, resource({ id: 'added-container', name: 'new-container' })] : [remaining], freshApi)
+                        const reconciled = await freshReclaim.reconcileAbsentReclaimAction({ authority: absence.authority,
+                            discovery: mode === 'cold-absent-forged' ? { ...post } : post })
+                        if (mode !== 'cold-absent-current') {
+                            expect(reconciled).toMatchObject({ kind: 'refusal' })
+                            expect(await readState(selected.value.paths.coordination(stackId))).toMatchObject({ kind: 'complete',
+                                value: { value: { holders: [{ holderId }], drain: { attempt: { status: 'active' } } } } })
+                            return
+                        }
+                        expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.any(Object), authority: expect.any(Object) })
+                        if (reconciled.kind !== 'complete' || !reconciled.authority || !reconciled.continuation) throw new Error('absent teardown continuation unavailable')
+                        const success = freshReclaim.consumeReclaimCompleted(reconciled.authority)
+                        if (!success) throw new Error('absent teardown completion unavailable')
+                        const published = await freshClaims.prepareDrainOutcomePublication({ authority: success, namespace: selected.value, stackId })
+                        if (published.kind !== 'complete') throw new Error(JSON.stringify(published))
+                        expect(freshClaims.finalizeDrainOutcome({ authority: success, publication: published,
+                            address: selected.value.paths.coordination(stackId) })).toBe(true)
+                        const continued = await freshReclaim.planTeardown({ ...common, coordinationRecord: published.value,
+                            discovery: post, executable: runtimeByDiscovery.get(post)!, selectionAuthority: selectionByDiscovery.get(post),
+                            expectedDiscoveryDigest: preview.discoveryDigest, continuation: reconciled.continuation,
+                            coordinationAddress: selected.value.paths.coordination(stackId) })
+                        expect(continued, JSON.stringify(continued)).toMatchObject({ kind: 'complete', actionAuthority: expect.any(Object), noop: false })
+                        return
+                    }
                     const coldExecution = await freshReclaim.redeemTeardownAction({ actionAuthority: coldPlan.actionAuthority, attempt: coldAttempt.authority })
                     if (!coldExecution) throw new Error('cold teardown execution unavailable')
                     const coldOutcome = await freshExecute.executeProbe(coldExecution.step)
@@ -1592,7 +1626,7 @@ describe('reset planning', () => {
     it.each([
         'success', 'prestart-failure', 'prestart-retry', 'cold-prestart-retry', 'cold-changed-config',
         'cold-changed-runtime', 'cold-changed-timeout', 'cold-target-set-change', 'cold-target-identity-change',
-        'cold-added-target',
+        'cold-added-target', 'cold-absent-current',
         'expired-before-spawn', 'started-failure', 'same-id-replacement',
         'remaining-volume-replacement', 'remaining-volume-bytes-change', 'two-action-success',
         'completed-target-reappears', 'completed-target-is-replaced',
@@ -1604,7 +1638,7 @@ describe('reset planning', () => {
         try {
             const coldRetryMode = mode === 'cold-prestart-retry' || mode === 'cold-changed-config'
                 || mode === 'cold-changed-runtime' || mode === 'cold-changed-timeout'
-                || mode === 'cold-target-set-change' || mode === 'cold-target-identity-change' || mode === 'cold-added-target'
+                || mode === 'cold-target-set-change' || mode === 'cold-target-identity-change' || mode === 'cold-added-target' || mode === 'cold-absent-current'
             const retryMode = mode === 'prestart-retry' || coldRetryMode
             const holderId = `holder:${sha('holder')}:session` as HolderId
             const checkoutId = `checkout:${sha('checkout')}` as CheckoutId
@@ -1797,7 +1831,7 @@ describe('reset planning', () => {
                         expect(freshClaims.consumeFailedReclaimRecovery(coldRecordAuthority!)).toMatchObject({
                             purpose: 'reset', current: { targetCommitment: expect.any(Object) },
                         })
-                        const coldResources = mode === 'cold-target-set-change' ? []
+                        const coldResources = mode === 'cold-target-set-change' || mode === 'cold-absent-current' ? []
                             : mode === 'cold-target-identity-change'
                                 ? [resource({ ...volume, generation: sha('changed cold identity') })]
                                 : mode === 'cold-added-target'
@@ -1816,21 +1850,58 @@ describe('reset planning', () => {
                             ...(mode === 'cold-changed-runtime' ? { cwd: join(root, 'changed-runtime') } : {}),
                             ...(mode === 'cold-changed-timeout' ? { timeoutMs: 29_000 } : {}),
                             ...(mode === 'cold-added-target' ? { resettableVolumes: ['a-data', 'session-data'] } : {}),
+                            ...(mode === 'cold-target-set-change' ? { resettableVolumes: [] } : {}),
                             coordinationAddress: selected.value.paths.coordination(stackId),
                         }
+                        const approvalDiscovery = await authenticatedDiscovery(root, coldResources, freshApi)
+                        const operatorApproval = await freshReclaim.planReset({ ...base,
+                            coordinationRecord: failedCommit.value, expectedCoordinationRevision: failedCommit.value.revision,
+                            discovery: approvalDiscovery, runtimeExecutable: runtimeByDiscovery.get(approvalDiscovery)!,
+                            selectionAuthority: selectionByDiscovery.get(approvalDiscovery),
+                            ...(mode === 'cold-added-target' ? { resettableVolumes: ['a-data', 'session-data'] } : {}),
+                            ...(mode === 'cold-target-set-change' ? { resettableVolumes: [] } : {}),
+                        })
+                        if (operatorApproval.kind !== 'preview') throw new Error(JSON.stringify(operatorApproval))
                         if (mode === 'cold-prestart-retry') {
-                            expect(await freshReclaim.planReset({
-                                ...coldInput, recoveryAuthority: { ...coldReservation.authority } as never,
+                            expect(await freshReclaim.planReset({ ...coldInput, operatorApproval,
+                                recoveryAuthority: { ...coldReservation.authority } as never,
                             })).toMatchObject({ kind: 'refusal' })
                         }
-                        const coldPlan = await freshReclaim.planReset(coldInput)
-                        if (mode !== 'cold-prestart-retry') {
+                        if (mode === 'cold-absent-current') {
+                            expect(operatorApproval).toMatchObject({ noop: true, targets: [] })
+                            expect(await freshReclaim.planReset(coldInput)).toMatchObject({ kind: 'refusal',
+                                diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH' }] })
+                            expect(await freshReclaim.planReset({ ...coldInput, operatorApproval: { ...operatorApproval } }))
+                                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH' }] })
+                        }
+                        const coldPlan = await freshReclaim.planReset({ ...coldInput, operatorApproval })
+                        if (mode !== 'cold-prestart-retry' && mode !== 'cold-absent-current') {
                             expect(coldPlan).toMatchObject({ kind: 'refusal' })
                             return
                         }
                         if (coldPlan.kind !== 'complete' || !coldPlan.actionAuthority) throw new Error(`cold retry reset action unavailable: ${JSON.stringify(coldPlan)}`)
                         const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, authority: coldReservation.authority })
                         if (coldAttempt.kind !== 'complete') throw new Error('cold retry drain attempt unavailable')
+                        if (mode === 'cold-absent-current') {
+                            expect(freshReclaim.projectRecoveredResetActionTargets({ ...coldPlan })).toBeUndefined()
+                            const envelope = freshReclaim.consumeReclaimTargetProjection(freshReclaim.projectRecoveredResetActionTargets(coldPlan)!)
+                            expect(envelope).toMatchObject({ purpose: 'reset', planDigest: preview.digest, commitments: reclaimCommitments })
+                            const absent = freshReclaim.redeemAbsentReclaimAction({ actionAuthority: coldPlan.actionAuthority, attempt: coldAttempt.authority })
+                            if (!absent) throw new Error('absent reset reconciliation unavailable')
+                            const post = await authenticatedDiscovery(root, [], freshApi)
+                            const completed = await freshReclaim.reconcileAbsentReclaimAction({ authority: absent.authority, discovery: post })
+                            expect(completed).toMatchObject({ kind: 'complete', continuation: null, authority: expect.any(Object) })
+                            if (completed.kind !== 'complete' || !completed.authority) throw new Error('absent reset completion unavailable')
+                            const success = freshReclaim.consumeReclaimCompleted(completed.authority)
+                            if (!success) throw new Error('absent reset publication unavailable')
+                            const publication = await freshClaims.prepareDrainOutcomePublication({ authority: success, namespace: selected.value, stackId })
+                            if (publication.kind !== 'complete') throw new Error(JSON.stringify(publication))
+                            expect(freshClaims.finalizeDrainOutcome({ authority: success, publication,
+                                address: selected.value.paths.coordination(stackId) })).toBe(true)
+                            expect(publication.value.value).toMatchObject({ holders: [], lease: { released: true }, drain: null })
+                            expect(await readState(selected.value.paths.lifecycle(stackId))).toMatchObject({ kind: 'missing' })
+                            return
+                        }
                         expect(await freshReclaim.redeemReclaimAction({
                             actionAuthority: planned.actionAuthority, attempt: coldAttempt.authority,
                         })).toBeUndefined()
@@ -1978,13 +2049,21 @@ describe('reset planning', () => {
                                 ? [resource({ id: 'volume-0', name: 'a-data', kind: 'volume', dataBearing: true,
                                     generation: sha('added cold second target') }), remainingVolume]
                             : [remainingVolume]
+                    const approvalDiscovery = await authenticatedDiscovery(root, coldResources, freshApi)
+                    const operatorApproval = await freshReclaim.planReset({ ...base,
+                        coordinationRecord: failedCommit.value, expectedCoordinationRevision: failedCommit.value.revision,
+                        discovery: approvalDiscovery, runtimeExecutable: runtimeByDiscovery.get(approvalDiscovery)!,
+                        selectionAuthority: selectionByDiscovery.get(approvalDiscovery),
+                        ...(mode === 'cold-second-added-target' ? { resettableVolumes: ['a-data', 'session-data', 'session-logs'] } : {}),
+                    })
+                    if (operatorApproval.kind !== 'preview') throw new Error(JSON.stringify(operatorApproval))
                     const coldDiscovery = await authenticatedDiscovery(root, coldResources, freshApi)
                     const coldPlan = await freshReclaim.planReset({
                         ...base, coordinationRecord: failedCommit.value,
                         expectedCoordinationRevision: failedCommit.value.revision,
                         discovery: coldDiscovery, runtimeExecutable: runtimeByDiscovery.get(coldDiscovery)!,
                         selectionAuthority: selectionByDiscovery.get(coldDiscovery), confirmationDigest: preview.digest,
-                        recoveryAuthority: coldReservation.authority,
+                        recoveryAuthority: coldReservation.authority, operatorApproval,
                         ...(mode === 'cold-second-added-target' ? { resettableVolumes: ['a-data', 'session-data', 'session-logs'] } : {}),
                         coordinationAddress: selected.value.paths.coordination(stackId),
                     })

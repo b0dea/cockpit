@@ -86,7 +86,7 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
     return { root, checkout, home, configPath, composePath, dockerPath }
 }
 
-async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dataMode?: 'empty' | 'seeded' | 'restored'; layout?: 'root' | 'nested' | 'worktree' }> = {}) {
+async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dataMode?: 'empty' | 'seeded' | 'restored'; layout?: 'root' | 'nested' | 'worktree'; toolchain?: 'none' }> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-lifecycle-generated-')))
     roots.push(root)
     const mainCheckout = join(root, 'checkout')
@@ -108,6 +108,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
         .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
         .replace('default_mode = "seeded"', `default_mode = "${options.dataMode ?? 'seeded'}"`)
         .replace('subject = "data-default"\nsubject_id = "seeded"', `subject = "data-default"\nsubject_id = "${options.dataMode ?? 'seeded'}"`)
+    if (options.toolchain === 'none') base = base.replace('toolchain = \"node\"', 'toolchain = \"none\"')
     if (options.secondSibling) {
         const serviceStart = base.indexOf('[[environment.generated.services]]')
         const volumeStart = base.indexOf('[[environment.generated.volumes]]')
@@ -227,7 +228,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
 
 async function configureGeneratedDocker(
     candidate: Awaited<ReturnType<typeof generatedFixture>>,
-    context: Readonly<{ stackId: string; source: Readonly<{ sha256: string }> }>,
+    context: Readonly<{ stackId: string; cockpitId: string; source: Readonly<{ sha256: string }> }>,
     generation: string,
     options: Readonly<{ portOffset?: number; failNeedle?: string; secondSibling?: boolean; sourceDirectory?: string; environmentFile?: string; build?: Readonly<{ context: string; dockerfile?: string }> }> = {},
 ) {
@@ -288,6 +289,9 @@ async function configureGeneratedDocker(
     ).join(' ') + ' fi'
     const status = (service: string) => JSON.stringify({
         ID: service === 'app' ? containerId : 'b'.repeat(64), State: 'running', Health: 'healthy',
+        Mounts: (dockerFixture.topology.services[service]?.volumes ?? []).filter(({ type }) => type === 'bind')
+            .map(({ source, target }) => ({ Type: 'bind', Source: source, Destination: target })),
+        Ports: {},
         Labels: {
             'dev.b0dea.cockpit.stack-id': dockerFixture.stackId,
             'dev.b0dea.cockpit.config-sha256': dockerFixture.sourceSha256,
@@ -307,6 +311,12 @@ async function configureGeneratedDocker(
         Destination: '/workspace/node_modules' }],
     })
     const stoppedPath = join(candidate.root, 'runtime-stopped')
+    const removedPath = join(candidate.root, 'runtime-removed')
+    const resource = JSON.stringify({ id: containerId, name: 'synthetic-app', labels: {
+        'dev.b0dea.cockpit.stack-id': context.stackId,
+        'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+        'dev.b0dea.cockpit.owner-id': context.cockpitId,
+    }, referenced: false, bytes: '0B' })
     const effectivePorts = JSON.stringify({ services: Object.fromEntries(services.map((service) =>
         [service, { ports: [{ target: 3000, published: '%s' }] }])) })
     const effectivePortArguments = services.map((service) =>
@@ -326,7 +336,11 @@ has() {
     done
     return 1
 }
+if [ "$1" = --host ]; then shift 2; fi
 case "$1" in
+    context) [ "$2" = inspect ] || exit 64; printf '%s\\n' '{"context":"default","endpoint":"unix:///tmp/synthetic.sock"}'; exit 0 ;;
+    network|volume|image) [ "$2" = ls ] || exit 64; exit 0 ;;
+    builder) [ "$2" = du ] || exit 64; exit 0 ;;
     version) printf '27.1.2\\n'; exit 0 ;;
     info)
         case "$joined" in
@@ -373,9 +387,16 @@ ${services.map((service, index) => `                    ${service}) printf '%s\\
                     exit 0 ;;
             esac
         fi
-        if has up "$@" || has exec "$@"; then exit 0; fi ;;
+        if has up "$@"; then /bin/rm -f ${shellQuote(stoppedPath)} ${shellQuote(removedPath)}; exit 0; fi
+        if has exec "$@"; then exit 0; fi ;;
     container)
         case "$2" in
+            ls)
+                if [ -f ${shellQuote(removedPath)} ]; then exit 0; fi
+                if has --filter "$@"; then printf '%s\\n' ${shellQuote(containerId)};
+                else printf '%s\\n' ${shellQuote(resource)}; fi
+                exit 0 ;;
+            rm) : > ${shellQuote(removedPath)}; exit 0 ;;
             inspect)
                 service=app
                 for value do
@@ -388,6 +409,9 @@ ${services.map((service, index) => `                    ${service}) printf '%s\\
                     shift
                 done
                 case "$format" in
+                    *NetworkSettings.Ports*)
+                        if [ "$service" = worker ]; then printf '%s' ${shellQuote(status('worker'))};
+                        else printf '%s' ${shellQuote(status('app'))}; fi ;;
                     *Mounts*)
                         if [ "$service" = worker ]; then printf '%s' ${shellQuote(mounts('worker'))};
                         else printf '%s' ${shellQuote(mounts('app'))}; fi ;;
@@ -409,7 +433,7 @@ exit 64
     return { containerId }
 }
 
-async function runGeneratedScenario(options: Readonly<{ portOffset?: number; failNeedle?: string; dependencyLoadOnly?: boolean; secondSibling?: boolean; forgedProgress?: boolean; failedVendorEvidence?: boolean; dataMode?: 'empty' | 'seeded' | 'restored'; layout?: 'root' | 'nested' | 'worktree' }> = {}) {
+async function runGeneratedScenario(options: Readonly<{ portOffset?: number; failNeedle?: string; dependencyLoadOnly?: boolean; secondSibling?: boolean; forgedProgress?: boolean; failedVendorEvidence?: boolean; dataMode?: 'empty' | 'seeded' | 'restored'; layout?: 'root' | 'nested' | 'worktree'; toolchain?: 'none' }> = {}) {
     const candidate = await generatedFixture(options)
     const steps: ExecutionStep[] = []
     const adapters = createLifecycleCommandAdapters({

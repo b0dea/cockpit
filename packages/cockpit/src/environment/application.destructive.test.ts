@@ -506,7 +506,7 @@ describe('destructive application contracts', () => {
         await expect(session.decide('approve')).resolves.toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }],
         })
-        expect(calls).toBe(2)
+        expect(calls).toBe(1)
         expect(reserve).not.toHaveBeenCalled()
         expect(recover).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()

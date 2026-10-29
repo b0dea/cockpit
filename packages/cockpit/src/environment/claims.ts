@@ -57,7 +57,7 @@ export const mechanism = {
     exports: [
         'acquireClaim', 'releaseClaim', 'createHolderProcessProbePlan', 'collectHolderProcessProbe', 'observeHolderCheckouts', 'classifyHolders', 'decodeCoordinationRecord',
         'addCoordinationHolder', 'removeExactCoordinationHolder', 'coordinationStateRecord', 'readActiveStackInventory', 'readRootPortInventory', 'observeClaimState', 'isClaimObservation', 'observationDeclarations',
-        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
+        'reserveDrain', 'recoverDrainReservation', 'inspectSleepDrainRecovery', 'inspectDestructiveDrainRecovery', 'settleInterruptedDrainRepair', 'recoverSleepDrainReservation', 'consumeDrainReservationAuthority', 'discardDrainReservationAuthority', 'inspectFailedReclaimRecovery', 'consumeFailedReclaimRecovery', 'inspectDrainAttemptAuthority', 'reserveDrainAttempt', 'openRuntimeDrainExecution', 'inspectDrainExecutionFence', 'settleRuntimeDrainSuccess', 'settleRuntimeDrainFailure', 'openReclaimDrainExecution', 'settleReclaimDrainSuccess', 'settleReclaimDrainFailure', 'matchReclaimDrainContinuation', 'reduceDrainOutcome', 'prepareDrainOutcomePublication', 'finalizeDrainOutcome', 'isDrainActive', 'issueRestoreExecutionAuthority', 'consumeRestoreExecutionAuthority', 'settleRestoreExecutionAuthority',
     ],
 } as const
 
@@ -928,6 +928,7 @@ async function readCoordinationInventory(
             }
         } finally { await handle.close().catch(() => undefined) }
         const records: { stackId: StackId; record: CoordinationRecord }[] = []
+        const observedRecords = new Map<StackId, StateRecord>()
         for (const name of names.sort()) {
             if (budget) {
                 const path = join(directory, name)
@@ -974,6 +975,28 @@ async function readCoordinationInventory(
                     `${lock.description}; ${lock.recovery}; remove the residue only after proving that no writer owns it`,
                 )
             }
+            if (entry?.kind === 'executor') {
+                const path = join(directory, name)
+                const marker = await lstat(path, { bigint: true })
+                const stored = await readState(namespace.paths.coordination(entry.stackId))
+                const record = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, entry.stackId) : undefined
+                const after = await lstat(path, { bigint: true })
+                // The executor owns marker contents and repair. Inventory only admits a safe
+                // auxiliary file for the exact independently recorded drain attempt.
+                if (!marker.isFile() || marker.isSymbolicLink() || marker.nlink !== 1n
+                    || marker.uid !== BigInt(process.getuid?.() ?? -1) || (marker.mode & 0o022n) !== 0n
+                    || marker.size > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)
+                    || !after.isFile() || after.dev !== marker.dev || after.ino !== marker.ino
+                    || after.size !== marker.size || after.mtimeNs !== marker.mtimeNs || after.ctimeNs !== marker.ctimeNs
+                    || after.uid !== marker.uid || after.mode !== marker.mode || after.nlink !== marker.nlink
+                    || !record?.drain?.attempt || record.drain.attempt.attemptId !== entry.attemptId
+                    || stored.kind !== 'complete'
+                    || exactRecordFingerprint(stored.value) !== exactRecordFingerprint(observedRecords.get(entry.stackId))) {
+                    return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+                        'coordination executor marker is unsafe or does not match its current drain attempt', path)
+                }
+                continue
+            }
             if (!entry || entry.kind !== 'record') {
                 return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination store contains an unexpected entry', join(directory, name))
             }
@@ -988,6 +1011,7 @@ async function readCoordinationInventory(
             }
             const record = decodeCoordinationRecord(result.value, stackId)
             if (!record) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', result.value.subjectId)
+            observedRecords.set(stackId, result.value)
             if (record.holders.length > 0 || record.lease !== null && !record.lease.released) records.push({ stackId, record })
         }
         const after = await lstat(directory, { bigint: true })
@@ -1480,6 +1504,12 @@ export function consumeDrainReservationAuthority(authority: DrainReservationAuth
     drainAuthorities.delete(authority)
     drainAuthorityAddresses.delete(authority)
     return reservation
+}
+
+export function discardDrainReservationAuthority(authority: DrainReservationAuthority): boolean {
+    if (!authority || typeof authority !== 'object' || !drainAuthorities.has(authority)) return false
+    retireDrainAuthority(authority, true)
+    return true
 }
 
 export function isDrainActive(value: CoordinationRecord): boolean {

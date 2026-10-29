@@ -77,6 +77,7 @@ export interface LifecycleRecordValue extends LifecycleProgress {
     readonly holderId: HolderId
     readonly generatedReplay?: GeneratedLifecycleReplay
     readonly generatedProgress?: GeneratedLifecycleProgress
+    readonly teardownComplete?: true
 }
 
 export interface CurrentLifecycleRecord {
@@ -93,7 +94,7 @@ export function decodeLifecycleRecord(
 ): CurrentLifecycleRecord | undefined {
     const value = snapshotJson(record.value)
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || Object.keys(value).sort().join('\0') !== ['completedServices', ...(Object.hasOwn(value, 'generatedProgress') ? ['generatedProgress'] : []), ...(Object.hasOwn(value, 'generatedReplay') ? ['generatedReplay'] : []), 'holderId', 'operationGeneration', 'workBasisSha256'].join('\0')
+        || Object.keys(value).sort().join('\0') !== ['completedServices', ...(Object.hasOwn(value, 'generatedProgress') ? ['generatedProgress'] : []), ...(Object.hasOwn(value, 'generatedReplay') ? ['generatedReplay'] : []), 'holderId', 'operationGeneration', ...(Object.hasOwn(value, 'teardownComplete') ? ['teardownComplete'] : []), 'workBasisSha256'].join('\0')
         || record.format !== 'cockpit-state/v1' || record.kind !== 'lifecycle'
         || record.cockpitId !== context.cockpitId || record.subjectId !== context.stackId) return undefined
     const candidate = value as Record<string, unknown>
@@ -101,6 +102,9 @@ export function decodeLifecycleRecord(
         || typeof candidate.workBasisSha256 !== 'string' || !lifecycleDigest.test(candidate.workBasisSha256)
         || typeof candidate.operationGeneration !== 'string' || !lifecycleDigest.test(candidate.operationGeneration)
         || !Array.isArray(candidate.completedServices) || candidate.completedServices.length > 4_096) return undefined
+    const teardownComplete = Object.hasOwn(candidate, 'teardownComplete')
+    if (teardownComplete && (candidate.teardownComplete !== true || candidate.completedServices.length !== 0
+        || Object.hasOwn(candidate, 'generatedReplay') || Object.hasOwn(candidate, 'generatedProgress'))) return undefined
     let replay: GeneratedLifecycleReplay | undefined
     if (Object.hasOwn(candidate, 'generatedReplay')) {
         const value = candidate.generatedReplay
@@ -147,6 +151,7 @@ export function decodeLifecycleRecord(
             holderId: candidate.holderId as HolderId,
             ...(replay ? { generatedReplay: replay } : {}),
             ...(progress ? { generatedProgress: progress } : {}),
+            ...(teardownComplete ? { teardownComplete: true as const } : {}),
             workBasisSha256: candidate.workBasisSha256,
             operationGeneration: candidate.operationGeneration,
             completedServices: Object.freeze(completed as LifecycleProgress['completedServices']),

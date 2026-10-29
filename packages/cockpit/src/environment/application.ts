@@ -114,6 +114,8 @@ import {
     compensateAcquiredPortHolder,
     deriveEntrypoints,
     inspectPortLeaseTransfer,
+    inspectPortLeaseProjection,
+    revalidatePortLeaseProjection,
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
     releasePortFamily,
@@ -159,6 +161,7 @@ import {
 import { admitFailureLogs, planFailureLogs } from './logs.js'
 import {
     finalizeDrainOutcome,
+    discardDrainReservationAuthority,
     inspectDestructiveDrainRecovery,
     inspectSleepDrainRecovery,
     settleInterruptedDrainRepair,
@@ -177,8 +180,11 @@ import {
     planReset,
     planTeardown,
     projectResetActionTargets,
+    projectRecoveredResetActionTargets,
     projectTeardownActionTargets,
     reconcileReclaimAction,
+    reconcileAbsentReclaimAction,
+    redeemAbsentReclaimAction,
     redeemReclaimAction,
     type PlanResetInput,
     type PlanTeardownInput,
@@ -2215,6 +2221,7 @@ async function publishLifecycleRecord(
     expected: StateRecord | null,
     value: LifecycleRecordValue,
     transfer?: Readonly<{ readonly previousHolderId: HolderId; readonly projection: PortLeaseProjection }>,
+    rebind?: PortLeaseProjection,
 ): Promise<StateResult<StateRecord> | UpCommandResult> {
     const address = context.namespace.paths.lifecycle(context.stackId)
     const expectedBytes = JSON.stringify(expected)
@@ -2247,6 +2254,11 @@ async function publishLifecycleRecord(
                             diagnostic.target ?? context.stackId)
                         : diagnostic),
                 })
+            }
+            if (rebind && (!await withLifecycleConfiguration(context, async () => true)
+                || !await revalidatePortLeaseProjection({ projection: rebind, namespace: context.namespace }))) {
+                return abortStateTransaction(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+                    `configuration or sole-holder lease changed before generated lifecycle refresh; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId))
             }
             return lifecycleStateRecord(context, current, value, new Date().toISOString())
         },
@@ -2415,7 +2427,7 @@ function orderedRuntimeServices(topology: RuntimeTopologyEvidence): RuntimeTopol
 async function prepareGeneratedBringup(
     context: LifecycleRunContext,
     adapters: UpCommandAdapters,
-    rememberAcquisition: (value: LeasePortFamilyResult) => void,
+    rememberAcquisition: (value: LeasePortFamilyResult, projection: PortLeaseProjection) => void,
 ): Promise<UpCommandResult | undefined> {
     const declared = await withLifecycleConfiguration(context, async (configuration) => {
         const loaded = consumeEffectiveConfiguration(configuration)
@@ -2447,7 +2459,7 @@ async function prepareGeneratedBringup(
         prepared = await adapters.withAcquiredPorts(context, async (ports) => {
             if (!matchesPortAcquisition(context, ports.leaseResult, ports.projection)) return undefined
             const generated = await adapters.prepareGeneratedEnvironment!(context, ports.projection)
-            rememberAcquisition(ports.leaseResult)
+            rememberAcquisition(ports.leaseResult, ports.projection)
             return generated
         }, (diagnostics) => { portRefusal = diagnostics; return undefined })
     }
@@ -2717,8 +2729,9 @@ async function executeUpRound(
     context: LifecycleRunContext,
     adapters: UpCommandAdapters,
     forceReset: boolean,
-    rememberAcquisition: (value: LeasePortFamilyResult) => void,
+    rememberAcquisition: (value: LeasePortFamilyResult, projection: PortLeaseProjection) => void,
     rememberRuntimeStart: () => void,
+    initialAcquisition: PortLeaseProjection | undefined,
 ): Promise<UpRoundResult> {
     const operate = async (runtime: RuntimeReadiness, stage: LifecycleStageProjection, ports: AcquiredPorts): Promise<UpRoundResult> => {
         const current = await readLifecycleRecord(context)
@@ -2727,12 +2740,36 @@ async function executeUpRound(
         }
         const stored = current as CurrentLifecycleRecord | null
         const generated = generatedBringupRuns.get(context)
-        if (stored && generated && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
+        const teardownComplete = stored?.value.teardownComplete === true
+        if (stored && generated && !teardownComplete && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                `generated environment identity changed since lifecycle progress was recorded; run \`${lifecycleSuggestion(context, 'down')}\` to remove the old stack, then \`${lifecycleSuggestion(context, 'up')}\``,
+                `generated environment identity changed since lifecycle progress was recorded; the previous stack must be removed under its own declaration — fix: restore the previous configuration and generated files, run \`${lifecycleSuggestion(context, 'up')}\` then \`${lifecycleSuggestion(context, 'down')}\`, restore the intended configuration, run \`${formatShellCommand(['cockpit', 'sync', '--config', context.source.path])}\` then \`${lifecycleSuggestion(context, 'up')}\``,
                 context.stackId) }
         }
+        if (teardownComplete) {
+            const acquisition = initialAcquisition ?? (ports.leaseResult.kind === 'complete' && ports.leaseResult.change === 'acquired'
+                ? inspectPortLeaseProjection(ports.projection, context.namespace) : undefined)
+            const freshSoleHolder = acquisition !== undefined
+                && inspectPortLeaseProjection(acquisition, context.namespace) === acquisition
+                && acquisition.ownership.change === 'acquired'
+                && acquisition.ownership.holderId === context.holderId
+                && acquisition.ownership.holderCount === 1
+                && acquisition.ownership.holderIds[0] === context.holderId
+                && acquisition.ownership.recordRevision === ports.projection.ownership.recordRevision
+                && ports.projection.ownership.holderCount === 1
+                && ports.projection.ownership.holderIds[0] === context.holderId
+                && await revalidatePortLeaseProjection({ projection: acquisition, namespace: context.namespace })
+            const sourceCurrent = await withLifecycleConfiguration(context, async () => true)
+            const currentProgress = await readLifecycleRecord(context)
+            if (!freshSoleHolder || !sourceCurrent || !currentProgress || 'status' in currentProgress
+                || !isDeepStrictEqual(currentProgress.record, stored.record)
+                || !await revalidatePortLeaseProjection({ projection: ports.projection, namespace: context.namespace })) {
+                return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+                    `completed teardown requires unchanged configuration, lifecycle progress and a fresh sole-holder claim; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId) }
+            }
+        }
+        const resetProgress = forceReset || teardownComplete
         const completedServiceIds = stored ? new Set(stored.value.completedServices.map(({ service }) => service)) : undefined
         const progressComplete = stored !== null && completedServiceIds?.size === runtime.topology.services.length
             && runtime.topology.services.every(({ id }) => completedServiceIds.has(id))
@@ -2752,7 +2789,7 @@ async function executeUpRound(
             ) }
         }
 
-        const operationGeneration = stored && !forceReset
+        const operationGeneration = stored && !resetProgress
             ? stored.value.operationGeneration
             : randomBytes(32).toString('hex')
         const revalidateCompletedServices = async (): Promise<
@@ -2761,7 +2798,7 @@ async function executeUpRound(
             | Readonly<{ kind: 'refusal'; result: UpCommandResult }>
         > => {
             const evidence: RuntimeServiceEvidence[] = []
-            if (!stored || forceReset) return { kind: 'complete', evidence }
+            if (!stored || resetProgress) return { kind: 'complete', evidence }
             for (const completed of stored.value.completedServices) {
                 const admitted = await revalidateService(runtime.topology, completed, adapters)
                 if (admitted.kind === 'stale') return { kind: 'retry' }
@@ -2799,11 +2836,11 @@ async function executeUpRound(
             lifecycleStage: stage,
             runtime: runtime.lifecycle,
             ports: ports.projection,
-            progress: stored && !forceReset ? progressValueForPlan(stored.value) : null,
+            progress: stored && !resetProgress ? progressValueForPlan(stored.value) : null,
             operationGeneration,
         })
         if (admission.kind === 'refusal') {
-            return stored && !forceReset
+            return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
                 : { kind: 'complete' as const, result: {
                     kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: admission.diagnostics,
@@ -2817,7 +2854,7 @@ async function executeUpRound(
 
         const planned = planAdmittedUp({ authority: admission.authority, completedServices: completedEvidence })
         if (planned.kind === 'refusal') {
-            return stored && !forceReset
+            return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
                 : { kind: 'complete' as const, result: lifecycleRefusal(
                       ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
@@ -2850,7 +2887,7 @@ async function executeUpRound(
             ...(generated ? { generatedReplay: generatedReplay(generated),
                 ...(stored?.value.generatedProgress ? { generatedProgress: stored.value.generatedProgress } : {}) } : {}),
         })
-        if (!stored || forceReset || stored.value.holderId !== context.holderId && !completedCoTenant) {
+        if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
             // The first lifecycle data starts its durable history, as `setup` does (an existing
             // `started` is unchanged), so lifecycle data without history keeps meaning that history
             // was lost. Publishing data alone let a first `up` pass and every resume refuse.
@@ -2868,6 +2905,7 @@ async function executeUpRound(
                 stored && stored.value.holderId !== context.holderId
                     ? { previousHolderId: stored.value.holderId, projection: ports.projection }
                     : undefined,
+                teardownComplete ? ports.projection : undefined,
             )
             if ('status' in publication) return { kind: 'complete' as const, result: publication }
             if (publication.kind === 'indeterminate') return { kind: 'complete' as const, result: lifecycleRefusal(
@@ -3021,7 +3059,7 @@ async function executeUpRound(
                 ) }
             }
             const outcome = await adapters.withRuntimeReadiness(context, (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
-            rememberAcquisition(ports.leaseResult)
+            rememberAcquisition(ports.leaseResult, ports.projection)
             return outcome
         }, refused) ?? unavailable(), refused) ?? unavailable()
     }
@@ -3035,7 +3073,7 @@ async function executeUpRound(
             }
             const outcome = await adapters.withRuntimeReadiness(context,
                 (runtime) => operate(runtime, stage, ports), ports.projection, refused) ?? unavailable()
-            rememberAcquisition(ports.leaseResult)
+            rememberAcquisition(ports.leaseResult, ports.projection)
             return outcome
         }, refused) ?? unavailable(), refused) ?? unavailable()
 }
@@ -3063,8 +3101,12 @@ export async function runUp(
     const context = loaded.result
     type AcquiredLeaseResult = Extract<LeasePortFamilyResult, { kind: 'complete' }> & { readonly change: 'acquired' }
     let acquired: AcquiredLeaseResult | undefined
-    const rememberAcquisition = (lease: LeasePortFamilyResult) => {
-        if (!acquired && lease.kind === 'complete' && lease.change === 'acquired') acquired = lease as AcquiredLeaseResult
+    let initialAcquisition: PortLeaseProjection | undefined
+    const rememberAcquisition = (lease: LeasePortFamilyResult, projection: PortLeaseProjection) => {
+        if (!acquired && lease.kind === 'complete' && lease.change === 'acquired') {
+            acquired = lease as AcquiredLeaseResult
+            initialAcquisition = inspectPortLeaseProjection(projection, context.namespace)
+        }
     }
     // The holder claim and its lease are what own the stack's runtime: `down` and `reset` act only
     // for a holder, and the next `up` resumes from the holder's durable progress. Once this `up`
@@ -3089,7 +3131,7 @@ export async function runUp(
     }
     let forceReset = false
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition, rememberRuntimeStart)
+        const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition, rememberRuntimeStart, initialAcquisition)
         if (round.kind === 'retry') {
             forceReset = round.forceReset
             continue
@@ -3372,6 +3414,7 @@ export async function runSleep(
             context,
             planned.request.operationBasis,
             planned.request.generation,
+            'sleep',
         )
         if (invalidated) return invalidated
         const finalized = await publishDrainOutcome(context, authority, fence)
@@ -3388,7 +3431,7 @@ export async function runSleep(
     )
 }
 
-function repairRequired(context: LifecycleRunContext): SleepCommandResult {
+function repairRequired(context: LifecycleRunContext): Extract<SleepCommandResult, { kind: 'refusal' }> {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
         'cockpit cannot prove the interrupted sleep executor stopped, so it will not overlap it with another destructive action; preserve the coordination state for explicit repair',
@@ -3400,20 +3443,25 @@ async function invalidateCompletedLifecycle(
     context: LifecycleRunContext,
     workBasisSha256: string,
     operationGeneration: string,
-): Promise<SleepCommandResult | undefined> {
+    purpose: 'sleep' | 'down',
+): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
     const current = await readLifecycleRecord(context)
     if (current !== null && 'kind' in current) return {
         kind: 'refusal', status: 2, result: null, diagnostics: current.diagnostics,
     }
     const stored = current as CurrentLifecycleRecord | null
-    // Stopped services are no longer complete, but the generated identity they ran stays: readiness
-    // admits a generated resume only against it, so dropping it refused every resume after sleep.
+    if (purpose === 'down' && stored?.value.teardownComplete === true
+        && stored.value.holderId === context.holderId && stored.value.workBasisSha256 === workBasisSha256
+        && stored.value.operationGeneration === operationGeneration) return undefined
+    // Sleep retains containers, so its replay still guards resume. Only a reconciled down
+    // retires that identity, before the final drain publication can release its claim.
     const value: LifecycleRecordValue = Object.freeze({
         holderId: context.holderId,
         workBasisSha256,
         operationGeneration,
         completedServices: Object.freeze([]),
-        ...(stored?.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
+        ...(purpose === 'down' ? { teardownComplete: true as const }
+            : stored?.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
     })
     const publication = await publishLifecycleRecord(context, stored?.record ?? null, value)
     if ('status' in publication) return {
@@ -3434,11 +3482,10 @@ async function invalidateCompletedLifecycle(
     return undefined
 }
 
-async function publishDrainOutcome(
+async function publishDrainOutcomeRecord(
     context: LifecycleRunContext,
     authority: DrainOutcomeAuthority,
-    fence: ExecutionFence,
-): Promise<SleepCommandResult | undefined> {
+): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
     const publication = await prepareDrainOutcomePublication({
         authority,
         namespace: context.namespace,
@@ -3463,6 +3510,16 @@ async function publishDrainOutcome(
         address: context.namespace.paths.coordination(context.stackId),
     })
     if (!finalized) return repairRequired(context)
+    return undefined
+}
+
+async function publishDrainOutcome(
+    context: LifecycleRunContext,
+    authority: DrainOutcomeAuthority,
+    fence: ExecutionFence,
+): Promise<SleepCommandResult | undefined> {
+    const published = await publishDrainOutcomeRecord(context, authority)
+    if (published) return published
     return await cleanupFencedExecution(fence) ? undefined : lifecycleRefusal(
         ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
         'the drain outcome was published but its durable execution fence could not be removed',
@@ -3607,7 +3664,13 @@ async function executeRuntimeDrain(
     const admitted = admitRuntimeStopped({ plan: observationPlan, outcome: observed })
     if (admitted.kind !== 'complete') return destructiveRepairRequired(context)
     const authority = consumeRuntimeStopped(admitted.authority)
-    return authority ? Object.freeze({ authority, fence }) : destructiveRepairRequired(context)
+    if (!authority) return destructiveRepairRequired(context)
+    const reservation = attempt.authority.reservation
+    if (reservation.purpose === 'down' && reservation.actions.length === 1) {
+        const invalidated = await invalidateCompletedLifecycle(context, reservation.operationBasis, reservation.generation, 'down')
+        if (invalidated) return invalidated
+    }
+    return Object.freeze({ authority, fence })
 }
 
 async function executeDestructivePlan(
@@ -3643,6 +3706,36 @@ async function executeDestructivePlan(
         if (recovered.kind !== 'complete') return destructiveRefusal(recovered.diagnostics)
         const attempt = await reserveDrainAttempt({ namespace: context.namespace, authority: recovered.authority })
         if (attempt.kind !== 'complete') return destructiveRefusal(attempt.diagnostics)
+        const absent = redeemAbsentReclaimAction({ actionAuthority: plan.actionAuthority, attempt: attempt.authority })
+        if (absent) {
+            const postAction = await observeDestructiveReclaim(context, adapters)
+            if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
+            const reconciled = await reconcileAbsentReclaimAction({ authority: absent.authority,
+                discovery: purpose === 'down' ? postAction.down.discovery : postAction.reset.discovery })
+            if (reconciled.kind !== 'complete' || !reconciled.authority) return reconciled.kind === 'refusal'
+                ? destructiveRefusal(reconciled.diagnostics) : destructiveRepairRequired(context)
+            const authority = consumeReclaimCompleted(reconciled.authority)
+            if (!authority) return destructiveRepairRequired(context)
+            if (purpose === 'down' && reconciled.continuation === null) {
+                const invalidated = await invalidateCompletedLifecycle(context, request.operationBasis, request.generation, 'down')
+                if (invalidated) return invalidated
+            }
+            const published = await publishDrainOutcomeRecord(context, authority)
+            if (published) return published
+            if (reconciled.continuation === null) break
+            const coordination = await readState(context.namespace.paths.coordination(context.stackId))
+            if (coordination.kind !== 'complete') return destructiveRepairRequired(context)
+            const next = purpose === 'down'
+                ? await planTeardown({ ...postAction.down, coordinationRecord: coordination.value,
+                    expectedDiscoveryDigest: request.planDigest, continuation: reconciled.continuation })
+                : await planReset({ ...postAction.reset, coordinationRecord: coordination.value,
+                    expectedCoordinationRevision: coordination.value.revision,
+                    confirmationDigest: request.planDigest, continuation: reconciled.continuation })
+            if (next.kind !== 'complete') return next.kind === 'refusal'
+                ? destructiveRefusal(next.diagnostics) : destructiveRepairRequired(context)
+            plan = next
+            continue
+        }
         const execution = await redeemReclaimAction({ actionAuthority: plan.actionAuthority, attempt: attempt.authority })
         if (!execution) return destructiveRepairRequired(context)
         const outcome = await adapters.execute(execution.step)
@@ -3671,6 +3764,10 @@ async function executeDestructivePlan(
         if (!authority) return destructiveRepairRequired(context)
         const fence = execution.step.executionFence
         if (!fence) return destructiveRepairRequired(context)
+        if (purpose === 'down' && reconciled.continuation === null) {
+            const invalidated = await invalidateCompletedLifecycle(context, request.operationBasis, request.generation, 'down')
+            if (invalidated) return invalidated
+        }
         const published = await publishDestructiveOutcome(context, authority, fence)
         if (published) return published
         if (reconciled.continuation === null) {
@@ -3729,6 +3826,7 @@ function matchesPersistedDrainRequest(
 async function prepareDown(
     context: DestructiveRunContext,
     adapters: DestructiveCommandAdapters,
+    recovered?: Extract<Awaited<ReturnType<typeof recoverDrainReservation>>, { kind: 'complete' }>,
 ): Promise<{
     runtime: DestructiveObservation['runtime']
     ports: DestructiveObservation['ports']
@@ -3737,7 +3835,8 @@ async function prepareDown(
 } | Extract<DownCommandResult, { kind: 'refusal' }>> {
     const previewObservation = await observeDestructive(context, adapters)
     if (!previewObservation || 'diagnostics' in previewObservation) return destructivePreconditionRefusal(context, previewObservation)
-    const preview = await planTeardown(previewObservation.down)
+    const preview = await planTeardown({ ...previewObservation.down,
+        ...(recovered ? { recoveryAuthority: recovered.authority } : {}) })
     if (preview.kind !== 'complete') return destructiveRefusal(preview.diagnostics)
     // The plan needs a discovery after the preview's consent; the runtime the preview measured
     // seconds ago still stands for planning the drain.
@@ -3769,41 +3868,45 @@ export async function runDown(
     const loaded = await loadDestructiveContext(input, adapters)
     if (loaded.kind !== 'complete') return loaded as DownCommandResult
     const context = loaded.result
-    const prepared = await prepareDown(context, adapters)
-    if ('diagnostics' in prepared) return prepared
-    const projection = projectTeardownActionTargets(prepared.preview)
-    if (!projection) return destructivePreconditionRefusal(context, undefined)
     const inspection = await inspectDestructiveRecoveryWithRepair(context, 'down')
     if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
     if (inspection.kind === 'repairable') return destructiveRepairRequired(context)
     const persistedRequest = inspection.kind === 'recoverable' ? inspection.request : undefined
-    const basis = destructivePlanningBasis(persistedRequest)
-    const lifecycle = planDown({
-        runtime: prepared.runtime,
-        ports: prepared.ports,
-        reclaim: projection,
-        operationGeneration: basis.generation,
-        runtimeStopValidForMs: basis.runtimeStopValidForMs,
-        reclaimValidForMs: basis.reclaimValidForMs,
-    })
-    if (lifecycle.kind !== 'drain') return destructiveRefusal(lifecycle.diagnostics)
-    if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(context)
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: context.namespace, request: persistedRequest })
     if (recovered?.kind === 'refusal') return destructiveRefusal(recovered.diagnostics)
-    const plan = await planTeardown({
-        ...prepared.observation.down,
-        expectedDiscoveryDigest: prepared.preview.discoveryDigest,
-        ...(recovered?.kind === 'complete'
-            ? { recoveryAuthority: recovered.authority }
-            : prepared.preview.consent === null ? {} : { consent: prepared.preview.consent }),
-    })
-    if (plan.kind !== 'complete') return destructiveRefusal(plan.diagnostics)
-    return executeDestructivePlan(
-        context, adapters, 'down', lifecycle, plan,
-        recovered?.kind === 'complete' ? recovered : undefined,
-        persistedRequest,
-    ) as Promise<DownCommandResult>
+    try {
+        const prepared = await prepareDown(context, adapters, recovered)
+        if ('diagnostics' in prepared) return prepared
+        const projection = projectTeardownActionTargets(prepared.preview)
+        if (!projection) return destructivePreconditionRefusal(context, undefined)
+        const basis = destructivePlanningBasis(persistedRequest)
+        const lifecycle = planDown({
+            runtime: prepared.runtime,
+            ports: prepared.ports,
+            reclaim: projection,
+            operationGeneration: basis.generation,
+            runtimeStopValidForMs: basis.runtimeStopValidForMs,
+            reclaimValidForMs: basis.reclaimValidForMs,
+        })
+        if (lifecycle.kind !== 'drain') return destructiveRefusal(lifecycle.diagnostics)
+        if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(context)
+        const plan = await planTeardown({
+            ...prepared.observation.down,
+            expectedDiscoveryDigest: prepared.preview.discoveryDigest,
+            ...(recovered?.kind === 'complete'
+                ? { recoveryAuthority: recovered.authority }
+                : prepared.preview.consent === null ? {} : { consent: prepared.preview.consent }),
+        })
+        if (plan.kind !== 'complete') return destructiveRefusal(plan.diagnostics)
+        return await executeDestructivePlan(
+            context, adapters, 'down', lifecycle, plan,
+            recovered?.kind === 'complete' ? recovered : undefined,
+            persistedRequest,
+        ) as DownCommandResult
+    } finally {
+        if (recovered?.kind === 'complete') discardDrainReservationAuthority(recovered.authority)
+    }
 }
 
 interface PrivateResetSession {
@@ -3871,25 +3974,6 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
         severity: 'error', code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
         message: decision === 'decline' ? 'reset was declined' : 'reset operator session is unavailable', target: 'reset',
     })]))
-    const observation = await observeDestructive(session.context, session.adapters)
-    if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(session.context, observation)
-    if (session.preview.noop) {
-        const noop = await planReset({
-            ...observation.reset,
-            confirmationDigest: session.preview.digest,
-            consent: session.preview.consent,
-        })
-        if (noop.kind !== 'complete' || !noop.noop || noop.actionAuthority !== null) {
-            return noop.kind === 'refusal' ? destructiveRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
-        }
-        const inspection = await inspectDestructiveRecoveryWithRepair(session.context, 'reset')
-        if (inspection.kind !== 'none') return inspection.kind === 'refusal'
-            ? destructiveRefusal(inspection.diagnostics) : destructiveRepairRequired(session.context)
-        return Object.freeze({
-            kind: 'complete', status: 0, diagnostics: Object.freeze([]),
-            result: Object.freeze({ stackId: session.context.stackId, change: 'unchanged' }),
-        })
-    }
     const inspection = await inspectDestructiveRecoveryWithRepair(session.context, 'reset')
     if (inspection.kind === 'refusal') return destructiveRefusal(inspection.diagnostics)
     if (inspection.kind === 'repairable') return destructiveRepairRequired(session.context)
@@ -3897,33 +3981,62 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
     const recovered = persistedRequest === undefined ? undefined
         : await recoverDrainReservation({ namespace: session.context.namespace, request: persistedRequest })
     if (recovered?.kind === 'refusal') return destructiveRefusal(recovered.diagnostics)
-    const projection = projectResetActionTargets(session.preview)
-    if (!projection) return destructiveRepairRequired(session.context)
-    const basis = destructivePlanningBasis(persistedRequest)
-    const lifecycle = planResetLifecycle({
-        runtime: observation.runtime,
-        ports: observation.ports,
-        reclaim: projection,
-        operationGeneration: basis.generation,
-        runtimeStopValidForMs: basis.runtimeStopValidForMs,
-        reclaimValidForMs: basis.reclaimValidForMs,
-    })
-    if (lifecycle.kind !== 'drain') return destructiveRefusal(lifecycle.diagnostics)
-    if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(session.context)
-    const actionablePlan = await planReset({
-        ...observation.reset,
-        confirmationDigest: session.preview.digest,
-        ...(recovered?.kind === 'complete'
-            ? { recoveryAuthority: recovered.authority }
-            : { consent: session.preview.consent }),
-    })
-    if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
-        ? destructiveRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
-    return executeDestructivePlan(
-        session.context, session.adapters, 'reset', lifecycle, actionablePlan,
-        recovered?.kind === 'complete' ? recovered : undefined,
-        persistedRequest,
-    ) as Promise<OperatorResetResult>
+    try {
+        const observation = await observeDestructive(session.context, session.adapters)
+        if (!observation || 'diagnostics' in observation) return destructivePreconditionRefusal(session.context, observation)
+        if (session.preview.noop && !persistedRequest) {
+            const noop = await planReset({
+                ...observation.reset,
+                confirmationDigest: session.preview.digest,
+                consent: session.preview.consent,
+            })
+            if (noop.kind !== 'complete' || !noop.noop || noop.actionAuthority !== null) {
+                return noop.kind === 'refusal' ? destructiveRefusal(noop.diagnostics) : destructivePreconditionRefusal(session.context, undefined)
+            }
+            const finalInspection = await inspectDestructiveDrainRecovery({ namespace: session.context.namespace,
+                stackId: session.context.stackId, holderId: session.context.holderId, purpose: 'reset' })
+            if (finalInspection.kind !== 'none') return finalInspection.kind === 'refusal'
+                ? destructiveRefusal(finalInspection.diagnostics) : destructiveRepairRequired(session.context)
+            return Object.freeze({
+                kind: 'complete', status: 0, diagnostics: Object.freeze([]),
+                result: Object.freeze({ stackId: session.context.stackId, change: 'unchanged' }),
+            })
+        }
+        const recoveryPlan = recovered ? await planReset({ ...observation.reset,
+            confirmationDigest: persistedRequest!.planDigest,
+            recoveryAuthority: recovered.authority, operatorApproval: session.preview }) : undefined
+        if (recoveryPlan && recoveryPlan.kind !== 'complete') return recoveryPlan.kind === 'refusal'
+            ? destructiveRefusal(recoveryPlan.diagnostics) : destructiveRepairRequired(session.context)
+        const projection = recoveryPlan ? projectRecoveredResetActionTargets(recoveryPlan) : projectResetActionTargets(session.preview)
+        if (!projection) return destructiveRepairRequired(session.context)
+        const basis = destructivePlanningBasis(persistedRequest)
+        const lifecycle = planResetLifecycle({
+            runtime: observation.runtime,
+            ports: observation.ports,
+            reclaim: projection,
+            operationGeneration: basis.generation,
+            runtimeStopValidForMs: basis.runtimeStopValidForMs,
+            reclaimValidForMs: basis.reclaimValidForMs,
+        })
+        if (lifecycle.kind !== 'drain') return destructiveRefusal(lifecycle.diagnostics)
+        if (!matchesPersistedDrainRequest(lifecycle.request, persistedRequest)) return destructiveRepairRequired(session.context)
+        const actionablePlan = recoveryPlan ?? await planReset({
+            ...observation.reset,
+            confirmationDigest: session.preview.digest,
+            ...(recovered?.kind === 'complete'
+                ? { recoveryAuthority: recovered.authority }
+                : { consent: session.preview.consent }),
+        })
+        if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
+            ? destructiveRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
+        return await executeDestructivePlan(
+            session.context, session.adapters, 'reset', lifecycle, actionablePlan,
+            recovered?.kind === 'complete' ? recovered : undefined,
+            persistedRequest,
+        ) as OperatorResetResult
+    } finally {
+        if (recovered?.kind === 'complete') discardDrainReservationAuthority(recovered.authority)
+    }
 }
 
 export interface ComparisonRemoteInput {

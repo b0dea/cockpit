@@ -230,7 +230,12 @@ cleanup. Ordinary nested cockpit lifecycle commands inherit the same private ses
 second `cockpit session` wrapper is refused.
 
 `down` removes only resources selected by authenticated runtime, checkout, and ownership
-evidence. `reset` first shows an exact preview of generated volumes and declared generated
+evidence. It retires startup progress only after those removals are authenticated, allowing a
+new generated identity. Run `cockpit down --config cockpit.toml` before changing generated
+declarations, then `cockpit sync --config cockpit.toml` and `cockpit up --config cockpit.toml`.
+`sleep` and `reset` retain the previous generated identity for resume.
+
+`reset` first shows an exact preview of generated volumes and declared generated
 host paths. Normal and JSON reset calls do not delete anything. Interactive reset requires a
 human terminal outside CI; approval remains in the process that showed the preview and is
 revalidated before an action. Set `DOCKER_CONTEXT` explicitly for destructive commands, or a local
@@ -248,7 +253,9 @@ ownership or execution primitives. A TLS override is refused.
 Every destructive action starts behind a durable execution fence. If cockpit itself is interrupted,
 the detached supervisor retains that exact attempt identity. The next `sleep`, `down`, or approved
 `reset` asks that supervisor to terminate its owned action group, proves the group is gone, records
-the active attempt as failed, and retries only the persisted action. `DRAIN_ATTEMPT_REPAIR_REQUIRED`
+the active attempt as failed, and retries the persisted action. If that exact target was already
+removed, fresh authenticated discovery must prove its absence and the unchanged remaining targets
+before cockpit reconciles completion without repeating the removal. `DRAIN_ATTEMPT_REPAIR_REQUIRED`
 means the marker, supervisor identity, control socket, or termination proof did not match; cockpit
 then preserves the active attempt and refuses overlapping cleanup. Do not remove its state or runtime
 resources by hand because that destroys the evidence needed for safe repair.

@@ -51,7 +51,7 @@ export const mechanism = {
         'createImageInspectionSteps', 'admitImageInspections', 'createVolumeInspectionSteps',
         'admitVolumeInspections', 'createNetworkInspectionSteps', 'admitNetworkInspections',
         'combineReclaimDiscoveries', 'inspectionOverflow',
-        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectTeardownActionTargets', 'consumeReclaimTargetProjection', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'reconcileTeardownAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
+        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'reconcileTeardownAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
     ],
 } as const
 
@@ -97,9 +97,17 @@ const pendingResetActions = new WeakMap<object, PendingResetAction>()
 const pendingTeardownActions = new WeakMap<object, PendingTeardownAction>()
 const consumedPendingTeardownActions = new WeakSet<object>()
 const pendingReclaimExecutions = new WeakMap<object, PendingReclaimExecution>()
+const pendingAbsentReclaimActions = new WeakMap<object, PendingAbsentReclaimAction>()
+const absentReclaimExecutions = new WeakMap<object, {
+    readonly pending: PendingAbsentReclaimAction
+    readonly reservation: DrainReservation
+    readonly attempt: NonNullable<DrainReservation['attempt']>
+    readonly execution: ReclaimDrainExecutionAuthority
+}>()
 const issuedReclaimCompleted = new WeakMap<object, DrainOutcomeAuthority>()
 const issuedReclaimFailures = new WeakMap<object, DrainOutcomeAuthority>()
 const issuedResetPreviews = new WeakMap<object, ReclaimTargetEnvelope>()
+const issuedResetRecoveryPlans = new WeakMap<object, ReclaimTargetEnvelope>()
 const issuedTeardownPlans = new WeakMap<object, ReclaimTargetEnvelope>()
 const issuedTargetProjections = new WeakMap<object, ReclaimTargetEnvelope>()
 const selectionProbePlans = new WeakMap<object, DockerSelectionProbePlan>()
@@ -152,7 +160,7 @@ interface DockerSelectionAuthority {
 
 interface ResetContinuationAuthority {
     readonly consentDigest: string
-    readonly completed: ResetTargetAuthority
+    readonly completedTargetId: string
     readonly issuedAt: string
     readonly runtimeDigest: string
     readonly targetIds: readonly string[]
@@ -162,7 +170,7 @@ interface ResetContinuationAuthority {
 
 interface TeardownContinuationAuthority {
     readonly discoveryDigest: string
-    readonly completed: ClassifiedReclaimResource
+    readonly completedTargetId: string
     readonly issuedAt: string
     readonly runtimeDigest: string
     readonly targetIds: readonly string[]
@@ -203,6 +211,32 @@ interface PendingReclaimExecution {
     readonly attempt: NonNullable<DrainReservation['attempt']>
     readonly execution: ReclaimDrainExecutionAuthority
     readonly targetIdentities: readonly ReclaimTargetIdentity[]
+}
+
+interface PendingAbsentReclaimAction {
+    readonly purpose: 'down' | 'reset'
+    readonly stackId: StackId
+    readonly configSha256: string
+    readonly coordinationRecord: StateRecord
+    readonly planDigest: string
+    readonly runtime: DiscoveryAuthority
+    readonly continuation: object
+    readonly targetId: string
+    readonly targetIds: readonly string[]
+    readonly removedTargetIds: readonly string[]
+    readonly targetIdentities: readonly ReclaimTargetIdentity[]
+    readonly remainingTargets: (discovery: ReclaimDiscoverySnapshot) => Promise<readonly string[] | undefined>
+}
+
+function issueAbsentReclaimAction(input: Omit<PendingAbsentReclaimAction, 'continuation'>, runtimeDigest: string): object {
+    const continuation = Object.freeze({})
+    const common = Object.freeze({ completedTargetId: input.targetId, issuedAt: new Date().toISOString(), runtimeDigest,
+        targetIds: input.targetIds, removedTargetIds: input.removedTargetIds, targetIdentities: input.targetIdentities })
+    if (input.purpose === 'down') teardownContinuations.set(continuation, { ...common, discoveryDigest: input.planDigest })
+    else resetContinuations.set(continuation, { ...common, consentDigest: input.planDigest })
+    const authority = Object.freeze({})
+    pendingAbsentReclaimActions.set(authority, Object.freeze({ ...input, continuation }))
+    return authority
 }
 
 type ReclaimTargetIdentity = ResetVolumeTargetIdentity | TeardownRuntimeTargetIdentity | PathTargetIdentity
@@ -1186,6 +1220,7 @@ export interface PlanResetInput extends ClassifyReclaimInput {
     readonly coordinationAddress?: StateAddress
     readonly continuation?: object
     readonly recoveryAuthority?: DrainReservationAuthority
+    readonly operatorApproval?: ResetPreview
 }
 
 export interface ResetPreview {
@@ -1587,6 +1622,12 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             ? inspectFailedReclaimRecovery({ authority: recoveryAuthority, record: input.coordinationRecord! }) : undefined
         const coldPlanningRecovery = coldPlanningAuthority === undefined
             ? undefined : consumeFailedReclaimRecovery(coldPlanningAuthority)
+        const operatorApproval = capturedInput!.opaque.operatorApproval
+        if ((recoveryAuthority !== undefined) !== (operatorApproval !== undefined)
+            || operatorApproval !== undefined && coldPlanningRecovery === undefined) {
+            return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
+                'cold reset recovery requires an authenticated approval of the remaining targets', 'reset-confirmation')
+        }
         const coldPlanningIdentities = coldPlanningRecovery === undefined
             ? undefined : committedTargetIdentities(coldPlanningRecovery)
         const observedAuthorities = await resetAuthorities(input)
@@ -1608,9 +1649,9 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             continuedAfterFailure = match === 'failed'
             const completedTargetIds = new Set(continuedAfterFailure
                 ? continued.removedTargetIds
-                : [...continued.removedTargetIds, `${continued.completed.kind}:${continued.completed.identity}`])
+                : [...continued.removedTargetIds, continued.completedTargetId])
             const remainingNow = continuedAfterFailure ? observedAuthorities
-                : observedAuthorities.filter(({ kind, identity }) => kind !== continued.completed.kind || identity !== continued.completed.identity)
+                : observedAuthorities.filter(({ kind, identity }) => `${kind}:${identity}` !== continued.completedTargetId)
             const remainingTargetIds = continued.targetIds.filter((targetId) => !completedTargetIds.has(targetId))
             const remainingIdentities = resetTargetIdentities(remainingTargetIds, remainingNow)
             const completedRemainAbsent = continued.targetIdentities
@@ -1632,6 +1673,15 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             .filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
             .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
         const digestIdentities = coldPlanningIdentities ?? resetTargetIdentities(digestTargetIds, authorities)
+        const coldCurrentIdentity = coldPlanningIdentities?.find(({ targetId }) => targetId === coldPlanningRecovery?.current.targetId)
+        const coldCurrentAbsent = coldCurrentIdentity !== undefined && targetIsAbsent(coldCurrentIdentity, discovery.resources)
+        if (coldCurrentAbsent && (coldCurrentIdentity.medium === 'path'
+            ? !input.generatedHostPaths.some(declaration => declaration.root === coldCurrentIdentity.root
+                && declaration.path === coldCurrentIdentity.path && declaration.declaration === coldCurrentIdentity.declaration)
+            : coldCurrentIdentity.scope === 'reset-volume' && !input.resettableVolumes.includes(coldCurrentIdentity.declaration))) {
+            return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
+                'interrupted reset target is no longer declared', 'reset-targets')
+        }
         const digest = continued?.consentDigest ?? digestValue({
             format: 'cockpit-reset-preview/v1', stackId: input.stackId, cockpitId: input.cockpitId,
             configSha256: input.configSha256,
@@ -1649,12 +1699,12 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             if (previewAuthority !== undefined) recordPreview(digest, previewAuthority)
             const preview = Object.freeze({
                 kind: 'preview', digest, coordinationRevision: coordination.revision,
-                targets: publicTargets, noop: authorities.length === 0,
+                targets: publicTargets, noop: authorities.length === 0 && !coldCurrentAbsent,
                 consent: issueConsent(digest, previewAuthority),
             })
             const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
             const targetIds = Object.freeze(actionable.map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical))
-            const identities = resetTargetIdentities(targetIds, actionable)
+            const identities = coldPlanningIdentities ?? resetTargetIdentities(targetIds, actionable)
             if (identities === undefined) {
                 return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be committed exactly', 'reset-targets')
             }
@@ -1679,13 +1729,13 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             : [...coldRecovery.completed, coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
         const coldCompletedTargetIds = coldRecovery?.completed.map(({ targetId }) => targetId)
         const coldRemainingTargetIds = coldRecovery === undefined ? undefined
-            : [coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
+            : (coldCurrentAbsent ? coldRecovery.pending : [coldRecovery.current, ...coldRecovery.pending]).map(({ targetId }) => targetId)
         const coldObservedIdentities = coldRemainingTargetIds === undefined ? undefined
             : resetTargetIdentities(coldRemainingTargetIds, authorities)
         const coldTargetsMatch = coldRecovery !== undefined && coldIdentities !== undefined
             && coldRecovery.purpose === 'reset' && coldRecovery.stackId === input.stackId
             && coldRecovery.configSha256 === input.configSha256 && coldRecovery.planDigest === input.confirmationDigest
-            && coldRecovery.current.targetId === coldRemainingTargetIds?.[0]
+            && (coldCurrentAbsent || coldRecovery.current.targetId === coldRemainingTargetIds?.[0])
             && sameStrings(digestTargetIds, coldRemainingTargetIds!)
             && coldCompletedTargetIds!.every((targetId) => coldIdentities
                 .filter((identity) => identity.targetId === targetId)
@@ -1695,12 +1745,42 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         const authority = sameRuntimeAuthority(discovery, runtimeExecutable, input.cwd, env, selection, currentSelection, continuation)
         const followsPersistedFailure = coldTargetsMatch
             && Date.parse(authority?.startedAt ?? '') > Date.parse(coldRecovery!.freshAfter)
+        const approval = operatorApproval !== null && typeof operatorApproval === 'object'
+            ? issuedResetPreviews.get(operatorApproval) : undefined
+        if (operatorApproval !== undefined && (!coldTargetsMatch || !approval
+            || approval.purpose !== 'reset' || approval.stackId !== input.stackId || approval.configSha256 !== input.configSha256
+            || digestValue(approval.commitments) !== digestValue(targetCommitments(coldIdentities!
+                .filter(({ targetId }) => coldRemainingTargetIds!.includes(targetId)))))) {
+            return refusal(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
+                'approved reset preview does not match the exact remaining persisted targets', 'reset-confirmation')
+        }
         if (!admittedDiscoveries.has(discovery) || authority === undefined
-            || !(coldTargetsMatch ? followsPersistedFailure : followsPreview(digest, authority))
+            || continued === undefined && !(coldTargetsMatch ? followsPersistedFailure : followsPreview(digest, authority))
             || currentSelection === undefined || currentSelectionToken === null || typeof currentSelectionToken !== 'object'
             || consumedSelectionAuthorities.has(currentSelectionToken)
             || continued === undefined && !coldTargetsMatch && !consumeConsent(consent, digest, authority)) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset requires a fresh authenticated runtime discovery', 'reset-discovery')
+        }
+        if (operatorApproval !== undefined) issuedResetPreviews.delete(operatorApproval as object)
+        if (coldTargetsMatch && coldCurrentAbsent) {
+            consumeAuthority(authority)
+            consumedSelectionAuthorities.add(currentSelectionToken as object)
+            const actionAuthority = issueAbsentReclaimAction({
+                purpose: 'reset', stackId: input.stackId, configSha256: input.configSha256,
+                coordinationRecord: currentCoordination, planDigest: digest, runtime: authority,
+                targetId: coldRecovery!.current.targetId, targetIds: coldReclaimTargetIds!,
+                removedTargetIds: coldCompletedTargetIds!, targetIdentities: coldIdentities!,
+                remainingTargets: async next => {
+                    const current = await resetAuthorities({ ...input, discovery: next })
+                    return current?.filter(candidate => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
+                        .map(({ kind, identity }) => `${kind}:${identity}`).sort(lexical)
+                },
+            }, runtimeDigest)
+            const result = Object.freeze({ kind: 'complete' as const, step: null, actionAuthority, remaining: digestTargetIds.length,
+                noop: false, digest, continuation: null })
+            issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId, input.configSha256,
+                digest, targetCommitments(coldIdentities!)))
+            return result
         }
         // Revalidation narrows cooperative races; portable process APIs cannot bind a daemon object or pathname descriptor through its final removal syscall.
         const actionable = authorities.filter((candidate) => candidate.kind !== 'host-path' || candidate.evidence.state === 'present')
@@ -1739,13 +1819,13 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         const removedTargetIds = coldTargetsMatch ? Object.freeze(coldCompletedTargetIds!) : continued === undefined
             ? Object.freeze([] as string[])
             : continuedAfterFailure ? continued.removedTargetIds
-                : Object.freeze([...continued.removedTargetIds, `${continued.completed.kind}:${continued.completed.identity}`].sort(lexical))
+                : Object.freeze([...continued.removedTargetIds, continued.completedTargetId].sort(lexical))
         const targetIdentities = continued?.targetIdentities ?? (coldTargetsMatch ? coldIdentities : resetTargetIdentities(targetIds, actionable))
         if (targetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset target identities could not be retained exactly', 'reset-targets')
         }
         resetContinuations.set(receipt, Object.freeze({
-            consentDigest: digest, completed: target,
+            consentDigest: digest, completedTargetId: `${target.kind}:${target.identity}`,
             issuedAt: new Date().toISOString(), runtimeDigest,
             targetIds, removedTargetIds, targetIdentities,
         }))
@@ -1753,7 +1833,11 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
             step, target, coordinationRecord: currentCoordination, continuation: receipt,
             planDigest: digest, targetIds, removedTargetIds, targetIdentities,
         }))
-        return Object.freeze({ kind: 'complete', step: null, actionAuthority, remaining: actionable.length - 1, noop: false, digest, continuation: null })
+        const result = Object.freeze({ kind: 'complete' as const, step: null, actionAuthority,
+            remaining: actionable.length - 1, noop: false, digest, continuation: null })
+        if (coldTargetsMatch) issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId,
+            input.configSha256, digest, targetCommitments(coldIdentities!)))
+        return result
     } catch {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset input could not be inspected safely', 'reset')
     }
@@ -1883,7 +1967,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             continuedAfterFailure = match === 'failed'
             const completedTargetIds = new Set(continuedAfterFailure
                 ? continued.removedTargetIds
-                : [...continued.removedTargetIds, `${continued.completed.kind}:${continued.completed.id}`])
+                : [...continued.removedTargetIds, continued.completedTargetId])
             const remainingActionable = actionableReclaimResources(classified.resources)
             const remainingCaches = caches.filter(({ evidence }) => evidence.state === 'present')
             const remainingTargetIds = continued.targetIds.filter((targetId) => !completedTargetIds.has(targetId))
@@ -1937,15 +2021,18 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         const coldReclaimTargetIds = coldRecovery === undefined ? undefined
             : [...coldRecovery.completed, coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
         const coldCompletedTargetIds = coldRecovery?.completed.map(({ targetId }) => targetId)
+        const coldCurrentIdentity = coldIdentities?.find(({ targetId }) => targetId === coldRecovery?.current.targetId)
+        const coldCurrentAbsent = coldCurrentIdentity !== undefined && targetIsAbsent(coldCurrentIdentity, discovery.resources)
         const coldRemainingTargetIds = coldRecovery === undefined ? undefined
-            : [coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
+            : (coldCurrentAbsent ? coldRecovery.pending : [coldRecovery.current, ...coldRecovery.pending]).map(({ targetId }) => targetId)
         const coldObservedIdentities = coldRemainingTargetIds === undefined ? undefined
             : teardownTargetIdentities(coldRemainingTargetIds, actionable, caches)
         const coldTargetsMatch = coldRecovery !== undefined && coldIdentities !== undefined
             && coldRecovery.purpose === 'down' && coldRecovery.stackId === input.stackId
             && coldRecovery.configSha256 === input.configSha256
-            && coldRecovery.planDigest === input.expectedDiscoveryDigest
-            && coldRecovery.current.targetId === coldRemainingTargetIds?.[0]
+            && coldRecovery.planDigest === discoveryDigest
+            && (input.expectedDiscoveryDigest === undefined || coldRecovery.planDigest === input.expectedDiscoveryDigest)
+            && (coldCurrentAbsent || coldRecovery.current.targetId === coldRemainingTargetIds?.[0])
             && sameStrings(freshTargetIds, coldRemainingTargetIds!)
             && coldCompletedTargetIds!.every((targetId) => coldIdentities
                 .filter((identity) => identity.targetId === targetId)
@@ -1954,17 +2041,18 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             && sameTargetProjections(coldObservedIdentities, coldIdentities, coldRemainingTargetIds!)
         const followsPersistedFailure = coldTargetsMatch
             && Date.parse(authority?.startedAt ?? '') > Date.parse(coldRecovery!.freshAfter)
-        if (first !== undefined && input.expectedDiscoveryDigest !== undefined
+        if ((first !== undefined || coldCurrentAbsent) && input.expectedDiscoveryDigest !== undefined
             && (!admittedDiscoveries.has(discovery) || authority === undefined
                 || currentSelection === undefined || currentSelectionToken === null || typeof currentSelectionToken !== 'object'
                 || consumedSelectionAuthorities.has(currentSelectionToken)
-                || !(coldTargetsMatch ? followsPersistedFailure : followsPreview(discoveryDigest, authority))
+                || continued === undefined && !(coldTargetsMatch ? followsPersistedFailure : followsPreview(discoveryDigest, authority))
                 || continued === undefined && !coldTargetsMatch && !consumeConsent(consent, discoveryDigest, authority))) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown requires a fresh authenticated runtime discovery', 'teardown-discovery')
         }
-        const step = first === undefined || input.expectedDiscoveryDigest === undefined
+        const absent = coldTargetsMatch && coldCurrentAbsent && input.expectedDiscoveryDigest !== undefined
+        const step = absent || first === undefined || input.expectedDiscoveryDigest === undefined
             ? undefined : teardownStep(first, { ...input, executable, env: env! }, selection, caches, pathExecutable)
-        if (first !== undefined && input.expectedDiscoveryDigest !== undefined && step === undefined) {
+        if (!absent && first !== undefined && input.expectedDiscoveryDigest !== undefined && step === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'exact teardown action could not cross the execution boundary', first.id)
         }
         const raw = observedDiscovery.resources
@@ -1983,7 +2071,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         if ([...Object.values(observed), ...Object.values(reclaimable)].some((value) => value === undefined)) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim byte accounting exceeds the safe integer range', 'teardown-accounting')
         }
-        if (step !== undefined) {
+        if (step !== undefined || absent) {
             consumeAuthority(authority!)
             consumedSelectionAuthorities.add(currentSelectionToken as object)
             if (inputContinuation !== undefined) {
@@ -1991,20 +2079,35 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
                 reconciledContinuationDiscoveries.delete(inputContinuation as object)
             }
         }
-        const actionAuthority = step === undefined || first === undefined ? null : Object.freeze({ kind: 'teardown-action-authority' })
+        const actionAuthority = absent ? issueAbsentReclaimAction({
+            purpose: 'down', stackId: input.stackId, configSha256: input.configSha256,
+            coordinationRecord: currentCoordination!, planDigest: discoveryDigest, runtime: authority!,
+            targetId: coldRecovery!.current.targetId, targetIds: coldReclaimTargetIds!,
+            removedTargetIds: coldCompletedTargetIds!, targetIdentities: coldIdentities!,
+            remainingTargets: async next => {
+                const nextCaches = await dependencyCacheAuthorities(input.dependencyCaches)
+                if (!nextCaches) return undefined
+                const cacheRows = nextCaches.filter(({ evidence }) => evidence.state === 'present').map(({ cacheId }) => ({
+                    id: cacheId, name: cacheId, kind: 'cache' as const, labels: {}, referenced: false, bytes: null,
+                }))
+                const classified = classifyReclaim({ ...reclaimInput(input), discovery: { ...next, resources: [...next.resources, ...cacheRows] } })
+                return classified.kind === 'complete' ? actionableReclaimResources(classified.resources)
+                    .map(({ kind, id }) => `${kind}:${id}`).sort(lexical) : undefined
+            },
+        }, runtimeDigest) : step === undefined || first === undefined ? null : Object.freeze({ kind: 'teardown-action-authority' })
         const continuation = step === undefined || first === undefined ? null
             : Object.freeze({ kind: 'teardown-continuation', digest: digestValue([discoveryDigest, first.kind, first.id]) })
         const targetIds = continued?.targetIds ?? coldReclaimTargetIds ?? freshTargetIds
         const removedTargetIds = coldTargetsMatch ? Object.freeze(coldCompletedTargetIds!) : continued === undefined
             ? Object.freeze([] as string[])
             : continuedAfterFailure ? continued.removedTargetIds
-                : Object.freeze([...continued.removedTargetIds, `${continued.completed.kind}:${continued.completed.id}`])
+                : Object.freeze([...continued.removedTargetIds, continued.completedTargetId])
         const targetIdentities = continued?.targetIdentities ?? (coldTargetsMatch ? coldIdentities : freshTargetIdentities)
         if (targetIdentities === undefined) {
             return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown target identities could not be retained exactly', 'teardown-targets')
         }
         if (continuation !== null) teardownContinuations.set(continuation, Object.freeze({
-            discoveryDigest, completed: first,
+            discoveryDigest, completedTargetId: `${first.kind}:${first.id}`,
             issuedAt: new Date().toISOString(), runtimeDigest,
             targetIds, removedTargetIds, targetIdentities,
         }))
@@ -2017,7 +2120,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
         const result = Object.freeze({
             kind: 'complete', steps: Object.freeze([]), actionAuthority,
             remaining: step === undefined ? actionable.length : actionable.length - 1,
-            noop: actionable.length === 0, discoveryDigest,
+            noop: actionable.length === 0 && !absent, discoveryDigest,
             byteAccounting: Object.freeze({
                 observed: observed as ByteClasses, reclaimable: reclaimable as ByteClasses,
                 action: first === undefined || step === undefined ? null : Object.freeze({ resourceId: first.id, observedBytes: first.bytes }),
@@ -2027,7 +2130,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             continuation: null,
         })
         issuedTeardownPlans.set(result, reclaimTargetEnvelope(
-            'down', input.stackId, input.configSha256, discoveryDigest, targetCommitments(targetIdentities),
+            'down', input.stackId, input.configSha256, discoveryDigest, targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities),
         ))
         return result
     } catch {
@@ -2159,6 +2262,11 @@ function issueTargetProjection(envelope: ReclaimTargetEnvelope): ReclaimTargetPr
 
 export function projectResetActionTargets(preview: ResetPreview): ReclaimTargetProjection | undefined {
     const envelope = preview && typeof preview === 'object' ? issuedResetPreviews.get(preview) : undefined
+    return envelope === undefined ? undefined : issueTargetProjection(envelope)
+}
+
+export function projectRecoveredResetActionTargets(plan: ResetPlanResult): ReclaimTargetProjection | undefined {
+    const envelope = plan && typeof plan === 'object' ? issuedResetRecoveryPlans.get(plan) : undefined
     return envelope === undefined ? undefined : issueTargetProjection(envelope)
 }
 
@@ -2371,6 +2479,87 @@ export async function redeemReclaimAction(input: {
 
 export const redeemTeardownAction = redeemReclaimAction
 
+export function redeemAbsentReclaimAction(input: {
+    readonly actionAuthority: object
+    readonly attempt: DrainAttemptAuthority
+}): { readonly authority: object } | undefined {
+    try {
+        const descriptors = Object.getOwnPropertyDescriptors(input)
+        if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.actionAuthority!)
+            || !('value' in descriptors.attempt!)) return undefined
+        const actionAuthority = descriptors.actionAuthority!.value as object
+        const attemptAuthority = descriptors.attempt!.value as DrainAttemptAuthority
+        const pending = pendingAbsentReclaimActions.get(actionAuthority)
+        const candidate = inspectDrainAttemptAuthority(attemptAuthority)
+        if (!pending || !candidate || candidate.attempt.status !== 'active'
+            || candidate.attempt.currentStage !== 'reclaim'
+            || candidate.reservation.purpose !== pending.purpose
+            || candidate.reservation.stackId !== pending.stackId
+            || candidate.reservation.configSha256 !== pending.configSha256
+            || candidate.reservation.planDigest !== pending.planDigest
+            || candidate.attempt.currentTarget !== pending.targetId
+            || candidate.attempt.actionIndex !== pending.removedTargetIds.length + 1
+            || !sameStrings(candidate.reservation.actions.filter(({ stage }) => stage === 'reclaim')
+                .map(({ targetId }) => targetId), pending.targetIds)) return undefined
+        const execution = openReclaimDrainExecution({ authority: attemptAuthority, candidate,
+            planningRecord: pending.coordinationRecord, continuation: pending.continuation })
+        if (!execution) return undefined
+        pendingAbsentReclaimActions.delete(actionAuthority)
+        const authority = Object.freeze({})
+        absentReclaimExecutions.set(authority, { pending, execution,
+            reservation: candidate.reservation, attempt: candidate.attempt })
+        return Object.freeze({ authority })
+    } catch { return undefined }
+}
+
+export async function reconcileAbsentReclaimAction(input: {
+    readonly authority: object
+    readonly discovery: ReclaimDiscoverySnapshot
+}): Promise<ReconcileTeardownActionResult> {
+    try {
+        const descriptors = Object.getOwnPropertyDescriptors(input)
+        if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.authority!)
+            || !('value' in descriptors.discovery!)) throw new Error('invalid input')
+        const authority = descriptors.authority!.value as object
+        const discovery = descriptors.discovery!.value as ReclaimDiscoverySnapshot
+        const issued = absentReclaimExecutions.get(authority)
+        if (!issued) throw new Error('unissued absence action')
+        absentReclaimExecutions.delete(authority)
+        const { pending, reservation, attempt, execution } = issued
+        const observed = sameRuntimeAuthority(discovery, pending.runtime.executable,
+            pending.runtime.cwd, pending.runtime.env, pending.runtime.selection)
+        if (!observed || !admittedDiscoveries.has(discovery)) throw new Error('unissued absence discovery')
+        const remainder = reservation.actions.slice(attempt.actionIndex + 1)
+            .filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId)
+        const completed = new Set([...pending.removedTargetIds, pending.targetId])
+        const remaining = await pending.remainingTargets(discovery)
+        if (Date.parse(observed.startedAt) <= Date.parse(pending.runtime.finishedAt)
+            || Date.parse(observed.startedAt) < Date.parse(attempt.committedAt)
+            || Date.parse(observed.startedAt) > Date.parse(observed.finishedAt)
+            || Date.parse(observed.finishedAt) > Date.parse(attempt.validThrough)
+            || Date.parse(observed.finishedAt) > Date.now()
+            || !remaining || !sameStrings(remaining, remainder)
+            || !sameStrings([...completed, ...remainder].sort(lexical), pending.targetIds)
+            || !pending.targetIdentities.every(identity => completed.has(identity.targetId)
+                ? targetIsAbsent(identity, discovery.resources)
+                : remainder.includes(identity.targetId) && sameTargetIdentity(identity, discovery.resources))) {
+            throw new Error('fresh absence evidence does not match the reserved target set')
+        }
+        consumeAuthority(observed)
+        const settled = settleReclaimDrainSuccess({ authority: execution,
+            fact: reclaimCompletionFact(reservation, attempt, observed.finishedAt, remainder) })
+        if (!settled) throw new Error('absence completion authority is unavailable')
+        if (remainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, observed)
+        const resultAuthority = Object.freeze({})
+        issuedReclaimCompleted.set(resultAuthority, settled)
+        return Object.freeze({ kind: 'complete', continuation: remainder.length === 0 ? null : pending.continuation,
+            authority: resultAuthority })
+    } catch {
+        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
+            'fresh discovery did not prove the exact interrupted removal and remaining target set', 'reclaim-reconciliation')
+    }
+}
+
 export type ReconcileTeardownActionResult =
     | { readonly kind: 'complete'; readonly continuation: object | null; readonly authority: object | null }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
@@ -2486,6 +2675,34 @@ export function consumeReclaimFailure(authority: object): DrainOutcomeAuthority 
     return fact
 }
 
+function reclaimCompletionFact(
+    reservation: DrainReservation,
+    attempt: NonNullable<DrainReservation['attempt']>,
+    observedAt: string,
+    remainingTargetIds: readonly string[],
+): ReclaimCompleted {
+    return Object.freeze({
+        purpose: reservation.purpose,
+        stackId: reservation.stackId,
+        configSha256: reservation.configSha256,
+        planDigest: reservation.planDigest,
+        operationBasis: reservation.operationBasis,
+        coordinationRevision: reservation.coordinationRevision,
+        reservationId: reservation.reservationId,
+        reservedAt: reservation.reservedAt,
+        generation: reservation.generation,
+        attemptId: attempt.attemptId,
+        attemptRevision: attempt.committedRevision,
+        attemptCommittedAt: attempt.committedAt,
+        validThrough: attempt.validThrough,
+        actionIndex: attempt.actionIndex,
+        currentTarget: attempt.currentTarget,
+        currentStage: attempt.currentStage,
+        observedAt: observedAt,
+        remainingTargetIds: Object.freeze([...remainingTargetIds]),
+    }) satisfies ReclaimCompleted
+}
+
 export function reconcileReclaimAction(input: {
     readonly authority: object
     readonly outcome: ExecuteProbeOutcome
@@ -2537,26 +2754,7 @@ export function reconcileReclaimAction(input: {
     }
     consumedExecutionReceipts.add(outcome.receipt)
     consumeAuthority(discoveryAuthority)
-    const fact = Object.freeze({
-        purpose: pending.reservation.purpose,
-        stackId: pending.reservation.stackId,
-        configSha256: pending.reservation.configSha256,
-        planDigest: pending.reservation.planDigest,
-        operationBasis: pending.reservation.operationBasis,
-        coordinationRevision: pending.reservation.coordinationRevision,
-        reservationId: pending.reservation.reservationId,
-        reservedAt: pending.reservation.reservedAt,
-        generation: pending.reservation.generation,
-        attemptId: pending.attempt.attemptId,
-        attemptRevision: pending.attempt.committedRevision,
-        attemptCommittedAt: pending.attempt.committedAt,
-        validThrough: pending.attempt.validThrough,
-        actionIndex: pending.attempt.actionIndex,
-        currentTarget: pending.attempt.currentTarget,
-        currentStage: pending.attempt.currentStage,
-        observedAt: discoveryAuthority.finishedAt,
-        remainingTargetIds: Object.freeze([...expectedRemainder]),
-    }) satisfies ReclaimCompleted
+    const fact = reclaimCompletionFact(pending.reservation, pending.attempt, discoveryAuthority.finishedAt, expectedRemainder)
     const settled = settleReclaimDrainSuccess({ authority: pending.execution, fact })
     if (!settled) return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim completion authority is unavailable', 'reclaim-reconciliation')
     if (expectedRemainder.length > 0) reconciledContinuationDiscoveries.set(pending.continuation, discoveryAuthority)

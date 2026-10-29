@@ -8,17 +8,18 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
-import { decodeLifecycleRecord, runDoctor, runSession, runSleep, runUp } from './application.js'
+import { beginOperatorReset, decodeLifecycleRecord, runDoctor, runDown, runReset, runSession, runSleep, runUp } from './application.js'
 import type { ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
+import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { readState } from './state.js'
-import { readActiveStackInventory } from './claims.js'
+import { decodeCoordinationRecord, inspectDestructiveDrainRecovery, readActiveStackInventory } from './claims.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { observeDependencyLoad } from './installs.js'
-import { generatedApplicationProjection } from './generated-application.js'
+import { generatedApplicationProjection, syncGeneratedEnvironment } from './generated-application.js'
 import { checkoutId, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
 import {
@@ -772,6 +773,191 @@ describe('production lifecycle adapter composition', () => {
         expect(result.diagnostics[0]?.message).not.toContain('unavailable by default')
     })
 
+    it.each(['container', 'no-resources'] as const)('retires completed down before starting a synchronized generated identity: %s', async resources => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = {
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000,
+        }
+        if (resources === 'no-resources') await writeFile(join(first.candidate.root, 'runtime-removed'), '')
+        const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({
+            ...input, dockerContext: 'default',
+        }, executeProbe))
+        expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        expect(await readActiveStackInventory(first.context.namespace)).toMatchObject({ kind: 'complete', value: [] })
+        const retired = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (retired.kind !== 'complete') throw new Error(JSON.stringify(retired))
+        expect(decodeLifecycleRecord(retired.value, first.context)?.value).toMatchObject({ teardownComplete: true, completedServices: [] })
+        expect(retired.value.value).not.toHaveProperty('generatedReplay')
+        expect(retired.value.value).not.toHaveProperty('generatedProgress')
+        const source = await readFile(input.configPath, 'utf8')
+        await writeFile(input.configPath, source.replace(
+            'reason = "Pinned synthetic runtime"', 'reason = "Pinned synthetic runtime after configuration review"'))
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        const steps: ExecutionStep[] = []
+        const adapters = createLifecycleCommandAdapters(input, async step => { steps.push(step); return executeProbe(step) })
+        const loaded = await adapters.load({ configPath: input.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        expect(generation).not.toBe(first.generation)
+        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+
+        const result = await runUp({ configPath: input.configPath }, adapters)
+
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        expect(steps.some(({ id }) => id === 'runtime:docker-compose:start:app')).toBe(true)
+        const saved = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
+        expect(decodeLifecycleRecord(saved.value, first.context)?.value.generatedReplay?.generation).toBe(generation)
+        expect(saved.value.value).not.toHaveProperty('teardownComplete')
+    })
+
+    it('keeps the final down claim when lifecycle retirement fails and resumes after the path is repaired', async () => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = { configPath: first.candidate.configPath, dockerContext: 'default',
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000 }
+        const path = first.context.namespace.paths.lifecycle(first.context.stackId).path
+        const backup = `${path}.before-retirement`
+        let denied = false
+        const adapters = createDestructiveCommandAdapters(input, async step => {
+            const outcome = await executeProbe(step)
+            if (!denied && step.argv.includes('rm') && step.argv.includes('container')) {
+                denied = true
+                await rename(path, backup)
+                await mkdir(path)
+            }
+            return outcome
+        })
+        const refused = await runDown({ configPath: input.configPath }, adapters)
+        expect(denied).toBe(true)
+        expect(refused, JSON.stringify(refused)).toMatchObject({ kind: 'refusal', status: 2 })
+        const held = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (held.kind !== 'complete') throw new Error(JSON.stringify(held))
+        expect(decodeCoordinationRecord(held.value, first.context.stackId)).toMatchObject({
+            holders: [{ holderId: first.context.holderId }], lease: { released: false },
+            drain: { purpose: 'down', attempt: { status: 'active' } },
+        })
+        await rm(path, { recursive: true })
+        await rename(backup, path)
+        const retained = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (retained.kind !== 'complete') throw new Error(JSON.stringify(retained))
+        expect(decodeLifecycleRecord(retained.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(retained.value.value).not.toHaveProperty('teardownComplete')
+        const inventory = await readActiveStackInventory(first.context.namespace)
+        expect(inventory, JSON.stringify(inventory)).toMatchObject({ kind: 'complete', value: [{ stackId: first.context.stackId }] })
+        const repair = await inspectDestructiveDrainRecovery({ namespace: first.context.namespace,
+            stackId: first.context.stackId, holderId: first.context.holderId, purpose: 'down' })
+        if (repair.kind !== 'repairable') throw new Error(JSON.stringify(repair))
+        const savedMarker = join(first.candidate.root, 'saved-executor-marker')
+        await rename(repair.fence.markerPath, savedMarker)
+        await writeFile(repair.fence.markerPath, '{}', { mode: 0o600 })
+        const malformed = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters(input, executeProbe))
+        expect(malformed).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }] })
+        const unreleased = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (unreleased.kind !== 'complete') throw new Error(JSON.stringify(unreleased))
+        expect(decodeCoordinationRecord(unreleased.value, first.context.stackId)).toMatchObject({
+            holders: [{ holderId: first.context.holderId }], lease: { released: false }, drain: { attempt: { status: 'active' } },
+        })
+        await rm(repair.fence.markerPath)
+        await rename(savedMarker, repair.fence.markerPath)
+
+        await writeFile(join(first.candidate.root, 'docker-failure-needle'), 'volume ls\n')
+        const unavailable = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters(input, executeProbe))
+        expect(unavailable).toMatchObject({ kind: 'refusal', status: 2 })
+        const retryable = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (retryable.kind !== 'complete') throw new Error(JSON.stringify(retryable))
+        expect(decodeCoordinationRecord(retryable.value, first.context.stackId)).toMatchObject({
+            holders: [{ holderId: first.context.holderId }], lease: { released: false }, drain: { attempt: { status: 'failed' } },
+        })
+        await writeFile(join(first.candidate.root, 'docker-failure-needle'), '\n')
+
+        const recovered = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters(input, executeProbe))
+        expect(recovered, JSON.stringify(recovered)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        expect(await readActiveStackInventory(first.context.namespace)).toMatchObject({ kind: 'complete', value: [] })
+        const saved = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
+        expect(decodeLifecycleRecord(saved.value, first.context)?.value).toMatchObject({ teardownComplete: true, completedServices: [] })
+    })
+
+    it('keeps interrupted reset previews read-only and reconciles an absent target only after approval', async () => {
+        const candidate = await generatedFixture({ toolchain: 'none' })
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8'))
+            .replace('[environment]\n', '[environment]\ngenerated_host_paths = ["reset-cache"]\n'))
+        const target = join(candidate.checkout, 'reset-cache')
+        await mkdir(target)
+        await writeFile(join(target, 'generated.txt'), 'synthetic generated cache\n')
+        const input = { configPath: candidate.configPath, dockerContext: 'default',
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000 }
+        const { dockerContext: _dockerContext, ...lifecycleInput } = input
+        const lifecycle = createLifecycleCommandAdapters(lifecycleInput, executeProbe)
+        const loaded = await lifecycle.load({ configPath: input.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        await configureGeneratedDocker(candidate, loaded.result, generation, {})
+        listenerProbeControl.enabled = true
+        expect(await runUp({ configPath: input.configPath }, lifecycle)).toMatchObject({ kind: 'complete', status: 0 })
+        let interrupted = false
+        const adapters = createDestructiveCommandAdapters(input, async step => {
+            const outcome = await executeProbe(step)
+            if (step.id.startsWith('reset:host-path:')) {
+                interrupted = true
+                throw new Error('synthetic interruption after removal before publication')
+            }
+            return outcome
+        })
+        const first = await beginOperatorReset({ configPath: input.configPath }, adapters)
+        if (!('decide' in first)) throw new Error(JSON.stringify(first))
+        await expect(first.decide('approve')).rejects.toThrow('synthetic interruption after removal before publication')
+        expect(interrupted).toBe(true)
+        const address = loaded.result.namespace.paths.coordination(loaded.result.stackId)
+        const before = await readState(address)
+        if (before.kind !== 'complete') throw new Error(JSON.stringify(before))
+        expect(decodeCoordinationRecord(before.value, loaded.result.stackId)).toMatchObject({
+            holders: [{ holderId: loaded.result.holderId }], drain: { purpose: 'reset', attempt: { status: 'active' } },
+        })
+        const retry = createDestructiveCommandAdapters(input, executeProbe)
+        expect(await runReset({ configPath: input.configPath }, retry)).toMatchObject({ kind: 'preview', result: {
+            noop: false, targets: [{ kind: 'host-path', identity: target, declaration: 'reset-cache' }],
+        } })
+        const declined = await beginOperatorReset({ configPath: input.configPath }, retry)
+        if (!('decide' in declined)) throw new Error(JSON.stringify(declined))
+        expect((await readState(address))).toEqual(before)
+        expect(await declined.decide('decline')).toMatchObject({ kind: 'refusal' })
+        expect((await readState(address))).toEqual(before)
+        const approved = await beginOperatorReset({ configPath: input.configPath }, retry)
+        if (!('decide' in approved)) throw new Error(JSON.stringify(approved))
+        expect(await approved.decide('approve')).toMatchObject({ kind: 'complete', status: 0, result: { change: 'reset' } })
+        expect(await readActiveStackInventory(loaded.result.namespace)).toMatchObject({ kind: 'complete', value: [] })
+        const saved = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
+        if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
+        expect(saved.value.value).not.toHaveProperty('teardownComplete')
+        expect(decodeLifecycleRecord(saved.value, loaded.result)?.value.generatedReplay?.generation).toBe(generation)
+    })
+
+    it('preserves the generated replay after sleep and resumes the same identity without a teardown fact', async () => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const slept = await runSleep({ configPath: first.candidate.configPath }, first.adapters)
+        expect(slept, JSON.stringify(slept)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'stopped' } })
+        const stopped = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (stopped.kind !== 'complete') throw new Error(JSON.stringify(stopped))
+        expect(decodeLifecycleRecord(stopped.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(stopped.value.value).not.toHaveProperty('teardownComplete')
+
+        const resumed = await runUp({ configPath: first.candidate.configPath }, first.adapters)
+
+        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        const saved = await readState(first.context.namespace.paths.lifecycle(first.context.stackId))
+        if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
+        expect(decodeLifecycleRecord(saved.value, first.context)?.value.generatedReplay?.generation).toBe(first.generation)
+        expect(saved.value.value).not.toHaveProperty('teardownComplete')
+    })
+
     it('names the generated identity change and cleanup commands instead of hiding it behind readiness', async () => {
         const first = await runGeneratedScenario()
         const source = await readFile(first.candidate.configPath, 'utf8')
@@ -795,7 +981,7 @@ describe('production lifecycle adapter composition', () => {
 
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `generated environment identity changed since lifecycle progress was recorded; run \`cockpit down --config ${loaded.result.source.path}\` to remove the old stack, then \`cockpit up --config ${loaded.result.source.path}\``,
+            message: `generated environment identity changed since lifecycle progress was recorded; the previous stack must be removed under its own declaration — fix: restore the previous configuration and generated files, run \`cockpit up --config ${loaded.result.source.path}\` then \`cockpit down --config ${loaded.result.source.path}\`, restore the intended configuration, run \`cockpit sync --config ${loaded.result.source.path}\` then \`cockpit up --config ${loaded.result.source.path}\``,
         }] })
     })
 })

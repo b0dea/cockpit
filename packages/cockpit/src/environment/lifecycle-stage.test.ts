@@ -63,6 +63,24 @@ describe('lifecycle stage authority', () => {
         expect(decodeLifecycleRecord(record, { cockpitId, stackId: otherStackId })).toBeUndefined()
     })
 
+    it('decodes teardown completion only without retained runtime or generated checkpoints', () => {
+        const value = { holderId, workBasisSha256: '1'.repeat(64), operationGeneration: '2'.repeat(64),
+            completedServices: [], teardownComplete: true }
+        const record: StateRecord = { format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId, subjectId: stackId,
+            revision: 7, updatedAt: observedAt, value }
+        expect(decodeLifecycleRecord(record, { cockpitId, stackId })?.value).toEqual(value)
+        const invalid: readonly Readonly<Record<string, StateRecord['value']>>[] = [
+            { teardownComplete: false },
+            { teardownComplete: 'true' },
+            { completedServices: [{ service: 'app', containerId: '3'.repeat(64) }] },
+            { generatedReplay: { sourceSha256: '4'.repeat(64), generation: '5'.repeat(64), profiles: [], mounts: [] } },
+            { generatedProgress: { applied: [], notApplied: [] } },
+        ]
+        for (const change of invalid) {
+            expect(decodeLifecycleRecord({ ...record, value: { ...value, ...change } }, { cockpitId, stackId })).toBeUndefined()
+        }
+    })
+
     it('issues bootstrap authority only for pristine state', async () => {
         const namespace = await stateNamespace()
         const result = await resolveLifecycleStage({ namespace, stackId, observedAt })
