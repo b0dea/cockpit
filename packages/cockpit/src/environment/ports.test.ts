@@ -21,9 +21,11 @@ import {
     inspectPortLeaseProjection,
     leasePortFamily as decidePortFamily,
     observePortFamily,
+    observePortListeners,
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
     projectPortLeaseResult,
+    revalidatePortLeaseProjection,
     releasePortFamily,
     type PortListenerEvidenceInput,
 } from './ports.js'
@@ -34,6 +36,7 @@ const publicationGate = vi.hoisted(() => ({
     reached: undefined as (() => void) | undefined,
     continuation: undefined as Promise<void> | undefined,
 }))
+const listenerGate = vi.hoisted(() => ({ listening: new Set<string>() }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -59,11 +62,13 @@ vi.mock('node:net', async () => {
     const { EventEmitter } = await import('node:events')
     return {
         ...actual,
-        createConnection: () => {
+        createConnection: (options: { host?: string; port?: number }) => {
             const socket = new EventEmitter() as unknown as ReturnType<typeof actual.createConnection>
             socket.destroy = () => socket
             socket.setTimeout = () => socket
-            queueMicrotask(() => socket.emit('error', Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })))
+            queueMicrotask(() => listenerGate.listening.has(`${options.host}:${options.port}`)
+                ? socket.emit('connect')
+                : socket.emit('error', Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })))
             return socket
         },
     }
@@ -84,7 +89,34 @@ afterEach(async () => {
     publicationGate.prefix = undefined
     publicationGate.reached = undefined
     publicationGate.continuation = undefined
+    listenerGate.listening.clear()
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+describe('current listener evidence', () => {
+    it('observes exact IPv4 and IPv6 listening and free expectations without mutating ports', async () => {
+        listenerGate.listening.add('127.0.0.1:3100')
+        listenerGate.listening.add('::1:4100')
+
+        await expect(observePortListeners({
+            bindings: [
+                { hostIp: '0.0.0.0', port: 3100, expected: 'listening' },
+                { hostIp: '::', port: 4100, expected: 'listening' },
+                { hostIp: '127.0.0.1', port: 5100, expected: 'free' },
+                { hostIp: '::1', port: 5100, expected: 'free' },
+            ],
+            timeoutMs: 1_000,
+        })).resolves.toMatchObject({
+            kind: 'complete',
+            rows: [
+                { hostIp: '0.0.0.0', probeHost: '127.0.0.1', port: 3100, listening: true },
+                { hostIp: '::', probeHost: '::1', port: 4100, listening: true },
+                { hostIp: '127.0.0.1', probeHost: '127.0.0.1', port: 5100, listening: false },
+                { hostIp: '::1', probeHost: '::1', port: 5100, listening: false },
+            ],
+            observedAt: expect.any(String),
+        })
+    })
 })
 
 async function namespace(): Promise<StateNamespace> {
@@ -1359,6 +1391,33 @@ describe('whole-family port leases', () => {
 })
 
 describe('retained port-family projection', () => {
+    it('revalidates only the exact unchanged active lease projection', async () => {
+        const state = await namespace()
+        const lease = await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
+        if (lease.kind !== 'complete') throw new Error('lease fixture unavailable')
+        const retained = await observeRetainedPortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config })
+        if (retained.kind !== 'complete') throw new Error('retained lease fixture unavailable')
+        const projection = await projectRetainedPortFamilyResult({
+            retainedResult: retained,
+            entrypointResult: deriveEntrypoints({ lease: retained.lease, declarations: [] }),
+        })
+        if (!projection) throw new Error('retained projection fixture unavailable')
+
+        await expect(revalidatePortLeaseProjection({ projection: { ...projection } as never, namespace: state })).resolves.toBe(false)
+        await expect(revalidatePortLeaseProjection({ projection, namespace: await namespace() })).resolves.toBe(false)
+        await expect(revalidatePortLeaseProjection({ projection, namespace: state })).resolves.toBe(true)
+        const reserved = await reserveDrain({ namespace: state, request: {
+            purpose: 'sleep', stackId: stackA, holderId: holderA, requesterId: holderA,
+            configSha256: '1'.repeat(64), planDigest: '2'.repeat(64), operationBasis: '3'.repeat(64),
+            generation: '4'.repeat(64), targetIds: [stackA],
+            actions: [{ stage: 'runtime-stop', targetId: stackA, validForMs: 30_000 }],
+            expectedCoordinationRevision: lease.recordRevision,
+        } })
+        expect(reserved.kind).toBe('complete')
+        await expect(revalidatePortLeaseProjection({ projection, namespace: state })).resolves.toBe(false)
+    })
+
     it('projects a named HTTPS route from the exact retained offset without rewriting its record', async () => {
         const state = await namespace()
         await leasePortFamily({ namespace: state, stackId: stackB, holderId: holderB, checkoutId, config, now,

@@ -49,7 +49,13 @@ import {
     type RuntimeStopped,
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
-import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
+import {
+    inspectPortLeaseProjection,
+    observePortListeners,
+    revalidatePortLeaseProjection,
+    type PortLeaseProjection,
+    type PortListenerBinding,
+} from './ports.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import type { StateNamespace } from './state.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
@@ -58,7 +64,7 @@ import { composeProcessEnvironment } from './compose-environment.js'
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -68,6 +74,11 @@ export const observationDeclarations = Object.freeze([
     { id: 'machine-cold-start', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
     { id: 'disk-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
     { id: 'guide-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+] as const)
+
+export const runtimeHealthObservationDeclarations = Object.freeze([
+    { id: 'runtime-mount-materialization', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-port-family', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'ports are leased after the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
@@ -1296,6 +1307,24 @@ interface TopologyEvidenceContract extends TopologyPlanContract {
     readonly step: ExecutionStep
     readonly order: readonly string[]
     readonly services: ReadonlyMap<string, RuntimeTopologyService>
+    readonly runtimeHealth: ReadonlyMap<string, RuntimeHealthServiceExpectation>
+}
+
+interface RuntimeBindMount {
+    readonly source: string
+    readonly target: string
+}
+
+interface RuntimePublishedPort {
+    readonly hostIp: '127.0.0.1' | '::1' | '0.0.0.0' | '::'
+    readonly target: number
+    readonly published: number
+    readonly protocol: 'tcp'
+}
+
+interface RuntimeHealthServiceExpectation {
+    readonly bindMounts: readonly RuntimeBindMount[]
+    readonly publishedPorts: readonly RuntimePublishedPort[]
 }
 
 const issuedTopologyPlans = new WeakMap<object, TopologyPlanContract>()
@@ -1486,6 +1515,55 @@ function bindMountSources(value: unknown): readonly string[] | undefined {
     return Object.freeze([...new Set(sources)].sort())
 }
 
+function bindMounts(value: unknown): readonly RuntimeBindMount[] | undefined {
+    if (value === undefined) return Object.freeze([])
+    if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
+    const mounts: RuntimeBindMount[] = []
+    for (const item of value) {
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) return undefined
+        const volume = item as Record<string, unknown>
+        if (volume.type !== 'bind') continue
+        if (typeof volume.source !== 'string' || !isAbsolute(volume.source)
+            || normalize(volume.source) !== volume.source || volume.source.includes('\0')
+            || typeof volume.target !== 'string' || !CONTAINER_PATH.test(volume.target)) return undefined
+        mounts.push(Object.freeze({ source: volume.source, target: volume.target }))
+    }
+    const identities = mounts.map(({ source, target }) => `${source}\0${target}`)
+    if (new Set(identities).size !== identities.length) return undefined
+    return Object.freeze([...mounts].sort((left, right) => `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
+}
+
+const PUBLISHED_HOSTS = new Set(['127.0.0.1', '::1', '0.0.0.0', '::'])
+
+function composePublishedPorts(value: unknown): readonly RuntimePublishedPort[] | undefined {
+    if (value === undefined) return Object.freeze([])
+    if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
+    const ports: RuntimePublishedPort[] = []
+    for (const item of value) {
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) return undefined
+        const row = item as Record<string, unknown>
+        const target = row.target
+        const rawPublished = row.published
+        const published = typeof rawPublished === 'string' && /^[1-9]\d{0,4}$/.test(rawPublished)
+            ? Number(rawPublished) : rawPublished
+        const hostIp = row.host_ip ?? '0.0.0.0'
+        const protocol = row.protocol ?? 'tcp'
+        if (!Number.isSafeInteger(target) || (target as number) < 1 || (target as number) > 65_535
+            || !Number.isSafeInteger(published) || (published as number) < 1 || (published as number) > 65_535
+            || typeof hostIp !== 'string' || !PUBLISHED_HOSTS.has(hostIp) || protocol !== 'tcp') return undefined
+        ports.push(Object.freeze({
+            hostIp: hostIp as RuntimePublishedPort['hostIp'],
+            target: target as number,
+            published: published as number,
+            protocol: 'tcp',
+        }))
+    }
+    const identities = ports.map(({ hostIp, target, published, protocol }) => `${hostIp}\0${published}\0${target}\0${protocol}`)
+    if (new Set(identities).size !== identities.length) return undefined
+    return Object.freeze([...ports].sort((left, right) =>
+        `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`)))
+}
+
 const PINNED_IMAGE = /^[^\s@]+@sha256:[a-f0-9]{64}$/
 const RUNTIME_VOLUME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const CONTAINER_PATH = /^\/(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*[\\\x00-\x1f\x7f])\S+$/
@@ -1554,6 +1632,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
     readonly services: readonly RuntimeTopologyService[]
     readonly order: readonly string[]
     readonly byId: ReadonlyMap<string, RuntimeTopologyService>
+    readonly runtimeHealth: ReadonlyMap<string, RuntimeHealthServiceExpectation>
 } | undefined {
     try {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(stdout)
@@ -1582,6 +1661,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
         names.sort()
         const known = new Set(names)
         const byId = new Map<string, RuntimeTopologyService>()
+        const runtimeHealth = new Map<string, RuntimeHealthServiceExpectation>()
         let edgeCount = 0
         for (const id of names) {
             const raw = (rawServices as Record<string, unknown>)[id]
@@ -1589,10 +1669,12 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
             const service = raw as Record<string, unknown>
             const dependsOn = dependencyNames(service.depends_on)
             const mounts = bindMountSources(service.volumes)
+            const exactBindMounts = bindMounts(service.volumes)
             const namedMounts = namedVolumeMounts(service.volumes, volumeNames)
+            const publishedPorts = composePublishedPorts(service.ports)
             const healthcheck = healthcheckEnabled(service.healthcheck)
             const labels = composeLabels(service.labels)
-            if (!dependsOn || !mounts || !namedMounts || healthcheck === undefined || dependsOn.includes(id) || dependsOn.some((name) => !known.has(name))
+            if (!dependsOn || !mounts || !exactBindMounts || !namedMounts || !publishedPorts || healthcheck === undefined || dependsOn.includes(id) || dependsOn.some((name) => !known.has(name))
                 || labels === null || typeof labels !== 'object' || Array.isArray(labels)
                 || (labels as Record<string, unknown>)['dev.b0dea.cockpit.stack-id'] !== stackId
                 || (labels as Record<string, unknown>)['dev.b0dea.cockpit.config-sha256'] !== configSha256) return undefined
@@ -1607,7 +1689,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
                 || generated === '1' && (typeof generation !== 'string' || !SHA256.test(generation)
                     || sourceSha256 !== configSha256
                     || !built && (typeof image !== 'string' || !PINNED_IMAGE.test(image)))) return undefined
-            edgeCount += dependsOn.length + mounts.length + namedMounts.length
+            edgeCount += dependsOn.length + mounts.length + namedMounts.length + publishedPorts.length
             if (edgeCount > MAX_TOPOLOGY_EDGES) return undefined
             byId.set(id, Object.freeze({
                 id,
@@ -1619,6 +1701,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
                 sourceSha256: generated === '1' ? sourceSha256 as string : null,
                 healthcheck,
             }))
+            runtimeHealth.set(id, Object.freeze({ bindMounts: exactBindMounts, publishedPorts }))
         }
         const indegree = new Map(names.map((name) => [name, byId.get(name)?.dependsOn.length ?? 0]))
         const dependents = new Map(names.map((name) => [name, [] as string[]]))
@@ -1640,7 +1723,7 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
             }
         }
         if (order.length !== names.length) return undefined
-        return Object.freeze({ services: Object.freeze(names.map((name) => byId.get(name) as RuntimeTopologyService)), order: Object.freeze(order), byId })
+        return Object.freeze({ services: Object.freeze(names.map((name) => byId.get(name) as RuntimeTopologyService)), order: Object.freeze(order), byId, runtimeHealth })
     } catch {
         return undefined
     }
@@ -1687,7 +1770,13 @@ export function admitRuntimeTopology(input: {
             observationWindow: contract.observationWindow,
             services: projected.services,
         })
-        issuedTopologyEvidence.set(topology, Object.freeze({ ...contract, step: plan.step, order: projected.order, services: projected.byId }))
+        issuedTopologyEvidence.set(topology, Object.freeze({
+            ...contract,
+            step: plan.step,
+            order: projected.order,
+            services: projected.byId,
+            runtimeHealth: projected.runtimeHealth,
+        }))
         const observations = Object.freeze([
             issueObservation({
                 code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
@@ -1924,10 +2013,10 @@ const consumedRuntimeServiceRevalidationPlans = new WeakSet<object>()
 const admittedRuntimeServiceRevalidationStatuses = new WeakMap<object, object>()
 const issuedRuntimeServiceHealthPlans = new WeakMap<object, RuntimeServiceHealthPlanContract>()
 const consumedRuntimeServiceHealthPlans = new WeakSet<object>()
-const issuedRuntimeServiceObservations = new WeakMap<object, RuntimeServiceHealthPlanContract>()
+const issuedRuntimeServiceObservations = new WeakMap<object, RuntimeServiceEvidenceContract>()
 const consumedRuntimeServiceHealthObservations = new WeakSet<object>()
 const consumedRuntimeServiceFailureObservations = new WeakSet<object>()
-const issuedRuntimeServiceEvidence = new WeakMap<object, RuntimeServiceHealthPlanContract>()
+const issuedRuntimeServiceEvidence = new WeakMap<object, RuntimeServiceEvidenceContract>()
 const issuedRuntimeServiceFailures = new WeakMap<object, RuntimeServiceFailureLogContext>()
 
 function unavailableRuntimeService(service: unknown): RuntimeServicePlan {
@@ -2295,7 +2384,7 @@ export function admitRuntimeServiceRevalidation(input: {
     }
 }
 
-const CONTAINER_INSPECT_FORMAT = '{"ID":{{json .Id}},"State":{{json .State.Status}},"Health":{{with .State.Health}}{{json .Status}}{{else}}""{{end}},"Labels":{"dev.b0dea.cockpit.stack-id":{{json (index .Config.Labels "dev.b0dea.cockpit.stack-id")}},"dev.b0dea.cockpit.config-sha256":{{json (index .Config.Labels "dev.b0dea.cockpit.config-sha256")}},"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}}}'
+const CONTAINER_INSPECT_FORMAT = '{"ID":{{json .Id}},"State":{{json .State.Status}},"Health":{{with .State.Health}}{{json .Status}}{{else}}""{{end}},"Labels":{"dev.b0dea.cockpit.stack-id":{{json (index .Config.Labels "dev.b0dea.cockpit.stack-id")}},"dev.b0dea.cockpit.config-sha256":{{json (index .Config.Labels "dev.b0dea.cockpit.config-sha256")}},"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}},"Mounts":{{json .Mounts}},"Ports":{{json .NetworkSettings.Ports}}}'
 
 function runtimeServiceInspectStep(
     topologyContract: TopologyEvidenceContract,
@@ -2499,6 +2588,61 @@ interface RuntimeServiceInspection {
     readonly containerId: string
     readonly state: RuntimeServiceObservation['state']
     readonly health: RuntimeServiceObservation['health']
+    readonly bindMounts: readonly RuntimeBindMount[]
+    readonly publishedPorts: readonly RuntimePublishedPort[]
+}
+
+interface RuntimeServiceEvidenceContract extends RuntimeServiceHealthPlanContract {
+    readonly inspection: RuntimeServiceInspection
+}
+
+function inspectedBindMounts(value: unknown): readonly RuntimeBindMount[] | undefined {
+    if (!Array.isArray(value) || value.length > MAX_TOPOLOGY_EDGES) return undefined
+    const mounts: RuntimeBindMount[] = []
+    for (const item of value) {
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) return undefined
+        const row = item as Record<string, unknown>
+        if (row.Type !== 'bind') continue
+        if (typeof row.Source !== 'string' || !isAbsolute(row.Source) || normalize(row.Source) !== row.Source
+            || row.Source.includes('\0') || typeof row.Destination !== 'string' || !CONTAINER_PATH.test(row.Destination)) return undefined
+        mounts.push(Object.freeze({ source: row.Source, target: row.Destination }))
+    }
+    const identities = mounts.map(({ source, target }) => `${source}\0${target}`)
+    if (new Set(identities).size !== identities.length) return undefined
+    return Object.freeze([...mounts].sort((left, right) =>
+        `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`)))
+}
+
+function inspectedPublishedPorts(value: unknown): readonly RuntimePublishedPort[] | undefined {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length > MAX_TOPOLOGY_EDGES) return undefined
+    const ports: RuntimePublishedPort[] = []
+    for (const [key, bindings] of entries) {
+        const match = key.match(/^([1-9]\d{0,4})\/(tcp|udp)$/)
+        if (!match || Number(match[1]) > 65_535) return undefined
+        if (bindings === null) continue
+        if (!Array.isArray(bindings) || bindings.length > MAX_TOPOLOGY_EDGES) return undefined
+        if (match[2] !== 'tcp') continue
+        for (const binding of bindings) {
+            if (binding === null || typeof binding !== 'object' || Array.isArray(binding)) return undefined
+            const row = binding as Record<string, unknown>
+            const published = typeof row.HostPort === 'string' && /^[1-9]\d{0,4}$/.test(row.HostPort)
+                ? Number(row.HostPort) : undefined
+            if (typeof row.HostIp !== 'string' || !PUBLISHED_HOSTS.has(row.HostIp)
+                || published === undefined || published > 65_535) return undefined
+            ports.push(Object.freeze({
+                hostIp: row.HostIp as RuntimePublishedPort['hostIp'],
+                target: Number(match[1]),
+                published,
+                protocol: 'tcp',
+            }))
+        }
+    }
+    const identities = ports.map(({ hostIp, target, published }) => `${hostIp}\0${published}\0${target}`)
+    if (new Set(identities).size !== identities.length) return undefined
+    return Object.freeze([...ports].sort((left, right) =>
+        `${left.hostIp}\0${left.published}\0${left.target}`.localeCompare(`${right.hostIp}\0${right.published}\0${right.target}`)))
 }
 
 function parseRuntimeServiceInspection(stdout: Buffer, contract: RuntimeServiceHealthPlanContract): RuntimeServiceInspection | undefined {
@@ -2508,6 +2652,8 @@ function parseRuntimeServiceInspection(stdout: Buffer, contract: RuntimeServiceH
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
         const value = parsed as Record<string, unknown>
         const labels = value.Labels as Record<string, unknown> | null | undefined
+        const mounts = inspectedBindMounts(value.Mounts)
+        const ports = inspectedPublishedPorts(value.Ports)
         if (value.ID !== contract.containerId || typeof value.State !== 'string' || typeof value.Health !== 'string'
             || !CONTAINER_STATES.has(value.State) || !CONTAINER_HEALTH.has(value.Health)
             || labels === null || typeof labels !== 'object' || Array.isArray(labels)
@@ -2515,11 +2661,13 @@ function parseRuntimeServiceInspection(stdout: Buffer, contract: RuntimeServiceH
             || labels['com.docker.compose.service'] !== contract.service.id
             || labels['dev.b0dea.cockpit.config-sha256'] !== contract.topologyContract.configSha256
             || labels['dev.b0dea.cockpit.stack-id'] !== contract.topologyContract.stackId
-            || !contract.service.healthcheck && value.Health !== '') return undefined
+            || !contract.service.healthcheck && value.Health !== '' || !mounts || !ports) return undefined
         return Object.freeze({
             containerId: value.ID,
             state: value.State as RuntimeServiceObservation['state'],
             health: value.Health === '' ? null : value.Health as Exclude<RuntimeServiceObservation['health'], null>,
+            bindMounts: mounts,
+            publishedPorts: ports,
         })
     } catch {
         return undefined
@@ -2570,7 +2718,7 @@ export function admitRuntimeServiceObservation(input: {
             observedAt,
             observationWindow: contract.topologyContract.observationWindow,
         })
-        issuedRuntimeServiceObservations.set(observation, contract)
+        issuedRuntimeServiceObservations.set(observation, Object.freeze({ ...contract, inspection: value }))
         return Object.freeze({ kind: 'complete', observation })
     } catch {
         return unavailable()
@@ -2622,6 +2770,202 @@ export function isRuntimeServiceEvidence(value: unknown): value is RuntimeServic
     const now = Date.now()
     return contract !== undefined && Date.parse(contract.topologyContract.observationWindow.startedAt) <= now
         && now <= Date.parse(contract.topologyContract.observationWindow.expiresAt)
+}
+
+export function observeRuntimeMountMaterialization(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly services: readonly RuntimeServiceEvidence[]
+    readonly observedAt: string
+}): EnvironmentObservation {
+    const captured = captureOwnValues(input, ['topology', 'services', 'observedAt'])
+    const topologyValue = captured?.topology as RuntimeTopologyEvidence | undefined
+    const topology = topologyValue && typeof topologyValue === 'object' ? issuedTopologyEvidence.get(topologyValue) : undefined
+    const observedAt = captured?.observedAt
+    if (!topology) throw new TypeError('runtime mount evidence is not authentic')
+    const fail = (reason: string) => issueObservation({
+        code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
+        owner: mechanism.id,
+        stackId: topology.stackId,
+        source: topology.runtime.projectName,
+        observed: { state: 'unavailable', reason, observedAt: typeof observedAt === 'string' && isCanonicalTimestamp(observedAt) ? observedAt : new Date().toISOString() },
+        expectation: { kind: 'equal', value: true },
+        applicability: { state: 'required', posture: 'environment' },
+        freshness: { state: 'current' },
+        remedy: 'restore the exact declared bind mounts and re-observe every runtime service',
+    })
+    if (!Array.isArray(captured?.services) || captured.services.length !== topology.services.size
+        || typeof observedAt !== 'string' || !isCanonicalTimestamp(observedAt)) {
+        return fail('runtime mount evidence is incomplete or unauthenticated')
+    }
+    const now = Date.now()
+    if (now < Date.parse(topology.observationWindow.startedAt) || now > Date.parse(topology.observationWindow.expiresAt)
+        || Date.parse(observedAt) < Date.parse(topology.observationWindow.startedAt)
+        || Date.parse(observedAt) > Math.min(now, Date.parse(topology.observationWindow.expiresAt))) {
+        return fail('runtime mount evidence is outside its current observation window')
+    }
+    const seen = new Set<string>()
+    for (const evidence of captured.services as readonly RuntimeServiceEvidence[]) {
+        const contract = evidence && typeof evidence === 'object' ? issuedRuntimeServiceEvidence.get(evidence) : undefined
+        if (!contract || contract.topologyContract !== topology || seen.has(contract.service.id)
+            || evidence.observedAt > observedAt || !isRuntimeServiceEvidence(evidence)) {
+            return fail('runtime mount evidence is incomplete or unauthenticated')
+        }
+        seen.add(contract.service.id)
+        const expected = topology.runtimeHealth.get(contract.service.id)?.bindMounts
+        if (!expected || JSON.stringify(expected) !== JSON.stringify(contract.inspection.bindMounts)) {
+            return issueObservation({
+                code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
+                owner: mechanism.id,
+                stackId: topology.stackId,
+                source: `${topology.runtime.projectName}:${contract.service.id}`,
+                observed: { state: 'available', value: false, observedAt },
+                expectation: { kind: 'equal', value: true },
+                applicability: { state: 'required', posture: 'environment' },
+                freshness: { state: 'current' },
+                remedy: 'restore the exact declared bind mounts and recreate the affected service',
+            })
+        }
+    }
+    if (seen.size !== topology.services.size) return fail('runtime mount evidence is incomplete or unauthenticated')
+    return issueObservation({
+        code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
+        owner: mechanism.id,
+        stackId: topology.stackId,
+        source: `${topology.runtime.projectName}:runtime-mounts`,
+        observed: { state: 'available', value: true, observedAt },
+        expectation: { kind: 'equal', value: true },
+        applicability: { state: 'required', posture: 'environment' },
+        freshness: { state: 'current' },
+        remedy: 'restore the exact declared bind mounts and recreate the affected service',
+    })
+}
+
+function currentRuntimeServices(
+    topology: TopologyEvidenceContract,
+    values: unknown,
+): ReadonlyMap<string, { readonly evidence: RuntimeServiceEvidence; readonly contract: RuntimeServiceEvidenceContract }> | undefined {
+    if (!Array.isArray(values) || values.length !== topology.services.size) return undefined
+    const services = new Map<string, { evidence: RuntimeServiceEvidence; contract: RuntimeServiceEvidenceContract }>()
+    for (const evidence of values as readonly RuntimeServiceEvidence[]) {
+        const contract = evidence && typeof evidence === 'object' ? issuedRuntimeServiceEvidence.get(evidence) : undefined
+        if (!contract || contract.topologyContract !== topology || services.has(contract.service.id)
+            || !isRuntimeServiceEvidence(evidence)) return undefined
+        services.set(contract.service.id, { evidence, contract })
+    }
+    return services.size === topology.services.size ? services : undefined
+}
+
+function exactRuntimePorts(
+    expected: readonly RuntimePublishedPort[],
+    actual: readonly RuntimePublishedPort[],
+): boolean {
+    const remaining = new Set(actual.map(({ hostIp, target, published }) => `${hostIp}\0${published}\0${target}`))
+    for (const row of expected) {
+        const identity = `${row.hostIp}\0${row.published}\0${row.target}`
+        if (row.hostIp !== '0.0.0.0') {
+            if (!remaining.delete(identity)) return false
+            continue
+        }
+        if (!remaining.delete(identity)) return false
+        remaining.delete(`::\0${row.published}\0${row.target}`)
+    }
+    return remaining.size === 0
+}
+
+export async function observeRuntimePortFamily(input: {
+    readonly topology: RuntimeTopologyEvidence
+    readonly services: readonly RuntimeServiceEvidence[]
+    readonly namespace: StateNamespace
+    readonly listenerTimeoutMs: number
+    readonly revalidate: () => Promise<readonly RuntimeServiceEvidence[]>
+}): Promise<EnvironmentObservation> {
+    const captured = captureOwnValues(input, ['topology', 'services', 'namespace', 'listenerTimeoutMs', 'revalidate'])
+    const topologyValue = captured?.topology as RuntimeTopologyEvidence | undefined
+    const topology = topologyValue && typeof topologyValue === 'object' ? issuedTopologyEvidence.get(topologyValue) : undefined
+    if (!topology) throw new TypeError('runtime port evidence is not authentic')
+    const now = new Date().toISOString()
+    const unavailable = (reason: string, observedAt = now) => issueObservation({
+        code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
+        owner: mechanism.id,
+        stackId: topology.stackId,
+        source: topology.runtime.projectName,
+        observed: { state: 'unavailable', reason, observedAt },
+        expectation: { kind: 'equal', value: true },
+        applicability: { state: 'required', posture: 'environment' },
+        freshness: { state: 'current' },
+        remedy: 'restore the retained port lease and the exact declared runtime publication',
+    })
+    try {
+        const services = currentRuntimeServices(topology, captured?.services)
+        const namespace = captured?.namespace as StateNamespace | undefined
+        const timeoutMs = captured?.listenerTimeoutMs
+        const revalidate = captured?.revalidate
+        const projection = topology.runtime.portLeaseProjection
+        const lease = projection && namespace ? inspectPortLeaseProjection(projection, namespace) : undefined
+        if (!services || !namespace || !lease || typeof revalidate !== 'function'
+            || !Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 30_000
+            || !await revalidatePortLeaseProjection({ projection: lease, namespace })) {
+            return unavailable('runtime port evidence is incomplete or unauthenticated')
+        }
+        const leased = new Set(Object.values(lease.lease.ports))
+        const published = new Set<number>()
+        const listeners: PortListenerBinding[] = []
+        const listenerKeys = new Set<string>()
+        for (const [serviceId, current] of services) {
+            const expected = topology.runtimeHealth.get(serviceId)?.publishedPorts
+            if (!expected || !exactRuntimePorts(expected, current.contract.inspection.publishedPorts)) {
+                return unavailable(`runtime port publication differs from the declared topology for ${serviceId}`)
+            }
+            for (const row of current.contract.inspection.publishedPorts) {
+                if (!leased.has(row.published)) return unavailable(`runtime published port ${row.published} is outside the retained lease`)
+                published.add(row.published)
+                const key = `${row.hostIp}\0${row.published}`
+                if (listenerKeys.has(key)) return unavailable('runtime publication contains a duplicate host address')
+                listenerKeys.add(key)
+                listeners.push({ hostIp: row.hostIp, port: row.published, expected: 'listening' })
+            }
+        }
+        for (const port of leased) {
+            if (published.has(port)) continue
+            listeners.push({ hostIp: '127.0.0.1', port, expected: 'free' })
+            listeners.push({ hostIp: '::1', port, expected: 'free' })
+        }
+        if (listeners.length === 0) return unavailable('retained port lease contains no observable ports')
+        const observed = await observePortListeners({ bindings: listeners, timeoutMs: timeoutMs as number })
+        if (observed.kind !== 'complete') return unavailable(observed.reason)
+        if (observed.rows.some((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))) {
+            return issueObservation({
+                code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
+                source: `${topology.runtime.projectName}:runtime-ports`,
+                observed: { state: 'available', value: false, observedAt: observed.observedAt },
+                expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+                freshness: { state: 'current' }, remedy: 'free unpublished leased ports and restore every declared listener',
+            })
+        }
+        if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {
+            return unavailable('retained port lease changed during listener observation', observed.observedAt)
+        }
+        const afterValues = await revalidate()
+        const after = currentRuntimeServices(topology, afterValues)
+        if (!after || after.size !== services.size) return unavailable('runtime service identity changed during listener observation', observed.observedAt)
+        for (const [serviceId, before] of services) {
+            const current = after.get(serviceId)
+            if (!current || current.evidence === before.evidence || current.evidence.containerId !== before.evidence.containerId
+                || Date.parse(current.evidence.observedAt) < Date.parse(observed.observedAt)
+                || JSON.stringify(current.contract.inspection.bindMounts) !== JSON.stringify(before.contract.inspection.bindMounts)
+                || JSON.stringify(current.contract.inspection.publishedPorts) !== JSON.stringify(before.contract.inspection.publishedPorts)) {
+                return unavailable('runtime service identity changed during listener observation', observed.observedAt)
+            }
+        }
+        return issueObservation({
+            code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
+            source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value: true, observedAt: observed.observedAt },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+            freshness: { state: 'current' }, remedy: 'restore the retained port lease and the exact declared runtime publication',
+        })
+    } catch {
+        return unavailable('runtime port observation failed closed')
+    }
 }
 
 export function observeRuntimeServiceColdStart(input: {

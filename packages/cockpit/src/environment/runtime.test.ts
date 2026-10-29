@@ -1,6 +1,8 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statfsSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,6 +50,8 @@ import {
     observeDockerRuntime,
     observedVersionCore,
     observeRuntimeServiceColdStart,
+    observeRuntimeMountMaterialization,
+    observeRuntimePortFamily,
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
     projectRuntimeExecutionEnvironment,
@@ -1219,7 +1223,8 @@ describe('authenticated runtime topology and service health', () => {
                 const labels = typeof value.Labels === 'string'
                     ? Object.fromEntries(value.Labels.split(',').map((item) => [item.slice(0, item.indexOf('=')), item.slice(item.indexOf('=') + 1)]))
                     : value.Labels
-                return JSON.stringify({ ID: value.ID, State: value.State, Health: value.Health, Labels: labels })
+                return JSON.stringify({ ID: value.ID, State: value.State, Health: value.Health, Labels: labels,
+                    Mounts: value.Mounts ?? [], Ports: value.Ports ?? {} })
             })()
             : '{}'
         const controls = Array.isArray(containers) && containers.length > 0 && containers[0] !== null
@@ -1274,10 +1279,10 @@ has_argument() {
   done
   return 1
 }
-has_mounts_argument() {
-  case "$0" in *'"Mounts"'*) return 0;; esac
+has_dependency_inspect_argument() {
+  case "$0" in *'"ConfigImage"'*) return 0;; esac
   for argument do
-    case "$argument" in *'"Mounts"'*) return 0;; esac
+    case "$argument" in *'"ConfigImage"'*) return 0;; esac
   done
   return 1
 }
@@ -1352,7 +1357,7 @@ elif suffix_11_is_launcher "$@"; then
   exit ${launcherExitCode}
 elif suffix_5_is_running "$@"; then
   exit 0
-elif has_argument inspect "$@" && has_mounts_argument "$@"; then
+elif has_argument inspect "$@" && has_dependency_inspect_argument "$@"; then
   printf '%s' ${shellQuote(dependencyInspectOutput)}
 elif has_argument exec "$@" && suffix_2_is_architecture "$@"; then
   printf '%s' ${shellQuote(architectureOutput)}
@@ -1995,6 +2000,131 @@ fi
         expect(isRuntimeServiceEvidence(health.evidence)).toBe(true)
         expect(isRuntimeServiceEvidence({ ...health.evidence })).toBe(false)
         expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('unavailable')
+    })
+
+    it('issues mount materialization only from exact current container mounts', async () => {
+        const inspected = {
+            ID: containerId,
+            State: 'running',
+            Health: '',
+            Labels: {
+                'com.docker.compose.project': 'synthetic',
+                'com.docker.compose.service': 'api',
+                'dev.b0dea.cockpit.config-sha256': configSha256,
+                'dev.b0dea.cockpit.stack-id': stack,
+            },
+            Mounts: [{ Type: 'bind', Source: '/workspace/应用', Destination: '/app' }],
+            Ports: {},
+        }
+        const result = await topologyEvidence({ services: { api: {
+            volumes: [{ type: 'bind', source: '/workspace/应用', target: '/app' }],
+        } } }, [{
+            ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
+            InspectOutput: JSON.stringify(inspected),
+        }])
+        if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
+        const plan = createRuntimeServicePlan({ topology: result.admitted.topology, service: 'api' })
+        if (plan.kind !== 'planned') throw new Error(plan.reason)
+        const healthPlan = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
+        if (healthPlan.kind !== 'planned') throw new Error(healthPlan.reason)
+        const observedService = admitRuntimeServiceObservation({ plan: healthPlan, outcome: await executeProbe(healthPlan.step) })
+        if (observedService.kind !== 'complete') throw new Error(observedService.reason)
+        const service = admitRuntimeServiceHealth({ observation: observedService.observation })
+        if (service.kind !== 'complete') throw new Error(service.reason)
+
+        expect(observeRuntimeMountMaterialization({
+            topology: result.admitted.topology,
+            services: [service.evidence],
+            observedAt: service.evidence.observedAt,
+        })).toMatchObject({
+            code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
+            observed: { state: 'available', value: true },
+        })
+        expect(observeRuntimeMountMaterialization({
+            topology: result.admitted.topology,
+            services: [{ ...service.evidence } as never],
+            observedAt: service.evidence.observedAt,
+        })).toMatchObject({ observed: { state: 'unavailable' } })
+    })
+
+    it('issues port health only from the exact lease, publication, listeners, and fresh service reread', async () => {
+        const server = createServer()
+        server.listen(0, '127.0.0.1')
+        await once(server, 'listening')
+        const address = server.address()
+        if (!address || typeof address === 'string') throw new Error('listener fixture unavailable')
+        const published = address.port
+        const home = mkdtempSync(join(tmpdir(), 'cockpit-runtime-port-health-'))
+        try {
+            const namespace = await selectStateRoot({ platform: 'linux', home, cockpitId: runtimeCockpit })
+            if (namespace.kind !== 'complete') throw new Error('state namespace unavailable')
+            const lease = await leasePortFamilyFixture({
+                namespace: namespace.value, stackId: stack,
+                holderId: `holder:${sha('runtime port health holder')}:session` as HolderId,
+                checkoutId: checkoutId({ checkoutPath: '/tmp/work' }),
+                config: { step: 100, count: 1, bases: { APP_HOST_PORT: published } },
+                now: new Date().toISOString(), listenerTimeoutMs: 100,
+                listenerEvidence: [{ ports: [published], observation: {
+                    state: 'available', value: [], observedAt: new Date().toISOString(), producer: 'runtime-port-health-fixture',
+                } }],
+            })
+            if (lease.kind !== 'complete') throw new Error(JSON.stringify(lease))
+            const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: [] })
+            if (entrypoints.kind !== 'complete') throw new Error(JSON.stringify(entrypoints))
+            const projection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
+            if (!projection) throw new Error('port projection unavailable')
+            const inspected = JSON.stringify({
+                ID: containerId, State: 'running', Health: '',
+                Labels: { 'com.docker.compose.project': 'synthetic', 'com.docker.compose.service': 'api',
+                    'dev.b0dea.cockpit.config-sha256': configSha256, 'dev.b0dea.cockpit.stack-id': stack },
+                Mounts: [], Ports: { '3000/tcp': [{ HostIp: '0.0.0.0', HostPort: String(published) }] },
+            })
+            const result = await topologyEvidence({ services: { api: { ports: [{ target: 3000, published: String(published),
+                protocol: 'tcp' }] } } }, [{
+                ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
+                InspectOutput: inspected,
+            }], { ports: [published], authority: { ownComposeFiles: true, cockpitId: runtimeCockpit, stackId: stack,
+                portLeaseProjection: projection } })
+            if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
+            const topology = result.admitted.topology
+            const observeService = async (revalidate: boolean) => {
+                if (revalidate) {
+                    const plan = createRuntimeServiceRevalidationPlan({ topology, service: 'api', expectedContainerId: containerId })
+                    if (plan.kind !== 'planned') throw new Error(plan.reason)
+                    const status = await executeProbe(plan.status)
+                    if (admitRuntimeServiceRevalidationStatus({ plan, outcome: status }).kind !== 'admitted') throw new Error('status unavailable')
+                    const health = admitRuntimeServiceRevalidation({ plan, outcome: status, identityOutcome: await executeProbe(plan.identity) })
+                    if (health.kind !== 'planned') throw new Error(health.kind === 'unavailable' ? health.reason : 'runtime service became stale')
+                    const observation = admitRuntimeServiceObservation({ plan: health.plan, outcome: await executeProbe(health.plan.step) })
+                    if (observation.kind !== 'complete') throw new Error(observation.reason)
+                    const service = admitRuntimeServiceHealth({ observation: observation.observation })
+                    if (service.kind !== 'complete') throw new Error(service.reason)
+                    return service.evidence
+                }
+                const plan = createRuntimeServicePlan({ topology, service: 'api' })
+                if (plan.kind !== 'planned') throw new Error(plan.reason)
+                const health = createRuntimeServiceHealthPlan({ plan, ...await admitCleanStartup(plan) })
+                if (health.kind !== 'planned') throw new Error(health.reason)
+                const observation = admitRuntimeServiceObservation({ plan: health, outcome: await executeProbe(health.step) })
+                if (observation.kind !== 'complete') throw new Error(observation.reason)
+                const service = admitRuntimeServiceHealth({ observation: observation.observation })
+                if (service.kind !== 'complete') throw new Error(service.reason)
+                return service.evidence
+            }
+            const service = await observeService(false)
+            await expect(observeRuntimePortFamily({ topology, services: [service],
+                namespace: namespace.value, listenerTimeoutMs: 1_000,
+                revalidate: async () => [await observeService(true)] })).resolves.toMatchObject({
+                code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, observed: { state: 'available', value: true },
+            })
+            await expect(observeRuntimePortFamily({ topology, services: [service],
+                namespace: namespace.value, listenerTimeoutMs: 1_000, revalidate: async () => [service] })).resolves.toMatchObject({
+                observed: { state: 'unavailable' },
+            })
+        } finally {
+            server.close()
+            rmSync(home, { recursive: true, force: true })
+        }
     })
 
     it.each([

@@ -44,7 +44,7 @@ import {
 export const mechanism = {
     id: 'environment-port-coordination',
     module: 'packages/cockpit/src/environment/ports.ts',
-    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'isPortObservation', 'observationDeclarations'],
+    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'revalidatePortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'observePortListeners', 'isPortObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -176,6 +176,27 @@ export interface PortListenerEvidenceInput {
     readonly ports: readonly number[]
     readonly observation: Observation<readonly number[]>
 }
+
+export type PortListenerHost = '127.0.0.1' | '::1' | '0.0.0.0' | '::'
+
+export interface PortListenerBinding {
+    readonly hostIp: PortListenerHost
+    readonly port: number
+    readonly expected: 'listening' | 'free'
+}
+
+export type PortListenerObservation =
+    | Readonly<{
+          kind: 'complete'
+          rows: readonly Readonly<{
+              hostIp: PortListenerHost
+              probeHost: '127.0.0.1' | '::1'
+              port: number
+              listening: boolean
+          }>[]
+          observedAt: string
+      }>
+    | Readonly<{ kind: 'unavailable'; reason: string }>
 
 export interface PortLease {
     readonly stackId: StackId
@@ -437,6 +458,35 @@ export function inspectPortLeaseProjection(projection: PortLeaseProjection, name
     // Lifecycle admission consumes the projection before data work checks its coordination origin.
     const authenticated = authenticateStateNamespace(namespace)
     return authenticated?.paths.coordination(projection.lease.stackId).path === issued.address.path ? projection : undefined
+}
+
+export async function revalidatePortLeaseProjection(input: {
+    readonly projection: PortLeaseProjection
+    readonly namespace: StateNamespace
+}): Promise<boolean> {
+    try {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+        const descriptors = Object.getOwnPropertyDescriptors(input)
+        if (Reflect.ownKeys(descriptors).length !== 2
+            || !('value' in (descriptors.projection ?? {})) || !('value' in (descriptors.namespace ?? {}))) return false
+        const projection = descriptors.projection!.value as PortLeaseProjection
+        const issued = projection && typeof projection === 'object' ? issuedLeaseProjections.get(projection) : undefined
+        const namespace = authenticateStateNamespace(snapshotStateNamespace(descriptors.namespace!.value as StateNamespace))
+        if (!issued || !namespace) return false
+        const address = namespace.paths.coordination(projection.lease.stackId)
+        if (!sameCoordinationAddress(address, issued.address)) return false
+        const current = await readState(address)
+        if (current.kind !== 'complete' || current.value.revision !== projection.ownership.recordRevision) return false
+        const value = decodeCoordinationRecord(current.value, projection.lease.stackId)
+        if (!value?.lease || value.lease.released || value.lease.offset !== projection.lease.offset
+            || !sameValues(value.lease.ports, projection.lease.ports)) return false
+        const holderIds = value.holders.map(({ holderId }) => holderId).sort()
+        return holderIds.includes(projection.ownership.holderId)
+            && projection.ownership.holderCount === holderIds.length
+            && JSON.stringify(projection.ownership.holderIds) === JSON.stringify(holderIds)
+    } catch {
+        return false
+    }
 }
 
 export type PortLeaseTransferInspection = Readonly<{ readonly kind: 'complete' }> | PortRefusal
@@ -729,9 +779,9 @@ interface ListenerEvidenceResult {
     readonly refusal?: PortRefusal
 }
 
-async function probeLoopbackPort(port: number, timeoutMs: number): Promise<boolean | undefined> {
+async function probeLoopbackPort(port: number, timeoutMs: number, host: '127.0.0.1' | '::1' = '127.0.0.1'): Promise<boolean | undefined> {
     return new Promise((resolveProbe) => {
-        const socket = createConnection({ host: '127.0.0.1', port })
+        const socket = createConnection({ host, port })
         let settled = false
         const finish = (value: boolean | undefined) => {
             if (settled) return
@@ -749,6 +799,75 @@ async function probeListenerFamily(ports: readonly number[], timeoutMs: number):
     const probes = await Promise.all(ports.map(async (port) => [port, await probeLoopbackPort(port, timeoutMs)] as const))
     if (probes.some(([, occupied]) => occupied === undefined)) return undefined
     return probes.filter(([, occupied]) => occupied).map(([port]) => port)
+}
+
+export async function observePortListeners(input: {
+    readonly bindings: readonly PortListenerBinding[]
+    readonly timeoutMs: number
+}): Promise<PortListenerObservation> {
+    try {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            return Object.freeze({ kind: 'unavailable', reason: 'listener observation input is malformed' })
+        }
+        const descriptors = Object.getOwnPropertyDescriptors(input)
+        if (Reflect.ownKeys(descriptors).length !== 2
+            || !('value' in (descriptors.bindings ?? {})) || !('value' in (descriptors.timeoutMs ?? {}))) {
+            return Object.freeze({ kind: 'unavailable', reason: 'listener observation input is malformed' })
+        }
+        const bindings = descriptors.bindings!.value
+        const timeoutMs = descriptors.timeoutMs!.value as unknown
+        if (!Array.isArray(bindings) || bindings.length === 0 || bindings.length > STRUCTURED_INPUT_ENTRY_LIMIT
+            || !Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 30_000) {
+            return Object.freeze({ kind: 'unavailable', reason: 'listener observation input is outside its declared bounds' })
+        }
+        const rows: { hostIp: PortListenerHost; probeHost: '127.0.0.1' | '::1'; port: number; expected: 'listening' | 'free' }[] = []
+        const identities = new Set<string>()
+        for (const binding of bindings) {
+            if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
+                return Object.freeze({ kind: 'unavailable', reason: 'listener binding is malformed' })
+            }
+            const captured = Object.getOwnPropertyDescriptors(binding)
+            if (Reflect.ownKeys(captured).length !== 3
+                || !('value' in (captured.hostIp ?? {})) || !('value' in (captured.port ?? {}))
+                || !('value' in (captured.expected ?? {}))) {
+                return Object.freeze({ kind: 'unavailable', reason: 'listener binding is malformed' })
+            }
+            const hostIp = captured.hostIp!.value
+            const port = captured.port!.value
+            const expected = captured.expected!.value
+            if (!['127.0.0.1', '::1', '0.0.0.0', '::'].includes(hostIp)
+                || !Number.isSafeInteger(port) || port < 1 || port > 65_535
+                || expected !== 'listening' && expected !== 'free') {
+                return Object.freeze({ kind: 'unavailable', reason: 'listener binding is outside its declared bounds' })
+            }
+            const probeHost = hostIp === '::1' || hostIp === '::' ? '::1' as const : '127.0.0.1' as const
+            const identity = `${probeHost}\0${port}`
+            if (identities.has(identity)) {
+                return Object.freeze({ kind: 'unavailable', reason: 'listener observation contains a duplicate address' })
+            }
+            identities.add(identity)
+            rows.push({ hostIp: hostIp as PortListenerHost, probeHost, port, expected })
+        }
+        const probed = await Promise.all(rows.map(async (row) => Object.freeze({
+            hostIp: row.hostIp,
+            probeHost: row.probeHost,
+            port: row.port,
+            listening: await probeLoopbackPort(row.port, timeoutMs as number, row.probeHost),
+        })))
+        if (probed.some(({ listening }) => listening === undefined)) {
+            return Object.freeze({ kind: 'unavailable', reason: 'bounded host listener probe did not produce current evidence' })
+        }
+        return Object.freeze({
+            kind: 'complete',
+            rows: Object.freeze(probed.map((row) => Object.freeze({ ...row, listening: row.listening as boolean }))),
+            observedAt: new Date().toISOString(),
+        })
+    } catch (error) {
+        return Object.freeze({
+            kind: 'unavailable',
+            reason: `listener observation failed: ${error instanceof Error ? error.message : String(error)}`,
+        })
+    }
 }
 
 function observePortFamilies(input: {
