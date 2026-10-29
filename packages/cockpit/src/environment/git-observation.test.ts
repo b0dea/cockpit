@@ -7,6 +7,7 @@ import { type CheckoutId, type StackId } from './contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from './executable.js'
 import { resolvedExecutable } from './executable.js'
+import { observationSatisfiesExpectation } from './observations.js'
 import {
     createComparisonRemoteRefStep,
     createGitAncestryObservationStep,
@@ -70,6 +71,22 @@ describe('Git adjacency evidence', () => {
             expect(observeGit(step, outcome, { stackId, checkoutId, source: root })).toMatchObject({
                 kind: 'complete', evidence: { workingTree: 'clean' },
             })
+            const local = observeGit(step, outcome, { stackId, checkoutId, source: root })
+            expect(local).toMatchObject({ kind: 'complete', evidence: { upstream: null, adjacency: 'untracked-upstream' } })
+            if (local.kind !== 'complete') throw new Error('local Git evidence is unavailable')
+            const adjacency = local.observations.find(({ code }) => code === 'CHECKOUT_ADJACENCY_UNHEALTHY')!
+            expect(adjacency.observed).toMatchObject({ state: 'available', value: { upstream: null, adjacency: 'untracked-upstream' } })
+            expect(observationSatisfiesExpectation(adjacency)).toBe(true)
+            execFileSync('git', ['remote', 'add', 'origin', 'https://example.invalid/synthetic.git'], { cwd: root })
+            execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: root })
+            execFileSync('git', ['branch', '--set-upstream-to=origin/main'], { cwd: root })
+            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'ahead'], { cwd: root })
+            const ahead = observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })
+            expect(ahead).toMatchObject({ kind: 'complete', evidence: { upstream: 'origin/main', adjacency: 'ahead' } })
+            if (ahead.kind !== 'complete') throw new Error('selected upstream evidence is unavailable')
+            expect(observationSatisfiesExpectation(ahead.observations.find(({ code }) => code === 'CHECKOUT_ADJACENCY_UNHEALTHY')!)).toBe(false)
+            execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: root })
+            expect(observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })).toMatchObject({ kind: 'unavailable' })
             expect(observeGit(step, { ...outcome }, { stackId, checkoutId, source: root })).toEqual({
                 kind: 'unavailable', reason: 'Git execution evidence is unavailable or unauthenticated',
             })

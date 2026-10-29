@@ -220,7 +220,8 @@ export function decodeGitObservation(
     const workingTreeValue = Object.freeze({ revision, branch, trackedDirtyCount, untrackedCount })
     const workingTreeExpected = Object.freeze({ revision, branch, trackedDirtyCount: 0, untrackedCount: 0 })
     const adjacencyValue = Object.freeze({ revision, branch, upstream, ahead, behind, adjacency })
-    const adjacencyExpected = Object.freeze({ revision, branch, upstream, ahead: 0, behind: 0, adjacency: 'aligned' })
+    const adjacencyExpected = Object.freeze({ revision, branch, upstream, ahead: 0, behind: 0,
+        adjacency: upstream === null ? 'untracked-upstream' : 'aligned' })
     const observations: readonly EnvironmentObservation[] = Object.freeze([
         {
             code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY,

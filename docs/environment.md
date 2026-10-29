@@ -548,7 +548,9 @@ does not become a pass because another check succeeded. Configured host capacity
 installation, and runtime health still require complete owner-issued execution evidence; where
 that evidence is unavailable, these commands report a nonpassing result. A declared sibling
 remote is checked against the remote selected by that checkout's branch upstream. Cockpit
-does not rewrite Git remotes.
+does not rewrite Git remotes. A local checkout with no selected upstream has no adjacency
+comparison; its evidence reports that absence. Once an upstream is selected, it must be available
+and aligned; a missing or diverged selected upstream blocks the gate.
 
 Generated, dependency, data, and vendor producers return owner-issued observations.
 `preflight` and `doctor` consume current read-only observations; doctor previews generated
