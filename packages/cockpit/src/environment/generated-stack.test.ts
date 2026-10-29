@@ -12,7 +12,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import type { CheckoutId, HolderId, StackId } from './contract.js'
 import { executeDataMode, planDataMode } from './data-plane.js'
-import { admitGeneratedObservation, createGeneratedObservationExecution, inspectGeneratedEnvironment, inspectGeneratedRuntimeAuthority, isGeneratedObservation, isGeneratedObservationAdmission, observeGeneratedEnvironment, projectGeneratedComposeArtifactAuthority, projectGeneratedRuntimeAuthority, renderGeneratedEnvironment, resolveGeneratedDataOperation, type GeneratedEnvironmentResult } from './generated-stack.js'
+import { admitGeneratedObservation, createGeneratedObservationExecution, inspectGeneratedEnvironment, inspectGeneratedRuntimeAuthority, isGeneratedObservation, isGeneratedObservationAdmission, observeGeneratedEnvironment, observeGeneratedEnvironmentHealth, projectGeneratedComposeArtifactAuthority, projectGeneratedRuntimeAuthority, renderGeneratedEnvironment, resolveGeneratedDataOperation, type GeneratedEnvironmentResult } from './generated-stack.js'
 import { consumePortLeaseProjection, deriveEntrypoints, inspectPortLeaseProjection, projectPortLeaseResult } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan } from './runtime.js'
@@ -338,11 +338,26 @@ describe('generated environment rendering', () => {
         if (second.kind !== 'complete') throw new Error(second.reason)
         const secondInspection = inspectGeneratedEnvironment({ rendered: second, candidates: second.manifest.map(({ path, bytes }) => ({ path, bytes })), now: '2026-09-26' })
         expect(observeGeneratedEnvironment({ rendered: second, inspection: secondInspection, admissions: [admission!] })).toBeUndefined()
+        const registry = result.observations.find(({ kind }) => kind === 'registry-auth')!
+        const registryAdmissions = []
+        for (const _ of [0, 1]) {
+            const registryExecution = createGeneratedObservationExecution({ authority, observation: registry })
+            if (registryExecution.kind !== 'planned') throw new Error(registryExecution.reason)
+            const registryAdmission = admitGeneratedObservation({ execution: registryExecution, outcome: await executeProbe(registryExecution.step) })
+            if (!registryAdmission) throw new Error('registry admission unavailable')
+            registryAdmissions.push(registryAdmission)
+        }
         const inspection = inspectGeneratedEnvironment({ rendered: result, candidates: result.manifest.map(({ path, bytes }) => ({ path, bytes })), now: '2026-09-26' })
-        const aggregate = observeGeneratedEnvironment({ rendered: result, inspection, admissions: [admission!] })
-        expect(aggregate).toMatchObject({ observed: { state: 'unavailable' }, applicability: { posture: 'generated-environment' } })
-        expect(isGeneratedObservation(aggregate)).toBe(true)
-        expect(isGeneratedObservation({ ...aggregate! })).toBe(false)
+        const health = observeGeneratedEnvironmentHealth({ rendered: result, inspection, admissions: [admission!, ...registryAdmissions] })
+        expect(health).toMatchObject({
+            environment: { observed: { state: 'failed' }, applicability: { posture: 'generated-environment' } },
+            registryAuthentication: {
+                observed: { state: 'unavailable', reason: expect.stringContaining('duplicate admission') },
+                applicability: { posture: 'registry-authentication' },
+            },
+        })
+        expect(isGeneratedObservation(health?.environment)).toBe(true)
+        expect(isGeneratedObservation({ ...health!.environment })).toBe(false)
         expect(admitGeneratedObservation({ execution, outcome })).toBeUndefined()
         expect(createGeneratedObservationExecution({ authority: { ...authority }, observation })).toMatchObject({ kind: 'unavailable' })
         expect(observeGeneratedEnvironment({ rendered: result, inspection: { ...inspection }, admissions: [] })).toBeUndefined()
@@ -405,6 +420,39 @@ describe('generated environment rendering', () => {
         for (const invalid of [{ ...resources, memory_mb: 0 }, { ...resources, cpus: 0 }, { ...resources, memory_mb: 1.5 }, { ...resources, cpus: Infinity }, { ...resources, cpus: Number.MIN_VALUE }, { ...resources, cpus: Number.MAX_VALUE }, { ...resources, memory_mb: 5 }]) {
             const rejected = renderGeneratedEnvironment({ declaration: { ...limited, services: limited.services.map(service => ({ ...service, resources: invalid })) }, ...resolvedInput })
             expect(rejected.kind).toBe('refusal')
+        }
+    })
+
+    it('marks registry authentication inapplicable only when the current render declares no probe', async () => {
+        const generated = await declaration()
+        delete generated.services[0]!.image!.registry_auth_probe
+        const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput })
+        if (result.kind !== 'complete') throw new Error(result.reason)
+        expect(result.observations.some(({ kind }) => kind === 'registry-auth')).toBe(false)
+        const root = realpathSync(await mkdtemp(join(tmpdir(), 'cockpit-generated-no-registry-auth-')))
+        try {
+            const { authority } = await generatedAuthority(result, root)
+            const admissions = []
+            for (const observation of result.observations) {
+                const execution = createGeneratedObservationExecution({ authority, observation })
+                if (execution.kind !== 'planned') throw new Error(execution.reason)
+                const admission = admitGeneratedObservation({ execution, outcome: await executeProbe(execution.step) })
+                if (!admission) throw new Error('generated observation admission unavailable')
+                admissions.push(admission)
+            }
+            const inspection = inspectGeneratedEnvironment({
+                rendered: result,
+                candidates: result.manifest.map(({ path, bytes }) => ({ path, bytes })),
+                now: '2026-09-26',
+            })
+            expect(observeGeneratedEnvironmentHealth({ rendered: result, inspection, admissions })).toMatchObject({
+                registryAuthentication: {
+                    observed: { state: 'available', value: { observations: [] } },
+                    applicability: { state: 'not-applicable', posture: 'registry-authentication' },
+                },
+            })
+        } finally {
+            await rm(root, { recursive: true, force: true })
         }
     })
 

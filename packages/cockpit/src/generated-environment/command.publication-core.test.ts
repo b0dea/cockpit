@@ -11,6 +11,8 @@ import { cockpitId } from '../environment/identity.js'
 import {
     generatedApplicationProjection,
     observeGeneratedApplication,
+    observeGeneratedApplicationHealth,
+    observeGeneratedApplicationSurfaces,
     projectGeneratedApplicationNodeExecutable,
     projectGeneratedApplicationRuntimeAuthority,
     resolveGeneratedApplicationOperation,
@@ -58,6 +60,54 @@ describe('generated environment command', () => {
         const observation = await observeGeneratedApplication(application, harness, executeProbe)
         expect(observation).toMatchObject({ observed: { state: 'failed' }, applicability: { posture: 'generated-environment' } })
         expect(await observeGeneratedApplication({ ...application }, harness, executeProbe)).toBeUndefined()
+
+        const surfaceObservations = observeGeneratedApplicationSurfaces(application)
+        expect(surfaceObservations?.map(({ code, observed }) => [code, observed.state])).toEqual([
+            ['HARNESS_SURFACE_UNAVAILABLE', 'available'],
+            ['DIRECTORY_GRANTS_UNAVAILABLE', 'available'],
+            ['GUIDE_CAP_EXCEEDED', 'available'],
+            ['SKILL_BUDGET_UNAVAILABLE', 'available'],
+        ])
+        expect(surfaceObservations?.find(({ code }) => code === 'HARNESS_SURFACE_UNAVAILABLE')).toMatchObject({
+            observed: { state: 'available', value: { manifestSha256: application.surfaceSelftest.manifestSha256, entries: expect.any(Number) } },
+        })
+        expect(surfaceObservations?.find(({ code }) => code === 'DIRECTORY_GRANTS_UNAVAILABLE')).toMatchObject({
+            observed: { state: 'available', value: { grants: expect.any(Number), generatedFragments: expect.any(Number), modelSha256: expect.stringMatching(/^[a-f0-9]{64}$/) } },
+        })
+        expect(surfaceObservations?.find(({ code }) => code === 'GUIDE_CAP_EXCEEDED')).toMatchObject({
+            observed: { state: 'available', value: expect.any(Number) }, expectation: { kind: 'maximum', value: 200 },
+        })
+        const guideValue = surfaceObservations?.find(({ code }) => code === 'GUIDE_CAP_EXCEEDED')?.observed
+        expect(guideValue?.state === 'available' ? guideValue.value : 0).toBeGreaterThan(0)
+        const rootGuide = application.surfaceSelftest.entries.find(entry => entry.path === 'AGENTS.md')
+        if (!rootGuide || rootGuide.kind !== 'shared-region' || rootGuide.region.format !== 'markdown-delimited') {
+            throw new Error('generated root guide unavailable')
+        }
+        expect(guideValue?.state === 'available' ? guideValue.value : 0)
+            .toBe(rootGuide.region.bytes.trimEnd().split('\n').length)
+        expect(surfaceObservations?.find(({ code }) => code === 'SKILL_BUDGET_UNAVAILABLE')).toMatchObject({
+            observed: { state: 'available', value: { collectionSha256: expect.stringMatching(/^[a-f0-9]{64}$/), costs: expect.arrayContaining([
+                expect.objectContaining({ metric: 'frontmatter_bytes', value: expect.any(Number), cap: expect.any(Number) }),
+            ]) } },
+        })
+        expect(observeGeneratedApplicationSurfaces({ ...application })).toBeUndefined()
+
+        const fresh = await checkGeneratedEnvironment({ configPath })
+        if (fresh.kind !== 'complete') throw new Error(fresh.diagnostics[0]?.message)
+        const freshApplication = fresh.result.application
+        const freshHarness = await generatedRuntime(root, freshApplication)
+        let executions = 0
+        const health = await observeGeneratedApplicationHealth(freshApplication, freshHarness, async step => {
+            executions += 1
+            return executeProbe(step)
+        })
+        expect(executions).toBe(health ? inspectGeneratedRuntimeAuthority(
+            projectGeneratedApplicationRuntimeAuthority(freshApplication, freshHarness)!,
+        )!.rendered.observations.length : 0)
+        expect(health).toMatchObject({
+            environment: { code: 'GENERATED_ENVIRONMENT_UNAVAILABLE' },
+            registryAuthentication: { code: 'REGISTRY_AUTH_UNAVAILABLE' },
+        })
 
         const mismatched = await generatedRuntime(root, application, 'f'.repeat(64))
         expect(projectGeneratedApplicationRuntimeAuthority(application, mismatched)).toBeUndefined()
@@ -466,6 +516,7 @@ sources = [{ path = "subagents/synthetic-agent.md", bytes = ${JSON.stringify(`\u
         expect(actions).not.toContain('publish-batch')
         expect(actions).not.toContain('verify-batch')
         expect(actions).not.toContain('commit-batch')
+        expect(observeGeneratedApplicationSurfaces(preview.result.application)).toBeUndefined()
         await expect(lstat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
         await expect(lstat(join(root, '.cockpit/generated-environment-ownership.json'))).rejects.toMatchObject({ code: 'ENOENT' })
 

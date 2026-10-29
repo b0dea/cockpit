@@ -35,11 +35,15 @@ export type {
 export const mechanism = {
     id: 'generated-environment',
     module: 'packages/cockpit/src/environment/generated-stack.ts',
-    exports: ['renderGeneratedEnvironment', 'inspectGeneratedEnvironment', 'undecidedGeneratedDecisions', 'projectGeneratedComposeArtifactAuthority', 'projectGeneratedRuntimeAuthority', 'inspectGeneratedRuntimeAuthority', 'resolveGeneratedDataOperation', 'createGeneratedObservationExecution', 'admitGeneratedObservation', 'isGeneratedObservationAdmission', 'observeGeneratedEnvironment', 'isGeneratedObservation', 'observationDeclarations'],
+    exports: ['renderGeneratedEnvironment', 'inspectGeneratedEnvironment', 'undecidedGeneratedDecisions', 'projectGeneratedComposeArtifactAuthority', 'projectGeneratedRuntimeAuthority', 'inspectGeneratedRuntimeAuthority', 'resolveGeneratedDataOperation', 'createGeneratedObservationExecution', 'admitGeneratedObservation', 'isGeneratedObservationAdmission', 'observeGeneratedEnvironmentHealth', 'observeGeneratedEnvironment', 'isGeneratedObservation', 'isGeneratedRegistryAuthenticationObservation', 'observationDeclarations', 'registryAuthenticationObservationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
     { id: 'generated-environment', owner: mechanism.id, postures: ['generated-environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE, isIssued: isGeneratedObservation, issuedAt: generatedObservationIssuedAt },
+] as const)
+
+export const registryAuthenticationObservationDeclarations = Object.freeze([
+    { id: 'registry-authentication', owner: mechanism.id, postures: ['registry-authentication'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE, isIssued: isGeneratedRegistryAuthenticationObservation, issuedAt: generatedRegistryAuthenticationObservationIssuedAt },
 ] as const)
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -48,6 +52,7 @@ const DECISION_MAX_AGE_DAYS = 366
 const MAX_CAPTURE_NODES = 100_000
 const MAX_CAPTURE_STRING_BYTES = 16_777_216
 const MAX_CAPTURE_BYTES = 33_554_432
+const issuedRegistryAuthenticationObservations = new WeakMap<object, number>()
 
 
 export interface GeneratedArtifactCandidate {
@@ -771,11 +776,14 @@ export function isGeneratedObservationAdmission(value: unknown): value is Genera
     return value !== null && typeof value === 'object' && issuedObservationAdmissions.has(value)
 }
 
-export function observeGeneratedEnvironment(input: {
+export function observeGeneratedEnvironmentHealth(input: {
     readonly rendered: GeneratedEnvironmentResult
     readonly inspection: GeneratedInspectionResult
     readonly admissions: readonly GeneratedObservationAdmission[]
-}): EnvironmentObservation | undefined {
+}): Readonly<{
+    environment: EnvironmentObservation
+    registryAuthentication: EnvironmentObservation
+}> | undefined {
     const captured = ownRecord(input)
     if (!captured || !exactKeys(captured, ['admissions', 'inspection', 'rendered']) || !Array.isArray(captured.admissions)) return undefined
     const rendered = captured.rendered
@@ -798,7 +806,7 @@ export function observeGeneratedEnvironment(input: {
     const duplicate = new Set(admittedIds).size !== admittedIds.length
     const failed = admissions.filter(({ kind }) => kind !== 'complete')
     const observedAt = admissions.map(({ observedAt }) => observedAt).sort().at(-1) ?? new Date().toISOString()
-    const observation = snapshotEnvironmentObservation({
+    const environment = snapshotEnvironmentObservation({
         code: ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
         owner: mechanism.id,
         stackId: authority.stackId,
@@ -813,11 +821,54 @@ export function observeGeneratedEnvironment(input: {
         freshness: { state: 'current' },
         remedy: 'execute and admit every observation declared by the current generated environment',
     })
-    if (!observation) return undefined
-    issuedGeneratedObservations.set(observation, Date.now())
-    return observation
+    const registryIds = (rendered as Extract<GeneratedEnvironmentResult, { kind: 'complete' }>).observations
+        .filter(({ kind }) => kind === 'registry-auth').map(({ id }) => id)
+    const registryAdmissions = admissions.filter(({ id }) => registryIds.includes(id))
+    const missingRegistry = registryIds.filter(id => !registryAdmissions.some(admission => admission.id === id))
+    const duplicateRegistry = new Set(registryAdmissions.map(({ id }) => id)).size !== registryAdmissions.length
+    const failedRegistry = registryAdmissions.filter(({ kind }) => kind !== 'complete')
+    const registryAuthentication = snapshotEnvironmentObservation({
+        code: ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE,
+        owner: mechanism.id,
+        stackId: authority.stackId,
+        source: `generated-registry:${authority.sourceSha256}`,
+        observed: missingRegistry.length === 0 && !duplicateRegistry && failedRegistry.length === 0
+            ? { state: 'available', value: { generation: authority.generation, observations: registryAdmissions.map(({ id }) => id).sort() }, observedAt }
+            : duplicateRegistry
+                ? { state: 'unavailable', reason: 'generated registry authentication probes are incomplete: duplicate admission', observedAt }
+                : failedRegistry.length > 0
+                ? { state: 'failed', reason: `generated registry authentication probes failed: ${failedRegistry.map(({ id }) => id).join(', ')}`, observedAt }
+                : { state: 'unavailable', reason: `generated registry authentication probes are incomplete: ${missingRegistry.join(', ')}`, observedAt },
+        expectation: { kind: 'present' },
+        applicability: registryIds.length > 0
+            ? { state: 'required', posture: 'registry-authentication' }
+            : { state: 'not-applicable', posture: 'registry-authentication', reason: 'the generated environment declares no registry authentication probe' },
+        freshness: { state: 'current' },
+        remedy: 'make every declared registry authentication probe succeed, then rerun cockpit preflight',
+    })
+    if (!environment || !registryAuthentication) return undefined
+    const issuedAt = Date.now()
+    issuedGeneratedObservations.set(environment, issuedAt)
+    issuedRegistryAuthenticationObservations.set(registryAuthentication, issuedAt)
+    return Object.freeze({ environment, registryAuthentication })
+}
+
+export function observeGeneratedEnvironment(input: {
+    readonly rendered: GeneratedEnvironmentResult
+    readonly inspection: GeneratedInspectionResult
+    readonly admissions: readonly GeneratedObservationAdmission[]
+}): EnvironmentObservation | undefined {
+    return observeGeneratedEnvironmentHealth(input)?.environment
 }
 
 export function isGeneratedObservation(value: unknown): value is EnvironmentObservation {
     return value !== null && typeof value === 'object' && issuedGeneratedObservations.has(value)
+}
+
+export function isGeneratedRegistryAuthenticationObservation(value: unknown): value is EnvironmentObservation {
+    return value !== null && typeof value === 'object' && issuedRegistryAuthenticationObservations.has(value)
+}
+
+function generatedRegistryAuthenticationObservationIssuedAt(value: unknown): number | undefined {
+    return value !== null && typeof value === 'object' ? issuedRegistryAuthenticationObservations.get(value) : undefined
 }

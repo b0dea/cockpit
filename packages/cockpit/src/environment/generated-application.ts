@@ -60,7 +60,7 @@ import {
     type SurfaceDesiredEntry,
     type SurfacePriorOwnedEntry,
 } from '../surfaces/ownership.js'
-import { observeSiblingGuides, planSiblingProjection, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput } from '../surfaces/projection.js'
+import { observeSiblingGuides, planSiblingProjection, type DirectoryGrant, type GuideObservation, type GuideObservationRequest, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
 import {
     renderSurfaceSet,
     surfaceModelSha256,
@@ -73,13 +73,13 @@ import { expandRestrictions } from '../surfaces/restrictions.js'
 import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
-import { SHIPPED_SETUP_SKILL, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
+import { SHIPPED_SETUP_SKILL, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
 import {
     nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, runPublicationPlan,
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
+import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
@@ -90,7 +90,7 @@ import {
     admitGeneratedObservation,
     createGeneratedObservationExecution,
     inspectGeneratedEnvironment,
-    observeGeneratedEnvironment,
+    observeGeneratedEnvironmentHealth,
     projectGeneratedComposeArtifactAuthority,
     projectGeneratedRuntimeAuthority,
     resolveGeneratedDataOperation,
@@ -104,7 +104,6 @@ import {
 } from './generated-stack.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
 import { projectPersonaOutputs, type DataStepContext } from './data-plane.js'
-import { resolveObservationPostures } from './observations.js'
 import { decodeLifecycleRecord, resolveLifecycleStage } from './lifecycle-stage.js'
 import { authenticateStatePublication, observeConfiguration, readState, selectStateRoot,
     type BootstrapStateAddress, type BootstrapStateRecord, type StateNamespace, type StateResult } from './state.js'
@@ -123,8 +122,17 @@ import { observeGeneratedCheckoutIdentity, revalidateGeneratedCheckoutIdentity, 
 export const mechanism = {
     id: 'generated-environment-application',
     module: 'packages/cockpit/src/environment/generated-application.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationMountSources', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplication'],
+    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationMountSources', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplicationSurfaces', 'observeGeneratedApplicationHealth', 'observeGeneratedApplication', 'isGeneratedApplicationSurfaceObservation', 'surfaceObservationDeclarations'],
 } as const
+
+export const surfaceObservationDeclarations = Object.freeze([
+    { id: 'harness-surfaces', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'directory-grants', owner: mechanism.id, postures: ['directory-grants'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'guide-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+    { id: 'skill-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, isIssued: isGeneratedApplicationSurfaceObservation, issuedAt: generatedApplicationSurfaceObservationIssuedAt },
+] as const)
+
+const issuedSurfaceObservations = new WeakMap<object, number>()
 
 export interface GeneratedEnvironmentCommandInput {
     readonly configPath: string
@@ -200,6 +208,7 @@ interface OwnedBytes {
 interface PreparedEnvironment {
     readonly root: string
     readonly cockpitId: CockpitId
+    readonly stackId: ReturnType<typeof stackId>
     readonly runtimeCheckout?: GeneratedCheckoutIdentity
     readonly configPath: string
     readonly sourceSha256: string
@@ -218,6 +227,7 @@ interface PreparedEnvironment {
     readonly activeSurfaceOverrides: readonly ActiveSurfaceOverride[]
     readonly changedOverrideOriginals: readonly SurfaceUpgradeFinding[]
     readonly surfaceSelftest?: GeneratedSurfaceSelftestProjection
+    readonly surfaceHealth?: GeneratedSurfaceHealthEvidence
     readonly guideSources: Readonly<{
         readonly requests: readonly GuideObservationRequest[]
         readonly observations: readonly GuideObservation[]
@@ -470,6 +480,15 @@ export interface GeneratedSurfaceSelftestProjection {
     readonly manifestSha256: string
 }
 
+interface GeneratedSurfaceHealthEvidence {
+    readonly observedAt: string
+    readonly grants: readonly DirectoryGrant[]
+    readonly nativeGrants: NativeFragmentSet
+    readonly guideCosts: readonly StandingCost[]
+    readonly skillCosts: readonly SkillStandingCost[]
+    readonly skillCollectionSha256: string
+}
+
 interface CompleteOutcome {
     readonly kind: 'complete'
     readonly artifact: null
@@ -544,6 +563,8 @@ interface GeneratedHostInput {
 
 interface GeneratedApplicationRecord {
     readonly root: string
+    readonly stackId: ReturnType<typeof stackId>
+    readonly currentPublication: true | false
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
     readonly hostInputs: readonly GeneratedHostInput[]
@@ -551,6 +572,8 @@ interface GeneratedApplicationRecord {
     readonly inspection?: Readonly<{ kind: 'passed' }>
     readonly node: ResolvedExecutable
     readonly workApplication?: WorkApplicationAuthorityRecord
+    readonly surfaceSelftest: GeneratedSurfaceSelftestProjection
+    readonly surfaceHealth: GeneratedSurfaceHealthEvidence
 }
 
 type WorkApplicationAuthorityRecord = ConsumedWorkApplicationAuthorities
@@ -612,6 +635,10 @@ function exactKeys(record: Record<string, unknown>, expected: readonly string[])
     return keys.length === wanted.length && keys.every((key, index) => key === wanted[index])
 }
 
+function guideLines(bytes: string): number {
+    return bytes.trimEnd().split('\n').length
+}
+
 function refuse(code: string, message: string, target?: string, fix?: string): RefusalOutcome {
     return Object.freeze({
         kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
@@ -626,7 +653,7 @@ function complete(
     changes: readonly GeneratedEnvironmentChange[] = Object.freeze([]),
     staleRemoval?: GeneratedStaleRemovalApprovalRequest,
 ): CompleteOutcome | RefusalOutcome {
-    if (!prepared.surfaceSelftest) return refuse('SURFACE_INPUT_INVALID', 'authenticated selftest inputs are missing', 'surfaces')
+    if (!prepared.surfaceSelftest || !prepared.surfaceHealth) return refuse('SURFACE_INPUT_INVALID', 'authenticated surface health inputs are missing', 'surfaces')
     const generatedPaths = generatedPathFacts(prepared, dryRun ? 'declared-before-sync' : 'required-after-sync')
     if (generatedPaths.kind !== 'complete') return refuse(generatedPaths.diagnostic.code, generatedPaths.diagnostic.message, generatedPaths.diagnostic.target)
     const application = Object.freeze({
@@ -645,9 +672,10 @@ function complete(
         }),
     })
     issuedApplicationProjections.set(application, Object.freeze({
-        root: prepared.root, siblingRoots: prepared.siblingRoots, hostInputRoots: prepared.hostInputRoots, hostInputs: prepared.hostInputs,
+        root: prepared.root, stackId: prepared.stackId, currentPublication: !dryRun,
+        siblingRoots: prepared.siblingRoots, hostInputRoots: prepared.hostInputRoots, hostInputs: prepared.hostInputs,
         ...(prepared.rendered && prepared.inspection ? { rendered: prepared.rendered, inspection: prepared.inspection } : {}),
-        node: prepared.node,
+        node: prepared.node, surfaceSelftest: prepared.surfaceSelftest, surfaceHealth: prepared.surfaceHealth,
         ...(!dryRun && prepared.workApplication ? { workApplication: prepared.workApplication } : {}),
     }))
     return Object.freeze({
@@ -1056,11 +1084,77 @@ export function resolveGeneratedApplicationOperation(
     }) : undefined
 }
 
-export async function observeGeneratedApplication(
+export function observeGeneratedApplicationSurfaces(
+    application: GeneratedApplicationProjection,
+): readonly EnvironmentObservation[] | undefined {
+    const record = application !== null && typeof application === 'object'
+        ? issuedApplicationProjections.get(application)
+        : undefined
+    if (!record?.currentPublication || record.surfaceSelftest !== application.surfaceSelftest) return undefined
+    const grantsSha256 = surfaceModelSha256(record.surfaceHealth.grants)
+    const availableGuideCosts = record.surfaceHealth.guideCosts.filter(
+        (cost): cost is Exclude<StandingCost, { status: 'unavailable' }> => cost.status !== 'unavailable',
+    )
+    if (!grantsSha256 || grantsSha256 !== record.surfaceHealth.nativeGrants.modelSha256
+        || availableGuideCosts.length !== record.surfaceHealth.guideCosts.length
+        || availableGuideCosts.some(cost => cost.status !== 'within_cap')) return undefined
+    const guideValue = availableGuideCosts.reduce((maximum, cost) => Math.max(maximum, cost.value), 0)
+    const guideCap = availableGuideCosts[0]?.cap
+    if (guideCap === undefined || availableGuideCosts.some(cost => cost.cap !== guideCap)) return undefined
+    const observedAt = record.surfaceHealth.observedAt
+    const required = (posture: string) => ({ state: 'required' as const, posture })
+    const observations = [
+        snapshotEnvironmentObservation({
+            code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
+            source: `surface-manifest:${record.surfaceSelftest.manifestSha256}`,
+            observed: { state: 'available', value: { manifestSha256: record.surfaceSelftest.manifestSha256,
+                harnesses: record.surfaceSelftest.configuredHarnesses, entries: record.surfaceSelftest.entries.length }, observedAt },
+            expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
+            remedy: 'run cockpit sync --config <file>, then rerun cockpit preflight',
+        }),
+        snapshotEnvironmentObservation({
+            code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
+            source: `directory-grants:${grantsSha256}`,
+            observed: { state: 'available', value: { grants: record.surfaceHealth.grants.length,
+                generatedFragments: record.surfaceHealth.nativeGrants.fragments.length, modelSha256: grantsSha256 }, observedAt },
+            expectation: { kind: 'present' }, applicability: required('directory-grants'), freshness: { state: 'current' },
+            remedy: 'run cockpit sync --config <file>, then rerun cockpit preflight',
+        }),
+        snapshotEnvironmentObservation({
+            code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, owner: mechanism.id, stackId: record.stackId,
+            source: `surface-guide-costs:${record.surfaceSelftest.manifestSha256}`,
+            observed: { state: 'available', value: guideValue, observedAt }, expectation: { kind: 'maximum', value: guideCap },
+            applicability: required('environment'), freshness: { state: 'current' },
+            remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run cockpit sync --config <file>',
+        }),
+        snapshotEnvironmentObservation({
+            code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
+            source: `skill-collection:${record.surfaceHealth.skillCollectionSha256}`,
+            observed: { state: 'available', value: { collectionSha256: record.surfaceHealth.skillCollectionSha256,
+                costs: record.surfaceHealth.skillCosts.map(({ target, metric, value, cap }) => ({ target, metric, value, cap })) }, observedAt },
+            expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
+            remedy: 'move skill procedure text out of always-loaded entry points, then run cockpit sync --config <file>',
+        }),
+    ]
+    if (!observations.every((observation): observation is EnvironmentObservation => observation !== undefined)) return undefined
+    const issuedAt = Date.now()
+    for (const observation of observations) issuedSurfaceObservations.set(observation, issuedAt)
+    return Object.freeze(observations)
+}
+
+export function isGeneratedApplicationSurfaceObservation(value: unknown): value is EnvironmentObservation {
+    return value !== null && typeof value === 'object' && issuedSurfaceObservations.has(value)
+}
+
+function generatedApplicationSurfaceObservationIssuedAt(value: unknown): number | undefined {
+    return value !== null && typeof value === 'object' ? issuedSurfaceObservations.get(value) : undefined
+}
+
+export async function observeGeneratedApplicationHealth(
     application: GeneratedApplicationProjection,
     input: Readonly<{ topology: RuntimeTopologyEvidence; runtime: GeneratedObservationRuntime }>,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-): Promise<EnvironmentObservation | undefined> {
+): Promise<Readonly<{ environment: EnvironmentObservation; registryAuthentication: EnvironmentObservation }> | undefined> {
     const record = application !== null && typeof application === 'object'
         ? issuedApplicationProjections.get(application)
         : undefined
@@ -1074,7 +1168,15 @@ export async function observeGeneratedApplication(
         if (!admission) return undefined
         admissions.push(admission)
     }
-    return observeGeneratedEnvironment({ rendered: record.rendered, inspection: record.inspection, admissions })
+    return observeGeneratedEnvironmentHealth({ rendered: record.rendered, inspection: record.inspection, admissions })
+}
+
+export async function observeGeneratedApplication(
+    application: GeneratedApplicationProjection,
+    input: Readonly<{ topology: RuntimeTopologyEvidence; runtime: GeneratedObservationRuntime }>,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<EnvironmentObservation | undefined> {
+    return (await observeGeneratedApplicationHealth(application, input, execute))?.environment
 }
 
 function commandInput(input: unknown): GeneratedEnvironmentCommandInput | undefined {
@@ -1479,6 +1581,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     return Object.freeze({
         root,
         cockpitId: publishedCockpit,
+        stackId: currentStack,
         ...(runtimeCheckout ? { runtimeCheckout } : {}),
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
@@ -2097,7 +2200,7 @@ async function prepareSurfaces(
             opencode: { measuredOn: '2026-09-26', provenance: 'instructions-list loading measurement', metric: 'lines', scopeSemantics: 'full' },
         },
     }
-    const projection = planSiblingProjection(projectionInput)
+    let projection = planSiblingProjection(projectionInput)
     if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)
 
     const evidence: SurfaceInputEvidence[] = observedGuides.observations.map(row => Object.freeze({
@@ -2168,6 +2271,7 @@ async function prepareSurfaces(
             ? refuse('SURFACE_INPUT_INVALID', namespace.message, namespace.target)
             : refuse('SURFACE_INPUT_INVALID', `browser posture state is ${namespace.kind}`, prepared.root)
         try {
+            const { resolveObservationPostures } = await import('./observations.js')
             const authority = await resolveObservationPostures({
                 configuration,
                 cockpitId: checkout.cockpitId,
@@ -2260,11 +2364,6 @@ async function prepareSurfaces(
     const testingRegistry = prepared.workEnvironment.testing
         ? createGateRegistry(prepared.workEnvironment.testing.declarations)
         : TESTING_GUIDE_REGISTRY
-    const tierGuide = renderTierGuide(testingRegistry, projectionInput)
-    if (tierGuide.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', tierGuide.reason, 'testing-tiers')
-    if (!prepared.workEnvironment.testing && tierGuide.bytes !== asset('references/testing-tiers.md').bytes) {
-        return refuse('SURFACE_INPUT_INVALID', 'the shipped testing tier guide differs from its canonical registry projection', 'references/testing-tiers.md')
-    }
     const configuredHarnesses = [...SURFACE_TARGETS, ...config.surfaces.harnesses.map(row => row.name)].sort()
     const testingConfiguration = prepared.workEnvironment.testing
     const explicitNativeHooks = testingConfiguration?.nativeHookInstall === 'explicit-native'
@@ -2431,6 +2530,27 @@ async function prepareSurfaces(
             ...(browserSkillRendered ? [{ name: 'cockpit-browser', description: skillDescription(asset('skills/cockpit-browser.skill.md').bytes) }] : []),
         ],
     })
+    const generatedRootInstructions = generated.files.filter(file => file.path === 'AGENTS.md')
+    const distinctGeneratedRoots = [...new Set(generatedRootInstructions.map(file => file.bytes))]
+    if (distinctGeneratedRoots.length > 1) return refuse(
+        'SURFACE_PATH_CONFLICT', 'generated root instructions diverge across always-loaded harnesses', 'AGENTS.md',
+    )
+    const rootInstructions = distinctGeneratedRoots[0]
+    const commonRootInstructions = [rootInstructions?.replace(/\n+$/u, ''), instructions.replace(/\n+$/u, '')]
+        .filter((value): value is string => value !== undefined && value.length > 0).join('\n') + '\n'
+    projectionInput.standingSources = GUARD_SURFACE_TARGETS.map(target => ({
+        target,
+        path: 'AGENTS.md',
+        content: commonRootInstructions,
+        scope: 'always' as const,
+    }))
+    projection = planSiblingProjection(projectionInput)
+    if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)
+    const tierGuide = renderTierGuide(testingRegistry, projectionInput)
+    if (tierGuide.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', tierGuide.reason, 'testing-tiers')
+    if (!prepared.workEnvironment.testing && tierGuide.bytes !== asset('references/testing-tiers.md').bytes) {
+        return refuse('SURFACE_INPUT_INVALID', 'the shipped testing tier guide differs from its canonical registry projection', 'references/testing-tiers.md')
+    }
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions, instructions,
         nativeMcp, nativeGrants, browser, browserReference: browser ? asset('references/browser.md').bytes : null,
         skillReferences: REFERENCE_ASSETS.map(path => ({ skill: SHIPPED_SETUP_SKILL, path, bytes: asset(path).bytes })),
@@ -2482,6 +2602,37 @@ async function prepareSurfaces(
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
     const surfaceEntries = Object.freeze([...bound.entries, ...bundleEntries]
         .sort((left, right) => compareCodeUnits(left.path, right.path)))
+    const rootGuide = surfaceEntries.find(entry => entry.path === 'AGENTS.md')
+    if (!rootGuide || rootGuide.kind !== 'shared-region' || rootGuide.region.format !== 'markdown-delimited') {
+        return refuse('SURFACE_INPUT_INVALID', 'the published always-loaded root guide is unavailable', 'AGENTS.md')
+    }
+    const characterizedGuideCosts = tierGuide.costs.filter(
+        (cost): cost is Exclude<StandingCost, { status: 'unavailable' }> => cost.status !== 'unavailable',
+    )
+    if (characterizedGuideCosts.length !== tierGuide.costs.length) {
+        return refuse('SURFACE_INPUT_INVALID', 'published instruction cost is not characterized', 'AGENTS.md')
+    }
+    let missingLinkedGuide = false
+    const rootGuideLines = guideLines(rootGuide.region.bytes)
+    const actualGuideCosts = characterizedGuideCosts.map(cost => {
+        const linkedGuideLines = cost.target === 'codexcli' ? 0 : projection.native
+            .filter(native => native.target === cost.target)
+            .reduce((sum, native) => {
+                const link = projection.links.find(candidate => candidate.path === native.linkPath)
+                const observation = link && observedGuides.observations.find(candidate => candidate.sourcePath === link.sourceGuidePath)
+                if (!observation) {
+                    missingLinkedGuide = true
+                    return sum
+                }
+                return sum + guideLines(observation.content)
+            }, 0)
+        const value = rootGuideLines + linkedGuideLines
+        return Object.freeze({ ...cost, value, status: value > cost.cap ? 'exceeded' as const : 'within_cap' as const })
+    })
+    if (missingLinkedGuide) return refuse('SURFACE_INPUT_INVALID', 'a published linked guide lost its authenticated measurement', 'AGENTS.md')
+    if (actualGuideCosts.some(cost => cost.status !== 'within_cap')) {
+        return refuse('SURFACE_INPUT_INVALID', 'combined published instruction cost exceeds the existing guide cap', 'AGENTS.md')
+    }
     if (explicitNativeHooks && !surfaceEntries.some(entry => entry.kind === 'file'
         && entry.path === explicitNativeHooks.source.path && entry.sha256 === explicitNativeHooks.source.sha256)) {
         return refuse('SURFACE_INPUT_INVALID', 'native hook policy must remain an exact desired owned surface', explicitNativeHooks.source.path)
@@ -2507,6 +2658,14 @@ async function prepareSurfaces(
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom }
     const surfaceSelftest = Object.freeze({ ...payload, manifestSha256: sha256(JSON.stringify(payload)) })
+    const surfaceHealth: GeneratedSurfaceHealthEvidence = Object.freeze({
+        observedAt: prepared.producedAt,
+        grants: Object.freeze(projection.grants.map(grant => Object.freeze({ ...grant }))),
+        nativeGrants,
+        guideCosts: Object.freeze(actualGuideCosts),
+        skillCosts: Object.freeze(skillInspection.costs.map(cost => Object.freeze({ ...cost }))),
+        skillCollectionSha256: skillInspection.collection.source.sha256,
+    })
     const customSurfacePaths = new Set(customReceipts.flatMap(receipt => receipt.files.map(file => file.path)))
     const compactSurfacePaths = new Set(generated.files.map(file => file.path).filter(path => !customSurfacePaths.has(path)))
     const evaluator = asset(EVALUATOR_ASSET)
@@ -2529,6 +2688,7 @@ async function prepareSurfaces(
     return Object.freeze({ ...prepared, guardHandler, surfaces: surfaceEntries, compactSurfacePaths, configuredHarnesses: Object.freeze(configuredHarnesses),
         activeSurfaceOverrides: merge.overrides, changedOverrideOriginals: merge.findings,
         surfaceSelftest,
+        surfaceHealth,
         guideSources: Object.freeze({
             requests: Object.freeze(guideRequests),
             observations: Object.freeze(observedGuides.observations.map(row => Object.freeze({ ...row }))
