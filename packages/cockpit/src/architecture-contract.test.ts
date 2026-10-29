@@ -4676,10 +4676,14 @@ describe('product architecture contract', () => {
             ['{ path, sha256: entry.sha256, maxBytes: Buffer.byteLength(entry.bytes), argvIndexes: [4], executable: false }', '{ path: prepared.root, sha256: entry.sha256, maxBytes: Buffer.byteLength(entry.bytes), argvIndexes: [4], executable: false }'],
             ["{ path: prepared.root, expected: 'directory' }, { path: scratch!, expected: 'directory' }", "{ path: prepared.root, expected: 'directory' }"],
             ['const revisionOutcome = authenticatedExecutionOutcome(await adapters.execute(revisionStep), revisionStep)', 'const revisionOutcome = await adapters.execute(revisionStep)'],
-            [`source: Object.freeze({ path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity }),
+            [`return Object.freeze({
+            projection,
+            source,
         })
     } finally {
-        if (scratch && scratchIdentity) {`, `source: Object.freeze({ path: policyDeclaration.path, sha256: policyRead.sha256, identity: policyRead.identity }),
+        if (scratch && scratchIdentity) {`, `return Object.freeze({
+            projection,
+            source,
         })
     } finally {
         if (scratch && scratchIdentity) {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { SurfaceTarget } from '../surfaces/contract.js'
+import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { runInitApplication, type CockpitRootQuestion, type InitApplicationInput, type InitApplicationOutcome } from '../environment/init-application.js'
 
 export const mechanism = {
@@ -152,7 +153,7 @@ export async function runInitOperatorCommand(
     application: InitApplicationHandler,
 ): Promise<InitApplicationOutcome> {
     const platform = input.platform ?? process.platform
-    if (platform !== 'darwin' && platform !== 'linux') return refusal('STATE_ROOT_UNAVAILABLE',
+    if (platform !== 'darwin' && platform !== 'linux') return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
         `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host`)
     const asked = new Set<string>()
     const outcome = await drive({ ...input, platform }, options, io, application, asked)
