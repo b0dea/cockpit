@@ -151,8 +151,11 @@ export async function runInitOperatorCommand(
     io: InitCommandIo,
     application: InitApplicationHandler,
 ): Promise<InitApplicationOutcome> {
+    const platform = input.platform ?? process.platform
+    if (platform !== 'darwin' && platform !== 'linux') return refusal('STATE_ROOT_UNAVAILABLE',
+        `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host`)
     const asked = new Set<string>()
-    const outcome = await drive(input, options, io, application, asked)
+    const outcome = await drive({ ...input, platform }, options, io, application, asked)
     if (!options.unattended || outcome.kind !== 'complete' || asked.size === 0) return outcome
     // A finished run that ignored part of the file would otherwise look like it honoured all of it.
     const ignored = [...answersByField(options.unattended.answers).fields.keys()]
@@ -163,7 +166,7 @@ export async function runInitOperatorCommand(
 }
 
 async function drive(
-    input: InitCommandInput,
+    input: InitCommandInput & Required<Pick<InitCommandInput, 'platform'>>,
     options: InitCommandOptions,
     io: InitCommandIo,
     application: InitApplicationHandler,
@@ -174,7 +177,7 @@ async function drive(
         target: input.target,
         ...(input.registry === undefined ? {} : { registry: input.registry }),
         sessionId: input.sessionId ?? randomUUID(),
-        platform: input.platform ?? (process.platform === 'darwin' ? 'darwin' : 'linux'),
+        platform: input.platform,
         home: input.home ?? process.env.HOME,
         ...(input.xdgStateHome === undefined ? {} : { xdgStateHome: input.xdgStateHome }),
         ...(input.resetAnswer === undefined ? {} : { resetAnswer: input.resetAnswer }),

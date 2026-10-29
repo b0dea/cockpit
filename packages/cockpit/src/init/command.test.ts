@@ -9,6 +9,38 @@ const pending = (): InitApplicationOutcome => ({
 })
 
 describe('init operator command', () => {
+    it('refuses an unsupported host platform before application while retaining an explicit supported platform', async () => {
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        let applicationCalls = 0
+        try {
+            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+
+            const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                { interactive: false, json: true }, {
+                    terminal: false,
+                    confirm: async () => undefined,
+                    writeArtifact: async () => undefined,
+                }, async () => { applicationCalls += 1; return pending() })
+
+            expect(outcome).toMatchObject({ kind: 'refusal', status: 2, diagnostics: [{
+                code: 'STATE_ROOT_UNAVAILABLE',
+                message: 'init cannot select a state root on win32 — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host',
+            }] })
+            expect(applicationCalls).toBe(0)
+
+            const explicit = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli', platform: 'linux' },
+                { interactive: false, json: true }, {
+                    terminal: false,
+                    confirm: async () => undefined,
+                    writeArtifact: async () => undefined,
+                }, async input => { applicationCalls += 1; expect(input.platform).toBe('linux'); return pending() })
+            expect(explicit).toEqual(pending())
+            expect(applicationCalls).toBe(1)
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+    })
+
     it('returns preview unchanged when noninteractive or JSON and never confirms or writes', async () => {
         const calls: string[] = []
         const io: InitCommandIo = {
