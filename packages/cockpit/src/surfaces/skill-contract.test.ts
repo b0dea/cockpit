@@ -267,6 +267,10 @@ describe('shipped skill contract', () => {
         expect(body).toContain('result.orders[0].state.attempts')
         expect(body).toContain('cockpit test-run --config cockpit.toml --gate declared-gate-id')
         const work = body.slice(body.indexOf('## Work'))
+        expect(work).toContain('[public intake examples]')
+        expect(work).toContain('Inspect applicable installed thinking, research, specification and planning skills')
+        expect(work).toContain('Record an audited empty selection when none applies')
+        expect(work).not.toContain("Run the harness's installed brainstorming and planning skills")
         const installedReview = work.indexOf("Run the harness's installed simplification and code-review skills")
         expect(installedReview).toBeGreaterThan(-1)
         expect(work.indexOf('cockpit work-review')).toBeGreaterThan(installedReview)
@@ -285,6 +289,12 @@ describe('shipped skill contract', () => {
         const setup = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-setup/SKILL.md')
         expect(setup?.bytes).toContain('references/test-data-and-personas.md')
         expect(setup?.bytes).toContain('adopt-cockpit')
+        const upgradeReview = setup?.bytes.indexOf('[Review an upgrade]') ?? -1
+        const exactInstall = setup?.bytes.indexOf('install that exact release') ?? -1
+        const humanSync = setup?.bytes.indexOf('ask a human to run `cockpit sync --interactive`') ?? -1
+        expect(upgradeReview).toBeGreaterThan(-1)
+        expect(exactInstall).toBeGreaterThan(upgradeReview)
+        expect(humanSync).toBeGreaterThan(exactInstall)
         expect(explain?.bytes).toContain('This skill changes nothing.')
         expect(fix?.bytes).toContain('direct-fix door')
         expect(fix?.bytes).toContain('does not scaffold a cockpit')

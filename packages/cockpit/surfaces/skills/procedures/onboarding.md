@@ -262,8 +262,10 @@ contract and the independent grading, not the thinking: reuse the planning skill
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** When preparing an intent descriptor, draft contract or source audit, follow the
    [public intake examples](https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor)
-   so the closed formats bind the inspected request without guessing fields. Run the harness's installed brainstorming and planning skills, then compile their output into
-   the work-order schema with `./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
+   so the closed formats bind the inspected request without guessing fields. Inspect applicable installed
+   thinking, research, specification and planning skills, and link each selected output in the source audit.
+   Record an audited empty selection when none applies. Then compile them into the work-order schema with
+   `./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
    The contract needs the parser-admitted number of acceptance criteria, each a Given/When/Then that independent reviewers could not
    disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from
    intake, then a human accepts it in a terminal with `./node_modules/.bin/cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,

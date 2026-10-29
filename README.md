@@ -118,11 +118,13 @@ section.
   `cockpit check` runs locally and in CI.
 - **Preview before every write.** `sync --dry-run` and `reset` show the exact changes; deleting
   anything stale or resetting data needs an interactive confirmation of that exact preview.
-- **Guards that run before the tool does.** One guard policy denies pushes to protected
+- **One guard policy, rendered through measured adapters.** The policy denies pushes to protected
   branches, edits to environment and secret files, and commands that reach declared hosted
-  databases or vendor hosts, translated into each harness's hook format.
-- **Work orders with independent grading.** Acceptance criteria, declared verification commands,
-  and an evaluator that is never the session that did the work.
+  databases or vendor hosts. The capability matrix records whether each harness enforces its
+  generated adapter.
+- **Work orders with independently routed grading.** Acceptance criteria, declared verification
+  commands and an evaluator surface keep authorship and review distinct. The capability matrix
+  records whether each harness enforces that separation.
 - **Shared machines stay safe.** Port leases, holder tracking and `sleep` mean one agent cannot
   stop another agent's stack.
 - **Adopt what you already have.** `cockpit document` turns an existing shell-registry cockpit
@@ -137,7 +139,7 @@ section.
 | Tilt, Garden | Dev loops for service stacks, centred on Kubernetes | cockpit targets Docker Compose on one machine and adds agent surfaces and grading. |
 | Plain Docker Compose | Running the services | cockpit generates the Compose file and adds agent configuration, drift checks and grading. |
 
-## Supported agent tools
+## Generated agent-tool targets
 
 | Harness | Target name | Where cockpit writes its surfaces |
 |---|---|---|
