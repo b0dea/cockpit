@@ -104,6 +104,8 @@ async function failureEvidence(logTimestamp = new Date().toISOString(), logOutpu
         State: container.State,
         Health: container.Health,
         Labels: Object.fromEntries(container.Labels.split(',').map((item) => item.split('='))),
+        Mounts: [],
+        Ports: {},
     })
     const source = `#!/bin/sh
 has_argument() {
