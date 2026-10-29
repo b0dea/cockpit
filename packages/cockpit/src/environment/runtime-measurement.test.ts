@@ -232,18 +232,30 @@ describe('runtime measurement recording', () => {
         expect(await readFile(host.configPath, 'utf8')).toBe(edited)
     })
 
-    it('refuses --write and prints the inline row when measurements are an inline array the append cannot extend', async () => {
+    it('replaces the generated empty inline measurements array with exactly one supported row', async () => {
         const host = await measuredHost()
-        const inline = `${CONFIG}runtime_measurements = []\n`
+        const inline = `${CONFIG.replace('purpose = "Synthetic API"', [
+            'purpose = """',
+            '[environment]',
+            'runtime_measurements = []',
+            '"""',
+        ].join('\n'))}# runtime_measurements = []\nruntime_measurements = []\n`
         await writeFile(host.configPath, inline)
 
         const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env: host.env },
             { execute: executeProbe, probe: async (request) => verdict(true, request.executable.sha256) })
 
-        expect(outcome).toMatchObject({ status: 2, diagnostics: [{
-            code: 'CONFIG_PARSE_INVALID', message: expect.stringContaining('{ runtime = "orbstack", compose_floor = "5.1.2"'),
-        }] })
-        expect(await readFile(host.configPath, 'utf8')).toBe(inline)
+        expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        const written = await readFile(host.configPath, 'utf8')
+        expect(written).toContain('purpose = """\n[environment]\nruntime_measurements = []\n"""')
+        expect(written).toContain('# runtime_measurements = []')
+        const loaded = await loadCockpitConfig(host.configPath)
+        expect(loaded.kind).toBe('complete')
+        if (loaded.kind !== 'complete') return
+        expect(loaded.result.config.environment.runtime_measurements).toEqual([{
+            runtime: 'orbstack', compose_floor: '5.1.2', measured_on: new Date().toISOString().slice(0, 10),
+            candidate: 'passed', broken_control: 'rejected', status: 'supported',
+        }])
     })
 
     it.each([

@@ -280,8 +280,9 @@ profiles, bind mounts in both directions, labels, health, logs, recovery and tea
 deliberately broken Compose file that the runtime must reject. It uses only the named local image
 and never pulls. When the candidate passes and the broken control is rejected, it prints one
 `[[environment.runtime_measurements]]` row whose `compose_floor` is the observed Compose version.
-With `--write` it appends that row to `cockpit.toml`, re-reads the file, and refuses unless exactly
-that one row was added; it also refuses when the runtime already has a row or the file changed
+With `--write` it appends that row to `cockpit.toml`, or replaces the generated empty
+`runtime_measurements = []` field with the row, then re-reads the file and refuses unless exactly
+that one row was added. It also refuses when the runtime already has a row or the file changed
 while the probe ran. A failed measurement writes nothing.
 
 The probe runs only from an installed `@b0dea/cockpit` package and only against a local runtime:

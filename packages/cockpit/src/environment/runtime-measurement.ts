@@ -105,6 +105,79 @@ function inlineRow(row: Readonly<Record<string, string>>): string {
     return `{ ${Object.entries(row).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join(', ')} }`
 }
 
+type MultilineDelimiter = '"""' | "'''"
+
+function multilineEnd(line: string, delimiter: MultilineDelimiter, start: number): number {
+    let candidate = line.indexOf(delimiter, start)
+    while (candidate !== -1 && delimiter === '"""') {
+        let escapes = 0
+        for (let index = candidate - 1; index >= 0 && line[index] === '\\'; index -= 1) escapes += 1
+        if (escapes % 2 === 0) break
+        candidate = line.indexOf(delimiter, candidate + delimiter.length)
+    }
+    return candidate
+}
+
+/** Return only TOML syntax outside strings and comments, carrying multiline-string state between lines. */
+function tomlCode(line: string, initial: MultilineDelimiter | null): Readonly<{ code: string; multiline: MultilineDelimiter | null }> {
+    let code = ''
+    let multiline = initial
+    for (let index = 0; index < line.length;) {
+        if (multiline !== null) {
+            const end = multilineEnd(line, multiline, index)
+            if (end === -1) return { code, multiline }
+            index = end + multiline.length
+            multiline = null
+            continue
+        }
+        const triple = line.slice(index, index + 3)
+        if (triple === '"""' || triple === "'''") {
+            multiline = triple
+            index += 3
+            continue
+        }
+        const char = line[index]!
+        if (char === '#') break
+        if (char === '"' || char === "'") {
+            const quote = char
+            index += 1
+            while (index < line.length) {
+                if (quote === '"' && line[index] === '\\') index += 2
+                else if (line[index] === quote) { index += 1; break }
+                else index += 1
+            }
+            continue
+        }
+        code += char
+        index += 1
+    }
+    return { code, multiline }
+}
+
+/** Replace only the generator's empty field in `[environment]`; unsupported TOML layouts fall through to verified refusal. */
+function rowEdit(original: string, row: Readonly<Record<string, string>>): string {
+    const lines = original.split('\n')
+    let table = ''
+    let multiline: MultilineDelimiter | null = null
+    let target: number | null = null
+    for (const [index, line] of lines.entries()) {
+        const scanned = tomlCode(line, multiline)
+        multiline = scanned.multiline
+        if (multiline !== null || scanned.code.trim().length === 0) continue
+        const header = /^\s*\[([^\[\]]+)]\s*$/.exec(scanned.code)
+        if (header) table = header[1]!.trim()
+        else if (table === 'environment' && /^\s*runtime_measurements\s*=\s*\[\]\s*$/.test(scanned.code)) {
+            if (target !== null) return original
+            target = index
+        }
+    }
+    if (target !== null) {
+        lines[target] = lines[target]!.replace(/\[\]/, `[ ${inlineRow(row)} ]`)
+        return lines.join('\n')
+    }
+    return `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}\n${tomlRow(row)}`
+}
+
 function withoutLastMeasurement(config: unknown): string {
     const value = config as { environment: { runtime_measurements: readonly unknown[] } }
     return JSON.stringify({ ...value, environment: { ...value.environment,
@@ -125,7 +198,7 @@ type AppendResult = Readonly<{ kind: 'complete' }> | Readonly<{ kind: 'refused';
 async function appendRow(path: string, expectedSha256: string, baseConfig: unknown, row: Readonly<Record<string, string>>): Promise<AppendResult> {
     const written = await writeVerifiedConfig({
         path, expectedSha256, temporaryTag: 'measure',
-        edit: (original) => `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}\n${tomlRow(row)}`,
+        edit: (original) => rowEdit(original, row),
         isExactChange: (config) => exactlyOneRowAdded(baseConfig, config, row),
         messages: {
             changedBefore: 'cockpit.toml changed while the runtime was being measured; nothing was written. Re-run the measurement',
