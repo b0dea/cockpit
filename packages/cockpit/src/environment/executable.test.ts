@@ -14,6 +14,19 @@ function directory(): string {
     return path
 }
 
+async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+    if (descriptor === undefined) throw new Error('process.platform descriptor is unavailable')
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
+}
+
+const searchResolvers = [
+    ['generic', 'comparison-tool', (env: Readonly<Record<string, string>>) => resolveExecutable('comparison-tool', env)],
+    ['Git', 'git', resolveGitExecutable],
+    ['Docker', 'docker', resolveDockerExecutable],
+] as const
+
 describe('resolved executable identity', () => {
     it('separates canonical bytes from the bound invocation identity', () => {
         expect(isResolvedExecutable({
@@ -131,6 +144,43 @@ describe('resolved executable identity', () => {
                 sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'verified-path' },
         })
         await expect(resolveExecutable('../comparison-tool', { PATH: root })).resolves.toEqual(expect.objectContaining({ state: 'unavailable' }))
+        await expect(withPlatform('darwin', () => resolveExecutable('comparison-tool', { Path: root })))
+            .resolves.toEqual({ state: 'unavailable', reason: 'Executable search path is missing or invalid' })
+    })
+
+    it.each(searchResolvers)('uses the single case-insensitive PATH spelling for %s resolution on Windows', async (_label, name, resolve) => {
+        const root = directory()
+        const invocationPath = join(root, name)
+        writeFileSync(invocationPath, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+
+        const result = await withPlatform('win32', () => resolve({ Path: root }))
+
+        expect(result).toEqual({
+            state: 'available',
+            value: {
+                canonicalPath: realpathSync(invocationPath), invocationPath,
+                sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+                executionMode: name === 'docker' ? 'staged' : 'verified-path',
+            },
+        })
+    })
+
+    it.each(searchResolvers)('refuses ambiguous PATH spellings before %s resolution on Windows', async (_label, name, resolve) => {
+        const root = directory()
+        writeFileSync(join(root, name), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+
+        const result = await withPlatform('win32', () => resolve({ PATH: root, Path: root }))
+
+        expect(result).toEqual({ state: 'unavailable', reason: 'Executable search environment has ambiguous PATH spellings' })
+    })
+
+    it.each(searchResolvers)('refuses ambiguous PATHEXT spellings before %s resolution on Windows', async (_label, name, resolve) => {
+        const root = directory()
+        writeFileSync(join(root, name), '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+
+        const result = await withPlatform('win32', () => resolve({ PATH: root, PATHEXT: '.EXE', PathExt: '.EXE' }))
+
+        expect(result).toEqual({ state: 'unavailable', reason: 'Executable search environment has ambiguous PATHEXT spellings' })
     })
 
     it('binds disk capacity to the current Node executable without searching PATH', async () => {

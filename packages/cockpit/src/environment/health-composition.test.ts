@@ -10,6 +10,7 @@ import { recordLifecycleSeeded, recordLifecycleStarted } from './lifecycle-stage
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
 import { selectStateRoot } from './state.js'
 import { createHealthCommandAdapters } from './health-composition.js'
+import { observeEnvSchemas } from './env-schema-observation.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 
 const run = promisify(execFile)
@@ -102,7 +103,7 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
         ].join('\n'), { mode: 0o700 })
         await chmod(dockerPath, 0o700)
     }
-    return { root, checkout, home, configPath }
+    return { root, checkout, home, configPath, stack }
 }
 
 async function surfaceOverrideFixture() {
@@ -590,6 +591,30 @@ describe('env schema health', () => {
                 severity: 'warning', code: 'ENV_SCHEMA_TOOL_MISSING', target: 'api', fix: expect.stringContaining('https://varlock.dev'),
             }))
         }
+    })
+
+    it('does not dispatch varlock through ambiguous Windows search environment names', async () => {
+        const candidate = await fixture({ machineOnly: true })
+        await withVarlock(candidate, printing(report(), 0))
+        const path = `${candidate.root}:/usr/bin:/bin`
+        const execute = vi.fn(executeProbe)
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+        if (platform === undefined) throw new Error('process.platform descriptor is unavailable')
+        Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+        try {
+            const observations = await observeEnvSchemas({
+                stackId: candidate.stack,
+                siblings: [{ slug: 'api', dir: 'api', root: join(candidate.checkout, 'siblings', 'api') }],
+                env: { PATH: path, Path: path, HOME: candidate.home },
+                timeoutMs: 5_000,
+            }, { execute })
+
+            expect(execute).not.toHaveBeenCalled()
+            expect(observations).toEqual([expect.objectContaining({
+                owner: schemaOwner,
+                observed: expect.objectContaining({ state: 'available', value: [{ sibling: 'api', state: 'tool-missing' }] }),
+            })])
+        } finally { Object.defineProperty(process, 'platform', platform) }
     })
 
     it('fails preflight naming the invalid keys and the fix', async () => {

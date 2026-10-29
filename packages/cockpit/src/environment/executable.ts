@@ -74,6 +74,25 @@ export type ExecutableResolution = Readonly<{ state: 'available'; value: Resolve
 const EXECUTABLE_BYTE_LIMIT = 536_870_912
 const PATH_ENTRY_LIMIT = 256
 
+type SearchEnvironmentSelection = Readonly<{ kind: 'selected'; value: unknown }>
+    | Readonly<{ kind: 'ambiguous'; name: 'PATH' | 'PATHEXT' }>
+    | Readonly<{ kind: 'unreadable' }>
+
+function selectSearchEnvironment(env: Readonly<Record<string, string>>): SearchEnvironmentSelection {
+    let name = 'PATH'
+    if (process.platform === 'win32') {
+        let keys: string[]
+        try { keys = Object.keys(env) } catch { return { kind: 'unreadable' } }
+        const pathNames = keys.filter((candidate) => candidate.toUpperCase() === 'PATH')
+        const pathExtNames = keys.filter((candidate) => candidate.toUpperCase() === 'PATHEXT')
+        if (pathNames.length > 1) return { kind: 'ambiguous', name: 'PATH' }
+        if (pathExtNames.length > 1) return { kind: 'ambiguous', name: 'PATHEXT' }
+        if (pathNames[0] === undefined) return { kind: 'selected', value: undefined }
+        name = pathNames[0]
+    }
+    try { return { kind: 'selected', value: env[name] } } catch { return { kind: 'unreadable' } }
+}
+
 function unavailable(reason: string): ExecutableResolution {
     return Object.freeze({ state: 'unavailable', reason })
 }
@@ -133,8 +152,10 @@ export async function resolveExecutable(name: string, env: Readonly<Record<strin
     if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) return unavailable('Executable name is invalid')
     if (isAbsolute(name)) return resolveExecutablePath(name)
     if (basename(name) !== name) return unavailable('Executable name must be absolute or a PATH entry name')
-    let pathValue: unknown
-    try { pathValue = env.PATH } catch { return unavailable('Executable search path is not readable') }
+    const selected = selectSearchEnvironment(env)
+    if (selected.kind === 'unreadable') return unavailable('Executable search path is not readable')
+    if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
+    const pathValue = selected.value
     if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
         return unavailable('Executable search path is missing or invalid')
     }
@@ -150,8 +171,10 @@ export async function resolveExecutable(name: string, env: Readonly<Record<strin
 }
 
 export async function resolveGitExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
-    let pathValue: unknown
-    try { pathValue = env.PATH } catch { return unavailable('Git executable search path is not readable') }
+    const selected = selectSearchEnvironment(env)
+    if (selected.kind === 'unreadable') return unavailable('Git executable search path is not readable')
+    if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
+    const pathValue = selected.value
     if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
         return unavailable('Git executable search path is missing or invalid')
     }
@@ -184,8 +207,10 @@ export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolut
 }
 
 export async function resolveDockerExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
-    let pathValue: unknown
-    try { pathValue = env.PATH } catch { return unavailable('Docker executable search path is not readable') }
+    const selected = selectSearchEnvironment(env)
+    if (selected.kind === 'unreadable') return unavailable('Docker executable search path is not readable')
+    if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
+    const pathValue = selected.value
     if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
         return unavailable('Docker executable search path is missing or invalid')
     }
