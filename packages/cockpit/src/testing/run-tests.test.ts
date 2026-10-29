@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 const SCRIPT = fileURLToPath(new URL('../../../../scripts/run-tests.mjs', import.meta.url))
 const IMMEDIATE_FAILURE_REPORTER = fileURLToPath(new URL('../../../../scripts/immediate-failure-reporter.mjs', import.meta.url))
+// The fake runners and their children ignore SIGTERM, so an interrupted run, when nothing is left to SIGKILL them, has
+// left them running for days. Their keep-alive also exits once this test worker is gone.
+const KEEP_ALIVE = `setInterval(() => { try { process.kill(${process.pid}, 0) } catch { process.exit(0) } }, 1000)`
 const roots: string[] = []
 const originalScenario = process.env.COCKPIT_RUNNER_SCENARIO
 const originalPidPath = process.env.COCKPIT_RUNNER_PID_PATH
@@ -98,10 +101,10 @@ if (scenario === 'missing-internal') {
 if (scenario === 'mismatched-pending') result.numPendingTests = 1
 if (scenario === 'hang') {
   process.on('SIGTERM', () => {})
-  const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'], { detached: true, stdio: 'ignore' })
+  const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});${KEEP_ALIVE}'], { detached: true, stdio: 'ignore' })
   child.unref()
   writeFileSync(process.env.COCKPIT_RUNNER_PID_PATH, String(child.pid))
-  setInterval(() => {}, 1000)
+  ${KEEP_ALIVE}
 } else if (scenario === 'late-descendant') {
   const gate = process.env.COCKPIT_RUNNER_GATE_PATH
   const wait = new Int32Array(new SharedArrayBuffer(4))
@@ -118,7 +121,7 @@ if (scenario === 'hang') {
     process.exit(0)
   })
   writeFileSync(process.env.COCKPIT_RUNNER_PID_PATH, String(process.pid))
-  setInterval(() => {}, 1000)
+  ${KEEP_ALIVE}
 } else {
   if (scenario === 'replace-temp') {
     const moved = invocationTemp.root + '-moved'
@@ -425,7 +428,7 @@ process.exitCode = await runTestsCli(${JSON.stringify(selected)}, {
             "const { spawn } = require('node:child_process')",
             "const { writeFileSync } = require('node:fs')",
             "process.on('SIGTERM', () => {",
-            "  const fork = spawn(process.execPath, ['-e', 'process.on(\\\"SIGTERM\\\",()=>{});setInterval(()=>{},1000)'], { stdio: 'ignore' })",
+            "  const fork = spawn(process.execPath, ['-e', 'process.on(\\\"SIGTERM\\\",()=>{});" + KEEP_ALIVE + "'], { stdio: 'ignore' })",
             '  fork.unref()',
             '  writeFileSync(process.env.COCKPIT_RUNNER_FORK_PID_PATH, String(fork.pid))',
             '  process.exit(0)',

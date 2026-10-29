@@ -17,6 +17,10 @@ const nodeStep = (id: string, script: string, overrides: Partial<ExecutionStep> 
 })
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
 
+// The fixtures that ignore SIGTERM outlive an interrupted run, when nothing is left to SIGKILL them, and have run on for
+// days. Their keep-alive also exits once this test worker is gone; while it lives, every termination assertion holds.
+const KEEP_ALIVE = `setInterval(() => { try { process.kill(${process.pid}, 0) } catch { process.exit(0) } }, 1000)`
+
 function stagedProcess(marker: string): { pid: number; staging: string } {
     const [staging, pid] = readFileSync(marker, 'utf8').trim().split('\n')
     return { staging, pid: Number(pid) }
@@ -220,7 +224,7 @@ describe('mechanical environment executor', () => {
             "const { writeFileSync } = require('node:fs')",
             `writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
             "process.on('SIGTERM', () => {})",
-            'setInterval(() => {}, 1000)',
+            KEEP_ALIVE,
         ].join(';'), { timeoutMs: 30_000, executionFence: fence })
         const executeModule = fileURLToPath(new URL('./execute.ts', import.meta.url))
         const source = `import { executeProbe } from ${JSON.stringify(executeModule)}; await executeProbe(JSON.parse(process.argv[1]))`
@@ -262,7 +266,7 @@ describe('mechanical environment executor', () => {
         const outcome = await executeProbe(nodeStep('fenced-timeout', [
             `require('node:fs').writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
             "process.on('SIGTERM', () => {})",
-            'setInterval(() => {}, 1000)',
+            KEEP_ALIVE,
         ].join(';'), {
             timeoutMs: 500,
             executionFence: {
@@ -286,7 +290,7 @@ describe('mechanical environment executor', () => {
         const script = [
             "const { spawn } = require('node:child_process')",
             "const { writeFileSync } = require('node:fs')",
-            `const child = spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)")}], { stdio: 'ignore' })`,
+            `const child = spawn(process.execPath, ['-e', ${JSON.stringify(`process.on('SIGTERM', () => {}); ${KEEP_ALIVE}`)}], { stdio: 'ignore' })`,
             'child.unref()',
             `writeFileSync(${JSON.stringify(descendant)}, String(child.pid))`,
         ].join(';')
@@ -311,10 +315,10 @@ describe('mechanical environment executor', () => {
             "const { spawn } = require('node:child_process')",
             "const { writeFileSync } = require('node:fs')",
             `writeFileSync(${JSON.stringify(action)}, String(process.pid))`,
-            `const child = spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)")}], { stdio: 'ignore' })`,
+            `const child = spawn(process.execPath, ['-e', ${JSON.stringify(`process.on('SIGTERM', () => {}); ${KEEP_ALIVE}`)}], { stdio: 'ignore' })`,
             `writeFileSync(${JSON.stringify(descendant)}, String(child.pid))`,
             "process.on('SIGTERM', () => {})",
-            'setInterval(() => {}, 1000)',
+            KEEP_ALIVE,
         ].join(';')
         const execution = executeProbe(nodeStep('fenced-pipe-loss', script, { timeoutMs: 30_000, executionFence: fence }))
         let actionPid: number | undefined
@@ -352,7 +356,7 @@ describe('mechanical environment executor', () => {
         const execution = executeProbe(nodeStep('fenced-pipe-loss-refusal', [
             `require('node:fs').writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
             "process.on('SIGTERM', () => {})",
-            'setInterval(() => {}, 1000)',
+            KEEP_ALIVE,
         ].join(';'), { timeoutMs: 30_000, executionFence: fence }))
         let actionPid: number | undefined
         try {
@@ -425,7 +429,7 @@ describe('mechanical environment executor', () => {
                 "const { writeFileSync } = require('node:fs')",
                 "process.on('SIGTERM', () => {})",
                 `writeFileSync(${JSON.stringify(ready)}, 'ready')`,
-                'setInterval(() => {}, 1000)',
+                KEEP_ALIVE,
             ].join(';')],
             cwd: process.cwd(),
             env: { PATH: process.env.PATH ?? '' },
@@ -1397,7 +1401,7 @@ while :; do sleep 1; done
             "process.on('SIGTERM', () => {})",
             `require('node:fs').writeFileSync(${JSON.stringify(`${descendantMarker}.pending`)}, String(process.pid))`,
             `require('node:fs').renameSync(${JSON.stringify(`${descendantMarker}.pending`)}, ${JSON.stringify(descendantMarker)})`,
-            'setInterval(() => {}, 1000)',
+            KEEP_ALIVE,
         ].join(';')
         const source = `#!/usr/bin/env node
 const { spawn } = require('node:child_process')
@@ -1451,7 +1455,7 @@ const ready = setInterval(() => {
         const started = Date.now()
         const outcome = await executePlan({ steps: [nodeStep(
             'ignores-term',
-            "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)",
+            `process.on('SIGTERM', () => {}); ${KEEP_ALIVE}`,
             { timeoutMs: 30 },
         )] })
 
@@ -1466,9 +1470,9 @@ const ready = setInterval(() => {
             'descendant-pipes',
             [
                 "const { spawn } = require('node:child_process')",
-                "spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"], { stdio: ['ignore', 'inherit', 'inherit'] })",
+                "spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); " + KEEP_ALIVE + "\"], { stdio: ['ignore', 'inherit', 'inherit'] })",
                 "process.on('SIGTERM', () => {})",
-                'setInterval(() => {}, 1000)',
+                KEEP_ALIVE,
             ].join(';'),
             { timeoutMs: 30 },
         )] })
@@ -1484,7 +1488,7 @@ const ready = setInterval(() => {
         const childScript = [
             "process.on('SIGTERM', () => {})",
             `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'alive'), 400)`,
-            'setInterval(() => {}, 1000)',
+            KEEP_ALIVE,
         ].join(';')
         const leaderScript = [
             "const { spawn } = require('node:child_process')",
