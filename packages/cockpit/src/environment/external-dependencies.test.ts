@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { parse as parseYaml } from 'yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
@@ -161,14 +162,14 @@ async function authoritativeHarness(root: string, vendors = [vendor()]) {
         'dev.b0.cockpit.source-sha256': configSha256,
     }
     writeFileSync(docker, `#!/usr/bin/env node
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 const args = process.argv.slice(2)
 const stopped = existsSync('.backend-stopped')
 const labels = ${JSON.stringify(labels)}
 const container = ${JSON.stringify({ ID: containerId, Name: 'synthetic-app-1', Project: 'synthetic-stack', Service: 'app', State: 'running', Health: 'healthy', ExitCode: 0 })}
 if (args.includes('config') && args.includes('--no-env-resolution')) {
-  process.stdout.write(JSON.stringify({ services: { app: { image: 'node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5', labels, healthcheck: { test: ['CMD', 'true'] } } } }))
+  process.stdout.write(readFileSync('topology.yml', 'utf8'))
 } else if (args.includes('--progress') && args.includes('up')) {
   process.exit(0)
 } else if (args.includes('ps') && args.includes('--format') && args.includes('json')) {
@@ -215,9 +216,22 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
         cockpitId, portDefaults: { APP_HOST_PORT: 4100 }, siblingDirectories: { app: 'app', web: 'web' },
     })
     if (rendered.kind !== 'complete') throw new Error(rendered.reason)
+    const parsedCompose = parseYaml(rendered.compose) as {
+        services: { app: { image: string; volumes?: { type: string; source: string; target: string }[] } }
+        volumes?: Record<string, unknown>
+    }
+    const service = parsedCompose.services.app
+    const resolvedVolumes = (service.volumes ?? []).map((volume) => volume.type === 'bind'
+        ? { ...volume, source: resolve(root, volume.source) }
+        : volume)
+    const expectedMountSources = resolvedVolumes.filter(({ type }) => type === 'bind').map(({ source }) => source).sort()
+    const volumeRegistry = Object.fromEntries(Object.keys(parsedCompose.volumes ?? {}).map((source) => [source, { name: `synthetic_${source}` }]))
     const composePath = runtime.composeFiles[0]!.path
     const topologyPath = join(root, 'topology.yml')
-    const topologySource = `services:\n  app:\n    image: synthetic@sha256:${'a'.repeat(64)}\n`
+    const topologySource = JSON.stringify({
+        services: { app: { image: service.image, labels, healthcheck: { test: ['CMD', 'true'] }, volumes: resolvedVolumes } },
+        volumes: volumeRegistry,
+    })
     writeFileSync(topologyPath, topologySource)
     const runtimeExecutable = executable(docker)
     const compose = { path: composePath, sha256: createHash('sha256').update(rendered.compose).digest('hex') }
@@ -227,7 +241,7 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
         composeFiles: [{ reference: 'topology.yml', canonicalPath: topologyPath, source: topologySource, sha256: createHash('sha256').update(topologySource).digest('hex') }],
         projectName: 'synthetic-stack', env: { PATH: process.env.PATH ?? '/usr/bin:/bin' }, ports: [],
         labels: { stackId: stack, configSha256, batchId }, timeoutMs: 5_000,
-        stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources: [],
+        stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources,
     })
     if (adapter.kind !== 'preview') throw new Error(`runtime adapter fixture unavailable: ${JSON.stringify(adapter)}`)
     const window = { startedAt: new Date(Date.now() - 1_000).toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() }
@@ -250,8 +264,11 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
     const health = admitRuntimeServiceHealth({ observation: observed.observation })
     if (health.kind !== 'complete') throw new Error(health.reason)
     writeFileSync(composePath, rendered.compose)
+    mkdirSync(join(root, 'app'), { recursive: true })
+    const siblingIdentity = statSync(join(root, 'app'))
+    const hostInputRoots = { app: { path: join(root, 'app'), dev: siblingIdentity.dev, ino: siblingIdentity.ino } }
     const generatedAuthority = projectGeneratedRuntimeAuthority({
-        rendered, topology: admittedTopology.topology,
+        hostInputRoots, rendered, topology: admittedTopology.topology,
         runtime: { ...runtime, publicEnv: { ...runtime.publicEnv, COCKPIT_OWNER_ID: cockpitId, COCKPIT_STACK_ID: stack },
             executable: runtimeExecutable, composeFiles: [compose], projectName: 'synthetic-stack', serviceAuthority: { topology: admittedTopology.topology, evidence: health.evidence } },
     })
@@ -265,7 +282,7 @@ if (args.includes('config') && args.includes('--no-env-resolution')) {
         serviceAuthority: { topology: admittedTopology.topology, evidence: health.evidence },
     }
     return { ...authorityRuntime, generatedAuthority,
-        authoritySource: { rendered, topology: admittedTopology.topology, runtime: authorityRuntime } }
+        authoritySource: { hostInputRoots, rendered, topology: admittedTopology.topology, runtime: authorityRuntime } }
 }
 
 describe('external dependency boundary', () => {
