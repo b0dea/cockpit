@@ -18,6 +18,7 @@ import { selectStateRoot, transactState } from '../environment/state.js'
 import { recordLifecycleStarted } from '../environment/lifecycle-stage.js'
 import {
     generatedApplicationProjection,
+    observeGeneratedApplicationSurfaces,
     projectWorkApplicationAuthorities,
     consumeWorkApplicationAuthorities,
 } from '../environment/generated-application.js'
@@ -295,6 +296,44 @@ native_hooks = { install = "inspect" }
                 } else expect(compose.services).not.toHaveProperty('cockpit-browser-runner')
                 const application = generatedApplicationProjection(synchronized.result.application)
                 if (!application) throw new Error('generated application projection was not issued')
+                const installedSkills = application.surfaceSelftest.entries.filter(entry => entry.kind === 'file'
+                    && entry.path.startsWith('.claude/skills/') && entry.path.endsWith('/SKILL.md'))
+                let installedFrontmatterBytes = 0
+                for (const entry of installedSkills) {
+                    const published = await readFile(join(fixture.root, entry.path), 'utf8')
+                    expect(published).toMatch(/^---\n/)
+                    const end = published.indexOf('\n---\n', 4)
+                    expect(end).toBeGreaterThan(4)
+                    installedFrontmatterBytes += Buffer.byteLength(published.slice(4, end))
+                }
+                const installedInventory = application.surfaceSelftest.entries.filter(entry => entry.kind === 'file'
+                    && entry.path.endsWith('/SKILL.md')).flatMap(entry => entry.harnesses.map(target => ({
+                        target, path: entry.path, sha256: entry.kind === 'file' ? entry.sha256 : '',
+                    }))).sort((left, right) => {
+                        const a = `${left.target}\0${left.path}`
+                        const b = `${right.target}\0${right.path}`
+                        return a < b ? -1 : a > b ? 1 : 0
+                    })
+                const frontmatterByTarget = new Map<string, number>()
+                for (const row of installedInventory) {
+                    const published = await readFile(join(fixture.root, row.path), 'utf8')
+                    expect(published).toMatch(/^---\n/)
+                    const end = published.indexOf('\n---\n', 4)
+                    expect(end).toBeGreaterThan(4)
+                    frontmatterByTarget.set(row.target, (frontmatterByTarget.get(row.target) ?? 0)
+                        + Buffer.byteLength(published.slice(4, end)))
+                }
+                const skillHealth = observeGeneratedApplicationSurfaces(application)?.find(row => row.code === 'SKILL_BUDGET_UNAVAILABLE')
+                expect(skillHealth).toMatchObject({ observed: { state: 'available', value: {
+                    inventorySha256: digest(JSON.stringify(installedInventory)), inventory: installedInventory, skills: [...new Set(installedInventory.map(row => row.path.split('/').at(-2)!))].sort(),
+                    costs: expect.arrayContaining([
+                    expect.objectContaining({ target: 'claudecode', metric: 'frontmatter_bytes', value: installedFrontmatterBytes }),
+                ]) } } })
+                expect(skillHealth).toHaveProperty('observed.value.costs.length', frontmatterByTarget.size)
+                expect(skillHealth).toMatchObject({ observed: { value: { costs: expect.arrayContaining(
+                    [...frontmatterByTarget].map(([target, value]) => expect.objectContaining({ target, metric: 'frontmatter_bytes', value })),
+                ) } } })
+
                 expect(projectWorkApplicationAuthorities({ ...application })).toBeUndefined()
                 const projected = projectWorkApplicationAuthorities(application)
                 if (!projected) throw new Error('work application authorities were not projected')

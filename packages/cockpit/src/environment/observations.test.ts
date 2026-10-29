@@ -16,14 +16,13 @@ import {
     projectDoctor,
     refreshObservationPostures,
     resolveObservationPostures,
-    unavailableProducerObservations,
     validateObservationDeclarations,
 } from './observations.js'
 import { observeConfiguration, selectStateRoot, transactState } from './state.js'
 import { coordinationStateRecord, observeClaimState } from './claims.js'
 import { leasePortFamily, observePortFamily } from './ports.js'
 import { observeEnvironmentKeys, observeSiblingPresence } from './templates.js'
-import { createResourceBudgetPlan, createRuntimeAdapter, observeResourceBudgets, observeRuntimeExecution } from './runtime.js'
+import { createRuntimeAdapter, observeRuntimeExecution } from './runtime.js'
 import { resolvedExecutable } from './executable.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { observeStateSeed, recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
@@ -96,6 +95,13 @@ async function observation(input: {
     return values.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
 }
 
+async function unavailableConfiguration() {
+    const root = await mkdtemp(join(tmpdir(), 'cockpit-missing-config-observation-'))
+    temporaryPaths.push(root)
+    return (await observeConfiguration({ path: join(root, 'missing.toml'), stackId, observedAt: now }))
+        .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
+}
+
 async function evaluateFixture(values: readonly EnvironmentObservation[]) {
     const stackIds = [...new Set(values.map(({ stackId: value }) => value))]
     const contexts = await Promise.all(stackIds.map((value) => context(value)))
@@ -112,9 +118,8 @@ const everyStage = Object.freeze([
 ] as const)
 
 describe('observation contract and applicability', () => {
-    it('keeps producer-issued authentication unknown through preflight and doctor mandatory checks', async () => {
-        const values = unavailableProducerObservations(stackId, now)
-        const value = values.find(({ owner }) => owner === 'registry-authentication')!
+    it('keeps producer-issued unavailable configuration through preflight and doctor mandatory checks', async () => {
+        const value = await unavailableConfiguration()
         expect(observationSatisfiesExpectation(value)).toBe(false)
         const preflight = aggregateObservations([[value]], await context())
         for (const projection of [preflight, projectDoctor(preflight)]) {
@@ -150,12 +155,13 @@ describe('observation contract and applicability', () => {
 
     it('derives leaf applicability only from the current declared configuration', async () => {
         const plain = await context()
-        expect(plain.authorities[0]!.postures).toEqual(['environment', 'mounted'])
+        expect(plain.authorities[0]!.postures).toEqual(['directory-grants', 'environment', 'mounted'])
         const generatedSource = (await readFile(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8'))
             .replace('name = "generated-environment"', 'name = "fixture"')
         const declared = await context(stackId, 'always', generatedSource)
         expect(declared.authorities[0]!.postures).toEqual([
-            'data-plane', 'dependencies', 'environment', 'external-dependencies', 'generated-environment', 'mounted',
+            'data-plane', 'dependencies', 'directory-grants', 'environment', 'external-dependencies', 'generated-environment', 'mounted',
+            'registry-authentication', 'running-stack',
         ])
     })
 
@@ -168,7 +174,7 @@ describe('observation contract and applicability', () => {
     it('carries exact addressing and authentication declarations separately from lifecycle applicability', async () => {
         const declared = await context(stackId, 'always', validConfigSource)
         expect(declared.authorities[0]).toEqual(expect.objectContaining({
-            postures: ['environment', 'mounted'],
+            postures: ['directory-grants', 'environment', 'mounted'],
             environmentPostures: { addressing: 'hostname', authentication: 'real' },
         }))
 
@@ -465,7 +471,7 @@ describe('observation contract and applicability', () => {
         expect(preflight.verdict).not.toBe('pass')
     })
 
-    it('has local producers for configuration, sibling, and bounded resource checks', async () => {
+    it('has local producers for configuration and sibling checks', async () => {
         const siblingRoot = await mkdtemp(join(tmpdir(), 'cockpit-siblings-'))
         temporaryPaths.push(siblingRoot)
         await mkdir(join(siblingRoot, 'service'))
@@ -483,44 +489,17 @@ describe('observation contract and applicability', () => {
         }, 'siblingRoot', { enumerable: true, get: () => ++rootReads === 1 ? siblingRoot : join(siblingRoot, 'missing') })
         await expect(observeSiblingPresence(mutableSibling as never)).rejects.toThrow('sibling presence input is malformed')
         expect(rootReads).toBe(0)
-        const artifact = join(siblingRoot, 'artifact.txt')
-        const guide = join(siblingRoot, 'AGENTS.md')
-        await writeFile(artifact, 'abc')
-        await writeFile(guide, 'guide')
-        expect((await observeResourceBudgets({ plan: createResourceBudgetPlan({
-            stackId, artifactPaths: [artifact], diskLimitBytes: 4,
-            guidePaths: [guide], guideLimitBytes: 6,
-        }) })).map(({ code }) => code)).toEqual([
-            ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED,
-            ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
-        ])
-        let reads = 0
-        const mutable = Object.defineProperty({
-            stackId, artifactPaths: [artifact], guidePaths: [guide], guideLimitBytes: 6,
-        }, 'diskLimitBytes', { enumerable: true, get: () => ++reads === 1 ? 4 : 0 })
-        expect(() => createResourceBudgetPlan(mutable as never)).toThrow('resource budget input is malformed')
-        expect(reads).toBe(0)
     })
 
-    it('preserves exact disk byte comparisons at the configured threshold', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-byte-budget-'))
-        temporaryPaths.push(root)
-        const artifact = join(root, 'artifact')
-        for (const size of [4, 5]) {
-            await writeFile(artifact, Buffer.alloc(size))
-            const evaluationContext = await context(stackId, 'always', validConfigSource, new Date().toISOString())
-            const values = await observeResourceBudgets({ plan: createResourceBudgetPlan({
-                stackId, artifactPaths: [artifact], diskLimitBytes: 4,
-                guidePaths: [], guideLimitBytes: 4,
-            }) })
-            const disk = values.find(({ code }) => code === ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED)!
-            expect(disk.observed).toMatchObject({ state: 'available', value: size })
-            expect(disk.expectation).toEqual({ kind: 'maximum', value: 4 })
-            expect(observationSatisfiesExpectation(disk)).toBe(size === 4)
-            const checks = evaluatePreflight(values, evaluationContext).checks
-            expect(checks.find(({ code }) => code === ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED)?.verdict)
-                .toBe(size === 4 ? 'pass' : 'fail')
-        }
+    it('keeps operation timing and undeclared artifact ceilings outside read-only health', async () => {
+        const result = evaluatePreflight([], await context())
+        expect(result.checks.map(({ code }) => code)).not.toContain(ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED)
+        expect(result.checks.map(({ code }) => code)).not.toContain('DISK_BUDGET_EXCEEDED')
+        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR)?.verdict).toBe('not-applicable')
+        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED)).toMatchObject({
+            owner: 'generated-environment-application', verdict: 'unavailable',
+        })
+        expect(ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED).toBe('MACHINE_COLD_START_EXCEEDED')
     })
 
     it('collects claim, port, and seed state through their owning read paths', async () => {
@@ -536,9 +515,12 @@ describe('observation contract and applicability', () => {
             ENVIRONMENT_CODES.STATE_UNSEEDED,
         ])
         const evaluationContext = await context()
-        expect(() => evaluatePreflight(items.map((item) => ({ ...item })), evaluationContext)).toThrow('producer-issued')
-        expect(evaluatePreflight(items, await context()).checks.filter(({ code }) => items.some((item) => item.code === code)).map(({ verdict }) => verdict))
-            .toEqual(['not-applicable', 'not-applicable', 'not-applicable'])
+        const healthItems = items.filter(({ code }) => code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION)
+        expect(() => evaluatePreflight(healthItems.map((item) => ({ ...item })), evaluationContext)).toThrow('producer-issued')
+        const acquisitionContext = await context()
+        expect(() => evaluatePreflight([items[1]!], acquisitionContext)).toThrow('no declared producer authority')
+        expect(evaluatePreflight(healthItems, await context()).checks.filter(({ code }) => healthItems.some((item) => item.code === code)).map(({ verdict }) => verdict))
+            .toEqual(['not-applicable', 'not-applicable'])
     })
 
     it('keeps locally required observations active after the first seed', async () => {
@@ -564,7 +546,7 @@ describe('observation contract and applicability', () => {
         ]) expect(checks.find((check) => check.code === code)?.verdict).toBe('unavailable')
     })
 
-    it('projects tri-state empty listener success only through the active lease owner', async () => {
+    it('keeps empty acquisition listener evidence separate from current runtime health', async () => {
         const state = await namespace()
         const leaseEvidence = await leasePortFamilyFixture({
             namespace: state, stackId, holderId: firstHolder, checkoutId,
@@ -585,11 +567,8 @@ describe('observation contract and applicability', () => {
         if (stage.kind !== 'complete') throw new Error('empty listener lifecycle authority was refused')
         const authorities = (await context()).authorities
         const absence = await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })
-        const preflight = aggregateObservations([[absence]], { authorities, stages: [stage.authority] })
-        for (const projection of [preflight, projectDoctor(preflight)]) {
-            expect(projection.checks.find(({ code }) => code === ENVIRONMENT_CODES.PORT_FAMILY_COLLISION))
-                .toMatchObject({ owner: 'environment-port-coordination', verdict: 'pass', measured: true, expected: { kind: 'equal', value: true } })
-        }
+        expect(() => aggregateObservations([[absence]], { authorities, stages: [stage.authority] }))
+            .toThrow('no declared producer authority')
         expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence: { ...leaseEvidence } })).observed.state)
             .toBe('unavailable')
 
@@ -794,7 +773,7 @@ describe('observation contract and applicability', () => {
     })
 
     it('never turns unavailable or stale required evidence green', async () => {
-        const unavailable = unavailableProducerObservations(stackId, now)[0]!
+        const unavailable = await unavailableConfiguration()
         const stale = await observation()
         expect((await evaluateFixture([unavailable])).checks.find(({ code }) => code === unavailable.code)?.verdict).toBe('unavailable')
         const changedSource = `${validConfigSource}# changed\n`
@@ -809,19 +788,20 @@ describe('observation contract and applicability', () => {
         expect(evaluatePreflight([], await context(stackId, 'profile:web')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
     })
 
-    it('publishes unavailable producers under stable public names', async () => {
-        const items = unavailableProducerObservations(stackId, now)
-        expect(items.map((item) => item.owner)).toEqual([
-            'directory-grants',
-            'harness-surfaces',
-            'mount-materialization',
-            'registry-authentication',
-            'skill-budget',
-        ])
-        expect(items.every((item) => item.observed.state === 'unavailable')).toBe(true)
-        const result = evaluatePreflight(items, await context())
+    it('requires real surface owners and rejects a fabricated passing surface row', async () => {
+        const codes = [ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
+            ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE,
+            ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE, ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE]
+        for (const code of codes) {
+            const declaration = allObservationDeclarations.find(row => row.code === code)
+            expect(declaration, code).toBeDefined()
+            expect(declaration!.isIssued({ code, observed: { state: 'available', value: true } })).toBe(false)
+        }
+        const result = evaluatePreflight([], await context())
         expect(result.verdict).toBe('unavailable')
-        expect(result.checks.find(({ owner }) => owner === 'registry-authentication')?.verdict).toBe('unavailable')
+        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE)?.verdict).toBe('unavailable')
+        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE)?.verdict).toBe('unavailable')
+        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE)?.verdict).toBe('not-applicable')
     })
 
     it('projects doctor from the same verdict and only adds evidence', async () => {
@@ -1084,10 +1064,11 @@ describe('deterministic preflight and doctor', () => {
         expect(checks.map(({ verdict }) => verdict)).toEqual(['pass', 'pass'])
     })
 
-    it('keeps mandatory unavailable producers in the production aggregate', async () => {
+    it('keeps mandatory missing owner evidence in the production aggregate', async () => {
         const result = aggregateObservations([], await context())
-        expect(result.checks.map(({ owner }) => owner)).toEqual(expect.arrayContaining([
-            'directory-grants', 'harness-surfaces', 'mount-materialization', 'registry-authentication', 'skill-budget',
+        expect(result.checks.map(({ code }) => code)).toEqual(expect.arrayContaining([
+            ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE,
+            ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, ENVIRONMENT_CODES.REGISTRY_AUTH_UNAVAILABLE, ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE,
         ]))
         expect(result.verdict).toBe('unavailable')
     })

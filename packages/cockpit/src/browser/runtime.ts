@@ -3,7 +3,7 @@ import { isIP } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { GeneratedHostPath, parseBrowserNetworkExposure } from '../schema.js'
-import { evaluatePreflight } from '../environment/observations.js'
+import { authenticateObservationPostureContext, type PreflightContext } from '../environment/posture-observation.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from '../environment/ports.js'
 import { authenticateStateNamespace, type StateNamespace } from '../environment/state.js'
 import { browserHostAllowed, resolveBrowserProxy, type BrowserProxyInput } from './proxy.js'
@@ -26,7 +26,7 @@ interface BrowserStorageState {
 }
 
 export interface BrowserRuntimeInput {
-    readonly postures: Parameters<typeof evaluatePreflight>[1]
+    readonly postures: PreflightContext
     readonly images: Readonly<{ runner: BrowserImage; mcp: BrowserImage }>
     readonly project: Readonly<{ lockfile: string; sha256: string; driverVersion: string; manifest?: string; manifestSha256?: string }>
     readonly engine?: 'chromium' | 'firefox' | 'webkit'
@@ -90,12 +90,12 @@ export function browserClientLimit(maxClients: number, policy: BrowserRuntimeInp
 export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNamespace?: StateNamespace) {
     assertPlainData(input)
     // The existing owner authenticates source, freshness and both directions of the catalog.
-    const checked = evaluatePreflight([], input.postures)
-    const checks = checked.checks.filter(({ owner }) => owner === 'posture-requirements')
+    const checked = authenticateObservationPostureContext(input.postures)
+    const checks = checked.checks
     if (input.postures.authorities.length !== 1 || checks.length !== 2 || checks.some(({ verdict }) => verdict !== 'pass')) {
         throw new TypeError('browser posture requirements must match the selected declarations')
     }
-    const authority = input.postures.authorities[0]!
+    const authority = checked.authorities.values().next().value!
     const namespace = coordinationNamespace === undefined ? undefined : authenticateStateNamespace(coordinationNamespace)
     if (coordinationNamespace !== undefined && !namespace) throw new TypeError('browser runtime coordination namespace must be an issued canonical state namespace')
     const { addressing, authentication } = authority.environmentPostures

@@ -1,3 +1,4 @@
+import { dirname } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import {
@@ -10,19 +11,22 @@ import {
     type ExecutionStep,
     type StackId,
 } from './contract.js'
-import { resolvedExecutable, resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
+import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 import { repositoryIdentity, type RepositoryIdentity } from './repository-identity.js'
+import { stackId as deriveStackId } from './identity.js'
+import { isRuntimeTopologyEvidence, type RuntimeTopologyEvidence } from './runtime.js'
+import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from './setup-observation.js'
 
 export const mechanism = {
     id: 'git-observation',
     module: 'packages/cockpit/src/environment/git-observation.ts',
-    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'createRunningCheckoutObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations'],
+    exports: ['createComparisonRemoteRefStep', 'createGitAncestryObservationStep', 'createGitObservationStep', 'decodeGitObservation', 'observeComparisonRemoteRef', 'observeComparisonRemoteRevalidation', 'observeComparisonRemoteUrl', 'observeGit', 'observeGitAncestry', 'observeRunningCheckout', 'isGitObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
     { id: 'git-working-tree', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
     { id: 'git-adjacency', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CHECKOUT_ADJACENCY_UNHEALTHY, isIssued: isGitObservation, issuedAt: observationIssuedAt },
-    { id: 'running-checkout', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'no running checkout exists before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, isIssued: isGitObservation, issuedAt: observationIssuedAt },
+    { id: 'running-checkout', owner: mechanism.id, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'no running checkout exists before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, isIssued: isGitObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
@@ -72,7 +76,6 @@ interface GitBinding extends ObservationBinding {
 }
 const issuedGitSteps = new WeakMap<object, GitBinding>()
 const issuedGitResults = new WeakMap<object, GitBinding & { readonly evidence: GitObservationEvidence }>()
-const issuedRunningCheckoutSteps = new WeakMap<object, ObservationBinding & { readonly expectedCheckoutId: CheckoutId }>()
 
 function safeObservationEnvironment(env: Readonly<Record<string, string>>): readonly [string, string][] | undefined {
     const entries = Object.entries(env)
@@ -116,33 +119,6 @@ export function createGitObservationStep(input: {
         stackId: input.stackId, source: input.source, checkoutId: input.checkoutId,
         checkoutRoot: input.checkoutRoot, executable, env: Object.freeze(Object.fromEntries(safeEnvironment)), timeoutMs: input.timeoutMs,
     }))
-    return step
-}
-
-export function createRunningCheckoutObservationStep(input: {
-    readonly executable: ResolvedExecutable
-    readonly cwd: string
-    readonly env: Readonly<Record<string, string>>
-    readonly timeoutMs: number
-    readonly stackId: StackId
-    readonly source: string
-    readonly checkoutId: CheckoutId
-    readonly expectedCheckoutId: CheckoutId
-}): ExecutionStep | undefined {
-    const executable = resolvedExecutable(input.executable)
-    const env = safeObservationEnvironment(input.env)
-    if (!executable || !env || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 30_000
-        || !/^stack:[a-f0-9]{64}$/.test(input.stackId) || !/^checkout:[a-f0-9]{64}$/.test(input.checkoutId)
-        || !/^checkout:[a-f0-9]{64}$/.test(input.expectedCheckoutId) || typeof input.source !== 'string'
-        || Buffer.byteLength(`${input.source}:running-checkout`) > 1_024 || /[\x00-\x1f\x7f]/.test(input.source)) return undefined
-    const step = snapshotExecutionStep({
-        id: 'runtime:observe:checkout', argv: [executable.canonicalPath], argv0: executable.invocationPath,
-        cwd: input.cwd, env: Object.fromEntries(env), timeoutMs: input.timeoutMs,
-        stdoutLimitBytes: 1_024, stderrLimitBytes: 1_024, paths: [], ports: [], labels: { producer: 'running-checkout', stackId: input.stackId, source: input.source, checkoutId: input.checkoutId, expectedCheckoutId: input.expectedCheckoutId }, expected: [],
-        consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: executable.executionMode }],
-        filesystemChecks: [], compensation: [],
-    })
-    if (step) issuedRunningCheckoutSteps.set(step, Object.freeze({ stackId: input.stackId, source: input.source, checkoutId: input.checkoutId, expectedCheckoutId: input.expectedCheckoutId }))
     return step
 }
 
@@ -514,28 +490,29 @@ export type RunningCheckoutObservationResult =
     | { readonly kind: 'unavailable'; readonly reason: string }
 
 export function observeRunningCheckout(
-    step: ExecutionStep,
-    outcome: ExecuteProbeOutcome,
-    context: { readonly stackId: StackId; readonly checkoutId: CheckoutId; readonly source: string; readonly expectedCheckoutId: CheckoutId },
+    topology: RuntimeTopologyEvidence,
+    checkoutProjection: SetupCheckoutProjection,
+    observedAt: string,
 ): RunningCheckoutObservationResult {
-    const binding = issuedRunningCheckoutSteps.get(step)
-    if (!binding || binding.stackId !== context.stackId || binding.checkoutId !== context.checkoutId || binding.source !== context.source
-        || binding.expectedCheckoutId !== context.expectedCheckoutId) return { kind: 'unavailable', reason: 'running checkout context does not match its issued plan' }
-    const authenticated = authenticatedExecutionOutcome(outcome, step)
-    if (!authenticated || authenticated.kind !== 'complete') return { kind: 'unavailable', reason: 'running checkout evidence is unavailable or unauthenticated' }
-    if (!/^stack:[a-f0-9]{64}$/.test(context.stackId) || !/^checkout:[a-f0-9]{64}$/.test(context.expectedCheckoutId)
-        || Buffer.byteLength(`${context.source}:running-checkout`) > 1_024
-        || /[\x00-\x1f\x7f]/.test(context.source)) return { kind: 'unavailable', reason: 'running checkout context is malformed' }
-    let value: string
-    try { value = new TextDecoder('utf-8', { fatal: true }).decode(authenticated.stdout).trim() } catch {
-        return { kind: 'unavailable', reason: 'running checkout evidence is not valid UTF-8' }
+    const checkout = consumeSetupCheckoutProjection(checkoutProjection)
+    const now = Date.now()
+    const observed = Date.parse(observedAt)
+    if (!checkout || !isRuntimeTopologyEvidence(topology) || !isCanonicalTimestamp(observedAt)
+        || observed > now || observed < Date.parse(checkout.observedAt)
+        || now > Date.parse(checkout.validThrough)
+        || observed < Date.parse(topology.observationWindow.startedAt)
+        || observed > Date.parse(topology.observationWindow.expiresAt)) {
+        return { kind: 'unavailable', reason: 'running checkout needs current authenticated topology and checkout evidence' }
     }
-    if (!/^checkout:[a-f0-9]{64}$/.test(value)) return { kind: 'unavailable', reason: 'running checkout evidence is malformed' }
+    const expectedStack = deriveStackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } })
+    const measured = Object.freeze({ stackId: topology.stackId, configSha256: topology.configSha256,
+        checkoutMatches: topology.cwd === dirname(checkout.source.path) })
+    const expected = Object.freeze({ stackId: expectedStack, configSha256: checkout.source.sha256, checkoutMatches: true })
     const observation: EnvironmentObservation = {
-        code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, owner: mechanism.id, stackId: context.stackId,
-        source: `${context.source}:running-checkout`, observed: { state: 'available', value, observedAt: authenticated.receipt.finishedAt },
-        expectation: { kind: 'equal', value: context.expectedCheckoutId }, applicability: { state: 'required', posture: 'environment' },
-        freshness: { state: 'current' }, remedy: 'restart the stack from the declared checkout identity',
+        code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, owner: mechanism.id, stackId: expectedStack,
+        source: `${checkout.source.path}:running-checkout`, observed: { state: 'available', value: measured, observedAt },
+        expectation: { kind: 'equal', value: expected }, applicability: { state: 'required', posture: 'running-stack' },
+        freshness: { state: 'current' }, remedy: 'restart the stack from the current checkout and configuration',
     }
     return { kind: 'complete', observation: issueObservation(observation) }
 }

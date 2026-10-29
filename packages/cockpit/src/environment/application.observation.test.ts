@@ -915,7 +915,7 @@ describe('observation application runners', () => {
 
         expect(order).toEqual([
             'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-    'generated', 'data', 'external', 'envSchema',
+            'generated', 'data', 'external', 'envSchema', 'surfaces',
             'authenticate',
         ])
         expect(execute).not.toHaveBeenCalled()
@@ -1036,7 +1036,7 @@ describe('observation application runners', () => {
 
 const healthProducerNames = [
     'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-    'generated', 'data', 'external', 'envSchema',
+    'generated', 'data', 'external', 'envSchema', 'surfaces',
 ] as const
 
 function logRequestBaseFixture() {

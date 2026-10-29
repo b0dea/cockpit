@@ -16,9 +16,9 @@ export const mechanism = {
 } as const
 
 export const observationDeclarations = Object.freeze([
-    { id: 'machine-memory', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
-    { id: 'machine-cpu', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
-    { id: 'machine-disk', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
+    { id: 'machine-memory', owner: mechanism.id, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
+    { id: 'machine-cpu', owner: mechanism.id, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_CPU_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
+    { id: 'machine-disk', owner: mechanism.id, postures: ['machine-floor'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_DISK_BELOW_FLOOR, isIssued: isHostObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
@@ -50,7 +50,7 @@ function metric(stackId: StackId, evidence: MachineFloorEvidence, code: Environm
         code, owner: mechanism.id, stackId, source,
         observed: { state: 'available', value: measured, observedAt: evidence.observedAt },
         expectation,
-        applicability: { state: 'required', posture: 'environment' },
+        applicability: { state: 'required', posture: 'machine-floor' },
         freshness: { state: 'current' }, remedy,
     })
 }

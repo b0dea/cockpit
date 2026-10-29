@@ -44,12 +44,8 @@ import {
 export const mechanism = {
     id: 'environment-port-coordination',
     module: 'packages/cockpit/src/environment/ports.ts',
-    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'revalidatePortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'observePortListeners', 'isPortObservation', 'observationDeclarations'],
+    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'revalidatePortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'observePortListeners', 'isPortObservation'],
 } as const
-
-export const observationDeclarations = Object.freeze([
-    { id: 'port-family', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'ports are leased after the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, isIssued: isPortObservation, issuedAt: observationIssuedAt },
-] as const)
 
 const issuedObservations = new WeakMap<object, number>()
 const issuedLeaseResults = new WeakMap<object, {
@@ -85,10 +81,6 @@ function issueObservation(value: EnvironmentObservation): EnvironmentObservation
 
 export function isPortObservation(value: unknown): value is import('./contract.js').EnvironmentObservation {
     return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
 }
 
 export async function observePortFamily(input: {

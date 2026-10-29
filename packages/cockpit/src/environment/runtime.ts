@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { lstat } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
@@ -64,16 +63,13 @@ import { composeProcessEnvironment } from './compose-environment.js'
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'createResourceBudgetPlan', 'observeResourceBudgets', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
     { id: 'runtime-availability', owner: mechanism.id, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
     { id: 'runtime-measurement', owner: mechanism.id, postures: ['environment', 'mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
     { id: 'mount-posture', owner: mechanism.id, postures: ['mounted', 'host'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'machine-cold-start', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'disk-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'guide-budget', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 export const runtimeHealthObservationDeclarations = Object.freeze([
@@ -197,91 +193,6 @@ export function observeRuntimeExecution(input: {
         }))
     }
     return Object.freeze(observations)
-}
-
-export interface ResourceBudgetPlan {
-    readonly stackId: StackId
-    readonly artifactPaths: readonly string[]
-    readonly diskLimitBytes: number
-    readonly guidePaths: readonly string[]
-    readonly guideLimitBytes: number
-}
-
-const issuedResourceBudgetPlans = new WeakSet<object>()
-
-export function createResourceBudgetPlan(input: ResourceBudgetPlan): ResourceBudgetPlan {
-    const owned = snapshotJson(input)
-    if (!owned || typeof owned !== 'object' || Array.isArray(owned)
-        || !exactKeys(owned, ['stackId', 'artifactPaths', 'diskLimitBytes', 'guidePaths', 'guideLimitBytes'])) throw new TypeError('resource budget input is malformed')
-    const values = owned as unknown as ResourceBudgetPlan
-    if (!/^stack:[a-f0-9]{64}$/.test(values.stackId)
-        || !Number.isSafeInteger(values.diskLimitBytes) || values.diskLimitBytes < 0
-        || !Number.isSafeInteger(values.guideLimitBytes) || values.guideLimitBytes < 0
-        || !Array.isArray(values.artifactPaths) || !Array.isArray(values.guidePaths)) throw new TypeError('resource budget input is malformed')
-    for (const paths of [values.artifactPaths, values.guidePaths]) {
-        if (paths.length > 4_096 || new Set(paths).size !== paths.length
-            || paths.some((path) => !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
-            throw new TypeError('resource budget input is malformed')
-        }
-    }
-    const plan = Object.freeze({
-        stackId: values.stackId,
-        artifactPaths: Object.freeze([...values.artifactPaths]),
-        diskLimitBytes: values.diskLimitBytes,
-        guidePaths: Object.freeze([...values.guidePaths]),
-        guideLimitBytes: values.guideLimitBytes,
-    })
-    issuedResourceBudgetPlans.add(plan)
-    return plan
-}
-
-export async function observeResourceBudgets(input: {
-    readonly plan: ResourceBudgetPlan
-}): Promise<readonly EnvironmentObservation[]> {
-    const descriptor = input && typeof input === 'object' ? Object.getOwnPropertyDescriptor(input, 'plan') : undefined
-    const suppliedPlan = descriptor && 'value' in descriptor ? descriptor.value : undefined
-    if (!suppliedPlan || !issuedResourceBudgetPlans.has(suppliedPlan)) throw new TypeError('resource budget input is malformed')
-    const owned = snapshotJson(suppliedPlan)
-    if (!owned || typeof owned !== 'object' || Array.isArray(owned)) throw new TypeError('resource budget input is malformed')
-    const values = owned as Readonly<Record<string, JsonSnapshot>>
-    if (typeof values.stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(values.stackId)
-        || !Number.isSafeInteger(values.diskLimitBytes) || (values.diskLimitBytes as number) < 0
-        || !Number.isSafeInteger(values.guideLimitBytes) || (values.guideLimitBytes as number) < 0
-        || !Array.isArray(values.artifactPaths) || !Array.isArray(values.guidePaths)) throw new TypeError('resource budget input is malformed')
-    const stackId = values.stackId as StackId
-    const observedAt = new Date().toISOString()
-    const diskLimitBytes = values.diskLimitBytes as number
-    const guideLimitBytes = values.guideLimitBytes as number
-    const measure = async (paths: readonly string[]): Promise<number | undefined> => {
-        if (!Array.isArray(paths) || paths.length > 4_096 || new Set(paths).size !== paths.length
-            || paths.some((path) => !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) return undefined
-        let total = 0
-        for (const path of paths) {
-            try {
-                const before = await lstat(path, { bigint: true })
-                if (!before.isFile() || before.isSymbolicLink()) return undefined
-                const after = await lstat(path, { bigint: true })
-                if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
-                    || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) return undefined
-                total += Number(before.size)
-                if (!Number.isSafeInteger(total)) return undefined
-            } catch { return undefined }
-        }
-        return total
-    }
-    const [diskBytes, guideBytes] = await Promise.all([measure(values.artifactPaths as readonly string[]), measure(values.guidePaths as readonly string[])])
-    const metric = (code: typeof ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED | typeof ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
-        source: string, value: number | undefined, limit: number, remedy: string): EnvironmentObservation => issueObservation({
-        code, owner: mechanism.id, stackId, source,
-        observed: value === undefined
-            ? { state: 'failed', reason: `${source} could not be measured consistently`, observedAt }
-            : { state: 'available', value, observedAt },
-        expectation: { kind: 'maximum', value: limit }, applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy,
-    })
-    return Object.freeze([
-        metric(ENVIRONMENT_CODES.DISK_BUDGET_EXCEEDED, 'generated-artifact-bytes', diskBytes, diskLimitBytes, 'restore the declared disk budget'),
-        metric(ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, 'always-loaded-guide-bytes', guideBytes, guideLimitBytes, 'restore the declared guide budget'),
-    ])
 }
 
 export type RuntimeOperation = 'validate' | 'up' | 'down'

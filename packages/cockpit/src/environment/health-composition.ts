@@ -25,7 +25,7 @@ import {
     planExternalDependency,
     verifyExternalDependency,
 } from './external-dependencies.js'
-import { createGitObservationStep, observeGit } from './git-observation.js'
+import { createGitObservationStep, observeGit, observeRunningCheckout } from './git-observation.js'
 import { stackId } from './identity.js'
 import { observeDependencyLoad } from './installs.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -33,9 +33,9 @@ import { observeStateSeed, resolveLifecycleStage } from './lifecycle-stage.js'
 import { refreshObservationPostures, resolveObservationPostures, type PreflightContext } from './observations.js'
 import {
     deriveEntrypoints,
-    observePortFamily,
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
+    revalidatePortLeaseProjection,
 } from './ports.js'
 import {
     admitDependencyRuntime,
@@ -51,13 +51,17 @@ import {
     generatedApplicationProjection,
     projectGeneratedApplicationRuntimeAuthority,
     resolveGeneratedApplicationOperation,
-    observeGeneratedApplication,
+    checkGeneratedEnvironment,
+    observeGeneratedApplicationHealth,
+    observeGeneratedApplicationSurfaces,
     syncGeneratedEnvironment,
 } from './generated-application.js'
 import {
     admitRuntimeMeasurement,
     observeDockerRuntime,
     observeRuntimeMeasurement,
+    observeRuntimeMountMaterialization,
+    observeRuntimePortFamily,
     projectDependencyRuntime,
     type RuntimeServiceEvidence,
 } from './runtime.js'
@@ -153,22 +157,23 @@ function producers(input: {
     readonly env: Readonly<Record<string, string | undefined>>
     readonly timeoutMs: number
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-}): HealthObservationProducers {
+}): Readonly<{ observations: HealthObservationProducers; revalidate: () => Promise<boolean> }> {
     const observedAt = () => new Date().toISOString()
     const siblingRoot = resolve(dirname(input.config.result.source.path), input.config.result.config.cockpit.siblings_root)
     const generated = input.config.result.config.environment.generated
+    const runningStack = generated !== undefined || input.config.result.config.environment.compose_files.length > 0
     const configuredRuntime = generated !== undefined
         || input.config.result.config.environment.compose_files.length > 0
         || input.config.result.config.environment.machine !== undefined
         || input.config.result.config.sibling.some(({ mount }) => mount !== 'none')
-    const runtimeMeasurement = configuredRuntime ? (async () => {
+    const runtimeMeasurement = configuredRuntime && !runningStack ? (async () => {
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return undefined
         const observed = await observeDockerRuntime({
             executable: docker.value,
             cwd: input.checkout.currentCheckoutPath,
             env: Object.freeze(Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] =>
-                ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(entry[0])
+                ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(entry[0])
                 && typeof entry[1] === 'string',
             ))),
             timeoutMs: input.timeoutMs,
@@ -179,7 +184,7 @@ function producers(input: {
             input.stack,
         )
     })() : undefined
-    const runtimeSession = generated !== undefined || input.config.result.config.environment.compose_files.length > 0 ? (async () => {
+    const runtimeSession = runningStack ? (async () => {
         const adapters = createLifecycleCommandAdapters({
             configPath: input.config.result.source.path,
             env: input.env,
@@ -188,30 +193,51 @@ function producers(input: {
         }, input.execute)
         const loaded = await adapters.load({ configPath: input.config.result.source.path })
         if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
-        let ports
-        let lifecycle
-        if (generated !== undefined) {
-            const stored = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
-            if (stored.kind !== 'complete') return undefined
-            lifecycle = decodeLifecycleRecord(stored.value, loaded.result)
-            if (!lifecycle?.value.generatedReplay
-                || lifecycle.value.generatedReplay.sourceSha256 !== loaded.result.source.sha256) return undefined
-            const retained = await observeRetainedPortFamily({
-                namespace: loaded.result.namespace,
-                stackId: loaded.result.stackId,
-                holderId: lifecycle.value.holderId,
-                checkoutId: loaded.result.checkoutId,
-                config: loaded.result.ports,
-            })
-            if (retained.kind !== 'complete') return undefined
-            const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: loaded.result.entrypointDerivatives })
-            if (entrypoints.kind !== 'complete') return undefined
-            ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
-            if (!ports) return undefined
-        }
+        const stored = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
+        if (stored.kind !== 'complete') return undefined
+        const lifecycle = decodeLifecycleRecord(stored.value, loaded.result)
+        if (!lifecycle || generated !== undefined && (!lifecycle.value.generatedReplay
+            || lifecycle.value.generatedReplay.sourceSha256 !== loaded.result.source.sha256)) return undefined
+        const retained = await observeRetainedPortFamily({
+            namespace: loaded.result.namespace,
+            stackId: loaded.result.stackId,
+            holderId: lifecycle.value.holderId,
+            checkoutId: loaded.result.checkoutId,
+            config: loaded.result.ports,
+        })
+        if (retained.kind !== 'complete') return undefined
+        const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: loaded.result.entrypointDerivatives })
+        if (entrypoints.kind !== 'complete') return undefined
+        const ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
+        if (!ports) return undefined
         const readiness = await adapters.withRuntimeReadiness(loaded.result, async (value) => value, ports)
-        return readiness ? Object.freeze({ adapters, context: loaded.result, readiness, lifecycle }) : undefined
+        return readiness ? Object.freeze({ adapters, context: loaded.result, readiness, lifecycle, ports,
+            lifecycleSnapshot: JSON.stringify(stored.value) }) : undefined
     })() : undefined
+    const stableSession = async () => {
+        const session = await runtimeSession
+        if (!session) return undefined
+        const [configuration, stored, leaseCurrent] = await Promise.all([
+            loadCockpitConfig(input.config.result.source.path),
+            readState(session.context.namespace.paths.lifecycle(session.context.stackId)),
+            revalidatePortLeaseProjection({ projection: session.ports, namespace: session.context.namespace }),
+        ])
+        return configuration.kind === 'complete' && configuration.result.source.sha256 === input.config.result.source.sha256
+            && stored.kind === 'complete' && JSON.stringify(stored.value) === session.lifecycleSnapshot && leaseCurrent
+            ? session : undefined
+    }
+    const generatedRuntime = generated === undefined ? undefined : (async () => {
+        const session = await runtimeSession
+        return session?.adapters.withGeneratedRuntime(session.context, session.readiness, async (value) => value)
+    })()
+    const checkedApplication = (async () => {
+        if (generated !== undefined) return (await generatedRuntime)?.application
+        const session = await runtimeSession
+        if (runningStack && !session) return undefined
+        const checked = await checkGeneratedEnvironment({ configPath: input.config.result.source.path }, session?.ports,
+            { execute: input.execute })
+        return checked.kind === 'complete' ? generatedApplicationProjection(checked.result.application) : undefined
+    })()
     const machineFloor = generated === undefined && input.config.result.config.environment.machine
         && input.config.result.config.environment.compose_files.length === 0 ? (async () => {
             const adapters = createLifecycleCommandAdapters({
@@ -224,9 +250,9 @@ function producers(input: {
             if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
             return adapters.withMachineFloorReadiness(loaded.result, async (value) => value)
         })() : undefined
-    const currentServices = generated === undefined ? undefined : (async () => {
-        const session = await runtimeSession
-        const completed = session?.lifecycle?.value.completedServices
+    const inspectCurrentServices = async () => {
+        const session = await stableSession()
+        const completed = session?.lifecycle.value.completedServices
         if (!session || !completed
             || completed.length !== session.readiness.topology.services.length
             || JSON.stringify(completed.map(({ service }) => service).sort())
@@ -237,24 +263,24 @@ function producers(input: {
             if (admitted.kind !== 'complete') return undefined
             values.set(service.service, admitted.evidence)
         }
-        return values
-    })()
-    return Object.freeze({
+        return await stableSession() ? values : undefined
+    }
+    const currentServices = runningStack ? inspectCurrentServices() : undefined
+    const observations: HealthObservationProducers = Object.freeze({
+        surfaces: async () => {
+            const application = await checkedApplication
+            const observations = application && observeGeneratedApplicationSurfaces(application)
+            if (!observations) throw new TypeError('surface health needs a current checked generated publication; run cockpit sync --config cockpit.toml')
+            return observations
+        },
         generated: async () => {
             if (generated === undefined) return Object.freeze([])
-            const session = await runtimeSession
-            if (!session) throw new TypeError('generated health needs authenticated runtime readiness')
-            const observation = await session.adapters.withGeneratedRuntime(
-                session.context,
-                session.readiness,
-                ({ application, runtime }) => observeGeneratedApplication(
-                    application,
-                    { topology: session.readiness.topology, runtime },
-                    input.execute,
-                ),
-            )
-            if (!observation) throw new TypeError('generated environment observation is unavailable')
-            return Object.freeze([observation])
+            const [session, prepared] = await Promise.all([runtimeSession, generatedRuntime])
+            if (!session || !prepared) throw new TypeError('generated health needs authenticated runtime readiness')
+            const observations = await observeGeneratedApplicationHealth(prepared.application,
+                { topology: session.readiness.topology, runtime: prepared.runtime }, input.execute)
+            if (!observations || !await stableSession()) throw new TypeError('generated environment observation is unavailable or changed')
+            return Object.freeze([observations.environment, observations.registryAuthentication])
         },
         data: async () => {
             const data = generated?.data
@@ -385,9 +411,9 @@ function producers(input: {
             namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
         })]),
         git: async () => {
-            // Git status may refresh its index while runtime checkout authority is being authenticated.
+            // Git status may refresh its index while checked publication authenticates checkout authority.
             await machineFloor
-            await runtimeSession
+            await checkedApplication
             const step = createGitObservationStep({
                 executable: input.git,
                 checkoutRoot: input.checkout.currentCheckoutPath,
@@ -404,7 +430,18 @@ function producers(input: {
                 source: input.config.result.source.path,
             })
             if (result.kind !== 'complete') throw new TypeError('Git health observation is unavailable')
-            return result.observations
+            if (!runningStack) return result.observations
+            const session = await stableSession()
+            if (!session) throw new TypeError('running checkout health needs unchanged runtime and lifecycle authority')
+            const time = observedAt()
+            const setup = await observeSetupCheckout({ source: input.config.result.source,
+                cockpitName: input.config.result.config.cockpit.name, observedAt: time,
+                env: checkoutObservationEnvironment(input.env), gitExecutable: input.git })
+            const running = await withSetupCheckoutProjection(setup, { source: input.config.result.source,
+                cockpitName: input.config.result.config.cockpit.name, evaluatedAt: Date.parse(time) },
+            (projection) => observeRunningCheckout(session.readiness.topology, projection, time))
+            if (running?.kind !== 'complete') throw new TypeError('running checkout identity observation is unavailable')
+            return Object.freeze([...result.observations, running.observation])
         },
         host: async () => {
             if (input.config.result.config.environment.machine) {
@@ -477,22 +514,32 @@ function producers(input: {
         lifecycle: async () => Object.freeze([await observeStateSeed({
             namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
         })]),
-        ports: async () => Object.freeze([await observePortFamily({
-            namespace: input.namespace, stackId: input.stack, observedAt: observedAt(),
-        })]),
+        ports: async () => {
+            if (!runningStack) return Object.freeze([])
+            const [session, services] = await Promise.all([stableSession(), currentServices])
+            if (!session || !services) throw new TypeError('runtime port health needs current lifecycle, lease and service identities')
+            const observation = await observeRuntimePortFamily({ topology: session.readiness.topology,
+                services: Object.freeze([...services.values()]), namespace: session.context.namespace,
+                listenerTimeoutMs: input.timeoutMs,
+                revalidate: async () => {
+                    const fresh = await inspectCurrentServices()
+                    if (!fresh) throw new TypeError('runtime services or lifecycle changed during port observation')
+                    return Object.freeze([...fresh.values()])
+                } })
+            return Object.freeze([observation])
+        },
         runtime: async () => {
-            if (configuredRuntime) {
+            if (!configuredRuntime) return Object.freeze([])
+            if (!runningStack) {
                 const measured = await runtimeMeasurement
                 if (!measured) throw new TypeError('configured runtime measurement needs authenticated runtime identity evidence')
-                if (measured.observed.state !== 'available') return Object.freeze([measured])
-                const current = await runtimeSession
-                if (!current) {
-                    if (generated === undefined && input.config.result.config.environment.compose_files.length === 0) return Object.freeze([measured])
-                    throw new TypeError('configured runtime health needs authenticated runtime execution evidence')
-                }
-                return current.readiness.runtimeObservations
+                return Object.freeze([measured])
             }
-            return Object.freeze([])
+            const [session, services] = await Promise.all([stableSession(), currentServices])
+            if (!session || !services) throw new TypeError('configured runtime health needs current runtime execution evidence')
+            return Object.freeze([...session.readiness.runtimeObservations,
+                observeRuntimeMountMaterialization({ topology: session.readiness.topology,
+                    services: Object.freeze([...services.values()]), observedAt: observedAt() })])
         },
         envSchema: async () => Object.freeze(await observeEnvSchemas({
             stackId: input.stack,
@@ -510,6 +557,7 @@ function producers(input: {
             siblings: input.config.result.config.sibling,
         }),
     })
+    return Object.freeze({ observations, revalidate: async () => !runningStack || await stableSession() !== undefined })
 }
 
 async function checkoutProjection(
@@ -636,8 +684,8 @@ export function createHealthCommandAdapters(
             env: gitObservationEnvironment(input.env),
             gitExecutable: git.value,
             timeoutMs: input.timeoutMs,
-            producers: sourceProducers,
-            refreshPreflight,
+            producers: sourceProducers.observations,
+            refreshPreflight: async (previous) => await sourceProducers.revalidate() ? refreshPreflight(previous) : undefined,
         }))
     }
     const inspectSurfaceOverrides: NonNullable<HealthCommandAdapterComposition['inspectSurfaceOverrides']> = async (configPath) => {

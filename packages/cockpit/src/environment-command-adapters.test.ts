@@ -33,7 +33,7 @@ import { resolvedExecutable, resolveGitExecutable } from './environment/executab
 import { observeSetupCheckout, withSetupCheckoutProjection } from './environment/setup-observation.js'
 import { observeConfiguration, selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage } from './environment/lifecycle-stage.js'
-import { resolveObservationPostures, unavailableProducerObservations, type PreflightContext } from './environment/observations.js'
+import { resolveObservationPostures, type PreflightContext } from './environment/observations.js'
 import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan, observeRuntimeExecution, projectRuntimeExecutionEnvironment } from './environment/runtime.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
 import { observeGeneratedApplication, projectGeneratedApplicationRuntimeAuthority } from './environment/generated-application.js'
@@ -317,7 +317,7 @@ else if (args.includes('exec')) {
                     return [aggregate]
                 }
                 const none = async () => []
-                const producers: HealthObservationProducers = { generated, data: none, external: none, claims: none, git: none,
+                const producers: HealthObservationProducers = { surfaces: none, generated, data: none, external: none, claims: none, git: none,
                     host: none, installs: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none, envSchema: none }
                 const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                     cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({
@@ -351,7 +351,7 @@ else if (args.includes('exec')) {
         }
     })
 
-    it('preserves producer-issued tri-state healthy, unhealthy, empty, authentication and transport facts through both real routes', async () => {
+    it('preserves producer-issued tri-state healthy, unhealthy, empty, unavailable configuration and transport facts through both real routes', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-routes-')))
         try {
             execFileSync('git', ['init', '--quiet', root])
@@ -407,12 +407,13 @@ else if (args.includes('exec')) {
                 listenerEvidence: [{ ports: [43000], observation: { state: 'available', value: [], observedAt, producer: 'synthetic-listener-probe' } }] })
             if (lease.kind !== 'complete') throw new Error('health empty listener evidence was refused')
             const empty = await observePortFamily({ namespace: state.value, stackId: stack, observedAt, leaseEvidence: lease })
-            const authentication = unavailableProducerObservations(stack, observedAt).find(({ owner }) => owner === 'registry-authentication')!
+            const missingConfiguration = (await observeConfiguration({ stackId: stack, observedAt, path: join(root, 'missing.toml') }))
+                .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
             const rows: readonly { name: string; producer: keyof HealthObservationProducers; value: EnvironmentObservation; verdict: 'pass' | 'fail' | 'unavailable'; measured?: boolean }[] = [
                 { name: 'healthy', producer: 'runtime', value: healthy.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)!, verdict: 'pass', measured: true },
                 { name: 'unhealthy', producer: 'runtime', value: unhealthy.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)!, verdict: 'fail', measured: false },
-                { name: 'empty', producer: 'ports', value: empty, verdict: 'pass', measured: true },
-                { name: 'authentication', producer: 'state', value: authentication, verdict: 'unavailable' },
+                { name: 'acquisition-only', producer: 'ports', value: empty, verdict: 'unavailable' },
+                { name: 'configuration-unavailable', producer: 'state', value: missingConfiguration, verdict: 'unavailable' },
                 { name: 'transport', producer: 'runtime', value: unhealthy.find(({ code }) => code === ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE)!, verdict: 'unavailable' },
             ]
             const actual = await vi.importActual<typeof import('./environment/application.js')>('./environment/application.js')
@@ -429,7 +430,7 @@ else if (args.includes('exec')) {
                     const preflight: PreflightContext = { authorities: [posture], stages: [stage.authority] }
                     const produce = async () => [row.value]
                     const none = async () => []
-                    const producers: HealthObservationProducers = { generated: none, data: none, external: none, claims: none,
+                    const producers: HealthObservationProducers = { surfaces: none, generated: none, data: none, external: none, claims: none,
                         git: none, host: none, installs: none, lifecycle: none, ports: none, runtime: none, state: none, templates: none, envSchema: none,
                         [row.producer]: produce }
                     const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
@@ -443,6 +444,12 @@ else if (args.includes('exec')) {
                 const adapters = { load, execute: executeProbe }
                 const first = await actual.runPreflight({ configPath }, adapters)
                 const second = await actual.runDoctor({ configPath }, adapters)
+                if (row.name === 'acquisition-only') {
+                    expect(first).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable', checks: [] } })
+                    expect(second.result).toMatchObject({ verdict: 'unavailable', checks: [] })
+                    expect(first.diagnostics).toContainEqual(expect.objectContaining({ code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID }))
+                    continue
+                }
                 const checks = [first.result, second.result].map(result => result.checks.find(({ owner, code }) => owner === row.value.owner && code === row.value.code))
                 for (const check of checks) {
                     expect(check, row.name).toMatchObject({ owner: row.value.owner, code: row.value.code, verdict: row.verdict })

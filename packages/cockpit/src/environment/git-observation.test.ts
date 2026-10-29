@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type CheckoutId, type StackId } from './contract.js'
@@ -8,11 +8,17 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from './executable.js'
 import { resolvedExecutable } from './executable.js'
 import { observationSatisfiesExpectation } from './observations.js'
+import { loadCockpitConfig } from '../config/load.js'
+import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
+import { syncGeneratedEnvironment } from './generated-application.js'
+import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
+import { createHash } from 'node:crypto'
+import { cockpitId, checkoutId as deriveCheckoutId, stackId as deriveStackId } from './identity.js'
+import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan } from './runtime.js'
 import {
     createComparisonRemoteRefStep,
     createGitAncestryObservationStep,
     createGitObservationStep,
-    createRunningCheckoutObservationStep,
     observeComparisonRemoteRef,
     observeComparisonRemoteRevalidation,
     observeComparisonRemoteUrl,
@@ -177,33 +183,106 @@ describe('Git adjacency evidence', () => {
         })
     })
 
-    it('authenticates the running stack checkout identity before comparison', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-running-checkout-'))
+    it('authenticates running topology against the current checkout and exact configuration', async () => {
+        const support = createGeneratedCommandFixture()
         try {
-            const probe = join(root, 'checkout-identity')
-            const body = `#!/bin/sh\nprintf 'checkout:${'a'.repeat(64)}\\n'\n`
+            const candidate = await support.consumer('running-checkout')
+            execFileSync('git', ['init', '-b', 'main'], { cwd: candidate.root })
+            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: candidate.root })
+            const published = await syncGeneratedEnvironment({ configPath: candidate.configPath })
+            if (published.kind !== 'complete') throw new Error(JSON.stringify(published.diagnostics))
+            const runtime = await support.generatedRuntime(candidate.root, published.result.application)
+            const executable = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+            if (executable.state !== 'available') throw new Error('fixture Git executable unavailable')
+            const observe = async (topology = runtime.topology, configPath = candidate.configPath, copiedCheckout = false) => {
+                const loaded = await loadCockpitConfig(configPath)
+                if (loaded.kind !== 'complete') throw new Error('fixture configuration unavailable')
+                const observedAt = new Date().toISOString()
+                const checkout = await observeSetupCheckout({ source: loaded.result.source,
+                    cockpitName: loaded.result.config.cockpit.name, observedAt, env: {}, gitExecutable: executable.value })
+                return withSetupCheckoutProjection(checkout, { source: loaded.result.source,
+                    cockpitName: loaded.result.config.cockpit.name, evaluatedAt: Date.parse(observedAt) },
+                projection => observeRunningCheckout(topology, copiedCheckout ? { ...projection } : projection, new Date().toISOString()))
+            }
+            const current = await observe()
+            expect(current).toMatchObject({ kind: 'complete' })
+            if (current?.kind !== 'complete') throw new Error('running checkout observation unavailable')
+            expect(observationSatisfiesExpectation(current.observation)).toBe(true)
+            expect(await observe({ ...runtime.topology })).toMatchObject({ kind: 'unavailable' })
+            expect(await observe(runtime.topology, candidate.configPath, true)).toMatchObject({ kind: 'unavailable' })
+            const foreign = await support.consumer('foreign-running-checkout')
+            execFileSync('git', ['init', '-b', 'main'], { cwd: foreign.root })
+            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: foreign.root })
+            const foreignResult = await observe(runtime.topology, foreign.configPath)
+            expect(foreignResult).toMatchObject({ kind: 'complete' })
+            if (foreignResult?.kind !== 'complete') throw new Error('foreign checkout comparison unavailable')
+            expect(observationSatisfiesExpectation(foreignResult.observation)).toBe(false)
+            await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n# changed declaration\n`)
+            const changed = await observe()
+            expect(changed).toMatchObject({ kind: 'complete' })
+            if (changed?.kind !== 'complete') throw new Error('changed configuration comparison unavailable')
+            expect(observationSatisfiesExpectation(changed.observation)).toBe(false)
+            const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(runtime.topology.observationWindow.expiresAt) + 1)
+            try { expect(await observe()).toMatchObject({ kind: 'unavailable' }) }
+            finally { clock.mockRestore() }
+        } finally { await support.cleanup() }
+    })
+
+
+    it('accepts a nested configuration cwd and refuses a different authenticated runtime cwd', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-nested-runtime-checkout-')))
+        try {
+            const nested = join(root, 'cockpit')
+            await mkdir(nested)
+            execFileSync('git', ['init', '-b', 'main'], { cwd: root })
+            execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: root })
+            const configPath = join(nested, 'cockpit.toml')
+            await writeFile(configPath, '[cockpit]\nname = "synthetic"\n[[sibling]]\nslug = "api"\ndir = "."\nvar = "API_DIR"\nmount = "none"\nacquire = "none"\npurpose = "Synthetic service"\n[ports]\nbases = {}\n')
+            const loaded = await loadCockpitConfig(configPath)
+            if (loaded.kind !== 'complete') throw new Error('nested fixture config unavailable')
+            const currentStack = deriveStackId({ cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: root }),
+                checkoutId: deriveCheckoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
+            const sourceSha256 = loaded.result.source.sha256
+            const labels = { 'dev.b0dea.cockpit.stack-id': currentStack, 'dev.b0dea.cockpit.config-sha256': sourceSha256 }
+            const probe = join(root, 'docker')
+            const body = `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ services: { api: { labels, healthcheck: { test: ['CMD', 'true'] } } } }))})\n`
             await writeFile(probe, body); await chmod(probe, 0o755)
-            const executable = resolvedExecutable({
-                canonicalPath: probe, invocationPath: probe,
-                sha256: (await import('node:crypto')).createHash('sha256').update(body).digest('hex'),
-                executionMode: 'staged',
-            })!
-            const expectedCheckoutId = `checkout:${'a'.repeat(64)}` as CheckoutId
-            const step = createRunningCheckoutObservationStep({ executable, cwd: root, env: {}, timeoutMs: 10_000, stackId, source: root, checkoutId, expectedCheckoutId })
-            expect(step).toBeDefined()
-            if (!step) return
-            const outcome = await executeProbe(step)
-            expect(observeRunningCheckout(step, outcome, {
-                stackId, checkoutId, source: root, expectedCheckoutId,
-            })).toMatchObject({ kind: 'complete', observation: { observed: { value: `checkout:${'a'.repeat(64)}` } } })
-            expect(observeRunningCheckout(step, { ...outcome }, {
-                stackId, checkoutId, source: root, expectedCheckoutId,
-            })).toMatchObject({ kind: 'unavailable' })
-            expect(observeRunningCheckout(step, outcome, {
-                stackId, checkoutId, source: `${root}-other`, expectedCheckoutId: `checkout:${'b'.repeat(64)}` as CheckoutId,
-            })).toMatchObject({ kind: 'unavailable' })
+            const executable = resolvedExecutable({ canonicalPath: probe, invocationPath: probe,
+                sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'staged' })!
+            const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+            if (git.state !== 'available') throw new Error('nested fixture Git unavailable')
+            for (const cwd of [nested, root]) {
+                const composePath = join(cwd, 'compose.yml')
+                const source = 'services: {}\n'
+                await writeFile(composePath, source)
+                const batchId = 'a'.repeat(64)
+                const runtime = createRuntimeAdapter({
+                    runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
+                    composeVersion: '2.39.2', executable, operation: 'validate', cwd,
+                    composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source, sha256: createHash('sha256').update(source).digest('hex') }],
+                    projectName: 'synthetic', env: {}, ports: [], labels: { stackId: currentStack, configSha256: sourceSha256, batchId },
+                    timeoutMs: 5_000, stackId: currentStack, coldStartLimitMillis: 30_000, expectedMountSources: [],
+                })
+                if (runtime.kind !== 'preview') throw new Error(JSON.stringify(runtime.diagnostics))
+                const plan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: currentStack,
+                    configSha256: sourceSha256, batchId,
+                    observationWindow: { startedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() } })
+                if (plan.kind !== 'planned') throw new Error(plan.reason)
+                const topology = admitRuntimeTopology({ plan, outcome: await executeProbe(plan.step) })
+                if (topology.kind !== 'complete') throw new Error(topology.reason)
+                const observedAt = new Date().toISOString()
+                const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: 'synthetic',
+                    observedAt, env: {}, gitExecutable: git.value })
+                const result = await withSetupCheckoutProjection(checkout, { source: loaded.result.source,
+                    cockpitName: 'synthetic', evaluatedAt: Date.parse(observedAt) },
+                projection => observeRunningCheckout(topology.topology, projection, new Date().toISOString()))
+                expect(result).toMatchObject({ kind: 'complete' })
+                if (result?.kind !== 'complete') throw new Error('nested running checkout comparison unavailable')
+                expect(observationSatisfiesExpectation(result.observation), JSON.stringify(result)).toBe(cwd === nested)
+            }
         } finally { await rm(root, { recursive: true, force: true }) }
     })
+
 })
 
 describe('comparison remote identity evidence', () => {

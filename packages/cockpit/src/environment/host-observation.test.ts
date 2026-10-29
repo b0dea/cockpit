@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type StackId } from './contract.js'
 import { resolvedExecutable, resolveGitExecutable } from './executable.js'
-import { observeHostCapacity } from './host-observation.js'
+import { observeHostCapacity, type HostCapacityFloor } from './host-observation.js'
 import { collectMachineFloorEvidence, createMachineFloorPlan, issueMachineFloorAuthority, type MachineFloorEvidence } from './runtime.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
@@ -26,11 +26,18 @@ const run = promisify(execFile)
 
 afterEach(async () => rm(authorityRoot, { recursive: true, force: true }))
 
-async function evaluationContext(evaluatedAt: string) {
+async function evaluationContext(evaluatedAt: string, floor?: HostCapacityFloor) {
     const root = authorityCheckout
     await mkdir(root, { recursive: true })
     const configPath = join(root, 'cockpit.toml')
     await writeFile(configPath, `[cockpit]\nname = "fixture"\n\n[[sibling]]\nslug = "service"\ndir = "service"\nremote = "https://example.invalid/service.git"\nmount = "always"\nacquire = "manual"\nvar = "SERVICE_DIR"\npurpose = "synthetic service"\n\n[ports.bases]\nWEB = 3000\n\n[environment]\naddressing = "hostname"\nauthentication = "real"\nposture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]\n`)
+    if (floor) await writeFile(configPath, `${await readFile(configPath, 'utf8')}
+[environment.machine]
+runtime_memory_mb = ${floor.memoryBytes / 1_048_576}
+runtime_cpus = ${floor.cpuMillis / 1_000}
+free_disk_mb = ${floor.freeDiskBytes / 1_048_576}
+cold_start_seconds = 30
+`)
     const configuration = (await observeConfiguration({ stackId, observedAt: evaluatedAt, path: configPath }))
         .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
     const posture = await resolveObservationPostures({
@@ -107,16 +114,28 @@ describe('host capacity evidence', () => {
         expect(reads).toBe(0)
     })
 
+    it('requires host measurements only for an authentic declared machine floor', async () => {
+        const absent = evaluatePreflight([], await evaluationContext(new Date().toISOString())).checks
+            .filter(({ owner }) => owner === 'host-observation')
+        expect(absent).toHaveLength(3)
+        expect(absent.map(({ verdict }) => verdict)).toEqual(['not-applicable', 'not-applicable', 'not-applicable'])
+        const declared = evaluatePreflight([], await evaluationContext(new Date().toISOString(), {
+            memoryBytes: 1_048_576, cpuMillis: 1_000, freeDiskBytes: 1_048_576,
+        })).checks.filter(({ owner }) => owner === 'host-observation')
+        expect(declared).toHaveLength(3)
+        expect(declared.map(({ verdict }) => verdict)).toEqual(['unavailable', 'unavailable', 'unavailable'])
+    })
+
     it('uses only authenticated exact machine-floor evidence', async () => {
         const exact = await evidence(8_589_934_592, 2, 10_240)
         const floor = { memoryBytes: exact.memoryBytes, cpuMillis: exact.cpuMillis, freeDiskBytes: exact.freeDiskBytes }
         const observations = observeHostCapacity({ evidence: exact })
-        expect(evaluatePreflight(observations, await evaluationContext(exact.observedAt)).checks
+        expect(evaluatePreflight(observations, await evaluationContext(exact.observedAt, floor)).checks
             .filter(({ owner }) => owner === 'host-observation').every(({ verdict }) => verdict === 'pass')).toBe(true)
         const raised = { memoryBytes: floor.memoryBytes + 1_048_576, cpuMillis: floor.cpuMillis + 1_000, freeDiskBytes: floor.freeDiskBytes + 1_048_576 }
         const below = await evidence(8_589_934_592, 2, 10_240, raised)
         expect(evaluatePreflight(observeHostCapacity({ evidence: below }), {
-            ...await evaluationContext(below.observedAt),
+            ...await evaluationContext(below.observedAt, raised),
         }).verdict).toBe('fail')
         expect(observations.map(({ observed }) => observed)).toEqual(expect.arrayContaining([
             { state: 'available', value: 8_589_934_592, observedAt: exact.observedAt },

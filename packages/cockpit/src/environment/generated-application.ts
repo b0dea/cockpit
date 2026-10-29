@@ -28,10 +28,11 @@ import {
 } from '../config/load.js'
 import { renderBrowserSurfaces } from '../browser/surfaces.js'
 import { bindBrowserRuntimePortLease, browserClientLimit, resolveBrowserRuntime, type BrowserRuntimeProjection } from '../browser/runtime.js'
+import { resolveObservationPostures } from './posture-observation.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { deriveRegistry, type DerivedRegistry } from '../registry-derivation.js'
-import { SURFACE_FEATURES, SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../surfaces/contract.js'
+import { SURFACE_FEATURES, SURFACE_TARGETS, type RenderedSurfaceFile, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, harnessFact, isGuardSurfaceTarget, SURFACE_PUBLICATION_ANCHORS } from '../surfaces/harness-registry.js'
 import { mergeAdoptedSurface } from '../surfaces/adoption.js'
 import { generateSurfaceEstate, type SurfaceGenerationOutcome, type SurfaceGenerationWarning } from '../surfaces/generator-adapter.js'
@@ -68,12 +69,13 @@ import {
     type NativeFragmentSet,
     type SurfaceInputEvidence,
 } from '../surfaces/render.js'
+import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { renderConsumerInstructions } from '../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../surfaces/restrictions.js'
 import { GUARD_LOCAL_PATHS, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
-import { SHIPPED_SETUP_SKILL, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
+import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
 import {
     nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, runPublicationPlan,
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
@@ -487,6 +489,9 @@ interface GeneratedSurfaceHealthEvidence {
     readonly guideCosts: readonly StandingCost[]
     readonly skillCosts: readonly SkillStandingCost[]
     readonly skillCollectionSha256: string
+    readonly skillInventorySha256: string
+    readonly skillInventory: readonly Readonly<{ target: string; path: string; sha256: string }>[]
+    readonly skills: readonly string[]
 }
 
 interface CompleteOutcome {
@@ -1117,7 +1122,10 @@ export function observeGeneratedApplicationSurfaces(
             source: `directory-grants:${grantsSha256}`,
             observed: { state: 'available', value: { grants: record.surfaceHealth.grants.length,
                 generatedFragments: record.surfaceHealth.nativeGrants.fragments.length, modelSha256: grantsSha256 }, observedAt },
-            expectation: { kind: 'present' }, applicability: required('directory-grants'), freshness: { state: 'current' },
+            expectation: { kind: 'present' }, applicability: record.surfaceHealth.grants.length > 0
+                ? required('directory-grants')
+                : { state: 'not-applicable', posture: 'directory-grants', reason: 'the active sibling projection declares no directory grants' },
+            freshness: { state: 'current' },
             remedy: 'run cockpit sync --config <file>, then rerun cockpit preflight',
         }),
         snapshotEnvironmentObservation({
@@ -1129,8 +1137,9 @@ export function observeGeneratedApplicationSurfaces(
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
-            source: `skill-collection:${record.surfaceHealth.skillCollectionSha256}`,
-            observed: { state: 'available', value: { collectionSha256: record.surfaceHealth.skillCollectionSha256,
+            source: `installed-skill-inventory:${record.surfaceHealth.skillInventorySha256}`,
+            observed: { state: 'available', value: { coreCollectionSha256: record.surfaceHealth.skillCollectionSha256,
+                inventorySha256: record.surfaceHealth.skillInventorySha256, inventory: record.surfaceHealth.skillInventory, skills: record.surfaceHealth.skills,
                 costs: record.surfaceHealth.skillCosts.map(({ target, metric, value, cap }) => ({ target, metric, value, cap })) }, observedAt },
             expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
             remedy: 'move skill procedure text out of always-loaded entry points, then run cockpit sync --config <file>',
@@ -2271,7 +2280,6 @@ async function prepareSurfaces(
             ? refuse('SURFACE_INPUT_INVALID', namespace.message, namespace.target)
             : refuse('SURFACE_INPUT_INVALID', `browser posture state is ${namespace.kind}`, prepared.root)
         try {
-            const { resolveObservationPostures } = await import('./observations.js')
             const authority = await resolveObservationPostures({
                 configuration,
                 cockpitId: checkout.cockpitId,
@@ -2602,6 +2610,29 @@ async function prepareSurfaces(
     if (bound.kind !== 'complete') return refuse(bound.diagnostic.code, bound.diagnostic.message, bound.diagnostic.target)
     const surfaceEntries = Object.freeze([...bound.entries, ...bundleEntries]
         .sort((left, right) => compareCodeUnits(left.path, right.path)))
+    const browserSkillFiles: RenderedSurfaceFile[] = []
+    const renderedBrowserSkills = browser?.files.filter(file => file.path.endsWith('/skills/cockpit-browser/SKILL.md')) ?? []
+    const publishedBrowserSkills = surfaceEntries.filter(entry => entry.path.endsWith('/skills/cockpit-browser/SKILL.md'))
+    for (const entry of publishedBrowserSkills) {
+        if (entry.kind !== 'file') return refuse('SURFACE_INPUT_INVALID', 'the browser skill must be a whole owned file', entry.path)
+        for (const target of entry.harnesses) {
+            const rendered = renderedBrowserSkills.find(file => file.path === entry.path && file.target === target)
+            const bytes = rendered && stripDevelopmentMarkers(rendered.bytes)
+            if (!rendered || bytes !== entry.bytes || sha256(bytes) !== entry.sha256) {
+                return refuse('SURFACE_INPUT_INVALID', 'the published browser skill differs from its authenticated renderer', entry.path)
+            }
+            browserSkillFiles.push(Object.freeze({ target: rendered.target, path: entry.path, bytes, sha256: entry.sha256 }))
+        }
+    }
+    if (renderedBrowserSkills.length !== browserSkillFiles.length
+        || renderedBrowserSkills.some(file => !browserSkillFiles.some(published => published.path === file.path && published.target === file.target))) {
+        return refuse('SURFACE_INPUT_INVALID', 'the published browser skill inventory is incomplete', 'surfaces')
+    }
+    const installedSkillInspection = extendInspectedSkillStandingCosts(skillInspection, browserSkillFiles)
+    if (installedSkillInspection.kind !== 'complete') {
+        const diagnostic = installedSkillInspection.diagnostics[0]
+        return refuse(diagnostic.code, diagnostic.message, diagnostic.target ?? 'surfaces')
+    }
     const rootGuide = surfaceEntries.find(entry => entry.path === 'AGENTS.md')
     if (!rootGuide || rootGuide.kind !== 'shared-region' || rootGuide.region.format !== 'markdown-delimited') {
         return refuse('SURFACE_INPUT_INVALID', 'the published always-loaded root guide is unavailable', 'AGENTS.md')
@@ -2658,12 +2689,24 @@ async function prepareSurfaces(
     const payload = { schema: captured.schema, configuredHarnesses: selftestPayload.configuredHarnesses,
         declarations: captured.declarations, entries: surfaceEntries, custom: captured.custom }
     const surfaceSelftest = Object.freeze({ ...payload, manifestSha256: sha256(JSON.stringify(payload)) })
+    const skillInventory = Object.freeze(surfaceEntries.filter((entry): entry is Extract<SurfaceDesiredEntry, { kind: 'file' }> =>
+        entry.kind === 'file' && entry.path.endsWith('/SKILL.md')).flatMap(entry => entry.harnesses.map(target =>
+        Object.freeze({ target, path: entry.path, sha256: entry.sha256 })))
+        .sort((left, right) => compareCodeUnits(`${left.target}\0${left.path}`, `${right.target}\0${right.path}`)))
+    const installedSkillTargets = new Set(skillInventory.map(({ target }) => target))
+    const installedSkillCosts = installedSkillInspection.costs.filter(({ target }) => installedSkillTargets.has(target))
+    if (installedSkillCosts.length !== installedSkillTargets.size) {
+        return refuse('SURFACE_INPUT_INVALID', 'a published skill target has no admitted standing-cost measurement', 'surfaces')
+    }
     const surfaceHealth: GeneratedSurfaceHealthEvidence = Object.freeze({
         observedAt: prepared.producedAt,
         grants: Object.freeze(projection.grants.map(grant => Object.freeze({ ...grant }))),
         nativeGrants,
         guideCosts: Object.freeze(actualGuideCosts),
-        skillCosts: Object.freeze(skillInspection.costs.map(cost => Object.freeze({ ...cost }))),
+        skillCosts: Object.freeze(installedSkillCosts),
+        skillInventorySha256: sha256(JSON.stringify(skillInventory)),
+        skillInventory,
+        skills: installedSkillInspection.skills,
         skillCollectionSha256: skillInspection.collection.source.sha256,
     })
     const customSurfacePaths = new Set(customReceipts.flatMap(receipt => receipt.files.map(file => file.path)))

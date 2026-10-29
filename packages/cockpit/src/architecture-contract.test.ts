@@ -3703,7 +3703,7 @@ function observationDeclarationViolations(sources: Sources): string[] {
                 && value.elements.some((element) => ts.isObjectLiteralExpression(element)
                     && element.properties.some((property) => property.name?.getText(sourceFile).replaceAll("'", '') === 'postures'))
             if (!looksLikeDeclarations) continue
-            declarationModules.add(canonicalModulePath(path))
+            if (ts.isIdentifier(declaration.name)) declarationModules.add(`${canonicalModulePath(path)}:${declaration.name.text}`)
             for (const element of value.elements) {
             if (!ts.isObjectLiteralExpression(element)) {
                 violations.add('ARCH030_OBSERVATION_DECLARATION_NOT_LOCAL'); continue
@@ -3751,9 +3751,9 @@ function observationDeclarationViolations(sources: Sources): string[] {
         for (const statement of aggregateFile.statements) {
             if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
                 && statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)) {
-                const imported = statement.importClause.namedBindings.elements.find(({ propertyName, name }) =>
-                    (propertyName ?? name).text === 'observationDeclarations')
-                if (imported) imports.set(statement.moduleSpecifier.text, imported.name.text)
+                for (const imported of statement.importClause.namedBindings.elements) {
+                    imports.set(`${statement.moduleSpecifier.text}:${(imported.propertyName ?? imported.name).text}`, imported.name.text)
+                }
             }
             if (!ts.isVariableStatement(statement)) continue
             for (const declaration of statement.declarationList.declarations) {
@@ -3767,13 +3767,14 @@ function observationDeclarationViolations(sources: Sources): string[] {
                 }
             }
         }
-        for (const module of declarationModules) {
-            if (module.endsWith('/observations.ts')) continue
-            const stem = posix.basename(module, '.ts')
-            const imported = imports.get(`./${stem}.js`)
+        for (const entry of declarationModules) {
+            const [module, declaration] = entry.split(':')
+            if (module!.endsWith('/observations.ts')) continue
+            const stem = posix.basename(module!, '.ts')
+            const imported = imports.get(`./${stem}.js:${declaration}`)
             if (!imported || !spreads.has(imported)) violations.add('ARCH031_OBSERVATION_AGGREGATE_INCOMPLETE')
         }
-        for (const code of ['CONFIG_STALE', 'SIBLING_MISSING', 'GUIDE_CAP_EXCEEDED', 'MACHINE_COLD_START_EXCEEDED', 'DISK_BUDGET_EXCEEDED']) {
+        for (const code of ['CONFIG_STALE', 'SIBLING_MISSING', 'GUIDE_CAP_EXCEEDED', 'MACHINE_DISK_BELOW_FLOOR', 'PORT_FAMILY_COLLISION', 'RUNNING_CHECKOUT_MISMATCH']) {
             if (!seenCodes.has(`ENVIRONMENT_CODES.${code}`)) violations.add('ARCH031_OBSERVATION_AGGREGATE_INCOMPLETE')
         }
     }
@@ -5128,6 +5129,20 @@ describe('product architecture contract', () => {
 
         expect(observationDeclarationViolations(nonLocalVerifier)).toContain('ARCH030_OBSERVATION_DECLARATION_NOT_LOCAL')
         expect(observationDeclarationViolations(omittedFromAggregate)).toContain('ARCH031_OBSERVATION_AGGREGATE_INCOMPLETE')
+        const requiredCodes = ['CONFIG_STALE', 'SIBLING_MISSING', 'GUIDE_CAP_EXCEEDED', 'MACHINE_DISK_BELOW_FLOOR',
+            'PORT_FAMILY_COLLISION', 'RUNNING_CHECKOUT_MISMATCH']
+        const rows = requiredCodes.map((code, index) => `{ id: 'fact-${index}', owner: mechanism.id, postures: ['environment'],
+            stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.${code}, isIssued }`)
+        const splitOwner = new Map([
+            ['packages/cockpit/src/environment/one.ts', `const mechanism = { id: 'one' } as const; const isIssued = () => false;
+                export const observationDeclarations = Object.freeze([${rows.join(',')} ] as const);
+                export const surfaceObservationDeclarations = Object.freeze([{ id: 'surface', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, isIssued }] as const)`],
+            ['packages/cockpit/src/environment/observations.ts', `import { observationDeclarations as facts, surfaceObservationDeclarations as surfaces } from './one.js'; export const allObservationDeclarations = Object.freeze([...facts, ...surfaces])`],
+        ])
+        expect(observationDeclarationViolations(splitOwner)).toEqual([])
+        splitOwner.set('packages/cockpit/src/environment/observations.ts',
+            `import { observationDeclarations as facts, surfaceObservationDeclarations as surfaces } from './one.js'; export const allObservationDeclarations = Object.freeze([...facts])`)
+        expect(observationDeclarationViolations(splitOwner)).toEqual(['ARCH031_OBSERVATION_AGGREGATE_INCOMPLETE'])
     })
 
     it('requires lifecycle applicability beside every observation producer', () => {

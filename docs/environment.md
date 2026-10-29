@@ -115,8 +115,8 @@ holder to report `change: "stopped"`; `"retained"` means another holder remains.
 `cockpit up --config cockpit.toml --json`. Use the newly returned entrypoints. Release before
 editing because the active lease authenticates the original port declaration.
 
-IPv4 loopback listener checks observe availability; they do not reserve a socket or detect an
-IPv6-only listener. Another process can bind after the check. If startup reports a bind failure,
+Initial port allocation uses IPv4 loopback listener checks; these observe availability without
+reserving a socket or detecting an IPv6-only listener. Another process can bind after the check. If startup reports a bind failure,
 inspect the conflicting process and rerun `cockpit up --config cockpit.toml` after resolving it.
 The lease remains owned until authenticated cleanup, even when its holder is no longer running.
 
@@ -551,6 +551,18 @@ remote is checked against the remote selected by that checkout's branch upstream
 does not rewrite Git remotes. A local checkout with no selected upstream has no adjacency
 comparison; its evidence reports that absence. Once an upstream is selected, it must be available
 and aligned; a missing or diverged selected upstream blocks the gate.
+
+Surface health checks current publication against its ownership manifest and existing guide-line
+and skill caps. This proves generated files are current; native harness enforcement remains in the
+[capability matrix](capability-matrix.md). Missing or edited publication blocks health; run
+`cockpit sync --config cockpit.toml`, then retry. Directory grants and registry authentication are
+required only when the current declarations select grants or registry probes. A runtime with no
+bind mounts passes an exact empty mount comparison; declared binds require exact current mounts.
+Running-stack health rechecks the retained lease, current container identities, mounts and published
+listeners without reserving sockets. Cold-start timing belongs to services actually started by
+`up`; read-only health does not invent a new duration. The machine disk floor measures current free
+space against an explicitly declared machine floor, independently of generated artifact sizes. Without
+that declaration, host-floor checks do not apply.
 
 Generated, dependency, data, and vendor producers return owner-issued observations.
 `preflight` and `doctor` consume current read-only observations; doctor previews generated

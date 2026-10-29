@@ -3096,6 +3096,11 @@ export async function runUp(
         }
         const result: UpCommandResult = round.result.progress || !generatedBringupProgress.has(context)
             ? round.result : { ...round.result, progress: generatedBringupProgress.get(context) }
+        if (result.kind === 'complete' && !generatedBringupRuns.has(context)) {
+            const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
+                holderId: context.holderId, observedAt: new Date().toISOString() })
+            if (seeded.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: seeded.diagnostics }
+        }
         if (result.kind === 'refusal' && releasable()) {
             const compensation = await compensateAcquiredPortHolder({
                 namespace: context.namespace,
@@ -3935,6 +3940,7 @@ export interface ComparisonRemoteInput {
 }
 
 export interface HealthObservationProducers {
+    readonly surfaces: () => Promise<readonly EnvironmentObservation[]>
     readonly generated: () => Promise<readonly EnvironmentObservation[]>
     readonly data: () => Promise<readonly EnvironmentObservation[]>
     readonly envSchema: () => Promise<readonly EnvironmentObservation[]>
@@ -4223,7 +4229,7 @@ const issuedHealthObservationSources = new WeakMap<object, PreparedHealthObserva
 
 const healthProducerNames = Object.freeze([
     'claims', 'git', 'host', 'installs', 'lifecycle', 'ports', 'runtime', 'state', 'templates',
-    'generated', 'data', 'external', 'envSchema',
+    'generated', 'data', 'external', 'envSchema', 'surfaces',
 ] as const)
 
 function applicationDiagnostic(
