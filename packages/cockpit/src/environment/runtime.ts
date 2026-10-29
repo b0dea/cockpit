@@ -50,6 +50,7 @@ import {
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
+import { redactSensitiveMessage } from './sensitive.js'
 import type { StateNamespace } from './state.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
 import { composeProcessEnvironment } from './compose-environment.js'
@@ -2033,6 +2034,16 @@ export type BuiltImageLauncherAdmission =
 
 const issuedBuiltImageLauncherPlans = new WeakMap<object, { readonly service: string }>()
 
+function executionFailureDetail(stderr: Buffer): string | undefined {
+    let text: string
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(stderr) } catch { return undefined }
+    const line = text.split(/\r?\n|\r/).filter(candidate => candidate.trim() !== '').at(-1)?.trim()
+    if (!line || /[\x00-\x08\x0b-\x1f\x7f]/.test(line)) return undefined
+    const redacted = redactSensitiveMessage(line)
+    if (!redacted || /[\x00-\x08\x0b-\x1f\x7f]/.test(redacted)) return undefined
+    return [...redacted].slice(0, 300).join('')
+}
+
 // A pinned image's `/bin/sh` launcher is checked before start; a built service has no image until
 // Compose builds it, so its first start used to fail opaquely inside `up --wait` when the image
 // shipped no shell. A built generated service's plan therefore builds first and checks its image
@@ -2076,13 +2087,15 @@ export function admitBuiltImageLauncher(input: {
     const build = authenticatedExecutionOutcome(input.buildOutcome, plan.build)
     if (!build) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image build evidence is unauthenticated')
     if (build.kind !== 'complete') {
+        const detail = executionFailureDetail(build.stderr)
         return refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-            `the image for built service ${contract.service} did not build (${build.code}); fix its build context, then rerun cockpit up`)
+            `the image for built service ${contract.service} did not build (${build.code})${detail ? ` (${detail})` : ''}`
+            + `; the service cannot start until its image builds; ${detail ? 'fix the reported build error' : 'inspect the build output'}, then rerun cockpit up`)
     }
     const launcher = input.launcherOutcome === undefined ? undefined : authenticatedExecutionOutcome(input.launcherOutcome, plan.launcher)
     if (!launcher) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image launcher evidence is unauthenticated')
     if (launcher.kind === 'complete') return Object.freeze({ kind: 'complete' })
-    const detail = new TextDecoder().decode(launcher.stderr.subarray(0, 4_096)).split('\n').find((line) => line.trim() !== '')?.slice(0, 300)
+    const detail = executionFailureDetail(launcher.stderr)
     return refuse(ENVIRONMENT_CODES.RUNTIME_LAUNCHER_UNAVAILABLE,
         `the built image for service ${contract.service} cannot run /bin/sh, which the generated entrypoint needs`
         + `${detail ? ` (${detail})` : ''}; build it from a base image that ships /bin/sh`)

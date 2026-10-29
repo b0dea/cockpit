@@ -614,7 +614,11 @@ that a child process and all its descendants have stopped. Run the command on a
 `EXECUTION_STAGING_CLEANUP_FAILED`, `EXECUTION_TIMEOUT`, `EXECUTION_STDOUT_LIMIT`,
 `EXECUTION_STDERR_LIMIT`, `EXECUTION_STEP_FAILED`, and `EXECUTION_ABORTED` identify the failed
 execution boundary. Use its target and bounded stderr to repair the named executable, staging
-path, timeout, output volume, or command. `EXECUTION_TERMINATION_UNCONFIRMED` means cockpit sent
+path, timeout, output volume, or command. A generated service build or launcher failure includes
+the last nonempty stderr line only when it is valid, control-character-free text and sensitive
+values can be redacted. Cockpit
+keeps the generic remedy when it cannot expose that line safely; correct the named image error,
+then rerun `cockpit up`. `EXECUTION_TERMINATION_UNCONFIRMED` means cockpit sent
 termination signals but could not prove the process group exited. Cockpit retains its staging
 directory, issues no finished execution receipt, and does not start follow-on compensation while
 that process may still be live. Inspect the named process and its ownership, confirm termination,

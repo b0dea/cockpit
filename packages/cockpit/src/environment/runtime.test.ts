@@ -1260,6 +1260,8 @@ describe('authenticated runtime topology and service health', () => {
             ? Number((containers[0] as Record<string, unknown>).StopExitCode ?? 0)
             : 0
         const buildExitCode = Number(controls.BuildExitCode ?? 0)
+        const buildStderr = typeof controls.BuildStderr === 'string' ? controls.BuildStderr : ''
+        const buildInvalidUtf8 = controls.BuildInvalidUtf8 === true
         const launcherExitCode = Number(controls.LauncherExitCode ?? 0)
         const launcherStderr = typeof controls.LauncherStderr === 'string' ? controls.LauncherStderr : ''
         const source = `#!/bin/sh
@@ -1343,6 +1345,7 @@ elif suffix_4_is_identity "$@"; then
 elif suffix_1_is_stop "$@"; then
   exit ${stopExitCode}
 elif suffix_4_is_build "$@"; then
+  ${buildInvalidUtf8 ? "printf '\\377' >&2" : `printf '%s' ${shellQuote(buildStderr)} >&2`}
   exit ${buildExitCode}
 elif suffix_11_is_launcher "$@"; then
   printf '%s' ${shellQuote(launcherStderr)} >&2
@@ -1693,7 +1696,24 @@ fi
             kind: 'refusal', diagnostics: [{ code: 'RUNTIME_LAUNCHER_UNAVAILABLE', target: 'api',
                 message: expect.stringContaining('cannot run /bin/sh, which the generated entrypoint needs (exec: "/bin/sh": stat /bin/sh: no such file or directory)') }],
         })
-        expect(await launcherCheck({ BuildExitCode: 1 })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api' }] })
+        const launcherSensitive = await launcherCheck({ LauncherExitCode: 1, LauncherStderr: 'launcher failed: token=synthetic-launcher-secret\n' })
+        expect(launcherSensitive).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_LAUNCHER_UNAVAILABLE', target: 'api',
+            message: expect.stringContaining('launcher failed: token=[redacted]') }] })
+        expect(JSON.stringify(launcherSensitive)).not.toContain('synthetic-launcher-secret')
+        expect(await launcherCheck({ BuildExitCode: 1, BuildStderr: 'Image app Building\nfailed to read Dockerfile: no such file\n' })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
+                message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED) (failed to read Dockerfile: no such file); the service cannot start until its image builds; fix the reported build error, then rerun cockpit up') }],
+        })
+        const buildSensitive = await launcherCheck({ BuildExitCode: 1, BuildStderr: 'registry rejected credentials: api_key=synthetic-build-secret\n' })
+        expect(buildSensitive).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
+            message: expect.stringContaining('registry rejected credentials: [redacted]') }] })
+        expect(JSON.stringify(buildSensitive)).not.toContain('synthetic-build-secret')
+        for (const controls of [{ BuildExitCode: 1 }, { BuildExitCode: 1, BuildInvalidUtf8: true }]) {
+            expect(await launcherCheck(controls)).toMatchObject({
+                kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
+                    message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED); the service cannot start until its image builds; inspect the build output, then rerun cockpit up') }],
+            })
+        }
         const pinnedEvidence = (await topologyEvidence(topology, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
         if (pinnedEvidence.kind !== 'complete') throw new Error(pinnedEvidence.reason)
         const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
