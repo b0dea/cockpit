@@ -36,5 +36,6 @@ outside generated paths.
 
 Give generated outputs portable relative names so the same committed checkout can be shared across
 filesystems. Avoid reserved device names, stream syntax, trailing dots or spaces, and directory names
-that differ only by case or Unicode normalization. Rename an invalid overlay output, then review
-`cockpit sync --dry-run` before publishing it.
+that differ only by case or Unicode normalization. Keep every path component within both 255 UTF-16
+code units and 255 UTF-8 bytes. Rename an invalid overlay output, then review `cockpit sync --dry-run`
+before publishing it.

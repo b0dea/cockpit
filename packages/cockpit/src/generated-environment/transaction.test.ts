@@ -13,7 +13,7 @@ import { resolveGitExecutable } from '../environment/executable.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
-import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource,
+import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
     revalidateReferenceBootstrap, runPublicationPlan } from './transaction.js'
 
 const roots: string[] = []
@@ -452,6 +452,10 @@ describe('portable publication names', () => {
             .resolves.toMatchObject({ kind: 'complete' })
         expect(await readFile(join(root, destination), 'utf8')).toBe(bytes)
         await expect(lstat(join(root, source))).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(restoreAnchoredFile(root, source, destination, 1024, digest(bytes), node, { execute: executeProbe }))
+            .resolves.toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, source), 'utf8')).toBe(bytes)
+        await expect(lstat(join(root, destination))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('refuses nonportable authored names before creating any output', async () => {
@@ -482,6 +486,30 @@ describe('portable publication names', () => {
         if (admitted.kind !== 'complete') throw new Error('valid dotted publication was refused')
         await expect(runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true })).resolves.toMatchObject({ kind: 'complete' })
         for (const file of control.files) expect(await readFile(join(control.root, file.path), 'utf8')).toBe(file.bytes)
+    }, 120_000)
+
+    it('publishes a 255-byte component and refuses 256 bytes through portable admission', async () => {
+        const maximum = `${'é'.repeat(127)}a`
+        const overlong = 'é'.repeat(128)
+        expect(Buffer.byteLength(maximum)).toBe(255)
+        expect(Buffer.byteLength(overlong)).toBe(256)
+
+        const accepted = await compactPublication({ paths: [`.cursor/portable/${maximum}`], preexisting: true })
+        const admitted = await admitPublicationPlan(accepted.input, { execute: executeProbe })
+        expect(admitted).toMatchObject({ kind: 'complete' })
+        if (admitted.kind !== 'complete') throw new Error('maximum portable publication was refused')
+        await expect(runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true }))
+            .resolves.toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(accepted.root, accepted.files[0]!.path), 'utf8')).toBe(accepted.files[0]!.bytes)
+
+        const refused = await compactPublication({ paths: [`.cursor/portable/${overlong}`], preexisting: true })
+        await expect(admitPublicationPlan(refused.input, { execute: executeProbe })).resolves.toMatchObject({
+            kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'GENERATED_PUBLICATION_FAILED', message: expect.stringContaining('cannot be transferred'),
+            })],
+        })
+        expect(await readdir(join(refused.root, '.cursor', 'portable'))).toEqual([])
+        await expect(lstat(join(refused.root, ledgerPath))).rejects.toMatchObject({ code: 'ENOENT' })
     }, 120_000)
 })
 

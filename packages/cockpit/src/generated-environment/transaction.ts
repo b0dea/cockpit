@@ -285,12 +285,12 @@ const anchoredName = value => {
   return value;
 };
 const name = value => {
-  if (typeof value !== "string" || value.length === 0 || value.length > 255 || /[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) || /[. ]$/.test(value) || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)) throw new Error("nonportable-name");
+  if (typeof value !== "string" || value.length === 0 || value.length > 255 || Buffer.byteLength(value, "utf8") > 255 || /[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) || /[. ]$/.test(value) || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)) throw new Error("nonportable-name");
   return value;
 };
-const safeSegments = value => {
+const safeSegments = (value, validate = name) => {
   if (!Array.isArray(value)) throw new Error("segments");
-  return value.map(name);
+  return value.map(validate);
 };
 const same = (actual, expected) => actual.isDirectory() && !actual.isSymbolicLink() && actual.dev === expected.dev && actual.ino === expected.ino;
 const identity = () => { const value = fs.lstatSync("."); if (!same(value, request.identity)) throw new Error("identity"); return value; };
@@ -326,10 +326,10 @@ const copy = (source, target, expected) => {
   const fd = fs.openSync(name(target), c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW || 0), 0o600);
   try { fs.writeFileSync(fd, value.bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 };
-const hash = path => digest(read(name(path)).bytes);
-const walk = (segments, chain = []) => {
+const hash = (path, validate = name) => digest(read(validate(path)).bytes);
+const walk = (segments, chain = [], validate = name) => {
   for (const raw of segments) {
-    const segment = name(raw); let created = false; let before;
+    const segment = validate(raw); let created = false; let before;
     try { before = fs.lstatSync(segment); }
     catch (error) { if (error.code !== "ENOENT") throw error; fs.mkdirSync(segment, { mode: 0o700 }); syncDirectory(); created = true; before = fs.lstatSync(segment); }
     if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("directory");
@@ -402,14 +402,14 @@ const verifySourceChain = (chain, start = request.identity) => {
   }
   const current = fs.lstatSync("."); if (!same(current, start)) throw new Error("start-identity");
 };
-const removeCreatedChain = (chain, start) => {
+const removeCreatedChain = (chain, start, validate = name) => {
   for (let index = chain.length - 1; index >= 0; index--) {
     process.chdir("..");
     const parent = fs.lstatSync("."); const expected = index === 0 ? start : chain[index - 1];
     if (!same(parent, expected)) throw new Error("parent-identity");
-    const child = fs.lstatSync(name(chain[index].name));
+    const child = fs.lstatSync(validate(chain[index].name));
     if (!same(child, chain[index])) throw new Error("child-identity");
-    if (chain[index].created) { try { fs.rmdirSync(name(chain[index].name)); syncDirectory(); } catch (error) { if (error.code !== "ENOTEMPTY") throw error; } }
+    if (chain[index].created) { try { fs.rmdirSync(validate(chain[index].name)); syncDirectory(); } catch (error) { if (error.code !== "ENOTEMPTY") throw error; } }
   }
   const current = fs.lstatSync("."); if (!same(current, start)) throw new Error("start-identity");
 };
@@ -522,8 +522,9 @@ try {
     respond({ kind: "complete", receiptBytes: receipt.length, receiptSha256: digest(receipt) });
   } else if (request.action === "read-persona" || request.action === "read-file" || request.action === "read-entry") {
     respond(readSource(request));
-  } else if (request.action === "relocate-file") {
+  } else if (request.action === "relocate-file" || request.action === "restore-file") {
     const base = process.cwd(); const destinationChain = []; const sourceCapture = name(".cockpit-adopt-source-" + request.nonce); const destinationCapture = name(".cockpit-adopt-destination-" + request.nonce);
+    const destinationPolicy = request.action === "restore-file" ? anchoredName : name;
     let sourceCapturePath; let sourceMode; let sourceCaptured = false; let sourceRestored = false; let originalRetired = false; let destinationCreated = false; let destinationQuarantined = false; let destinationIdentity;
     const restoreSource = () => {
       process.chdir(base); const chain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name);
@@ -542,7 +543,7 @@ try {
       fs.unlinkSync(sourceCapture); sourceCaptured = false; retired(); syncDirectory(); verifySourceChain(chain);
     };
     const removeDestination = () => {
-      process.chdir(base); const chain = walkExpected(destinationChain); const destinationName = name(request.destination.name);
+      process.chdir(base); const chain = walkExpected(destinationChain, destinationPolicy); const destinationName = destinationPolicy(request.destination.name);
       if (state(destinationCapture).kind !== "missing") throw new Error("destination-recovery-capture");
       fs.renameSync(destinationName, destinationCapture); destinationQuarantined = true; const captured = fs.lstatSync(destinationCapture);
       if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== destinationIdentity.dev || captured.ino !== destinationIdentity.ino) {
@@ -564,22 +565,22 @@ try {
       if (source.status.dev !== captured.dev || source.status.ino !== captured.ino || digest(source.bytes) !== request.source.sha256) throw new Error("source-digest");
       sourceMode = source.status.mode & 511; verifySourceChain(sourceChain);
 
-      process.chdir(base); walk(safeSegments(request.destination.segments), destinationChain);
-      const destinationName = name(request.destination.name);
+      process.chdir(base); walk(safeSegments(request.destination.segments, destinationPolicy), destinationChain, destinationPolicy);
+      const destinationName = destinationPolicy(request.destination.name);
       if (state(destinationName).kind !== "missing") throw new Error("destination-state");
       process.chdir(base); const linkSourceChain = walkExpected(request.source.chain, anchoredName); const currentCapture = read(sourceCapturePath, request.source.maxBytes, request.source.file);
       if (currentCapture.status.dev !== request.source.file.dev || currentCapture.status.ino !== request.source.file.ino
         || digest(currentCapture.bytes) !== request.source.sha256 || (currentCapture.status.mode & 511) !== sourceMode) throw new Error("source-capture-changed");
       verifySourceChain(linkSourceChain);
-      process.chdir(base); walkExpected(destinationChain);
+      process.chdir(base); walkExpected(destinationChain, destinationPolicy);
       fs.linkSync(sourceCapturePath, destinationName); destinationCreated = true; destinationIdentity = { ...request.source.file };
       const destination = fs.lstatSync(destinationName);
       if (!destination.isFile() || destination.isSymbolicLink() || destination.dev !== destinationIdentity.dev || destination.ino !== destinationIdentity.ino) throw new Error("destination-linked-identity");
       process.chdir(base); const linkedSourceChain = walkExpected(request.source.chain, anchoredName); const linkedCapture = fs.lstatSync(sourceCapture);
       if (!linkedCapture.isFile() || linkedCapture.isSymbolicLink() || linkedCapture.dev !== destinationIdentity.dev || linkedCapture.ino !== destinationIdentity.ino) throw new Error("source-linked-identity");
       verifySourceChain(linkedSourceChain);
-      process.chdir(base); walkExpected(destinationChain);
-      if (hash(destinationName) !== request.source.sha256 || (destination.mode & 511) !== sourceMode) throw new Error("destination-postimage");
+      process.chdir(base); walkExpected(destinationChain, destinationPolicy);
+      if (hash(destinationName, destinationPolicy) !== request.source.sha256 || (destination.mode & 511) !== sourceMode) throw new Error("destination-postimage");
       syncDirectory(); verifySourceChain(destinationChain);
 
       process.chdir(base); const currentSourceChain = walkExpected(request.source.chain, anchoredName);
@@ -588,10 +589,10 @@ try {
       if (!finalCapture.isFile() || finalCapture.isSymbolicLink() || finalCapture.dev !== destinationIdentity.dev || finalCapture.ino !== destinationIdentity.ino) throw new Error("source-capture-identity");
       verifySourceChain(currentSourceChain);
 
-      process.chdir(base); const currentDestinationChain = walkExpected(destinationChain);
+      process.chdir(base); const currentDestinationChain = walkExpected(destinationChain, destinationPolicy);
       const currentDestination = fs.lstatSync(destinationName);
       if (!currentDestination.isFile() || currentDestination.isSymbolicLink() || currentDestination.dev !== destinationIdentity.dev
-        || currentDestination.ino !== destinationIdentity.ino || hash(destinationName) !== request.source.sha256
+        || currentDestination.ino !== destinationIdentity.ino || hash(destinationName, destinationPolicy) !== request.source.sha256
         || (currentDestination.mode & 511) !== sourceMode) throw new Error("destination-changed");
       verifySourceChain(currentDestinationChain); process.chdir(base); identity();
       retireSourceCapture(false, () => { originalRetired = true; });
@@ -601,7 +602,7 @@ try {
       if (destinationCreated && !originalRetired) try { removeDestination(); } catch (recoveryError) { recoveryFailures.push("destination:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
       if (sourceCaptured && sourceRestored && !destinationCreated) try { retireSourceCapture(true); } catch (recoveryError) { recoveryFailures.push("source-retirement:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
       if (originalRetired) recoveryFailures.push("source:original-retired");
-      if (destinationChain.length > 0) try { process.chdir(base); walkExpected(destinationChain); removeCreatedChain(destinationChain, request.identity); } catch (recoveryError) { recoveryFailures.push("directories:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
+      if (destinationChain.length > 0) try { process.chdir(base); walkExpected(destinationChain, destinationPolicy); removeCreatedChain(destinationChain, request.identity, destinationPolicy); } catch (recoveryError) { recoveryFailures.push("directories:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
       try { process.chdir(base); identity(); } catch (recoveryError) { recoveryFailures.push("root:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
       if (recoveryFailures.length > 0) {
         const retained = [];
@@ -1088,7 +1089,7 @@ export async function readAnchoredEntry(
 export type AnchoredRelocation = Readonly<{ kind: 'complete'; sha256: string }>
     | Readonly<{ kind: 'refusal'; recovery: 'unchanged' | 'indeterminate'; failure?: string; recoveryFailures?: readonly string[]; retainedPaths?: readonly string[] }>
 
-/** Move one authenticated regular file between confined paths through the publication helper. */
+/** Move one authenticated regular file to a portable authored destination through the publication helper. */
 export async function relocateAnchoredFile(
     root: string,
     sourcePath: string,
@@ -1098,6 +1099,21 @@ export async function relocateAnchoredFile(
     node: NodeAuthority,
     adapters: PublicationAdapters,
 ): Promise<AnchoredRelocation> {
+    return relocateAnchoredFileWithDestinationPolicy(root, sourcePath, destinationPath, maxBytes, expectedSha256,
+        node, adapters, 'relocate-file', safePublicationSegment)
+}
+
+async function relocateAnchoredFileWithDestinationPolicy(
+    root: string,
+    sourcePath: string,
+    destinationPath: string,
+    maxBytes: number,
+    expectedSha256: string,
+    node: NodeAuthority,
+    adapters: PublicationAdapters,
+    action: 'relocate-file' | 'restore-file',
+    destinationSegment: (value: unknown) => value is string,
+): Promise<AnchoredRelocation> {
     const sourceTarget = confined(root, sourcePath)
     const destinationTarget = confined(root, destinationPath)
     if (!sourceTarget || !destinationTarget || sourceTarget === destinationTarget || !SHA256.test(expectedSha256)
@@ -1106,7 +1122,7 @@ export async function relocateAnchoredFile(
     }
     const sourceParts = relative(root, sourceTarget).split(sep)
     const destinationParts = relative(root, destinationTarget).split(sep)
-    if (sourceParts.some(part => !safeAnchoredSegment(part)) || destinationParts.some(part => !safePublicationSegment(part))) {
+    if (sourceParts.some(part => !safeAnchoredSegment(part)) || destinationParts.some(part => !destinationSegment(part))) {
         return Object.freeze({ kind: 'refusal', recovery: 'unchanged' })
     }
     const source = await readAnchoredFile(root, sourcePath, maxBytes, node, adapters)
@@ -1116,7 +1132,7 @@ export async function relocateAnchoredFile(
     }
     const nonce = randomBytes(16).toString('hex')
     const request = Object.freeze({
-        version: 1, nonce, action: 'relocate-file', identity: source.identity.root,
+        version: 1, nonce, action, identity: source.identity.root,
         source: Object.freeze({
             chain: Object.freeze(sourceParts.slice(0, -1).map((name, index) => Object.freeze({ name, ...source.identity.chain[index]! }))),
             name: sourceParts.at(-1), file: source.identity.file, sha256: source.sha256, maxBytes,
@@ -1125,17 +1141,17 @@ export async function relocateAnchoredFile(
     })
     const receipt = await runHelper(adapters, helperStep(node, root, 'adoption', request, [], Date.now() + HELPER_TIMEOUT_MS))
     const complete = helperRecord(receipt, ['version', 'nonce', 'action', 'kind', 'sha256'])
-    if (complete?.version === 1 && complete.nonce === nonce && complete.action === 'relocate-file'
+    if (complete?.version === 1 && complete.nonce === nonce && complete.action === action
         && complete.kind === 'complete' && complete.sha256 === expectedSha256) {
         return Object.freeze({ kind: 'complete', sha256: expectedSha256 })
     }
     const refusal = ownRecord(receipt)
     const safeFailure = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512
     const recovered = refusal && exactKeys(refusal, ['version', 'nonce', 'action', 'kind', 'reason', 'failure'])
-        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === 'relocate-file'
+        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === action
         && refusal.kind === 'refusal' && refusal.reason === 'relocate-failed' && safeFailure(refusal.failure)
     const recoveryFailed = refusal && exactKeys(refusal, ['version', 'nonce', 'action', 'kind', 'reason', 'failure', 'recoveryFailures', 'retained'])
-        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === 'relocate-file'
+        && refusal.version === 1 && refusal.nonce === nonce && refusal.action === action
         && refusal.kind === 'refusal' && refusal.reason === 'relocate-recovery-failed' && Array.isArray(refusal.retained)
         && safeFailure(refusal.failure) && Array.isArray(refusal.recoveryFailures)
         && refusal.recoveryFailures.length > 0 && refusal.recoveryFailures.every(safeFailure)
@@ -1170,7 +1186,8 @@ export async function restoreAnchoredFile(
         return Object.freeze({ kind: 'complete', sha256: expectedSha256 })
     }
     if (original.kind === 'missing' && relocated.kind === 'complete' && relocated.sha256 === expectedSha256) {
-        return relocateAnchoredFile(root, relocatedPath, originalPath, maxBytes, expectedSha256, node, adapters)
+        return relocateAnchoredFileWithDestinationPolicy(root, relocatedPath, originalPath, maxBytes, expectedSha256,
+            node, adapters, 'restore-file', safeAnchoredSegment)
     }
     return Object.freeze({ kind: 'refusal', recovery: 'indeterminate' })
 }
@@ -1399,7 +1416,7 @@ function safeAnchoredSegment(value: unknown): value is string {
 }
 
 function safePublicationSegment(value: unknown): value is string {
-    return typeof value === 'string' && value.length > 0 && value.length <= 255
+    return typeof value === 'string' && value.length > 0 && value.length <= 255 && Buffer.byteLength(value, 'utf8') <= 255
         && !/[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) && !/[. ]$/.test(value)
         && !/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)
 }
