@@ -1000,6 +1000,10 @@ describe('filesystem helper protocol', () => {
             segments: ['stamps'], name: overlong, bytesBase64: Buffer.from('overlong stamp').toString('base64') })
         expect({ directory: directory.status, stamp: stamp.status, refusedDirectory: refusedDirectory.status,
             refusedStamp: refusedStamp.status }).toEqual({ directory: 0, stamp: 0, refusedDirectory: 2, refusedStamp: 2 })
+        expect([refusedDirectory, refusedStamp]).toMatchObject([
+            { stdout: '', stderr: 'install-filesystem: invalid path segments\n' },
+            { stdout: '', stderr: 'install-filesystem: invalid file publication\n' },
+        ])
         expect((await lstat(join(root, maximum))).isDirectory()).toBe(true)
         expect(await readFile(join(root, 'stamps', maximum), 'utf8')).toBe('maximum stamp')
         expect(await readdir(root)).toEqual([maximum, 'stamps'].sort())
@@ -1042,7 +1046,10 @@ describe('filesystem helper protocol', () => {
             outcomes.push({ length, status: released.status })
             expect(await readdir(join(root, 'locks'))).not.toContain(quarantine)
             if (length === 255) await expect(lstat(lock.path)).rejects.toMatchObject({ code: 'ENOENT' })
-            else expect(await readFile(join(lock.path, 'owner.json'), 'utf8')).toBe('synthetic owner')
+            else {
+                expect(released).toMatchObject({ stdout: '', stderr: 'install-filesystem: invalid quarantine name\n' })
+                expect(await readFile(join(lock.path, 'owner.json'), 'utf8')).toBe('synthetic owner')
+            }
         }
         expect(outcomes).toEqual([{ length: 255, status: 0 }, { length: 256, status: 2 }])
     })
