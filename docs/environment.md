@@ -100,9 +100,14 @@ labels. Arbitrary suffixes, bare `localhost`, wildcard names and embedded ports 
 The `.localhost` namespace is reserved for loopback by [RFC 6761](https://www.rfc-editor.org/rfc/rfc6761.html#section-6.3);
 an arbitrary name such as `local.app.sample` has no such guarantee. Use a distinct hostname for
 each project: [cookies are not isolated by port](https://www.rfc-editor.org/rfc/rfc6265.html#section-8.5).
-Container loopback belongs to that container; configure container resolution and the declared
-`browser.resolver` for the client that actually connects.
-Service-to-service traffic normally uses Compose service names and container ports.
+Host clients use the host resolver; conforming resolvers map `.localhost` names to host loopback.
+Container loopback belongs to that container, so a product container that calls the host-published
+URL needs its own `extra_hosts` mapping to the appropriate host gateway; service-to-service traffic
+normally uses Compose service names and container ports instead. `browser.resolver` supplies
+mappings to Cockpit's declared browser runtime. It does not configure an unrelated remote browser,
+MCP server or other client: put the mapping in the environment where that client's network process
+runs. Browser operations then use that runtime's native networking and DNS, as described in
+[Browser evidence](work-and-browser.md#browser-evidence).
 
 `scheme = "https"` declares a URL; the product's Compose stack must serve TLS on that leased
 port. Provision a certificate whose subjectAltName covers the exact hostname and explicitly
