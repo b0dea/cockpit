@@ -208,7 +208,7 @@ describe('production health adapter composition', () => {
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
-            env: { PATH: process.env.PATH, HOME: candidate.home },
+            env: { PATH: process.env.PATH, Path: undefined, LC_ALL: undefined, HOME: candidate.home },
             timeoutMs: 5_000,
         }, execute)
 
@@ -270,7 +270,13 @@ describe('production health adapter composition', () => {
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath,
-            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            env: {
+                PATH: `${candidate.root}:/usr/bin:/bin`,
+                PATHEXT: '.EXE',
+                PathExt: undefined,
+                LANG: 'C',
+                HOME: candidate.home,
+            },
             timeoutMs: 5_000,
         }, execute)
 
@@ -278,7 +284,7 @@ describe('production health adapter composition', () => {
         const siblingGit = execute.mock.calls.map(([step]) => step).find(({ id, labels }) =>
             id === 'git-health' && labels.source === `${configPath}:api`)
         expect(siblingGit).toMatchObject({ cwd: api, argv: expect.arrayContaining(['-C', api]) })
-        expect(siblingGit?.env).toEqual({})
+        expect(siblingGit?.env).toEqual({ LANG: 'C' })
         expect(observed.result.comparisons).toContainEqual({ sibling: 'api', result: expect.objectContaining({ kind: 'complete', state: 'match' }) })
         expect(observed.result.checks).toContainEqual(expect.objectContaining({
             owner: 'env-schema-observation', verdict: 'pass', measured: [{ sibling: 'api', state: 'valid', keys: 1 }],

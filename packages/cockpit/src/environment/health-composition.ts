@@ -125,6 +125,11 @@ function gitObservationEnvironment(env: Readonly<Record<string, string | undefin
             (entry[0] === 'LANG' || entry[0] === 'LC_ALL' || entry[0] === 'TZ') && typeof entry[1] === 'string')))
 }
 
+function checkoutObservationEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
+}
+
 function commandConfigPath(value: unknown): string | undefined {
     try {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -517,7 +522,7 @@ async function checkoutProjection(
         source: loaded.result.source,
         cockpitName: loaded.result.config.cockpit.name,
         observedAt,
-        env: input.env,
+        env: checkoutObservationEnvironment(input.env),
         gitExecutable: git,
     })
     return withSetupCheckoutProjection(observed, {
@@ -609,7 +614,7 @@ export function createHealthCommandAdapters(
             source: loaded.result.source,
             cockpitName: loaded.result.config.cockpit.name,
             observedAt: secondObservedAt,
-            env: input.env,
+            env: checkoutObservationEnvironment(input.env),
             gitExecutable: git.value,
         })
         return withSetupCheckoutProjection(secondObservation, {
