@@ -2040,6 +2040,7 @@ fi
         })).toMatchObject({
             code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE,
             observed: { state: 'available', value: true },
+            applicability: { state: 'required', posture: 'running-stack' },
         })
         expect(observeRuntimeMountMaterialization({
             topology,
@@ -2093,9 +2094,10 @@ fi
         try {
             const namespace = await selectStateRoot({ platform: 'linux', home, cockpitId: runtimeCockpit })
             if (namespace.kind !== 'complete') throw new Error('state namespace unavailable')
+            const holderId = `holder:${sha('runtime port health holder')}:session` as HolderId
             const lease = await leasePortFamilyFixture({
                 namespace: namespace.value, stackId: stack,
-                holderId: `holder:${sha('runtime port health holder')}:session` as HolderId,
+                holderId,
                 checkoutId: checkoutId({ checkoutPath: '/tmp/work' }),
                 config: { step: 100, count: 1, bases: { APP_HOST_PORT: published } },
                 now: new Date().toISOString(), listenerTimeoutMs: 100,
@@ -2155,11 +2157,28 @@ fi
                 namespace: namespace.value, listenerTimeoutMs: 1_000,
                 revalidate: async () => [await observeService(true)] })).resolves.toMatchObject({
                 code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, observed: { state: 'available', value: true },
+                applicability: { state: 'required', posture: 'running-stack' },
             })
             await expect(observeRuntimePortFamily({ topology, services: [service],
                 namespace: namespace.value, listenerTimeoutMs: 1_000, revalidate: async () => [service] })).resolves.toMatchObject({
                 observed: { state: 'unavailable' },
             })
+            let callbackMutation: unknown
+            const raced = await observeRuntimePortFamily({ topology, services: [service], namespace: namespace.value,
+                listenerTimeoutMs: 1_000, revalidate: async () => {
+                    const refreshed = await observeService(true)
+                    callbackMutation = await transactState(namespace.value, namespace.value.paths.coordination(stack),
+                        { ownerId: holderId }, (current) => ({
+                            ...current!, revision: current!.revision + 1, updatedAt: new Date().toISOString(),
+                            value: {
+                                ...(current!.value as object), holders: [], lastReleasedHolder: holderId,
+                                lease: { ...((current!.value as { lease: object }).lease), released: true },
+                            },
+                        } as never))
+                    return [refreshed]
+                } })
+            expect(callbackMutation).toMatchObject({ kind: 'complete' })
+            expect(raced).toMatchObject({ observed: { state: 'unavailable' } })
         } finally {
             server.close()
             rmSync(home, { recursive: true, force: true })

@@ -77,8 +77,8 @@ export const observationDeclarations = Object.freeze([
 ] as const)
 
 export const runtimeHealthObservationDeclarations = Object.freeze([
-    { id: 'runtime-mount-materialization', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
-    { id: 'runtime-port-family', owner: mechanism.id, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'ports are leased after the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-mount-materialization', owner: mechanism.id, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
+    { id: 'runtime-port-family', owner: mechanism.id, postures: ['running-stack'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'ports are leased after the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, isIssued: isRuntimeObservation, issuedAt: observationIssuedAt },
 ] as const)
 
 const issuedObservations = new WeakMap<object, number>()
@@ -2789,7 +2789,7 @@ export function observeRuntimeMountMaterialization(input: {
         source: topology.runtime.projectName,
         observed: { state: 'unavailable', reason, observedAt: typeof observedAt === 'string' && isCanonicalTimestamp(observedAt) ? observedAt : new Date().toISOString() },
         expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'environment' },
+        applicability: { state: 'required', posture: 'running-stack' },
         freshness: { state: 'current' },
         remedy: 'restore the exact declared bind mounts and re-observe every runtime service',
     })
@@ -2820,7 +2820,7 @@ export function observeRuntimeMountMaterialization(input: {
                 source: `${topology.runtime.projectName}:${contract.service.id}`,
                 observed: { state: 'available', value: false, observedAt },
                 expectation: { kind: 'equal', value: true },
-                applicability: { state: 'required', posture: 'environment' },
+                applicability: { state: 'required', posture: 'running-stack' },
                 freshness: { state: 'current' },
                 remedy: 'restore the exact declared bind mounts and recreate the affected service',
             })
@@ -2834,7 +2834,7 @@ export function observeRuntimeMountMaterialization(input: {
         source: `${topology.runtime.projectName}:runtime-mounts`,
         observed: { state: 'available', value: true, observedAt },
         expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'environment' },
+        applicability: { state: 'required', posture: 'running-stack' },
         freshness: { state: 'current' },
         remedy: 'restore the exact declared bind mounts and recreate the affected service',
     })
@@ -2891,7 +2891,7 @@ export async function observeRuntimePortFamily(input: {
         source: topology.runtime.projectName,
         observed: { state: 'unavailable', reason, observedAt },
         expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'environment' },
+        applicability: { state: 'required', posture: 'running-stack' },
         freshness: { state: 'current' },
         remedy: 'restore the retained port lease and the exact declared runtime publication',
     })
@@ -2938,7 +2938,7 @@ export async function observeRuntimePortFamily(input: {
                 code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
                 source: `${topology.runtime.projectName}:runtime-ports`,
                 observed: { state: 'available', value: false, observedAt: observed.observedAt },
-                expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+                expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
                 freshness: { state: 'current' }, remedy: 'free unpublished leased ports and restore every declared listener',
             })
         }
@@ -2957,10 +2957,13 @@ export async function observeRuntimePortFamily(input: {
                 return unavailable('runtime service identity changed during listener observation', observed.observedAt)
             }
         }
+        if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {
+            return unavailable('retained port lease changed during service revalidation', observed.observedAt)
+        }
         return issueObservation({
             code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
             source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value: true, observedAt: observed.observedAt },
-            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
             freshness: { state: 'current' }, remedy: 'restore the retained port lease and the exact declared runtime publication',
         })
     } catch {
