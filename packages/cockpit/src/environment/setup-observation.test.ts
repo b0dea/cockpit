@@ -21,6 +21,28 @@ import {
 } from './setup-observation.js'
 import { gitEnvironment } from './setup.js'
 
+const directoryResolutionControl = vi.hoisted(() => ({
+    path: undefined as string | undefined,
+    mutation: undefined as (() => Promise<void>) | undefined,
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    return {
+        ...actual,
+        realpath: async (...args: Parameters<typeof actual.realpath>) => {
+            const result = await actual.realpath(...args)
+            if (typeof args[0] === 'string' && args[0] === directoryResolutionControl.path && directoryResolutionControl.mutation) {
+                const mutation = directoryResolutionControl.mutation
+                directoryResolutionControl.path = undefined
+                directoryResolutionControl.mutation = undefined
+                await mutation()
+            }
+            return result
+        },
+    }
+})
+
 const run = promisify(execFile)
 const scratch: string[] = []
 const declaration = { template: '.env.example', instance: '.env' }
@@ -119,6 +141,8 @@ async function checkoutAuthority(
 
 afterEach(async () => {
     vi.useRealTimers()
+    directoryResolutionControl.path = undefined
+    directoryResolutionControl.mutation = undefined
     await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
@@ -592,6 +616,38 @@ describe('environment ignore observation', () => {
 })
 
 describe('setup checkout observation', () => {
+    it('keeps generated standalone identity current across unrelated ancestor children and refuses a mode change', async () => {
+        const root = join(realpathSync(tmpdir()), `cockpit-generated-${randomUUID()}`)
+        const ancestor = join(root, 'shared-temporary-root')
+        const standalone = join(ancestor, 'standalone')
+        const configPath = join(standalone, 'cockpit.toml')
+        scratch.push(root)
+        await mkdir(standalone, { recursive: true })
+        await writeFile(configPath, '[cockpit]\nname = "sample"\n')
+        const input = await checkoutAuthority(configPath)
+
+        directoryResolutionControl.path = ancestor
+        directoryResolutionControl.mutation = () => mkdir(join(ancestor, 'unrelated-observation'))
+        const generated = await observeGeneratedCheckoutIdentity({
+            source: input.source, cockpitName: input.cockpitName, env: input.env,
+        })
+        if (generated.state !== 'available') throw new Error(generated.reason)
+        expect(generated).toMatchObject({ state: 'available', kind: 'standalone' })
+
+        directoryResolutionControl.path = ancestor
+        directoryResolutionControl.mutation = () => mkdir(join(ancestor, 'unrelated-revalidation'))
+        expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(true)
+
+        const originalMode = (await lstat(ancestor)).mode & 0o777
+        directoryResolutionControl.path = ancestor
+        directoryResolutionControl.mutation = () => chmod(ancestor, originalMode === 0o700 ? 0o755 : 0o700)
+        try {
+            expect(await revalidateGeneratedCheckoutIdentity(generated)).toBe(false)
+        } finally {
+            await chmod(ancestor, originalMode)
+        }
+    })
+
     it('derives ordinary main and linked checkout identities from authenticated Git evidence', async () => {
         const repository = await committedRepository()
         const linked = join(repository.root, 'linked')

@@ -89,21 +89,39 @@ function sameDirectoryIdentity(left: DirectoryIdentity, right: DirectoryIdentity
         && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
 }
 
-async function stableDirectory(path: string): Promise<{ canonicalPath: string; identity: DirectoryIdentity } | undefined> {
+function sameDirectoryNode(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
+    return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
+}
+
+async function resolvedDirectory(path: string): Promise<{
+    canonicalPath: string
+    beforeIdentity: DirectoryIdentity
+    afterIdentity: DirectoryIdentity
+} | undefined> {
     try {
         const before = await lstat(path, { bigint: true })
         if (!before.isDirectory() || before.isSymbolicLink()) return undefined
         const canonicalPath = await realpath(path)
         const after = await lstat(canonicalPath, { bigint: true })
-        const beforeIdentity = directoryIdentity(before)
-        const afterIdentity = directoryIdentity(after)
-        return canonicalPath === path && after.isDirectory() && !after.isSymbolicLink()
-            && sameDirectoryIdentity(beforeIdentity, afterIdentity)
-            ? Object.freeze({ canonicalPath, identity: afterIdentity })
-            : undefined
+        if (canonicalPath !== path || !after.isDirectory() || after.isSymbolicLink()) return undefined
+        return Object.freeze({ canonicalPath, beforeIdentity: directoryIdentity(before), afterIdentity: directoryIdentity(after) })
     } catch {
         return undefined
     }
+}
+
+async function stableDirectory(path: string): Promise<{ canonicalPath: string; identity: DirectoryIdentity } | undefined> {
+    const resolved = await resolvedDirectory(path)
+    return resolved && sameDirectoryIdentity(resolved.beforeIdentity, resolved.afterIdentity)
+        ? Object.freeze({ canonicalPath: resolved.canonicalPath, identity: resolved.afterIdentity })
+        : undefined
+}
+
+async function stableDirectoryNode(path: string): Promise<{ canonicalPath: string; identity: DirectoryIdentity } | undefined> {
+    const resolved = await resolvedDirectory(path)
+    return resolved && sameDirectoryNode(resolved.beforeIdentity, resolved.afterIdentity)
+        ? Object.freeze({ canonicalPath: resolved.canonicalPath, identity: resolved.afterIdentity })
+        : undefined
 }
 
 function fileIdentity(stat: BigIntStats): FileIdentity {
@@ -1217,10 +1235,6 @@ interface GeneratedCheckoutBinding {
 
 const issuedGeneratedCheckoutIdentities = new WeakMap<object, GeneratedCheckoutBinding>()
 
-function sameDirectoryNode(left: DirectoryIdentity, right: DirectoryIdentity): boolean {
-    return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
-}
-
 async function pathAbsent(path: string): Promise<boolean> {
     try { await lstat(path); return false } catch (error) {
         return (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -1253,7 +1267,7 @@ export async function observeGeneratedCheckoutIdentity(input: {
     let hasCheckout = false
     for (;;) {
         if (directories.size >= 256) return setupCheckoutFailure('generated checkout ancestor discovery exceeds its bound')
-        const directory = await stableDirectory(candidate)
+        const directory = await stableDirectoryNode(candidate)
         if (!directory) return setupCheckoutFailure('generated checkout ancestor cannot be authenticated')
         directories.set(candidate, directory.identity)
         const gitEntry = resolve(candidate, '.git')
@@ -1311,7 +1325,7 @@ async function generatedCheckoutBindingCurrent(binding: GeneratedCheckoutBinding
     if (!source || !sameFileIdentity(source.identity, binding.sourceIdentity)
         || source.sha256 !== binding.source.sha256 || source.byteLength !== binding.source.byteLength) return false
     for (const [path, expected] of binding.directories) {
-        const current = await stableDirectory(path)
+        const current = await stableDirectoryNode(path)
         if (!current || !sameDirectoryNode(current.identity, expected)) return false
     }
     for (const path of binding.absentGitEntries) if (!await pathAbsent(path)) return false
