@@ -234,6 +234,57 @@ describe('init application', () => {
         expect(observed.at(-1)).toEqual({ root: f.root, rootIsRepository: true })
     })
 
+    it('resumes durable init state when init-created files make the root look like a product repository', async () => {
+        const f = fixture()
+        let rootKind: 'cockpit-root' | 'product-repository' = 'cockpit-root'
+        const adapters: InitApplicationAdapters = {
+            ...f.adapters,
+            observeRoot: async () => rootKind,
+            classifyEstate: async ({ root }) => estate(root, 'no-runnable-product'),
+        }
+        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        const artifact = await runInitApplication(accepted, adapters)
+        expect(artifact).toMatchObject({ kind: 'artifact', result: { stage: 'draft-prepared' } })
+        f.setDestination({ kind: 'available', sha256: '010fb9b6053c7bfa4b9936cf8c372cc028feddd5bf4b848f65de048f198c1a3e' })
+        expect(await runInitApplication(accepted, adapters)).toMatchObject({
+            kind: 'complete', result: { stage: 'environment-verified' },
+        })
+        rootKind = 'product-repository'
+
+        const resumed = await runInitApplication(accepted, adapters)
+
+        expect(resumed).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified' } })
+    })
+
+    it('resumes an accepted preview after partial publication changes root classification', async () => {
+        const f = fixture()
+        let rootKind: 'cockpit-root' | 'product-repository' = 'cockpit-root'
+        let interruptPublication = true
+        const adapters: InitApplicationAdapters = {
+            ...f.adapters,
+            observeRoot: async () => rootKind,
+            classifyEstate: async ({ root }) => estate(root, 'no-runnable-product'),
+            applyBootstrap: async authority => {
+                if (interruptPublication) {
+                    interruptPublication = false
+                    return { kind: 'refusal', status: 2, diagnostics: [{ severity: 'error',
+                        code: 'PUBLICATION_INTERRUPTED', message: 'synthetic publication interruption' }], result: null }
+                }
+                return f.adapters.applyBootstrap(authority)
+            },
+        }
+        const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
+        expect(await runInitApplication(accepted, adapters)).toMatchObject({
+            kind: 'refusal', result: { stage: 'surface-previewed' },
+            diagnostics: [{ code: 'PUBLICATION_INTERRUPTED' }],
+        })
+        rootKind = 'product-repository'
+
+        const resumed = await runInitApplication(accepted, adapters)
+
+        expect(resumed).toMatchObject({ kind: 'artifact', result: { stage: 'draft-prepared' } })
+    })
+
     it('infers dedicated-cockpit answers from the observed product estate', async () => {
         const f = fixture()
         await writeFile(join(f.root, 'Dockerfile'), 'FROM node:22\nEXPOSE 3000\nCMD ["node", "server.mjs"]\n')

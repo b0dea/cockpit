@@ -402,18 +402,6 @@ export async function runInitApplication(
         return refused('INIT_ROOT_INVALID', 'a dedicated cockpit root must sit beside the product repository it is created for, without a registry', input.root)
     }
     let rootQuestion: CockpitRootQuestion | undefined
-    if (input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
-        let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
-        try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
-        catch (error) {
-            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun cockpit init`, input.root)
-        }
-        if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
-    }
-    // Accepting publishes files into the root, so a product repository's root must be chosen first;
-    // --accept-preview and --accept-defaults consent to bytes, never to a location.
-    if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
-        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run cockpit init --interactive`, 'cockpit.root')
     for (const target of SURFACE_TARGETS) {
         if (target === input.target) continue
         const other = await selectBootstrapStateRoot({ platform: input.platform, home: input.home,
@@ -434,6 +422,19 @@ export async function runInitApplication(
     const read = await readState(address)
     if (read.kind === 'refusal') return stateFailure(read)
     let current = read.kind === 'complete' ? read.value : null
+    if (current === null && input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
+        let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
+        try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
+        catch (error) {
+            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun cockpit init`, input.root)
+        }
+        if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
+    }
+    // Accepting publishes files into the root, so a product repository's root must be chosen first;
+    // --accept-preview and --accept-defaults consent to bytes, never to a location. Every durable
+    // bootstrap stage follows accepted placement, which init-created files must not reopen on resume.
+    if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
+        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run cockpit init --interactive`, 'cockpit.root')
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'draft-observed' || current?.value.stage === 'environment-verified') {
