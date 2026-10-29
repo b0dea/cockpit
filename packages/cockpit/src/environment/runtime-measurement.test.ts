@@ -127,28 +127,32 @@ describe('runtime measurement recording', () => {
     })
 
     it.each(['npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
-        'passes the exact Windows pipe %s to the runtime observation boundary without dispatch', async (endpoint) => {
+        'refuses Windows pipe %s measurement without native executable authority', async (endpoint) => {
             const host = await measuredHost()
+            const workingDirectory = process.cwd()
             const platform = Object.getOwnPropertyDescriptor(process, 'platform')
             if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
+            // These real files classify candidates; no POSIX identity can authorize Windows execution.
+            await writeFile(join(host.root, String.raw`C:\Tools\docker.EXE`), 'synthetic candidate\n')
+            await writeFile(join(host.root, String.raw`C:\Tools\git.EXE`), 'synthetic candidate\n')
             const steps: ExecutionStep[] = []
             let probeCalls = 0
             try {
+                process.chdir(host.root)
                 Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
                 const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true,
-                    env: { ...host.env, DOCKER_HOST: endpoint } }, {
+                    env: { ...host.env, PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', DOCKER_HOST: endpoint } }, {
                     execute: async (step) => { steps.push(step); throw new Error('stop before process dispatch') },
                     probe: async (request) => { probeCalls += 1; return verdict(true, request.executable.sha256) },
                 })
-                expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+                expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE', target: 'docker',
+                    message: 'Windows native executable identity authority is unavailable: ' + String.raw`C:\Tools\docker.EXE`,
+                }] })
             } finally {
                 Object.defineProperty(process, 'platform', platform)
+                process.chdir(workingDirectory)
             }
-            expect(steps).toHaveLength(1)
-            expect(steps[0]).toMatchObject({ id: 'runtime:docker-server-version', cwd: host.root,
-                argv: [expect.any(String), 'version', '--format', '{{.Server.Version}}'],
-                env: { PATH: host.env.PATH, DOCKER_HOST: endpoint },
-            })
+            expect(steps).toEqual([])
             expect(probeCalls).toBe(0)
             expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
         })
