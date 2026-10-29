@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises'
-import { basename, delimiter, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { types as utilTypes } from 'node:util'
 
@@ -20,7 +20,7 @@ import {
 } from './generated-application.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, type ConsumedFile, type ExecutionStep } from './contract.js'
-import type { ResolvedExecutable } from './executable.js'
+import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 import {
     planSurfaceSelftest,
     surfaceSelftestHumanNeeded,
@@ -101,6 +101,26 @@ const PROBE_TIMEOUT_MS = 30_000
 const EVIDENCE_EXPIRY_MS = 300_000
 const BUILTIN_EXECUTABLES = Object.freeze({ claudecode: 'claude', codexcli: 'codex', opencode: 'opencode' } as const)
 
+function captureSearchEnvironment(value: unknown): Readonly<Record<string, string | undefined>> | undefined {
+    try {
+        if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return undefined
+        const prototype = Object.getPrototypeOf(value)
+        if (prototype !== Object.prototype && prototype !== null) return undefined
+        const keys = Reflect.ownKeys(value)
+        if (keys.length > 4_096) return undefined
+        const env: Record<string, string | undefined> = {}
+        for (const key of keys) {
+            if (typeof key !== 'string' || !/^(?:PATH|PATHEXT)$/i.test(key)) continue
+            const descriptor = Object.getOwnPropertyDescriptor(value, key)
+            if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
+                || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
+                    || Buffer.byteLength(descriptor.value) > 65_536)) return undefined
+            env[key] = descriptor.value
+        }
+        return Object.freeze(env)
+    } catch { return undefined }
+}
+
 function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value) || utilTypes.isProxy(value)) return undefined
@@ -111,7 +131,7 @@ function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
             || required.some((key) => !Object.hasOwn(descriptors, key) || !Object.hasOwn(descriptors[key]!, 'value'))
             || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
         const root = descriptors.root!.value
-        const env = snapshotGeneratedJson(descriptors.env!.value) as Readonly<Record<string, string | undefined>> | undefined
+        const env = captureSearchEnvironment(descriptors.env!.value)
         const specifications = descriptors.specifications!.value
         if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
         return Object.freeze({ application: descriptors.application!.value, root, specifications, env }) as SurfaceSelftestCommandInput
@@ -129,7 +149,7 @@ function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestComman
             || Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return undefined
         const configPath = descriptors.configPath!.value
         const probeSpecificationsPath = descriptors.probeSpecificationsPath!.value
-        const env = snapshotGeneratedJson(descriptors.env!.value) as Readonly<Record<string, string | undefined>> | undefined
+        const env = captureSearchEnvironment(descriptors.env!.value)
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
             || probeSpecificationsPath.includes('\0') || !env) return undefined
@@ -186,44 +206,6 @@ function probeSpecificationsArtifact(
         if (!specifications || sha256(JSON.stringify(specifications)) !== captured.specificationsSha256) return undefined
         return specifications
     } catch { return undefined }
-}
-
-async function digestExecutable(path: string): Promise<string | undefined> {
-    let handle: Awaited<ReturnType<typeof open>> | undefined
-    try {
-        const before = await lstat(path)
-        if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_EXECUTABLE_BYTES || (before.mode & 0o111) === 0) return undefined
-        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-        const opened = await handle.stat()
-        if (!opened.isFile() || opened.size !== before.size || opened.dev !== before.dev || opened.ino !== before.ino) return undefined
-        const hash = createHash('sha256')
-        const chunk = Buffer.allocUnsafe(STREAM_BYTES)
-        let total = 0
-        while (true) {
-            const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, MAX_EXECUTABLE_BYTES - total + 1), null)
-            if (bytesRead === 0) break
-            total += bytesRead
-            if (total > MAX_EXECUTABLE_BYTES) return undefined
-            hash.update(chunk.subarray(0, bytesRead))
-        }
-        const after = await handle.stat()
-        return total === opened.size && after.size === opened.size && after.mtimeMs === opened.mtimeMs ? hash.digest('hex') : undefined
-    } catch { return undefined } finally { await handle?.close() }
-}
-
-async function resolveExecutable(name: string, pathValue: unknown): Promise<ResolvedExecutable | undefined> {
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > STREAM_BYTES) return undefined
-    const directories = pathValue.split(delimiter)
-    if (directories.length > 256 || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) return undefined
-    for (const directory of directories) {
-        const invocationPath = join(directory, name)
-        let canonicalPath: string
-        try { canonicalPath = await realpath(invocationPath) } catch { continue }
-        const digest = await digestExecutable(canonicalPath)
-        if (!digest) continue
-        return Object.freeze({ canonicalPath, invocationPath, sha256: digest, executionMode: 'verified-path' })
-    }
-    return undefined
 }
 
 type BuiltinHarnessName = 'Claude Code' | 'Codex' | 'OpenCode'
@@ -422,11 +404,13 @@ async function runEvidenceProbe(
         expectation, probe.cell, 'enforcement_probe_required', observedAt,
         `Run an operator-approved exact ${harnessName} ${probe.capability} probe with candidate and broken controls; generated module checks do not authorize constructed worker commands`,
     )
-    const executable = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env.PATH)
-    if (!executable) return surfaceSelftestHumanNeeded(
+    const resolution = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env)
+    if (resolution.state === 'unavailable') return surfaceSelftestHumanNeeded(
         expectation,
-        probe.cell, 'executable_missing', observedAt, `Install ${harnessName} and rerun its ${probe.capability} probe`,
+        probe.cell, 'executable_missing', observedAt,
+        `${resolution.reason}; provide an authenticated ${harnessName} executable on a supported host and rerun its ${probe.capability} probe`,
     )
+    const executable = resolution.value
     if (!await hasExecutableAuthority(adapters, approvedExecutables, probe.harness.name, executable)) {
         return surfaceSelftestHumanNeeded(
             expectation, probe.cell, 'authentication_required', observedAt,

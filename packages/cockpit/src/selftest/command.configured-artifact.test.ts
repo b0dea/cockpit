@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createSelftestFixture, specificationsDigest } from '../../test-support/selftest-fixture.js'
 import { executeProbe } from '../environment-exec/execute.js'
@@ -149,6 +149,44 @@ describe('surface selftest command', () => {
             kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID',
         }))
         expect(executions).toBe(0)
+    }, 180_000)
+
+    it('authenticates configured probe artifacts with undefined search aliases without reading unrelated values', async () => {
+        const { root, configPath, application, bin } = fixture()
+        const probeSpecifications = specifications(application)
+        const artifactPath = join(root, 'probe-specifications.json')
+        const artifactBytes = JSON.stringify({
+            schema: 'cockpit-selftest-probe-specifications/v1',
+            sourceSha256: application.sourceSha256,
+            generatedManifestSha256: application.surfaceSelftest.manifestSha256,
+            specificationsSha256: specificationsDigest(probeSpecifications),
+            specifications: probeSpecifications,
+        })
+        await writeFile(artifactPath, artifactBytes)
+        const unrelated = vi.fn(() => { throw new Error('unrelated environment value must not be read') })
+        const env = Object.defineProperty({ PATH: bin, Path: undefined }, 'UNRELATED', { enumerable: true, get: unrelated })
+        const execute = vi.fn(async () => { throw new Error('unapproved executable must not run') })
+        const requestProbeSpecificationsApproval = vi.fn(async (candidate: SurfaceSelftestProbeSpecificationsCandidate) => candidate.sha256)
+
+        const outcome = await runConfiguredSurfaceSelftestCommand({
+            configPath, probeSpecificationsPath: artifactPath, env,
+        }, { execute, requestProbeSpecificationsApproval })
+
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
+        if (outcome.kind !== 'complete') throw new Error('captured configured search input did not reach artifact authentication')
+        expect(requestProbeSpecificationsApproval).toHaveBeenCalledWith(expect.objectContaining({
+            canonicalPath: artifactPath,
+            sha256: createHash('sha256').update(artifactBytes).digest('hex'),
+            sourceSha256: application.sourceSha256,
+            generatedManifestSha256: application.surfaceSelftest.manifestSha256,
+        }))
+        expect(outcome.evidence.errors).toEqual([])
+        expect(outcome.evidence.evidence).toEqual([])
+        expect(outcome.evidence.pending).toHaveLength(27)
+        expect(outcome.bundle.records.every(record => record.kind === 'human_needed'
+            && record.reason === 'authentication_required')).toBe(true)
+        expect(unrelated).not.toHaveBeenCalled()
+        expect(execute).not.toHaveBeenCalled()
     }, 180_000)
 
     it('refuses absent, malformed and mismatched probe artifacts before executing a probe', async () => {

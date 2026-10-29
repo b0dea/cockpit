@@ -7,7 +7,7 @@ import { parse as parseToml } from 'smol-toml'
 import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
-import { parseArgs } from 'node:util'
+import { parseArgs, types as utilTypes } from 'node:util'
 import { admitLocalDockerEndpoint } from './environment/docker-endpoint.js'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
@@ -966,7 +966,24 @@ async function decodeRequest(
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'selftest accepts named inputs only')
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID', 'provide --probe-specifications <file>', '--probe-specifications')
-        return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env: { PATH: runtimeEnv.PATH } } }
+        const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
+            'selftest executable search inputs must be bounded own string or undefined values; supply PATH/PATHEXT without accessors and run cockpit selftest --help to retry')
+        const env: Record<string, string | undefined> = {}
+        try {
+            if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
+                || utilTypes.isProxy(runtimeEnv)) return invalidEnvironment()
+            const keys = Reflect.ownKeys(runtimeEnv)
+            if (keys.length > 4_096) return invalidEnvironment()
+            for (const key of keys) {
+                if (typeof key !== 'string' || !/^(?:PATH|PATHEXT)$/i.test(key)) continue
+                const descriptor = Object.getOwnPropertyDescriptor(runtimeEnv, key)
+                if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
+                    || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
+                        || Buffer.byteLength(descriptor.value) > 65_536)) return invalidEnvironment()
+                env[key] = descriptor.value
+            }
+        } catch { return invalidEnvironment() }
+        return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env: Object.freeze(env) } }
     }
 
     if (handler === 'upgrade') {

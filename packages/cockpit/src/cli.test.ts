@@ -15,6 +15,7 @@ import { renderHumanDiagnostics } from './diagnostics.js'
 import type { RegistryResolveCommandInput, RegistryResolveOutcome } from './registry-resolve/command.js'
 import type { EnvironmentCommandOutcome, ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
+import type { ConfiguredSurfaceSelftestCommandInput } from './selftest/command.js'
 import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
 import { SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -760,6 +761,47 @@ describe('generated environment process contract', () => {
             },
         })).toBe(0)
         expect(upgradeCalls).toEqual([{ configPath: 'cockpit.toml' }])
+    })
+
+    it('preserves only selftest search aliases and undefined own values for injected handlers', async () => {
+        const unrelated = vi.fn(() => { throw new Error('unrelated environment value must not be read') })
+        const env = Object.defineProperty({
+            Path: 'C:\\Harnesses', PATH: undefined, PathExt: '.EXE;.CMD', PATHEXT: undefined,
+            UNRELATED_DATA: 'synthetic-unrelated-canary',
+        }, 'UNRELATED_ACCESSOR', { enumerable: true, get: unrelated })
+        const selftest = vi.fn(async (_input: ConfiguredSurfaceSelftestCommandInput) => ({
+            status: 0, diagnostics: [], result: { pending: ['native'] },
+        }))
+        const capture = captureIo()
+
+        expect(await runCli([
+            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--json',
+        ], capture.io, { selftest }, { env })).toBe(0)
+
+        expect(selftest).toHaveBeenCalledExactlyOnceWith({
+            configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json',
+            env: { Path: 'C:\\Harnesses', PATH: undefined, PathExt: '.EXE;.CMD', PATHEXT: undefined },
+        })
+        expect(selftest.mock.calls[0]?.[0].env).toStrictEqual({
+            Path: 'C:\\Harnesses', PATH: undefined, PathExt: '.EXE;.CMD', PATHEXT: undefined,
+        })
+        expect(unrelated).not.toHaveBeenCalled()
+        expect(capture.output().stdout + capture.output().stderr).not.toContain('synthetic-unrelated-canary')
+    })
+
+    it.each(['PATH', 'PathExt'])('refuses selftest %s accessors before reading or dispatching them', async name => {
+        const selected = vi.fn(() => { throw new Error('selected search accessor must not be read') })
+        const env = Object.defineProperty({}, name, { enumerable: true, get: selected })
+        const selftest = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
+        const capture = captureIo()
+
+        expect(await runCli([
+            'selftest', '--config', 'cockpit.toml', '--probe-specifications', 'probe.json', '--json',
+        ], capture.io, { selftest }, { env })).toBe(2)
+
+        expect(capture.output().stdout).toContain('CLI_USAGE_INVALID')
+        expect(selected).not.toHaveBeenCalled()
+        expect(selftest).not.toHaveBeenCalled()
     })
 
     it('requires paired authenticated release-evidence inputs before upgrade dispatch', async () => {
