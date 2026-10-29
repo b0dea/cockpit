@@ -232,6 +232,19 @@ describe('init application', () => {
         expect(inRepo.result).not.toHaveProperty('nextCommand')
         // In-repo keeps the product: the root is observed as a repository itself, not as an empty cockpit.
         expect(observed.at(-1)).toEqual({ root: f.root, rootIsRepository: true })
+
+        const acceptedInRepo = { ...greenfield, cockpitRoot: { kind: 'in-repo' } as const,
+            accepted: true, acceptedPreviewSha256: digest('3') }
+        expect(await runInitApplication(acceptedInRepo, adapters)).toMatchObject({
+            kind: 'pending', result: { question: { field: 'sibling' } },
+        })
+        observed.length = 0
+
+        // Each CLI invocation starts without placement context; the authenticated preview must
+        // retain the accepted in-repo estate while the driver resumes its durable question.
+        const resumedInRepo = await runInitApplication({ ...greenfield, accepted: false }, adapters)
+        expect(resumedInRepo).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
+        expect(observed).toEqual([{ root: f.root, rootIsRepository: true }])
     })
 
     it('resumes durable init state when init-created files make the root look like a product repository', async () => {

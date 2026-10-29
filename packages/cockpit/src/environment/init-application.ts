@@ -318,6 +318,7 @@ async function interviewPlan(
 
 function commandDigest(input: InitApplicationInput): string {
     return sha256(JSON.stringify({ root: input.root, target: input.target, registry: input.registry ?? null,
+        ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
         ...(input.cockpitRoot?.kind === 'dedicated' ? { firstSibling: input.cockpitRoot.firstSibling } : {}) }))
 }
 
@@ -422,6 +423,13 @@ export async function runInitApplication(
     const read = await readState(address)
     if (read.kind === 'refusal') return stateFailure(read)
     let current = read.kind === 'complete' ? read.value : null
+    let boundInput = input
+    if (current !== null && input.cockpitRoot === undefined && input.registry === undefined) {
+        const inRepoInput: InitApplicationInput = { ...input, cockpitRoot: { kind: 'in-repo' } }
+        // The command driver starts each invocation before it has rediscovered placement. The
+        // accepted command digest restores in-repo context without reclassifying a genesis root.
+        if (current.value.commandSha256 === commandDigest(inRepoInput)) boundInput = inRepoInput
+    }
     if (current === null && input.cockpitRoot === undefined && input.registry === undefined && adapters.observeRoot) {
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
         try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
@@ -456,7 +464,7 @@ export async function runInitApplication(
     if (projection.root !== input.root || projection.target !== input.target || !SHA256.test(projection.previewSha256)) {
         return refused('INIT_BOOTSTRAP_IDENTITY_CHANGED', 'selected bootstrap preview does not match the requested root and target')
     }
-    const expectedCommand = commandDigest(input)
+    const expectedCommand = commandDigest(boundInput)
     if (current !== null && !evidenceMatches(current, projection, expectedCommand)) {
         return refused('INIT_STATE_STALE', 'bootstrap state does not match the current root, target, command, sources, or preview', address.path)
     }
@@ -484,9 +492,9 @@ export async function runInitApplication(
         const stage = current?.value.stage ?? 'surface-previewed'
         // Questions are only asked after acceptance, but listing them now lets an unattended caller
         // prepare every answer before it consents. The observation is read-only.
-        if (input.registry === undefined && adapters.classifyEstate && (stage === 'surface-previewed' || stage === 'surface-published')) {
-            const classified = await adapters.classifyEstate(estateInput(input))
-            if (classified.kind === 'complete') interview = await interviewPlan(input, adapters, classified.result, 0)
+        if (boundInput.registry === undefined && adapters.classifyEstate && (stage === 'surface-previewed' || stage === 'surface-published')) {
+            const classified = await adapters.classifyEstate(estateInput(boundInput))
+            if (classified.kind === 'complete') interview = await interviewPlan(boundInput, adapters, classified.result, 0)
             else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
                 message: `the interview could not be previewed (${classified.diagnostics.map(row => row.code).join(', ')}); each question is still reported when accepting reaches it`,
                 target: input.root })
@@ -500,7 +508,7 @@ export async function runInitApplication(
     }
 
     if (current === null) {
-        const previewed = await persist(namespace, address, input, projection, adapters, 'surface-previewed', null)
+        const previewed = await persist(namespace, address, boundInput, projection, adapters, 'surface-previewed', null)
         if (previewed.kind !== 'complete') return stateFailure(previewed)
         current = previewed.value
     }
@@ -517,7 +525,7 @@ export async function runInitApplication(
             || JSON.stringify(applied.result.files) !== JSON.stringify(projection.files)) {
             return refused('INIT_BOOTSTRAP_IDENTITY_CHANGED', 'published bootstrap result does not match the accepted preview')
         }
-        const published = await persist(namespace, address, input, projection, adapters, 'surface-published', current,
+        const published = await persist(namespace, address, boundInput, projection, adapters, 'surface-published', current,
             { published: projection.files })
         if (published.kind !== 'complete') return stateFailure(published)
         current = published.value
@@ -527,22 +535,22 @@ export async function runInitApplication(
     if (current.value.stage === 'surface-published') {
         let classification: EstateClassificationResult | undefined
         let sourceObservationSha256: string
-        if (input.registry === undefined) {
+        if (boundInput.registry === undefined) {
             if (!adapters.classifyEstate) return { kind: 'pending-dependency', status: 2, artifact: null, destination: null,
                 diagnostics: [diagnostic('GREENFIELD_DISCOVERY_UNAVAILABLE', 'greenfield init requires the public estate observation owner')],
                 result: result('surface-published', projection) }
-            const classified = await adapters.classifyEstate(estateInput(input))
+            const classified = await adapters.classifyEstate(estateInput(boundInput))
             if (classified.kind !== 'complete') return ownerRefusal(classified, current.value.stage, projection)
             classification = classified.result
             sourceObservationSha256 = (classified.result as IssuedEstateClassificationResult).sourceObservationSha256
             if (!SHA256.test(sourceObservationSha256)) return refused('GREENFIELD_OBSERVATION_INVALID',
                 'estate classification omitted its stable source observation digest', input.root)
         } else {
-            sourceObservationSha256 = sha256(JSON.stringify({ root: input.root, registry: resolve(input.registry),
+            sourceObservationSha256 = sha256(JSON.stringify({ root: boundInput.root, registry: resolve(boundInput.registry!),
                 commandSha256: expectedCommand }))
         }
         let state = current.value.greenfield
-        const mode = input.registry === undefined ? 'estate' as const : 'registry' as const
+        const mode = boundInput.registry === undefined ? 'estate' as const : 'registry' as const
         if (state && ((state.mode ?? 'estate') !== mode || state.sourceObservationSha256 !== sourceObservationSha256
             || state.classification !== classification?.classification)) {
             return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration source changed after the interview was persisted', address.path)
@@ -555,7 +563,7 @@ export async function runInitApplication(
             return refused('GREENFIELD_ANSWER_INVALID', 'configuration answer does not match the next persisted question and provenance', address.path)
         }
         const answers = proposed ? [...priorAnswers, { ...proposed, sha256: sha256(proposed.bytes) }] : [...priorAnswers]
-        const documented = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentEstate(input),
+        const documented = await adapters.document({ root: boundInput.root, registry: boundInput.registry, output: destination, ...documentEstate(boundInput),
             configuration: { sourceObservationSha256, ...(classification ? { classification: classification.classification } : {}), answers } })
         if (documented.artifact === null) {
             if (proposed && documented.diagnostics.some(row => row.code.startsWith('DOCUMENT_CONFIGURATION_ANSWER')
@@ -579,7 +587,7 @@ export async function runInitApplication(
             if (!proposed && expected && JSON.stringify(expected) !== JSON.stringify(question)) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration question changed after it was persisted', address.path)
             }
-            const interview = classification ? await interviewPlan(input, adapters, classification, answers.length) : undefined
+            const interview = classification ? await interviewPlan(boundInput, adapters, classification, answers.length) : undefined
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
             const pendingResult = result('surface-published', projection, undefined,
                 { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
@@ -593,7 +601,7 @@ export async function runInitApplication(
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]
             const nextState = { ...(mode === 'registry' ? { mode } : {}), stage: 'question-pending' as const, sourceObservationSha256,
                 ...(classification ? { classification: classification.classification, notice: classification.notice } : {}), questions, answers }
-            const recorded = await persist(namespace, address, input, projection, adapters, 'surface-published', current,
+            const recorded = await persist(namespace, address, boundInput, projection, adapters, 'surface-published', current,
                 { published: current.value.published, greenfield: nextState })
             if (recorded.kind !== 'complete') return stateFailure(recorded)
             return { kind: 'pending', status: 0, artifact: null, destination: null,
@@ -608,7 +616,7 @@ export async function runInitApplication(
                 notice: classification.notice } : {}),
             questions: [...(state?.questions ?? [])], answers }
         const artifactSha256 = sha256(documented.artifact)
-        const persisted = await persist(namespace, address, input, projection, adapters, 'draft-prepared', current, {
+        const persisted = await persist(namespace, address, boundInput, projection, adapters, 'draft-prepared', current, {
             published: current.value.published, destination: 'cockpit.toml', artifactBytes: documented.artifact, artifactSha256,
             greenfield: resolvedState,
         })
@@ -621,7 +629,7 @@ export async function runInitApplication(
     const persistedConfiguration = current.value.greenfield
     if (!persistedConfiguration) return refused('INIT_DRAFT_SOURCE_CHANGED',
         'persisted cockpit.toml has no source-bound configuration answers', destination)
-    const currentDocument = await adapters.document({ root: input.root, registry: input.registry, output: destination, ...documentEstate(input),
+    const currentDocument = await adapters.document({ root: boundInput.root, registry: boundInput.registry, output: destination, ...documentEstate(boundInput),
         configuration: { sourceObservationSha256: persistedConfiguration.sourceObservationSha256,
             ...(persistedConfiguration.classification ? { classification: persistedConfiguration.classification } : {}),
             answers: persistedConfiguration.answers } })
@@ -644,7 +652,7 @@ export async function runInitApplication(
         if (observed.sha256 !== current.value.artifactSha256) {
             return refused('INIT_DRAFT_CHANGED', 'existing cockpit.toml bytes differ from the persisted draft', destination)
         }
-        const observedState = await persist(namespace, address, input, projection, adapters, 'draft-observed', current)
+        const observedState = await persist(namespace, address, boundInput, projection, adapters, 'draft-observed', current)
         if (observedState.kind !== 'complete') return stateFailure(observedState)
         current = observedState.value
         draftPublication = observedState
@@ -665,7 +673,7 @@ export async function runInitApplication(
         return refused('INIT_CANONICAL_OWNERSHIP_MISSING', 'verified bootstrap state has no matching canonical ownership', address.path)
     }
     if (resumed.kind === 'pending' && draftPublication === undefined) {
-        const refreshed = await persist(namespace, address, input, projection, adapters, 'draft-observed', current)
+        const refreshed = await persist(namespace, address, boundInput, projection, adapters, 'draft-observed', current)
         if (refreshed.kind !== 'complete') return stateFailure(refreshed)
         current = refreshed.value
         draftPublication = refreshed
@@ -688,7 +696,7 @@ export async function runInitApplication(
     const runtimeAbsent = preflight.status !== 0 && preflight.diagnostics.length > 0
         && preflight.diagnostics.every(row => row.code === 'ENVIRONMENT_NOT_DECLARED')
     if (preflight.status !== 0 && !runtimeAbsent) return ownerRefusal(preflight, 'draft-observed', projection)
-    const verified = await persist(namespace, address, input, projection, adapters, 'environment-verified', current)
+    const verified = await persist(namespace, address, boundInput, projection, adapters, 'environment-verified', current)
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
         diagnostics: runtimeAbsent ? preflight.diagnostics.map(row => ({ ...row, severity: 'info' as const })) : preflight.diagnostics,
