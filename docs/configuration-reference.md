@@ -1823,6 +1823,18 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                         "path": {
                           "type": "string",
                           "pattern": "^\\/(?!\\/)(?!\\.{1,2}(?:\\/|$))(?!.*\\/\\.{1,2}(?:\\/|$))(?!.*[%\\\\?#\\x00-\\x20\\x7f]).*$"
+                        },
+                        "hostname": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+localhost(?![\\s\\S])"
+                        },
+                        "scheme": {
+                          "type": "string",
+                          "enum": [
+                            "http",
+                            "https"
+                          ]
                         }
                       },
                       "required": [
@@ -3719,6 +3731,18 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
               "path": {
                 "type": "string",
                 "pattern": "^\\/(?!\\/)(?!\\.{1,2}(?:\\/|$))(?!.*\\/\\.{1,2}(?:\\/|$))(?!.*[%\\\\?#\\x00-\\x20\\x7f]).*$"
+              },
+              "hostname": {
+                "type": "string",
+                "maxLength": 253,
+                "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+localhost(?![\\s\\S])"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "http",
+                  "https"
+                ]
               }
             },
             "required": [
