@@ -282,7 +282,6 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `DEPENDENCY_RUNTIME_UNAVAILABLE` | `packages/cockpit/src/environment/dependency-runtime.ts` | no static remedy captured; inspect implementing owners |
 | `DEPENDENCY_RUNTIME_UNMOUNTED` | `packages/cockpit/src/environment/dependency-runtime.ts` | no static remedy captured; inspect implementing owners |
 | `DIRECTORY_GRANTS_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `DISK_BUDGET_EXCEEDED` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `DOCEV050_NAMED_REFERENCE_MISSING` | `packages/cockpit/src/references/named.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
 | `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | `packages/cockpit/src/document/command.ts` | no static remedy captured; inspect implementing owners |
@@ -320,7 +319,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `ENV_SCHEMA_TOOL_MISSING` | `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `ENV_SCHEMA_UNHEALTHY` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `EVIDENCE_BASELINE_MISSING` | `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
-| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/observations.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
+| `EVIDENCE_UNAVAILABLE` | `packages/cockpit/src/cli.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/evidence.ts`, `packages/cockpit/src/environment/operator-application.ts`, `packages/cockpit/src/environment/posture-observation.ts`, `packages/cockpit/src/environment/selftest-application.ts` | no static remedy captured; inspect implementing owners |
 | `EXECUTION_ABORTED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/application.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `EXECUTION_COMPENSATION_STEP_FAILED` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
 | `EXECUTION_COMPENSATION_TIMEOUT` | `packages/cockpit/src/environment-exec/execute.ts`, `packages/cockpit/src/environment/contract.ts` | no static remedy captured; inspect implementing owners |
