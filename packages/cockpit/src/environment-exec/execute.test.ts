@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, snapshotJson, type ExecutionPlan, type ExecutionStep } from '../environment/contract.js'
 import { resolveExecutablePath } from '../environment/executable.js'
 import { cleanupFencedExecution, consumeFencedExecutionTermination, executeForegroundProcess, executePlan, executeProbe, executionOutcomeMatches, executionReceiptMatches, repairFencedExecution } from './execute.js'
@@ -82,6 +82,66 @@ describe('mechanical environment executor', () => {
         expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: false } })
         expect(existsSync(effect)).toBe(false)
     })
+
+    it.skipIf(process.platform === 'win32').each(['parent', 'supervisor', 'runner'] as const)(
+        'refuses expiry at the fenced %s release without retaining execution authority', async boundary => {
+            const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-expiry-'))
+            scratch.push(directory)
+            const attemptId = sha256(directory)
+            const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
+            const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
+            const effect = join(directory, 'effect')
+            const clockHit = join(directory, 'clock-hit')
+            const preload = join(directory, 'clock.cjs')
+            const deadline = Date.now() + 60_000
+            // Real child startup and marker publication advance the clock at the OS boundary.
+            writeFileSync(preload, `
+                const fs = require('node:fs')
+                const marker = ${JSON.stringify(fence.markerPath)}
+                const selected = fs.existsSync(marker) === ${boundary === 'runner'}
+                const now = Date.now
+                Date.now = () => {
+                    if (selected && fs.existsSync(marker)) {
+                        fs.writeFileSync(${JSON.stringify(clockHit)}, String(process.pid))
+                        return ${deadline + 1}
+                    }
+                    return now()
+                }
+            `)
+            const step = nodeStep('fenced-expiry', `require('node:fs').writeFileSync(${JSON.stringify(effect)}, 'started')`, {
+                executionFence: fence, spawnNotAfter: new Date(deadline).toISOString(),
+                ...(boundary === 'parent' ? {} : { env: { PATH: process.env.PATH ?? '', NODE_OPTIONS: `--require ${JSON.stringify(preload)}` } }),
+            })
+            const now = Date.now
+            const clock = boundary === 'parent' ? vi.spyOn(Date, 'now').mockImplementation(() => {
+                if (existsSync(fence.markerPath)) {
+                    writeFileSync(clockHit, String(process.pid))
+                    return deadline + 1
+                }
+                return now()
+            }) : undefined
+            let outcome: Awaited<ReturnType<typeof executeProbe>>
+            try { outcome = await executeProbe(step) } finally { clock?.mockRestore() }
+
+            expect(existsSync(effect)).toBe(false)
+            expect(outcome).toMatchObject({ kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED', execution: { started: false } })
+            expect(outcome.receipt).toBeUndefined()
+            expect(executionOutcomeMatches(outcome, step)).toBe(true)
+            expect(existsSync(clockHit)).toBe(true)
+            const marker = JSON.parse(readFileSync(fence.markerPath, 'utf8')) as { status: string; supervisorPid: number }
+            expect(marker.status).toBe('terminated')
+            expect(await waitForProcessGone(-marker.supervisorPid)).toBe(true)
+            if (boundary === 'runner') expect(await waitForProcessGone(-Number(readFileSync(clockHit, 'utf8')))).toBe(true)
+            expect(existsSync(fence.socketPath)).toBe(false)
+            const repaired = await repairFencedExecution(fence)
+            expect(repaired.kind).toBe('complete')
+            if (repaired.kind !== 'complete') throw new Error('expired fenced execution remains unrepaired')
+            expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(true)
+            expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(false)
+            await expect(cleanupFencedExecution(fence)).resolves.toBe(true)
+            expect(existsSync(fence.markerPath)).toBe(false)
+        },
+    )
 
     it.skipIf(process.platform === 'win32')('refuses swapped, oversized and blocking execution markers', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-hostile-marker-'))

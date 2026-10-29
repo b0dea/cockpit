@@ -158,9 +158,10 @@ const FENCED_GROUP_RUNNER = String.raw`
 const { spawn } = require('node:child_process'); const fs = require('node:fs'); const path = require('node:path')
 const c = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8'))
 process.on('SIGTERM', () => {}); process.on('SIGINT', () => {})
-const child = spawn(c.command, c.args, { argv0: c.argv0, cwd: c.cwd, env: process.env, stdio: ['ignore', 'inherit', 'inherit'] })
+const expired = c.spawnNotAfter !== undefined && Date.now() > Date.parse(c.spawnNotAfter)
+const child = expired ? undefined : spawn(c.command, c.args, { argv0: c.argv0, cwd: c.cwd, env: process.env, stdio: ['ignore', 'inherit', 'inherit'] })
 let reported = false; const report = code => { if (!reported) { reported = true; fs.writeSync(3, 'DONE ' + (Number.isInteger(code) ? code : 1) + '\n') } }
-child.once('error', () => report(1)); child.once('close', code => report(code))
+if (expired) fs.writeSync(3, 'EXPIRED\n'); else { child.once('error', () => report(1)); child.once('close', code => report(code)) }
 const readActive = () => { let fd; try { fd = fs.openSync(c.fence.markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); const before = fs.fstatSync(fd, { bigint: true }); if (!before.isFile() || before.size > 1024n) return; const bytes = Buffer.alloc(Number(before.size) + 1); const count = fs.readSync(fd, bytes, 0, bytes.length, 0); const after = fs.fstatSync(fd, { bigint: true }); const named = fs.lstatSync(c.fence.markerPath, { bigint: true }); const parent = fs.lstatSync(path.dirname(c.fence.markerPath), { bigint: true }); if (count !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || !named.isFile() || named.dev !== before.dev || named.ino !== before.ino || !parent.isDirectory() || parent.isSymbolicLink()) return; const current = JSON.parse(bytes.subarray(0, count).toString('utf8')); if (current.format !== 'cockpit-executor/v1' || current.attemptId !== c.fence.attemptId || current.supervisorPid !== c.approved.supervisorPid || current.status !== 'active' || current.markerDev !== c.approved.markerDev || current.markerIno !== c.approved.markerIno || current.parentDev !== c.approved.parentDev || current.parentIno !== c.approved.parentIno || current.markerDev !== String(before.dev) || current.markerIno !== String(before.ino) || current.parentDev !== String(parent.dev) || current.parentIno !== String(parent.ino)) return; return current } catch { return } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} } }
 const publishTerminating = () => { const current = readActive(); if (!current) return false; const temporary = c.fence.markerPath + '.runner-' + process.pid; let fd; try { fd = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600); const identity = fs.fstatSync(fd, { bigint: true }); fs.writeFileSync(fd, JSON.stringify({ ...current, markerDev: String(identity.dev), markerIno: String(identity.ino), status: 'terminating', groupPid: process.pid }) + '\n'); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined; if (!readActive()) return false; fs.renameSync(temporary, c.fence.markerPath); const directory = fs.openSync(path.dirname(c.fence.markerPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.fsyncSync(directory); fs.closeSync(directory); try { fs.unlinkSync(c.fence.socketPath) } catch (error) { if (error.code !== 'ENOENT') return false }; const socketDirectory = fs.openSync(path.dirname(c.fence.socketPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.fsyncSync(socketDirectory); fs.closeSync(socketDirectory); return true } catch { return false } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {}; try { fs.unlinkSync(temporary) } catch {} } }
 let stopping = false; let controlled = false; const stop = fallback => { if (stopping) return; if (fallback) publishTerminating(); stopping = true; process.kill(-process.pid, 'SIGTERM'); setTimeout(() => process.kill(-process.pid, 'SIGKILL'), 50) }
@@ -169,17 +170,17 @@ let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chun
 
 const FENCED_SUPERVISOR = String.raw`
 const { spawn } = require('node:child_process'); const { createServer } = require('node:net'); const fs = require('node:fs'); const path = require('node:path')
-const c = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8')); let action; let approved; let started = false; let finished = false; let terminating = false; let actionCode = 1
+const c = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8')); let action; let approved; let started = false; let finished = false; let terminating = false; let expired = false; let actionCode = 1
 const gone = pid => { try { process.kill(-pid, 0); return false } catch (e) { return e.code === 'ESRCH' } }
 const cleanup = () => { try { fs.unlinkSync(c.fence.socketPath) } catch {} }
 const readActive = () => { let fd; try { fd = fs.openSync(c.fence.markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); const before = fs.fstatSync(fd, { bigint: true }); if (!before.isFile() || before.size > 1024n) return; const bytes = Buffer.alloc(Number(before.size) + 1); const count = fs.readSync(fd, bytes, 0, bytes.length, 0); const after = fs.fstatSync(fd, { bigint: true }); const named = fs.lstatSync(c.fence.markerPath, { bigint: true }); const parent = fs.lstatSync(path.dirname(c.fence.markerPath), { bigint: true }); if (count !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || !named.isFile() || named.dev !== before.dev || named.ino !== before.ino || !parent.isDirectory() || parent.isSymbolicLink()) return; const current = JSON.parse(bytes.subarray(0, count).toString('utf8')); if (current.format !== 'cockpit-executor/v1' || current.attemptId !== c.fence.attemptId || current.supervisorPid !== process.pid || current.status !== 'active' || current.markerDev !== String(before.dev) || current.markerIno !== String(before.ino) || current.parentDev !== String(parent.dev) || current.parentIno !== String(parent.ino)) return; return current } catch { return } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} } }
 const durable = () => { const current = readActive(); if (!current || !approved || current.markerDev !== approved.markerDev || current.markerIno !== approved.markerIno || current.parentDev !== approved.parentDev || current.parentIno !== approved.parentIno) return false; const temporary = c.fence.markerPath + '.supervisor-' + process.pid; let fd; try { fd = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600); const identity = fs.fstatSync(fd, { bigint: true }); fs.writeFileSync(fd, JSON.stringify({ ...current, markerDev: String(identity.dev), markerIno: String(identity.ino), status: 'terminated', finishedAt: new Date().toISOString() }) + '\n'); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined; const latest = readActive(); if (!latest || latest.markerDev !== approved.markerDev || latest.markerIno !== approved.markerIno || latest.parentDev !== approved.parentDev || latest.parentIno !== approved.parentIno) return false; fs.renameSync(temporary, c.fence.markerPath); const directory = fs.openSync(path.dirname(c.fence.markerPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.fsyncSync(directory); fs.closeSync(directory); return true } catch { return false } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {}; try { fs.unlinkSync(temporary) } catch {} } }
-const finish = deadline => { if (finished) return; if (!action || !gone(action.pid)) { if (Date.now() >= deadline) { cleanup(); return process.exit(125) } return setTimeout(() => finish(deadline), 10) } finished = true; server.close(); cleanup(); if (!durable()) process.exit(125); process.exit(actionCode) }
+const finish = deadline => { if (finished) return; if (action && !gone(action.pid)) { if (Date.now() >= deadline) { cleanup(); return process.exit(125) } return setTimeout(() => finish(deadline), 10) } finished = true; server.close(); cleanup(); if (!durable()) process.exit(125); if (expired) fs.writeSync(3, 'EXPIRED\n'); process.exit(actionCode) }
 const terminate = code => { if (!action || terminating) return; terminating = true; actionCode = Number.isInteger(code) ? code : 1; try { action.stdin.end('STOP\n') } catch { cleanup(); process.exit(125) } }
 const server = createServer(socket => { let input = ''; socket.setEncoding('utf8'); socket.on('data', chunk => { input += chunk; if (input.length > 256) return socket.destroy(); if (!input.includes('\n')) return; if (input.trim() !== c.fence.attemptId) return socket.destroy(); socket.end(JSON.stringify({ attemptId: c.fence.attemptId, supervisorPid: process.pid }) + '\n'); terminate() }) })
 try { fs.unlinkSync(c.fence.socketPath) } catch (e) { if (e.code !== 'ENOENT') process.exit(125) }
 server.listen(c.fence.socketPath, () => fs.writeSync(3, 'READY\n'))
-process.stdin.setEncoding('utf8'); let input = ''; process.stdin.on('data', chunk => { input += chunk; if (started || !input.includes('\n')) return; const fields = input.trim().split(' '); if (fields.length !== 6 || fields[0] !== 'GO' || fields[1] !== c.fence.attemptId || fields.slice(2).some(value => !/^[0-9]+$/.test(value))) { cleanup(); return process.exit(125) }; approved = { markerDev: fields[2], markerIno: fields[3], parentDev: fields[4], parentIno: fields[5] }; started = true; const encoded = Buffer.from(JSON.stringify({ command: c.command, args: c.args, argv0: c.argv0, cwd: c.cwd, fence: c.fence, approved: { ...approved, supervisorPid: process.pid } })).toString('base64url'); action = spawn(process.execPath, ['-e', c.runner, encoded], { cwd: c.cwd, env: process.env, stdio: ['pipe', 'inherit', 'inherit', 'pipe'], detached: true }); let control = ''; action.stdio[3].setEncoding('utf8'); action.stdio[3].on('data', chunk => { control += chunk; if (control.length > 64) { cleanup(); return process.exit(125) }; if (!control.includes('\n')) return; const match = /^DONE (-?[0-9]+)\n$/.exec(control); if (!match) { cleanup(); return process.exit(125) }; terminate(Number(match[1])) }); action.once('error', () => { cleanup(); process.exit(125) }); action.once('close', () => { if (!terminating) { cleanup(); return process.exit(125) }; finish(Date.now() + 2000) }) }); process.stdin.on('end', () => { if (!started) { cleanup(); process.exit(125) } }); process.on('SIGTERM', () => terminate(1)); process.on('SIGINT', () => terminate(1))
+process.stdin.setEncoding('utf8'); let input = ''; process.stdin.on('data', chunk => { input += chunk; if (started || !input.includes('\n')) return; const fields = input.trim().split(' '); if (fields.length !== 6 || (fields[0] !== 'GO' && fields[0] !== 'CANCEL') || fields[1] !== c.fence.attemptId || fields.slice(2).some(value => !/^[0-9]+$/.test(value))) { cleanup(); return process.exit(125) }; approved = { markerDev: fields[2], markerIno: fields[3], parentDev: fields[4], parentIno: fields[5] }; started = true; if (fields[0] === 'CANCEL' || c.spawnNotAfter !== undefined && Date.now() > Date.parse(c.spawnNotAfter)) { expired = true; return finish(Date.now() + 2000) }; const encoded = Buffer.from(JSON.stringify({ command: c.command, args: c.args, argv0: c.argv0, cwd: c.cwd, spawnNotAfter: c.spawnNotAfter, fence: c.fence, approved: { ...approved, supervisorPid: process.pid } })).toString('base64url'); action = spawn(process.execPath, ['-e', c.runner, encoded], { cwd: c.cwd, env: process.env, stdio: ['pipe', 'inherit', 'inherit', 'pipe'], detached: true }); let control = ''; action.stdio[3].setEncoding('utf8'); action.stdio[3].on('data', chunk => { control += chunk; if (control.length > 64) { cleanup(); return process.exit(125) }; if (!control.includes('\n')) return; if (control === 'EXPIRED\n') { expired = true; return terminate(1) }; const match = /^DONE (-?[0-9]+)\n$/.exec(control); if (!match) { cleanup(); return process.exit(125) }; terminate(Number(match[1])) }); action.once('error', () => { cleanup(); process.exit(125) }); action.once('close', () => { if (!terminating) { cleanup(); return process.exit(125) }; finish(Date.now() + 2000) }) }); process.stdin.on('end', () => { if (!started) { cleanup(); process.exit(125) } }); process.on('SIGTERM', () => terminate(1)); process.on('SIGINT', () => terminate(1))
 `
 
 async function waitForFenceReady(child: ReturnType<typeof spawn>): Promise<boolean> {
@@ -196,11 +197,14 @@ async function waitForFenceReady(child: ReturnType<typeof spawn>): Promise<boole
     })
 }
 
-async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string, ...string[]]): Promise<ReturnType<typeof spawn> | undefined> {
+async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string, ...string[]]): Promise<{
+    readonly child: ReturnType<typeof spawn>
+    readonly spawnExpired: () => boolean
+} | undefined> {
     const fence = step.executionFence
     if (!fence || !validExecutionFence(fence) || process.platform === 'win32' || !await secureFenceSocketDirectory(fence)) return undefined
     const [command, ...args] = argv
-    const encoded = Buffer.from(JSON.stringify({ command, args, argv0: step.argv0, cwd: step.cwd, fence, runner: FENCED_GROUP_RUNNER })).toString('base64url')
+    const encoded = Buffer.from(JSON.stringify({ command, args, argv0: step.argv0, cwd: step.cwd, spawnNotAfter: step.spawnNotAfter, fence, runner: FENCED_GROUP_RUNNER })).toString('base64url')
     const supervisor = spawn(process.execPath, ['-e', FENCED_SUPERVISOR, encoded], {
         cwd: step.cwd, env: step.env, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
     })
@@ -210,8 +214,13 @@ async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string
         supervisor.stdin?.destroy(); try { process.kill(-supervisor.pid!, 'SIGKILL') } catch { /* no released action */ }
         return undefined
     }
-    supervisor.stdin?.end(`GO ${fence.attemptId} ${active.markerDev} ${active.markerIno} ${active.parentDev} ${active.parentIno}\n`)
-    return supervisor
+    // Startup and durable acknowledgement can outlive the evidence that authorized the action.
+    let control = ''
+    const readable = supervisor.stdio[3] as NodeJS.ReadableStream
+    readable.on('data', (chunk: string) => { control += chunk })
+    const release = step.spawnNotAfter !== undefined && Date.now() > Date.parse(step.spawnNotAfter) ? 'CANCEL' : 'GO'
+    supervisor.stdin?.end(`${release} ${fence.attemptId} ${active.markerDev} ${active.markerIno} ${active.parentDev} ${active.parentIno}\n`)
+    return { child: supervisor, spawnExpired: () => control === 'EXPIRED\n' }
 }
 
 function fencedProcessGone(pid: number): boolean {
@@ -631,10 +640,11 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
 
     const [command, ...args] = prepared.argv
     let runningProcess: ReturnType<typeof spawn>
+    let fenced: Awaited<ReturnType<typeof spawnFencedSupervisor>>
     try {
-        const fenced = step.executionFence ? await spawnFencedSupervisor(step, prepared.argv) : undefined
+        fenced = step.executionFence ? await spawnFencedSupervisor(step, prepared.argv) : undefined
         if (step.executionFence && !fenced) return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
-        runningProcess = fenced ?? spawn(command, args, {
+        runningProcess = fenced?.child ?? spawn(command, args, {
                 argv0: step.argv0,
                 cwd: step.cwd,
                 env: step.env,
@@ -659,11 +669,12 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         let killTimer: ReturnType<typeof setTimeout> | undefined
         let terminationPoll: ReturnType<typeof setTimeout> | undefined
         const result = (): InternalStepExecution => {
-            const started = runningProcess.pid !== undefined
+            const expired = fenced?.spawnExpired() === true
+            const started = runningProcess.pid !== undefined && !expired
             const retainedStdout = Buffer.concat(stdout).subarray(0, step.stdoutLimitBytes)
             const retainedStderr = Buffer.concat(stderr).subarray(0, step.stderrLimitBytes)
             const processSignal = closed?.signal ?? null
-            const processFailure = failure ?? (closed?.code === 0 && processSignal === null
+            const processFailure = failure ?? (expired ? ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED : closed?.code === 0 && processSignal === null
                 ? undefined : ENVIRONMENT_CODES.EXECUTION_STEP_FAILED)
             return {
                 id: step.id,
