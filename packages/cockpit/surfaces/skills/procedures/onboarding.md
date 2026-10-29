@@ -259,7 +259,9 @@ contract and the independent grading, not the thinking: reuse the planning skill
    must survive a handoff or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
    ceremony costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
-1. **Intake.** Run the harness's installed brainstorming and planning skills, then compile their output into
+1. **Intake.** When preparing an intent descriptor, draft contract or source audit, follow the
+   [public intake examples](https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor)
+   so the closed formats bind the inspected request without guessing fields. Run the harness's installed brainstorming and planning skills, then compile their output into
    the work-order schema with `./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
    The contract needs the parser-admitted number of acceptance criteria, each a Given/When/Then that independent reviewers could not
    disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from

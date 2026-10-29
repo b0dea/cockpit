@@ -537,8 +537,51 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         await expect(readFile(join(fixture.root, 'workorders/WO-004.md'))).rejects.toMatchObject({ code: 'ENOENT' })
     }, 120_000)
 
+    it('publishes the public guide examples as an unaccepted draft with its matching audit', async () => {
+        const guide = await readFile(resolve('docs/work-and-browser.md'), 'utf8')
+        const example = (heading: string, language: string): string => {
+            const section = guide.split(`### ${heading}\n`)[1]
+            const bytes = section?.split(`\`\`\`${language}\n`)[1]?.split('\n\`\`\`')[0]
+            if (!bytes) throw new Error(`Public work guide is missing the ${heading} example`)
+            return `${bytes}\n`
+        }
+        const intent = example('Intent descriptor', 'json')
+        const upstream = example('Upstream task', 'text')
+        const candidate = example('Draft contract', 'markdown')
+        const audit = example('Adjacent source audit', 'json')
+        const fixture = await configuredFixture()
+        await Promise.all(['WO-001', 'WO-002', 'WO-003'].flatMap(id => [
+            rm(join(fixture.root, `workorders/${id}.md`)), rm(join(fixture.root, `workorders/${id}.source-audit.json`)),
+        ]))
+        await mkdir(join(fixture.root, 'specs'))
+        await mkdir(join(fixture.root, 'drafts'))
+        await writeFile(join(fixture.root, 'specs/cache-refresh.md'), upstream)
+        await writeFile(join(fixture.root, 'intents/task.json'), intent)
+        await expect(runWorkApplication({ operation: 'work-intake', intent: 'intents/task.json' }, fixture.composition))
+            .resolves.toMatchObject({ kind: 'complete', value: { route: { kind: 'work-order' }, candidateRequired: true } })
+        await expect(readdir(join(fixture.root, 'workorders'))).resolves.toEqual(['programmes'])
+        await writeFile(join(fixture.root, 'drafts/task.md'), candidate)
+        await writeFile(join(fixture.root, 'drafts/task.source-audit.json'), audit)
+        const published = await runWorkApplication({ operation: 'work-intake', intent: 'intents/task.json', candidate: 'drafts/task.md' }, fixture.composition)
+        expect(published, JSON.stringify(published)).toMatchObject({ kind: 'complete', value: { kind: 'draft', skills: { kind: 'absent' }, gaps: [] } })
+        const parsed = parseWorkOrder(Buffer.from(candidate))
+        if (!parsed.ok) throw new Error('Published public example did not parse')
+        const id = parsed.value.frontmatter.id
+        await expect(readFile(join(fixture.root, `workorders/${id}.md`), 'utf8')).resolves.toBe(candidate)
+        await expect(readFile(join(fixture.root, `workorders/${id}.source-audit.json`), 'utf8')).resolves.toBe(audit)
+        await expect(runWorkApplication({ operation: 'work-status', workOrderId: id }, fixture.composition)).resolves.toMatchObject({
+            kind: 'complete', value: { active: [], orders: [{ id, status: 'draft', state: null,
+                layers: { source: [], local: [], ci: [], runtime: [], deployment: [] } }] },
+        })
+        await expect(runWorkApplication({ operation: 'work-accept', workOrderId: id }, fixture.composition))
+            .resolves.toMatchObject({ kind: 'human-needed' })
+    }, 120_000)
+
     it('retains actionable parser findings for inventory, intent and programme inputs', async () => {
         const fixture = await configuredFixture()
+        await writeFile(join(fixture.root, 'intents/invalid.json'), '{}')
+        await expect(runWorkApplication({ operation: 'work-intake', intent: 'intents/invalid.json' }, fixture.composition))
+            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('docs/work-and-browser.md#intent-descriptor') })
         const invalid = (bytes: string) => bytes.replace('## Non-goals\nChanging the storage provider.\n', '')
 
         const inventoryPath = join(fixture.root, 'workorders/WO-001.md')

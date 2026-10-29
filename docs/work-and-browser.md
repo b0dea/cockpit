@@ -12,11 +12,161 @@ stable release; use the command-specific help as the current contract.
 
 The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill drives the browser commands in [Browser evidence](#browser-evidence) and reports findings with evidence without editing code.
 
-<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Work orders use the bounded executable document contract owned by [the work-order parser](../packages/cockpit/src/work-orders/contract.ts). Its frontmatter, source provenance, Authority paths, bounded acceptance criteria, verification commands and ordered plan are validated together. Invalid or contradictory documents refuse before work starts.
+<!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The intent is a JSON file, not a sentence or a work-order document. Cockpit reads its upstream artifact, checks routing and capacity, and only then reads a candidate. A fix creates no work-order files. A work-order route returns `candidateRequired: true`; follow the examples below to prepare a draft. Existing orders can be inspected with `--work-order WO-001`.
 
-<!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The bounded descriptor links a task, issue, specification, decision or programme artifact and declares whether certification or a durable handoff is needed. Routing and current capacity are checked before any candidate is read or draft is written. A fix creates no work-order files. A work-order route reports that a candidate is needed; submit its contained path with `--candidate drafts/task.md` to validate and publish the draft and source audit. Existing orders can be inspected with `--work-order WO-001`.
+### Intent descriptor
 
-<!-- cockpit:ref path=packages/cockpit/surfaces/skills/procedures/onboarding.md --> Preparation records the instructed, human-reviewed inspection of applicable repository- and user-installed thinking, research, specification and planning skills. The adjacent `.source-audit.json` records the named auditor, provenance, explicit capability choices and linked output sources. An audited empty selection records absence. Repository references bind contained file bytes; user references remain opaque logical identifiers. Semantic applicability is instructed and human-reviewed. A hash proves byte identity only; generated skill inventory is not discovery evidence. Missing optional skills never skip the required source audit.
+Save this as `intents/task.json`, relative to the directory containing `cockpit.toml`:
+
+```json
+{
+  "version": 1,
+  "kind": "task",
+  "reference": "specs/cache-refresh.md",
+  "certification": true,
+  "crossSession": false,
+  "programme": null
+}
+```
+
+Every field shown is required; extra fields refuse. `version` is the descriptor format. `kind` is
+`task`, `issue`, `spec`, `decision` or `programme`; `reference` is an existing contained file,
+even for an external issue: first record the relevant request in that file. `certification` and
+`crossSession` are booleans describing independent certification and durable handoff. Either true
+selects a work order. `programme` is `null` for standalone work or the declared programme slug;
+a programme also selects a work order. With both booleans false and `programme: null`, intake
+returns the fix route without reading a candidate or creating work-order files.
+
+Create the referenced upstream file before running the command; the examples use a synthetic cache
+repair. Replace its facts, paths and commands with inspected product facts before using it for real work.
+Run intake without `--candidate` first; proceed only when it reports the work-order route and capacity.
+
+### Upstream task
+
+Save this as `specs/cache-refresh.md`:
+
+```text
+Repair cache refresh so reading a key after refresh returns its latest stored value.
+Refresh must preserve other keys and must make a previously absent key readable.
+Keep the current cache interface and storage provider.
+```
+
+### Draft contract
+
+<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Save this as `drafts/task.md`. Choose an unused work-order ID; intake checks repository refs and linked worktrees as well as current orders. Keep every canonical heading and the parser's bounded, sourced acceptance criteria. Authority lists exact files, including the intent's upstream file, so the draft binds the request being admitted. Verification rows are argument arrays, not shell strings; they declare future checks and do not claim those checks ran.
+
+```markdown
+---
+id: WO-004
+title: Repair cache refresh
+status: draft
+created: 2026-01-02
+---
+## Objective
+Return the latest stored value after a cache refresh.
+## Non-goals
+Changing the cache interface or storage provider.
+## Context and sources
+- S1 | read | specs/cache-refresh.md | Requested cache behavior inspected.
+- S2 | read | src/cache.ts | Current cache implementation inspected.
+- S3 | inferred | tests/cache.test.ts | Regression cases derived from the requested behavior.
+## Authority
+- specs/cache-refresh.md
+- src/cache.ts
+- tests/cache.test.ts
+## Acceptance criteria
+### AC1
+Source: S1
+Given: A cached key has an older value than storage.
+When: That key is refreshed.
+Then: Reading that key returns the latest stored value.
+### AC2
+Source: S2
+Given: Two keys are cached.
+When: One key is refreshed.
+Then: Reading the other key returns its unchanged value.
+### AC3
+Source: S3
+Given: A stored key is absent from the cache.
+When: That key is refreshed.
+Then: Reading that key returns its stored value.
+## Verification
+- AC1 | ["npm","test","--","cache-1"]
+- AC2 | ["npm","test","--","cache-2"]
+- AC3 | ["npm","test","--","cache-3"]
+## Docs impact
+none: The current interface remains unchanged.
+## Plan
+1. [ ] Reproduce stale, unrelated and absent key behavior through the cache interface.
+2. [ ] Correct refresh and run the declared verification commands.
+## Evidence
+- none
+## Decisions
+- none
+```
+
+Source provenance is `read` for inspected file bytes, `inferred` for a reasoned conclusion, or
+`operator-confirmed` for a fact the operator confirmed. Cockpit re-reads `read` sources; other
+provenance labels do not establish file inspection. Keep those distinctions truthful and record
+unresolved questions in the audit rather than inventing answers. Keep the draft's `Evidence` empty
+until evidence exists; intake never certifies the implementation.
+
+### Adjacent source audit
+
+Save this as `drafts/task.source-audit.json`, beside `drafts/task.md`. `sources` must match the
+contract's source rows exactly, including order and reason. Each gap is an object with `kind`
+(`omission`, `contradiction` or `question`), `reference` and `detail`; unresolved gaps block later
+execution. An empty `gaps` array means this audit found no material gaps.
+
+```json
+{
+  "sources": [
+    { "id": "S1", "provenance": "read", "reference": "specs/cache-refresh.md", "reason": "Requested cache behavior inspected." },
+    { "id": "S2", "provenance": "read", "reference": "src/cache.ts", "reason": "Current cache implementation inspected." },
+    { "id": "S3", "provenance": "inferred", "reference": "tests/cache.test.ts", "reason": "Regression cases derived from the requested behavior." }
+  ],
+  "gaps": [],
+  "skills": {
+    "status": "audited",
+    "auditor": "source-reviewer",
+    "provenance": "read",
+    "rows": []
+  }
+}
+```
+
+Inspect applicable repository- and user-installed thinking, research, specification and planning
+skills before compiling the draft. Name the actual auditor, use `read` or `operator-confirmed`
+provenance for that inspection, and record its choices under `skills.rows`. The audited empty
+selection above records that inspection found no applicable skill; it is not permission to skip
+inspection or the source audit. Semantic applicability is instructed and human-reviewed. A generated
+skill inventory or a byte hash alone does not prove discovery or applicability.
+
+Each optional row has `scope` (`repository` or `user`), a logical `reference`, `category`
+(`thinking`, `research`, `specification`, `planning` or `other`), boolean `applicable`, a nonempty
+`reason`, and `sourceIds` naming contract sources produced or informed by that skill. An applicable
+row outside `other` requires linked source IDs. Add the skill's output as a contract source and
+match it in the audit; do not substitute the skill text for its output. Record inspected but
+inapplicable skills with `applicable: false`, the reason, and `sourceIds: []` when no output applies.
+
+Repository rows additionally require `path`, a contained file relative to the cockpit root, and
+`sha256`, the lowercase SHA-256 digest of its inspected bytes. Cockpit rechecks that binding.
+User rows have neither `path` nor `sha256`: their references stay opaque logical identifiers,
+not home-directory paths. All row fields are closed; include only the fields for its scope.
+
+Publish only after the route admits the draft:
+
+```sh
+cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md
+cockpit work-status --config cockpit.toml --work-order WO-004 --json
+```
+
+Successful intake publishes the matched pair under `workorders/WO-004.md` and
+`workorders/WO-004.source-audit.json`, retaining `draft` status. It creates no accepted state or
+verification proof. Continue through [Accept and resume](#accept-and-resume); the operator's
+interactive acceptance is a separate step.
+
+### Programme and capacity
 
 <!-- cockpit:ref command=work-programme-mint --> Programme intent remains in one ordered ledger. `cockpit work-programme-mint --config cockpit.toml --programme release` reports the first unminted item as a provisional candidate request. Candidate validation checks predecessor completion, shippability and remaining capacity. Future item folders are unnecessary. Candidate publication rechecks the current ledger, identity and capacity.
 
