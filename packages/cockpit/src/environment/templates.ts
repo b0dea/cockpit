@@ -451,6 +451,7 @@ export async function observeTemplateHealth(input: {
     readonly siblings: readonly unknown[]
 }): Promise<readonly EnvironmentObservation[]> {
     const groups = new Map<string, EnvironmentObservation[]>()
+    let environmentFileCount = 0
     const add = (observation: EnvironmentObservation) => {
         const group = groups.get(observation.code) ?? []
         group.push(observation)
@@ -461,10 +462,25 @@ export async function observeTemplateHealth(input: {
         add(await observeSiblingPresence({ stackId: input.stackId, observedAt: input.observedAt,
             siblingRoot: input.siblingRoot, sibling }))
         for (const declaration of sibling.environment_files ?? []) {
+            environmentFileCount += 1
             const observations = await observeEnvironmentKeys({ stackId: input.stackId, observedAt: input.observedAt,
                 siblingRoot: resolve(input.siblingRoot, sibling.dir), declaration })
             observations.forEach(add)
         }
+    }
+    if (environmentFileCount === 0) {
+        add(issueObservation({
+            code: ENVIRONMENT_CODES.ENVIRONMENT_KEYS_STALE, owner: mechanism.id, stackId: input.stackId,
+            source: input.siblingRoot, observed: { state: 'available', value: true, observedAt: input.observedAt },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+            freshness: { state: 'current' }, remedy: 'synchronize the instance key names with its tracked template',
+        }))
+        add(issueObservation({
+            code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_NOT_FOUND, owner: mechanism.id, stackId: input.stackId,
+            source: input.siblingRoot, observed: { state: 'available', value: true, observedAt: input.observedAt },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+            freshness: { state: 'current' }, remedy: 'seed the missing environment instance from its tracked template',
+        }))
     }
     return Object.freeze([...groups.values()].map(group => {
         if (group.length === 1) return group[0]!

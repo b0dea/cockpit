@@ -276,6 +276,9 @@ describe('production health adapter composition', () => {
             expect.objectContaining({ owner: 'environment-port-coordination' }),
             expect.objectContaining({ owner: 'lifecycle-stage' }),
             expect.objectContaining({ owner: 'environment-template-seeding' }),
+            expect.objectContaining({ owner: 'environment-template-seeding', code: 'SIBLING_MISSING' }),
+            expect.objectContaining({ owner: 'environment-template-seeding', code: 'ENVIRONMENT_KEYS_STALE', verdict: 'pass', measured: true }),
+            expect.objectContaining({ owner: 'environment-template-seeding', code: 'ENVIRONMENT_FILE_NOT_FOUND', verdict: 'pass', measured: true }),
         ]))
         expect(result.result.checks.find(({ owner }) => owner === 'lifecycle-stage')?.measured).toBe(false)
     })

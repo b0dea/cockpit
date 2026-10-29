@@ -153,6 +153,8 @@ inside that root. Acquire missing checkouts before generating their environment.
 summarizes its failing paths, so a healthy file cannot hide another file's missing instance or
 stale key names. Restore the named checkout or synchronize its instance keys with its template,
 then rerun `cockpit doctor --config cockpit.toml`.
+When no sibling declares an environment file, the instance-presence and key-freshness checks pass:
+there is no environment file for cockpit to seed or compare.
 
 For generated services, `build.context`, bind and environment-file mount sources, and
 `toolchain_pins.path` are relative to the declared sibling checkout; `.` selects that checkout.
