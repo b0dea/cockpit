@@ -224,6 +224,7 @@ describe('changed adjacent-owner test runner', () => {
         ['docs tree', 'docs/guide/page.md'],
         ['examples tree', 'examples/demo/README.md'],
         ['package', 'packages/cockpit/README.md'],
+        ['changeset guidance', '.changeset/README.md'],
         ['agent index', 'llms.txt'],
     ])('runs the documentation tests when %s markdown changes', (_name, path) => {
         const fixture = withOwners({ [path]: 'before\n' })
@@ -233,6 +234,26 @@ describe('changed adjacent-owner test runner', () => {
 
         expect(result.status, result.stderr).toBe(0)
         expect(fixture.dispatched()).toEqual(DOCS_TESTS)
+    })
+
+    it('selects only the prose owner beside source owners for a release fragment', () => {
+        const source = 'packages/cockpit/src/example.ts'
+        const fixture = withOwners({
+            [source]: 'export const value = 1\n',
+            'packages/cockpit/src/example.test.ts': "import { value } from './example.js'\n",
+            '.changeset/release-note.md': '---\n"@b0dea/cockpit": patch\n---\n\nBefore.\n',
+        })
+        edit(fixture.root, source)
+        edit(fixture.root, '.changeset/release-note.md')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([
+            ARCHITECTURE,
+            'packages/cockpit/src/docs-lint.prose.test.ts',
+            'packages/cockpit/src/example.test.ts',
+        ])
     })
 
     it.each(['package.json', 'package-lock.json', 'packages/cockpit/package.json', 'packages/cockpit/package-lock.json'])(

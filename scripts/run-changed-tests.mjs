@@ -11,6 +11,7 @@ export const mechanism = {
 const TEST_PATH = /^packages\/[^/]+\/src\/.+\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/
 const SOURCE_PATH = /^(packages\/[^/]+\/src\/.+)\.([cm]?[jt]s|[jt]sx)$/
 const MARKDOWN_PATH = /\.md$/
+const CHANGESET_FRAGMENT = /^\.changeset\/(?!README\.md$)[^/]+\.md$/
 // llms.txt is the Markdown index agents read first; the documentation tests check where it points.
 const LLMS_INDEX = 'llms.txt'
 const MANIFEST_PATH = /^(?:packages\/[^/]+\/)?package(?:-lock)?\.json$/
@@ -25,9 +26,11 @@ const PACKAGE_SCRIPT_MODULE_PATH = /^packages\/[^/]+\/scripts\/.+\.[cm]?js$/
 const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g
 const TEST_DIRECTORY = 'packages/cockpit/src'
-// Markdown is read by the documentation tests wherever it lives: they lint the pages, check
-// ownership of each fact, and run the shipped example.
+// General Markdown can affect lint contracts, fact ownership, and runnable examples.
 const DOCUMENTATION_TESTS = [/^docs-lint(?:\..+)?\.test\.ts$/, /^docs-ownership\.test\.ts$/, /^example-cockpit\.test\.ts$/]
+// Release fragments cannot change linter mechanisms or runnable examples; lint:docs validates
+// their bytes while the prose owner pins their estate.
+const CHANGESET_FRAGMENT_TEST = 'docs-lint.prose.test.ts'
 const MANIFEST_TESTS = ['packaging.test.ts', 'supply-chain.test.ts']
 const WORKFLOW_TESTS = ['supply-chain.test.ts', 'docs-lint.contracts.test.ts', 'test-protection.test.ts']
 const GENERATED_FIXTURES = 'packages/cockpit/test-support/generated-fixtures.ts'
@@ -207,7 +210,8 @@ function ownerTests(root, paths, extras) {
             imports ??= importedModules(root)
             mapped.push(...testsImporting(imports, path))
         }
-        if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
+        if (CHANGESET_FRAGMENT.test(path)) mapped.push(...testsInDirectory(root, [CHANGESET_FRAGMENT_TEST]))
+        else if (MARKDOWN_PATH.test(path) || path === LLMS_INDEX) mapped.push(...testsInDirectory(root, DOCUMENTATION_TESTS))
         if (MANIFEST_PATH.test(path)) mapped.push(...testsInDirectory(root, MANIFEST_TESTS))
         if (path.startsWith('.github/')) mapped.push(...testsInDirectory(root, WORKFLOW_TESTS))
         if (SURFACES_PATH.test(path)) {
