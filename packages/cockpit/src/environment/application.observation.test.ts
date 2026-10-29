@@ -559,7 +559,9 @@ describe('observation application runners', () => {
         expect(execute.mock.calls.map(([step]) => step.id)).toEqual(['status', 'ref', 'url', 'revalidate'])
         expect(result).toMatchObject({
             kind: 'blocked', result: { verdict: 'fail', comparisons: [{ sibling: 'api', result: comparison }] },
-            diagnostics: [{ code: comparison.code, message: comparison.reason }],
+            diagnostics: [{ code: comparison.code, message: comparison.reason,
+                fix: 'in the sibling checkout, run `git status --short --branch` and `git remote -v`; reconcile the selected upstream and declared repository, then rerun the command',
+            }],
         })
     })
 
@@ -613,7 +615,9 @@ describe('observation application runners', () => {
 
         expect(result).toMatchObject({
             kind: 'blocked', result: { verdict: 'unavailable', comparisons: [{ result: unavailable }] },
-            diagnostics: [{ code: unavailable.code, message: unavailable.reason }],
+            diagnostics: [{ code: unavailable.code, message: unavailable.reason,
+                fix: 'in the sibling checkout, run `git status --short --branch` and `git remote -v`; reconcile the selected upstream and declared repository, then rerun the command',
+            }],
         })
         expect(JSON.stringify(result)).not.toContain('example.invalid')
     })

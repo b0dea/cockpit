@@ -4517,7 +4517,7 @@ function healthDiagnostics(health: HealthEvaluation): readonly EnvironmentDiagno
             result.code,
             result.reason,
             sibling,
-            'set the sibling remote to the repository selected by its configured upstream',
+            'in the sibling checkout, run `git status --short --branch` and `git remote -v`; reconcile the selected upstream and declared repository, then rerun the command',
         )]
     })
     const producerFailures = health.producerFailures.map((producer) => applicationDiagnostic(
