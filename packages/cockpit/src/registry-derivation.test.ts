@@ -24,7 +24,7 @@ function derivedConfig(): Record<string, unknown> {
         service.health.tool_probe,
     ]
     for (const operation of operationOwners) if (operation) operation.service = 'worker'
-    service.ports = [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3000 }]
+    service.ports = [{ name: 'http', host_variable: 'WORKER_HOST_PORT', internal: 3000, host_ip: '127.0.0.1' }]
     const { id: _id, sibling: _sibling, mounts: _mounts, profiles: _profiles, ...derivedService } = service
     void _id
     void _sibling

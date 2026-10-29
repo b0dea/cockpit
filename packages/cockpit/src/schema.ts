@@ -322,7 +322,7 @@ export const GeneratedService = z.object({
         context: z.union([z.literal('.'), SafeRelativePath.max(4096)]),
         dockerfile: SafeRelativePath.max(4096).optional(),
     }).strict().optional(),
-    ports: z.array(z.object({ name: DeclarationId, host_variable: EnvironmentName, internal: z.number().int().min(1).max(65535), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).optional() }).strict()).max(256).default([]),
+    ports: z.array(z.object({ name: DeclarationId, host_variable: EnvironmentName, internal: z.number().int().min(1).max(65535), host_ip: z.enum(['127.0.0.1', '::1', '0.0.0.0', '::']).default('127.0.0.1') }).strict()).max(256).default([]),
     host_aliases: z.array(GeneratedHostAlias).max(64).refine((aliases) => !hasDuplicate(aliases.map(({ hostname }) => hostname)), {
         message: 'generated service host aliases must name unique hostnames',
     }).optional(),

@@ -48,7 +48,7 @@ lists resource ceilings, data modes and vendor guards as not declared outside a 
 In compose-first mode `check` reads the topology through `docker compose config`, without
 interpolation, and refuses with `COMPOSE_TOPOLOGY_UNAVAILABLE` when Docker cannot produce it:
 
-- a published host port not written as a `[ports.bases]` variable, such as `"${API_HOST_PORT}:3000"`,
+- a published host port not written as a `[ports.bases]` variable, such as `"127.0.0.1:${API_HOST_PORT}:3000"`,
   fails with `COMPOSE_PORT_NOT_LEASED`, because the same number collides across worktrees and
   parallel stacks;
 - a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
@@ -71,6 +71,12 @@ Any other `${VAR}` reference needs a `:-default`. Each `mount = "always"` siblin
 bind-mounted, since that is what the declaration promises.
 
 ## Local URLs and port families
+
+Generated service ports bind to `127.0.0.1` by default so starting a local stack does not expose it
+to the network. Set a port's `host_ip` explicitly to `::1` for IPv6 loopback or to `0.0.0.0` or `::`
+only when that broader exposure is intentional. Cockpit preserves those declarations. In
+compose-first mode, keep the same explicit loopback binding in your own Compose file, as in
+`"127.0.0.1:${API_HOST_PORT}:3000"`; cockpit does not rewrite your published interfaces.
 
 Entrypoint derivatives turn an accepted port lease into application origins, callback URLs and
 other declared addresses. Add an optional `hostname` and `scheme` to use a named local URL:

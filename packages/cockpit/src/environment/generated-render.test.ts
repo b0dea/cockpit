@@ -106,6 +106,28 @@ describe('generated browser runner rendering', () => {
         expect(renderGeneratedEnvironment({ ...input, siblingDirectories: {} })).toMatchObject({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID' })
     })
 
+    it('defaults raw generated port publication to loopback while preserving explicit host bindings', async () => {
+        const loaded = await loadCockpitConfig(resolve('fixtures/registries/generated-environment.toml'))
+        if (loaded.kind !== 'complete' || !loaded.result.config.environment.generated) throw new Error('fixture unavailable')
+        const declaration = loaded.result.config.environment.generated
+        const service = declaration.services[0]!
+        const { host_ip: _hostIp, ...port } = service.ports[0]!
+        for (const hostIp of [undefined, '127.0.0.1', '::1', '0.0.0.0', '::'] as const) {
+            const rendered = renderGeneratedEnvironment({
+                declaration: { ...declaration, services: [{ ...service,
+                    ports: [{ ...port, ...(hostIp === undefined ? {} : { host_ip: hostIp }) }] }] },
+                sourceSha256: 'a'.repeat(64), generation: 'b'.repeat(64), stackId: `stack:${'c'.repeat(64)}`,
+                cockpitId: `cockpit:binding:${'d'.repeat(64)}`, portDefaults: loaded.result.config.ports.bases,
+                siblingDirectories: { app: 'app' },
+            })
+            expect(rendered, JSON.stringify({ hostIp, rendered })).toMatchObject({ kind: 'complete' })
+            if (rendered.kind !== 'complete') throw new Error('generated binding unavailable')
+            expect(parse(rendered.compose).services.app.ports).toEqual([{
+                target: 3000, published: '${APP_HOST_PORT:-4100}', host_ip: hostIp ?? '127.0.0.1', protocol: 'tcp',
+            }])
+        }
+    })
+
     it('refuses cyclic generated input within the shared capture bounds', () => {
         const cyclic: Record<string, unknown> = {}
         cyclic.self = cyclic
@@ -141,7 +163,7 @@ describe('generated browser runner rendering', () => {
         expect(rendered.compose).toContain('$$PAYLOAD')
         expect(rendered.compose).toContain('status=$$?')
         const compose = parse(rendered.compose)
-        expect(compose.services.app.ports).toEqual(['${APP_HOST_PORT:-4100}:3000'])
+        expect(compose.services.app.ports).toEqual([{ target: 3000, published: '${APP_HOST_PORT:-4100}', host_ip: '127.0.0.1', protocol: 'tcp' }])
 
         const root = await mkdtemp(join(tmpdir(), 'cockpit-compose-interpolation-'))
         try {

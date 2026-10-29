@@ -287,9 +287,8 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         const ports = [...service.ports].sort((left, right) => left.name.localeCompare(right.name)).map((port) => {
             const fallback = input.portDefaults[port.host_variable]
             if (!Number.isInteger(fallback) || fallback < 1 || fallback > 65535) return undefined
-            const hostIp = (port as typeof port & { host_ip?: string }).host_ip
-            return hostIp === undefined ? `${literalDefault(port.host_variable, fallback)}:${port.internal}` : {
-                target: port.internal, published: literalDefault(port.host_variable, fallback), host_ip: hostIp, protocol: 'tcp',
+            return {
+                target: port.internal, published: literalDefault(port.host_variable, fallback), host_ip: port.host_ip, protocol: 'tcp',
             }
         })
         if (ports.some((port) => port === undefined)) return undefined

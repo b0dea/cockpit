@@ -99,7 +99,7 @@ const generatedConfig = {
             services: [{
                 id: 'app', sibling: 'app', role: 'service', profiles: [], command: ['node', 'server.mjs'],
                 image: { reference: `example.invalid/synthetic@sha256:${'a'.repeat(64)}`, reason: 'Stable synthetic runtime', architectures: ['amd64', 'arm64'], manifest_probe: operation, provenance },
-                ports: [{ name: 'web', host_variable: 'WEB_PORT', internal: 3000 }],
+                ports: [{ name: 'web', host_variable: 'WEB_PORT', internal: 3000, host_ip: '127.0.0.1' }],
                 mounts: [{ kind: 'volume', source: 'dependencies', target: '/app/node_modules' }, { kind: 'volume', source: 'product-data', target: '/app/data' }, { kind: 'bind', source: '.', target: '/app/source', source_type: 'directory' }],
                 dependencies: [],
                 health: { property: 'Synthetic route resolves', probe: operation, tool_probe: operation, interval_seconds: 5, timeout_seconds: 3, retries: 3, start_period_seconds: 20, measurement: { duration_seconds: 15, provenance } },
@@ -356,12 +356,12 @@ describe('generated environment declarations', () => {
         ['undeclared endpoint supplier template', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].supplier.template = 'missing.env' }],
         ['duplicate endpoint variable', (config: typeof generatedConfig) => { config.environment.generated.vendors[1].endpoints[0].variable = config.environment.generated.vendors[0].endpoints[0].variable }],
         ['duplicate published lease in one service', (config: typeof generatedConfig) => {
-            config.environment.generated.services[0].ports.push({ name: 'admin', host_variable: 'WEB_PORT', internal: 3001 })
+            config.environment.generated.services[0].ports.push({ name: 'admin', host_variable: 'WEB_PORT', internal: 3001, host_ip: '127.0.0.1' })
             config.environment.generated.decisions.entries.push({ ...config.environment.generated.decisions.entries[11], id: 'port-admin', subject_id: 'app:admin' })
         }],
         ['duplicate published lease across services', (config: typeof generatedConfig) => {
             config.sibling.push({ ...config.sibling[0], slug: 'worker', dir: 'worker', var: 'WORKER_DIR' })
-            const worker = { ...structuredClone(config.environment.generated.services[0]), id: 'worker', sibling: 'worker', dependencies: [], ports: [{ name: 'worker', host_variable: 'WEB_PORT', internal: 3001 }] }
+            const worker = { ...structuredClone(config.environment.generated.services[0]), id: 'worker', sibling: 'worker', dependencies: [], ports: [{ name: 'worker', host_variable: 'WEB_PORT', internal: 3001, host_ip: '127.0.0.1' }] }
             worker.health.probe.service = 'worker'
             worker.health.tool_probe.service = 'worker'
             config.environment.generated.services.push(worker)
@@ -664,6 +664,8 @@ describe('work and browser declarations', () => {
         expect(Browser.safeParse({ ...browser, project: { ...browser.project, manifest: 'package.json' } }).success).toBe(false)
         expect(Browser.safeParse({ ...browser, project: { ...browser.project, manifest_sha256: 'd'.repeat(64) } }).success).toBe(false)
         const service = generatedConfig.environment.generated.services[0]!
+        const { host_ip: _hostIp, ...unboundPort } = service.ports[0]!
+        expect(GeneratedService.parse({ ...service, ports: [unboundPort] }).ports[0]?.host_ip).toBe('127.0.0.1')
         for (const host_ip of ['127.0.0.1', '::1', '0.0.0.0', '::']) expect(GeneratedService.safeParse({ ...service,
             ports: [{ ...service.ports[0], host_ip }] }).success).toBe(true)
         expect(GeneratedService.safeParse({ ...service, ports: [{ ...service.ports[0], host_ip: 'host.invalid' }] }).success).toBe(false)
