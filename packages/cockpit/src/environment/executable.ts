@@ -21,6 +21,11 @@ export interface ResolvedExecutable {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
+type HostPolicy = 'posix' | 'windows'
+
+function currentHostPolicy(): HostPolicy {
+    return process.platform === 'win32' ? 'windows' : 'posix'
+}
 
 function exactKeys(value: object, expected: readonly string[]): boolean {
     const actual = Object.keys(value).sort()
@@ -51,8 +56,11 @@ export function isResolvedExecutable(value: unknown): boolean {
 
 export function resolvedDockerExecutable(value: unknown): ResolvedExecutable | undefined {
     const executable = resolvedExecutable(value)
-    const name = executable && (process.platform === 'win32' ? win32.basename(executable.invocationPath) : basename(executable.invocationPath))
-    const accepted = process.platform === 'win32' ? name === 'docker.exe' || name === 'docker.com' : name === 'docker'
+    const host = currentHostPolicy()
+    const name = executable && (host === 'windows'
+        ? win32.basename(executable.invocationPath).toLowerCase()
+        : basename(executable.invocationPath))
+    const accepted = host === 'windows' ? name === 'docker.exe' || name === 'docker.com' : name === 'docker'
     return executable !== undefined && accepted && executable.executionMode === 'staged'
         ? executable : undefined
 }
@@ -63,8 +71,11 @@ export function isResolvedDockerExecutable(value: unknown): boolean {
 
 export function resolvedGitExecutable(value: unknown): ResolvedExecutable | undefined {
     const executable = resolvedExecutable(value)
-    const name = executable && (process.platform === 'win32' ? win32.basename(executable.invocationPath) : basename(executable.invocationPath))
-    const accepted = process.platform === 'win32' ? name === 'git.exe' || name === 'git.com' : name === 'git'
+    const host = currentHostPolicy()
+    const name = executable && (host === 'windows'
+        ? win32.basename(executable.invocationPath).toLowerCase()
+        : basename(executable.invocationPath))
+    const accepted = host === 'windows' ? name === 'git.exe' || name === 'git.com' : name === 'git'
     return executable !== undefined && accepted ? executable : undefined
 }
 
@@ -82,10 +93,10 @@ type SearchEnvironmentSelection = Readonly<{ kind: 'selected'; path: unknown; pa
     | Readonly<{ kind: 'ambiguous'; name: 'PATH' | 'PATHEXT' }>
     | Readonly<{ kind: 'unreadable' }>
 
-function selectSearchEnvironment(env: Readonly<Record<string, string>>): SearchEnvironmentSelection {
+function selectSearchEnvironment(env: Readonly<Record<string, string>>, host: HostPolicy): SearchEnvironmentSelection {
     let pathName = 'PATH'
     let pathExtName: string | undefined
-    if (process.platform === 'win32') {
+    if (host === 'windows') {
         let keys: string[]
         try { keys = Object.keys(env) } catch { return { kind: 'unreadable' } }
         const pathNames = keys.filter((candidate) => candidate.toUpperCase() === 'PATH')
@@ -132,7 +143,7 @@ async function inspectWindowsCandidate(path: string, kind: 'native' | 'batch'): 
     }
 }
 
-async function selectWindowsCandidate(name: string, env: Readonly<Record<string, string>>): Promise<WindowsCandidate> {
+async function selectWindowsCandidate(name: string, env: Readonly<Record<string, string>>, host: HostPolicy): Promise<WindowsCandidate> {
     if (Buffer.byteLength(name) > 4_096 || name.includes('\0')) {
         return { kind: 'invalid', reason: 'Windows executable name is invalid' }
     }
@@ -145,7 +156,7 @@ async function selectWindowsCandidate(name: string, env: Readonly<Record<string,
         return { kind: 'invalid', reason: 'Windows executable name must be drive-absolute or a PATH entry name' }
     }
 
-    const selected = selectSearchEnvironment(env)
+    const selected = selectSearchEnvironment(env, host)
     if (selected.kind === 'unreadable') return { kind: 'invalid', reason: 'Executable search environment is not readable' }
     if (selected.kind === 'ambiguous') return { kind: 'invalid', reason: `Executable search environment has ambiguous ${selected.name} spellings` }
     const pathValue = selected.path
@@ -236,6 +247,8 @@ async function digestRegularFile(path: string): Promise<string | undefined> {
 }
 
 export async function resolveExecutablePath(path: string): Promise<ExecutableResolution> {
+    const host = currentHostPolicy()
+    if (host === 'windows') return unavailable('Windows direct-path executable identity authority is unavailable')
     if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0')) {
         return unavailable('Executable path must be an exact absolute path')
     }
@@ -254,10 +267,11 @@ export async function resolveExecutablePath(path: string): Promise<ExecutableRes
 
 export async function resolveExecutable(name: string, env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
     if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) return unavailable('Executable name is invalid')
-    if (process.platform === 'win32') return windowsCandidateResolution(await selectWindowsCandidate(name, env), name)
+    const host = currentHostPolicy()
+    if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate(name, env, host), name)
     if (isAbsolute(name)) return resolveExecutablePath(name)
     if (basename(name) !== name) return unavailable('Executable name must be absolute or a PATH entry name')
-    const selected = selectSearchEnvironment(env)
+    const selected = selectSearchEnvironment(env, host)
     if (selected.kind === 'unreadable') return unavailable('Executable search path is not readable')
     if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
     const pathValue = selected.path
@@ -276,8 +290,9 @@ export async function resolveExecutable(name: string, env: Readonly<Record<strin
 }
 
 export async function resolveGitExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
-    if (process.platform === 'win32') return windowsCandidateResolution(await selectWindowsCandidate('git', env), 'git')
-    const selected = selectSearchEnvironment(env)
+    const host = currentHostPolicy()
+    if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate('git', env, host), 'git')
+    const selected = selectSearchEnvironment(env, host)
     if (selected.kind === 'unreadable') return unavailable('Git executable search path is not readable')
     if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
     const pathValue = selected.path
@@ -313,8 +328,9 @@ export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolut
 }
 
 export async function resolveDockerExecutable(env: Readonly<Record<string, string>>): Promise<ExecutableResolution> {
-    if (process.platform === 'win32') return windowsCandidateResolution(await selectWindowsCandidate('docker', env), 'docker')
-    const selected = selectSearchEnvironment(env)
+    const host = currentHostPolicy()
+    if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate('docker', env, host), 'docker')
+    const selected = selectSearchEnvironment(env, host)
     if (selected.kind === 'unreadable') return unavailable('Docker executable search path is not readable')
     if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
     const pathValue = selected.path
@@ -346,11 +362,5 @@ export async function resolveDockerExecutable(env: Readonly<Record<string, strin
 }
 
 export async function resolvePathRemovalExecutable(): Promise<ExecutableResolution> {
-    const invocationPath = '/bin/rm'
-    let canonicalPath: string
-    try { canonicalPath = await realpath(invocationPath) } catch { return unavailable('Path removal executable is unavailable') }
-    const sha256 = await digestRegularFile(canonicalPath)
-    if (sha256 === undefined) return unavailable('Path removal executable cannot be authenticated')
-    const value = Object.freeze({ canonicalPath, invocationPath, sha256, executionMode: 'verified-path' as const })
-    return Object.freeze({ state: 'available', value })
+    return resolveExecutablePath('/bin/rm')
 }
