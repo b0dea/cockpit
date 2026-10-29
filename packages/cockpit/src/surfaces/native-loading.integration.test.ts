@@ -146,7 +146,7 @@ describe('native instruction loading controls', () => {
             && row.harness.target === 'codexcli' && row.capability === 'instruction-loading')).toEqual(expect.objectContaining({
             kind: 'human_needed',
             reason: 'executable_missing',
-            operatorAction: 'Install Codex and rerun its instruction-loading probe',
+            operatorAction: 'Executable was not found in the supplied search path: codex; provide an authenticated Codex executable on a supported host and rerun its instruction-loading probe',
         }))
         expect(unavailable.evidence.evidence).toEqual([])
         expect(unavailable.evidence.pending).toHaveLength(specifications.length)
