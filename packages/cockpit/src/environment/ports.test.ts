@@ -1066,8 +1066,10 @@ describe('whole-family port leases', () => {
 })
 
 describe('retained port-family projection', () => {
-    it('projects the exact retained lease before a drain without rewriting its record', async () => {
+    it('projects a named HTTPS route from the exact retained offset without rewriting its record', async () => {
         const state = await namespace()
+        await leasePortFamily({ namespace: state, stackId: stackB, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
         await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })
         const before = await readFile(state.paths.coordination(stackA).path)
@@ -1075,15 +1077,16 @@ describe('retained port-family projection', () => {
         if (retained.kind !== 'complete') throw new Error('retained lease fixture unavailable')
         const entrypoints = deriveEntrypoints({
             lease: retained.lease,
-            declarations: [{ name: 'dashboard', kind: 'entrypoint', port: 'WEB', path: '/dashboard' }],
+            declarations: [{ name: 'dashboard', kind: 'entrypoint', port: 'WEB', path: '/dashboard',
+                hostname: 'app.sample.localhost', scheme: 'https' }],
         })
         const projection = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
 
         expect(projection).toMatchObject({
-            lease: { stackId: stackA, ports: { WEB: 3000, API: 4000 } },
+            lease: { stackId: stackA, offset: 100, ports: { WEB: 3100, API: 4100 } },
             ownership: { change: 'unchanged', holderId: holderA, recordRevision: 0, holderIds: [holderA] },
             entrypoints: expect.arrayContaining([
-                { name: 'dashboard', kind: 'entrypoint', port: 'WEB', value: 'http://127.0.0.1:3000/dashboard' },
+                { name: 'dashboard', kind: 'entrypoint', port: 'WEB', value: 'https://app.sample.localhost:3100/dashboard' },
             ]),
         })
         expect(consumePortLeaseProjection(projection!)).toBe(projection)
@@ -1506,6 +1509,47 @@ describe('lease derivatives', () => {
                 expect.objectContaining({ name, kind, port })
             ))),
         })
+    })
+
+    it('derives named URLs and corrects stale local addresses from the selected port family', () => {
+        const result = deriveEntrypoints({
+            lease,
+            declarations: [
+                { name: 'secure-origin', kind: 'origin', port: 'WEB', path: '/', hostname: 'app.sample.localhost', scheme: 'https' },
+                { name: 'local-callback', kind: 'callback_url', port: 'API', path: '/callback', hostname: 'api.sample.localhost' },
+                { name: 'secure-address', kind: 'public_base_url', port: 'API', path: '/', scheme: 'https' },
+            ],
+            declaredValues: {
+                'secure-origin': 'https://app.sample.localhost:3000/',
+                'local-callback': 'http://api.sample.localhost.example.test:4000/callback',
+            },
+        })
+        expect(result).toEqual({
+            kind: 'complete',
+            values: [
+                { name: 'web', kind: 'entrypoint', port: 'WEB', value: 'http://127.0.0.1:3100/' },
+                { name: 'api', kind: 'entrypoint', port: 'API', value: 'http://127.0.0.1:4100/' },
+                { name: 'secure-origin', kind: 'origin', port: 'WEB', value: 'https://app.sample.localhost:3100/' },
+                { name: 'local-callback', kind: 'callback_url', port: 'API', value: 'http://api.sample.localhost:4100/callback' },
+                { name: 'secure-address', kind: 'public_base_url', port: 'API', value: 'https://127.0.0.1:4100/' },
+            ],
+            diagnostics: [
+                expect.objectContaining({ severity: 'warning', code: ENVIRONMENT_CODES.PORT_LOCAL_VALUE_CORRECTED,
+                    target: 'secure-origin', fix: 'use https://app.sample.localhost:3100/' }),
+                expect.objectContaining({ severity: 'info', code: ENVIRONMENT_CODES.PORT_EXTERNAL_REGISTRATION_GAP,
+                    target: 'local-callback', fix: 'update the external registration to http://api.sample.localhost:4100/callback' }),
+            ],
+        })
+    })
+
+    it('refuses direct address declarations outside the local HTTP contract', () => {
+        for (const address of [{ hostname: 'app.localhost.example.test' }, { hostname: 'app.localhost\n' }, { scheme: 'file' }]) {
+            expect(deriveEntrypoints({ lease,
+                declarations: [{ name: 'application', kind: 'origin', port: 'WEB', path: '/', ...address }],
+            } as never)).toMatchObject({
+                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE }],
+            })
+        }
     })
 
     it('refuses kinds outside the shared entrypoint vocabulary', () => {

@@ -253,7 +253,7 @@ if (process.cwd() === ${JSON.stringify(fixture.root)} && argv[0] === 'status' &&
         await expect(readFile(join(capacityFixture.root, 'workorders/WO-002.md'), 'utf8')).resolves.toMatch(/^status: parked$/m)
     })
 
-    it('deduplicates declared aliases that resolve to the same application URL', async () => {
+    it('binds deduplicated browser routes to the named HTTPS origin at the retained lease offset', async () => {
         const fixture = await configuredFixture()
         const manifest = JSON.stringify({ name: 'synthetic-browser-project', version: '1.0.0', dependencies: { '@playwright/test': '1.2.3' } })
         const packageManifest = JSON.stringify({ name: '@playwright/test', version: '1.2.3', main: 'index.js', bin: { playwright: 'cli.js' } })
@@ -289,11 +289,11 @@ mcp_sources = [{ path = "browser.mcp.json", format = "mcp-json", provenance = { 
 approved = ["playwright"]
 
 [environment]
-addressing = "port"
+addressing = "hostname"
 authentication = "real"
-posture_requirements = [{ requirement = "synthetic-browser", addressing = "port", authentication = "real" }]
+posture_requirements = [{ requirement = "synthetic-browser", addressing = "hostname", authentication = "real" }]
 generated_host_paths = [".browser/runner", ".browser/mcp", ".browser/cli", ".browser/auth", ".browser/debugger"]
-entrypoint_derivatives = [{ name = "application", kind = "origin", port = "APP_HOST_PORT", path = "/" }, { name = "home", kind = "entrypoint", port = "APP_HOST_PORT", path = "/" }, { name = "status", kind = "entrypoint", port = "APP_HOST_PORT", path = "/status" }]
+entrypoint_derivatives = [{ name = "application", kind = "origin", port = "APP_HOST_PORT", path = "/", hostname = "app.sample.localhost", scheme = "https" }, { name = "home", kind = "entrypoint", port = "APP_HOST_PORT", path = "/", hostname = "app.sample.localhost", scheme = "https" }, { name = "status", kind = "entrypoint", port = "APP_HOST_PORT", path = "/status", hostname = "app.sample.localhost", scheme = "https" }]
 
 [browser]
 harnesses = [{ target = "codexcli", version = "0.149.0" }]
@@ -301,7 +301,7 @@ images = { runner = { reference = "synthetic.invalid/browser@sha256:${'a'.repeat
 project = { lockfile = "app/package-lock.json", sha256 = "${createHash('sha256').update(lockfile).digest('hex')}", driver_version = "1.2.3" }
 max_clients = 2
 proxy = { server_port = 4099, proxy_port = 4100, allowed_hosts = ["localhost:4100"] }
-resolver = []
+resolver = [{ hostname = "app.sample.localhost", address = "127.0.0.1" }]
 authentication = { policy = "per-worker", states = [{ worker = "first", path = ".browser/auth/first.json", source = "seeded" }, { worker = "second", path = ".browser/auth/second.json", source = "seeded" }] }
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
@@ -334,9 +334,10 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
                 checkoutId: currentCheckout, config: family, now: observedAt, listenerTimeoutMs: 1_000,
                 listenerEvidence: Array.from({ length: family.count }, (_, index) => ({
                     ports: Object.values(family.bases).map(base => base + index * family.step),
-                    observation: { state: 'available' as const, value: [], observedAt, producer: 'browser-alias-control' },
+                    observation: { state: 'available' as const, value: index === 0 ? Object.values(family.bases) : [], observedAt, producer: 'browser-alias-control' },
                 })) })
             if (lease.kind !== 'complete') throw new Error('browser alias fixture lease unavailable')
+            expect(lease.lease.offset).toBe(family.step)
             const entrypoints = deriveEntrypoints({ lease: lease.lease, declarations: loaded.result.config.environment.entrypoint_derivatives })
             if (entrypoints.kind !== 'complete' || !projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })) throw new Error('browser alias fixture entrypoints unavailable')
             const started = await recordLifecycleStarted({ namespace: namespace.value, stackId: currentStack, holderId: holder, observedAt })
@@ -350,9 +351,11 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
                 env: Object.freeze({ ...fixture.environment, HOME: stateHome, XDG_STATE_HOME: process.env.XDG_STATE_HOME }) })
             if (configured.kind !== 'complete') throw new Error(configured.reason)
             const command = await configured.composition.browser('drive', false)
+            const origin = `https://app.sample.localhost:${lease.lease.ports.APP_HOST_PORT}`
+            expect(command.policy.origin).toBe(origin)
             expect(command.policy.surfaces).toEqual([
-                { name: 'application', url: expect.stringMatching(/\/$/) },
-                { name: 'status', url: expect.stringMatching(/\/status$/) },
+                { name: 'application', url: `${origin}/` },
+                { name: 'status', url: `${origin}/status` },
             ])
             const binding = browserRuntimeCoordination(command.runtime)
             expect(binding).toBeDefined()

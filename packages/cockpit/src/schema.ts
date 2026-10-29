@@ -175,6 +175,8 @@ export const EntrypointDerivative = z
         kind: z.enum(ENTRYPOINT_KINDS),
         port: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
         path: SafeUrlPath,
+        hostname: z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+localhost(?![\s\S])/).optional(),
+        scheme: z.enum(['http', 'https']).optional(),
     })
     .strict()
 

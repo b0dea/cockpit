@@ -1,7 +1,7 @@
 import { createConnection } from 'node:net'
 import { z } from 'zod'
-import { isEntrypointKind, type EntrypointKind } from '../entrypoint-kinds.js'
-import { SafeUrlPath, STRUCTURED_INPUT_ENTRY_LIMIT, type EntrypointDerivative } from '../schema.js'
+import { type EntrypointKind } from '../entrypoint-kinds.js'
+import { EntrypointDerivative, STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
     addCoordinationHolder,
     coordinationStateRecord,
@@ -157,6 +157,8 @@ const DerivativeInputSchema = z.object({
         kind: z.string(),
         port: z.string(),
         path: z.string(),
+        hostname: EntrypointDerivative.shape.hostname,
+        scheme: EntrypointDerivative.shape.scheme,
     }).strict()).max(STRUCTURED_INPUT_ENTRY_LIMIT),
     declaredValues: z.record(z.string(), z.string()).refine(
         (values) => Object.keys(values).length <= STRUCTURED_INPUT_ENTRY_LIMIT,
@@ -1246,6 +1248,7 @@ function isLoopback(value: string): boolean {
     try {
         const hostname = new URL(value).hostname
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+            || EntrypointDerivative.shape.hostname.safeParse(hostname).success
     } catch {
         return false
     }
@@ -1303,12 +1306,7 @@ export function deriveEntrypoints(input: {
     const names = new Set(values.map(({ name }) => name))
     const diagnostics: EnvironmentDiagnostic[] = []
     for (const declaration of snapshot.declarations) {
-        if (
-            !/^[a-z0-9][a-z0-9-]*$/.test(declaration.name)
-            || !isEntrypointKind(declaration.kind)
-            || !portKey.test(declaration.port)
-            || !SafeUrlPath.safeParse(declaration.path).success
-        ) {
+        if (!EntrypointDerivative.safeParse(declaration).success) {
             return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'entrypoint declaration is malformed', declaration.name)
         }
         if (names.has(declaration.name)) {
@@ -1319,7 +1317,7 @@ export function deriveEntrypoints(input: {
         if (!Number.isSafeInteger(port) || port === undefined || port < 1 || port > 65535) {
             return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'entrypoint references a port absent from the accepted lease', declaration.port)
         }
-        const value = `http://127.0.0.1:${port}${declaration.path}`
+        const value = `${declaration.scheme ?? 'http'}://${declaration.hostname ?? '127.0.0.1'}:${port}${declaration.path}`
         values.push({ name: declaration.name, kind: declaration.kind, port: declaration.port, value })
         const declared = snapshot.declaredValues?.[declaration.name]
         if (declared !== undefined && declared !== value) {

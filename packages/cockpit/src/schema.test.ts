@@ -481,6 +481,46 @@ describe('entrypoint kind ownership', () => {
         }
         expect(EntrypointDerivative.safeParse({ name: 'web', kind: 'other', port: 'WEB', path: '/' }).success).toBe(false)
     })
+
+    it('keeps runtime and editor declarations aligned for bounded local HTTP origins', () => {
+        const base = { name: 'application', kind: 'origin', port: 'WEB_PORT', path: '/' }
+        const longestHostname = `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(51)}.localhost`
+        const cases = [
+            [{}, true],
+            [{ hostname: 'app.sample.localhost' }, true],
+            [{ scheme: 'https' }, true],
+            [{ hostname: 'app.sample.localhost', scheme: 'http' }, true],
+            [{ hostname: longestHostname, scheme: 'https' }, true],
+            [{ hostname: `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(52)}.localhost` }, false],
+            [{ hostname: `${'a'.repeat(64)}.localhost` }, false],
+            [{ hostname: 'localhost' }, false],
+            [{ hostname: '127.0.0.1' }, false],
+            [{ hostname: 'app.sample.test' }, false],
+            [{ hostname: 'app.localhost.example.test' }, false],
+            [{ hostname: 'App.sample.localhost' }, false],
+            [{ hostname: 'app_sample.localhost' }, false],
+            [{ hostname: '-app.localhost' }, false],
+            [{ hostname: 'app-.localhost' }, false],
+            [{ hostname: 'app..localhost' }, false],
+            [{ hostname: 'app.localhost.' }, false],
+            [{ hostname: 'app.localhost\n' }, false],
+            [{ hostname: 'app.localhost:8443' }, false],
+            [{ hostname: 'user@app.localhost' }, false],
+            [{ hostname: '*.sample.localhost' }, false],
+            [{ scheme: 'https:' }, false],
+            [{ scheme: 'HTTPS' }, false],
+            [{ scheme: 'file' }, false],
+        ] as const
+        for (const [address, accepted] of cases) {
+            const declaration = { ...base, ...address }
+            const config = { ...generatedConfig, environment: {
+                ...generatedConfig.environment, entrypoint_derivatives: [declaration],
+            } }
+            expect(EntrypointDerivative.safeParse(declaration).success, JSON.stringify(address)).toBe(accepted)
+            expect(CockpitConfig.safeParse(config).success, JSON.stringify(address)).toBe(accepted)
+            expect(publishedCockpitValidator(config), JSON.stringify(publishedCockpitValidator.errors)).toBe(accepted)
+        }
+    })
 })
 
 describe('posture requirement declarations', () => {

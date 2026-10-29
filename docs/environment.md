@@ -70,6 +70,49 @@ cannot enter its evidence; Compose still provides those files to containers when
 Any other `${VAR}` reference needs a `:-default`. Each `mount = "always"` sibling must be
 bind-mounted, since that is what the declaration promises.
 
+## Local URLs and port families
+
+Entrypoint derivatives turn an accepted port lease into application origins, callback URLs and
+other declared addresses. Add an optional `hostname` and `scheme` to use a named local URL:
+
+```toml
+[ports.bases]
+APP_HOST_PORT = 8443
+
+[[environment.entrypoint_derivatives]]
+name = "application"
+kind = "origin"
+port = "APP_HOST_PORT"
+path = "/"
+hostname = "app.sample.localhost"
+scheme = "https"
+```
+
+Run `cockpit up --config cockpit.toml --json` and use its returned entrypoint. The port comes
+from the selected family, including any nonzero offset; retained leases use the same derivation.
+The example produces `https://app.sample.localhost:<leased-port>/`. Omitting `hostname` uses
+`127.0.0.1`; omitting `scheme` uses `http`. Automatic numeric entrypoints keep their HTTP loopback
+URLs. These declarations do not export application environment variables: configure the
+product's public origin and callback settings to match the returned address.
+
+Names must be lowercase DNS subdomains of `.localhost`, with ordinary letter, digit and hyphen
+labels. Arbitrary suffixes, bare `localhost`, wildcard names and embedded ports are refused.
+The `.localhost` namespace is reserved for loopback by [RFC 6761](https://www.rfc-editor.org/rfc/rfc6761.html#section-6.3);
+an arbitrary name such as `local.app.sample` has no such guarantee. Use a distinct hostname for
+each project: [cookies are not isolated by port](https://www.rfc-editor.org/rfc/rfc6265.html#section-8.5).
+Container loopback belongs to that container; configure container resolution and the declared
+`browser.resolver` for the client that actually connects.
+Service-to-service traffic normally uses Compose service names and container ports.
+
+`scheme = "https"` declares a URL; the product's Compose stack must serve TLS on that leased
+port. Provision a certificate whose subjectAltName covers the exact hostname and explicitly
+trust its issuer in each connecting runtime. Port offsets do not change certificate identity.
+Keep private keys outside tracked files and build contexts, mounting only the leaf key into
+the TLS service. Clients need the public CA certificate, never the CA signing key. Cockpit
+does not install trust roots, change host DNS or start a shared HTTPS proxy. After configuring
+TLS and client trust, rerun `cockpit up --config cockpit.toml` and verify the returned URL with
+certificate validation enabled.
+
 ## Sibling and template paths
 
 `sync` and `check` require each declared sibling directory to exist inside the siblings root,
