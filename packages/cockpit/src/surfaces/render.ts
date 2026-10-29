@@ -313,7 +313,7 @@ export function renderSurfaceSet(input: unknown): SurfaceRenderResult {
         || captured.generated.kind !== 'complete' || captured.generated.status !== 0 || !Array.isArray(captured.generated.diagnostics)
         || captured.generated.diagnostics.length !== 0 || !object(captured.generated.mechanism)
         || !exact(captured.generated.mechanism, ['package', 'version', 'role']) || captured.generated.mechanism.package !== 'rulesync'
-        || captured.generated.mechanism.version !== '43.0.0' || captured.generated.mechanism.role !== 'spelling'
+        || captured.generated.mechanism.version !== '43.1.2' || captured.generated.mechanism.role !== 'spelling'
         || !Array.isArray(captured.generated.files)
         || !object(captured.projection) || captured.projection.kind !== 'complete' || !Array.isArray(captured.projection.links)
         || !Array.isArray(captured.projection.native) || !Array.isArray(captured.projection.grants)

@@ -66,8 +66,8 @@ async function renderNotices(inputs) {
         const item = await packageForInput(input)
         packages.set(`${item.manifest.name}@${item.manifest.version}\0${item.root}`, item)
     }
-    if (![...packages.values()].some(({ manifest }) => manifest.name === 'rulesync' && manifest.version === '43.0.0')) {
-        throw new Error('Rulesync 43.0.0 is absent from the bundle inventory')
+    if (![...packages.values()].some(({ manifest }) => manifest.name === 'rulesync' && manifest.version === '43.1.2')) {
+        throw new Error('Rulesync 43.1.2 is absent from the bundle inventory')
     }
 
     const sections = []

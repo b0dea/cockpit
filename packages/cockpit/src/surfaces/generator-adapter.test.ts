@@ -355,7 +355,7 @@ it('renders one deterministic complete batch through the authenticated generator
     expect(first.kind).toBe('complete')
     expect(second.kind).toBe('complete')
     if (first.kind !== 'complete' || second.kind !== 'complete') return
-    expect(first.mechanism).toEqual({ package: 'rulesync', version: '43.0.0', role: 'spelling' })
+    expect(first.mechanism).toEqual({ package: 'rulesync', version: '43.1.2', role: 'spelling' })
     expect(first.files).toEqual(second.files)
     expect(first.files.map(({ target, path }) => `${target}:${path}`)).toEqual([
         ...expectedOutputs.claudecode.map(path => `claudecode:${path}`),

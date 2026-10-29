@@ -29,7 +29,7 @@ const REVIEWED_EXECUTABLE_LOCK_NODES = Object.freeze([
     {"path": "node_modules/js-yaml", "version": "5.5.0", "hasInstallScript": false, "bin": {"js-yaml": "bin/js-yaml.mjs"}},
     {"path": "node_modules/nanoid", "version": "3.3.20", "hasInstallScript": false, "bin": {"nanoid": "bin/nanoid.cjs"}},
     {"path": "node_modules/rolldown", "version": "1.2.15", "hasInstallScript": false, "bin": {"rolldown": "bin/cli.mjs"}},
-    {"path": "node_modules/rulesync", "version": "43.0.0", "hasInstallScript": false, "bin": {"rulesync": "dist/cli/index.js"}},
+    {"path": "node_modules/rulesync", "version": "43.1.2", "hasInstallScript": false, "bin": {"rulesync": "dist/cli/index.js"}},
     {"path": "node_modules/semver", "version": "7.8.5", "hasInstallScript": false, "bin": {"semver": "bin/semver.js"}},
     {"path": "node_modules/tsx", "version": "4.23.15", "hasInstallScript": false, "bin": {"tsx": "dist/cli.mjs"}},
     {"path": "node_modules/typescript", "version": "7.0.2", "hasInstallScript": false, "bin": {"tsc": "bin/tsc"}},

@@ -1621,7 +1621,7 @@ function expectsCodexSkillSidecar(bytes: string): boolean {
 function emptyGeneration(): Extract<SurfaceGenerationOutcome, { kind: 'complete' }> {
     return Object.freeze({
         kind: 'complete', status: 0, diagnostics: Object.freeze([]) as readonly [],
-        mechanism: Object.freeze({ package: 'rulesync', version: '43.0.0', role: 'spelling' }),
+        mechanism: Object.freeze({ package: 'rulesync', version: '43.1.2', role: 'spelling' }),
         files: Object.freeze([]),
     })
 }
