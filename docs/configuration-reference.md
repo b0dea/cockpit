@@ -180,7 +180,7 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
           },
           "var": {
             "type": "string",
-            "pattern": "^[A-Z][A-Z0-9_]*$"
+            "pattern": "^(?!(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$))[A-Z][A-Z0-9_]*$"
           },
           "toolchain": {
             "default": "none",
