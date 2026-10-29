@@ -10,6 +10,7 @@ import { parse as parseToml } from 'smol-toml'
 import { loadCockpitConfig } from '../config/load.js'
 import type { HolderId } from './contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { resolveGitExecutable } from './executable.js'
 import { projectGeneratedApplicationMountSources } from './generated-application.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { nodeAuthority, readAnchoredBatches } from '../generated-environment/transaction.js'
@@ -509,6 +510,8 @@ native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.str
         const revisions = spawnSync('git', ['-C', root, 'rev-list', '--max-count=2', 'HEAD'], { encoding: 'utf8' })
         expect(revisions.status).toBe(0)
         const [head, parent] = revisions.stdout.trim().split('\n')
+        const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+        if (git.state !== 'available') throw new Error('native hook fixture Git authority unavailable')
         const bin = join(root, 'bin')
         const calls = join(root, 'git-calls')
         await mkdir(bin)
@@ -516,13 +519,14 @@ native_hook_policy = { path = ${JSON.stringify(policyPath)}, sha256 = ${JSON.str
 if [ "$PWD" != '${root.replaceAll("'", "'\\''")}' ]; then
     printf 'unexpected synthetic git working directory\\n' >&2; exit 64
 fi
-printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
 if [ "$#" -eq 3 ] && [ "$1" = rev-list ] && [ "$2" = --max-count=2 ] && [ "$3" = HEAD ]; then
+    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
     printf '%s\\n' '${head}' '${parent}'
 elif [ "$#" -eq 4 ] && [ "$1" = merge-base ] && [ "$2" = --is-ancestor ] && [ "$3" = '${parent}' ] && [ "$4" = '${head}' ]; then
+    printf '%s\\n' "$*" >> '${calls.replaceAll("'", "'\\''")}'
     exit 0
 else
-    printf 'unexpected synthetic git invocation: %s\\n' "$*" >&2; exit 64
+    exec '${git.value.canonicalPath.replaceAll("'", "'\\''")}' "$@"
 fi
 `, { mode: 0o700 })
         const priorPath = process.env.PATH
