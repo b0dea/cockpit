@@ -33,7 +33,7 @@ import { resolvedExecutable, resolveGitExecutable } from './environment/executab
 import { observeSetupCheckout, withSetupCheckoutProjection } from './environment/setup-observation.js'
 import { observeConfiguration, selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage } from './environment/lifecycle-stage.js'
-import { resolveObservationPostures, type PreflightContext } from './environment/observations.js'
+import { refreshObservationPostures, resolveObservationPostures, type PreflightContext } from './environment/observations.js'
 import { admitRuntimeTopology, createRuntimeAdapter, createRuntimeTopologyPlan, observeRuntimeExecution, projectRuntimeExecutionEnvironment } from './environment/runtime.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
 import { observeGeneratedApplication, projectGeneratedApplicationRuntimeAuthority } from './environment/generated-application.js'
@@ -290,6 +290,18 @@ else if (args.includes('exec')) {
                 const posture = await resolveObservationPostures({ configuration, cockpitId: cockpit, checkoutPath: root, variant: { kind: 'shared' } })
                 const stage = await resolveLifecycleStage({ namespace: state.value, stackId: stack, observedAt: setupTime })
                 if (stage.kind !== 'complete') throw new Error('generated health lifecycle authority was refused')
+                const refreshPreflight = async (previous: PreflightContext): Promise<PreflightContext> => {
+                    const observedAt = new Date().toISOString()
+                    const configuration = (await observeConfiguration({ stackId: stack, observedAt, path: configPath }))
+                        .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
+                    const posture = await refreshObservationPostures({ configuration, cockpitId: cockpit, checkoutPath: root,
+                        variant: { kind: 'shared' }, previous: previous.authorities[0]! })
+                    const stage = await resolveLifecycleStage({ namespace: state.value, stackId: stack, observedAt })
+                    if (stage.kind !== 'complete') throw new Error('generated health lifecycle refresh was refused')
+                    expect(stage.authority).not.toBe(previous.stages[0])
+                    expect(posture.evaluatedAt).toBe(previous.authorities[0]!.evaluatedAt)
+                    return { authorities: [posture], stages: [stage.authority] }
+                }
                 const generated = async () => {
                     const current = await checkGeneratedEnvironment({ configPath })
                     if (current.kind !== 'complete') throw new Error(`generated health check was refused: ${JSON.stringify(current.diagnostics)}`)
@@ -322,7 +334,7 @@ else if (args.includes('exec')) {
                 const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                     cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({
                     checkout, configuration: fresh.result, preflight: { authorities: [posture], stages: [stage.authority] },
-                    env: {}, gitExecutable: git.value, timeoutMs: 1_000, producers, refreshPreflight: async previous => previous,
+                    env: {}, gitExecutable: git.value, timeoutMs: 1_000, producers, refreshPreflight,
                 }))
                 if (!source) throw new Error('generated health source was not issued')
                 return source
@@ -428,6 +440,18 @@ else if (args.includes('exec')) {
                     const stage = await resolveLifecycleStage({ namespace: state.value, stackId: stack, observedAt })
                     if (stage.kind !== 'complete') throw new Error('health route lifecycle authority was refused')
                     const preflight: PreflightContext = { authorities: [posture], stages: [stage.authority] }
+                    const refreshPreflight = async (previous: PreflightContext): Promise<PreflightContext> => {
+                        const observedAt = new Date().toISOString()
+                        const configuration = (await observeConfiguration({ stackId: stack, observedAt, path: configPath }))
+                            .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
+                        const posture = await refreshObservationPostures({ configuration, cockpitId: cockpit, checkoutPath: root,
+                            variant: { kind: 'shared' }, previous: previous.authorities[0]! })
+                        const stage = await resolveLifecycleStage({ namespace: state.value, stackId: stack, observedAt })
+                        if (stage.kind !== 'complete') throw new Error('health route lifecycle refresh was refused')
+                        expect(stage.authority).not.toBe(previous.stages[0])
+                        expect(posture.evaluatedAt).toBe(previous.authorities[0]!.evaluatedAt)
+                        return { authorities: [posture], stages: [stage.authority] }
+                    }
                     const produce = async () => [row.value]
                     const none = async () => []
                     const producers: HealthObservationProducers = { surfaces: none, generated: none, data: none, external: none, claims: none,
@@ -436,7 +460,7 @@ else if (args.includes('exec')) {
                     const source = await withSetupCheckoutProjection(setup, { source: fresh.result.source,
                         cockpitName: fresh.result.config.cockpit.name, evaluatedAt: Date.parse(setupTime) }, checkout => issue({
                         checkout, configuration: fresh.result, preflight, env: {}, gitExecutable: git.value, timeoutMs: 1_000,
-                        producers, refreshPreflight: async previous => previous,
+                        producers, refreshPreflight,
                     }))
                     if (!source) throw new Error(`health source was not issued for ${row.name}`)
                     return source

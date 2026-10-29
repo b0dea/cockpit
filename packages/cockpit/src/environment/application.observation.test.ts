@@ -397,10 +397,11 @@ describe('observation application runners', () => {
         expect(load).toHaveBeenCalledTimes(2)
         expect(load).toHaveBeenNthCalledWith(1, first.input, expect.any(Function), expect.any(Function))
         expect(load).toHaveBeenNthCalledWith(2, second.input, expect.any(Function), expect.any(Function))
-        expect(aggregate.mock.calls[0]?.[0]).toHaveLength(healthProducerNames.length)
-        expect(aggregate.mock.calls[0]?.[1]).toBe(first.preflight)
-        expect(aggregate.mock.calls[1]?.[0]).toHaveLength(healthProducerNames.length)
-        expect(aggregate.mock.calls[1]?.[1]).toBe(second.preflight)
+        expect(aggregate).toHaveBeenCalledTimes(4)
+        for (const [index, preflight] of [first.preflight, first.preflight, second.preflight, second.preflight].entries()) {
+            expect(aggregate.mock.calls[index]?.[0]).toHaveLength(healthProducerNames.length)
+            expect(aggregate.mock.calls[index]?.[1]).toBe(preflight)
+        }
         expect(preflight).toMatchObject({
             kind: 'blocked', status: 2,
             result: { verdict: 'fail', revision: evaluation.revision },
