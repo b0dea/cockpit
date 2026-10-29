@@ -188,12 +188,11 @@ function canonicalToolCommand(command, name, errors) {
 }
 
 function executableOnPath(name) {
-    for (const directory of (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':')) {
+    if (process.platform === 'win32') return null
+    for (const directory of (process.env.PATH ?? '').split(':')) {
         if (!directory) continue
-        for (const suffix of process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']) {
-            const candidate = resolve(directory, `${name}${suffix}`)
-            if (existsSync(candidate) && statSync(candidate).isFile()) return realpathSync(candidate)
-        }
+        const candidate = resolve(directory, name)
+        if (existsSync(candidate) && statSync(candidate).isFile()) return realpathSync(candidate)
     }
     return null
 }
