@@ -22,20 +22,22 @@ afterEach(async () => {
 })
 
 describe('destructive command composition', () => {
-    it('forwards the opaque controlled-runtime authority and selected profiles to the lifecycle owner', () => {
-        const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
-        const profiles = ['runtime_probe']
-        const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
-        createDestructiveCommandAdapters({
-            configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp' },
-            sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
-            activeProfiles: profiles, runtimeMeasurementProbeAuthority: authority,
-        }, vi.fn() as never)
-        profiles.push('later_profile')
-        expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
-            activeProfiles: ['runtime_probe'], runtimeMeasurementProbeAuthority: authority,
-        }), expect.any(Function))
-    })
+    it.each(['unix:///synthetic home/docker.sock', 'npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
+        'forwards the exact local host %s and controlled-runtime authority to the lifecycle owner', (host) => {
+            const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
+            const profiles = ['runtime_probe']
+            const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
+            createDestructiveCommandAdapters({
+                configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: host },
+                sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
+                activeProfiles: profiles, runtimeMeasurementProbeAuthority: authority,
+            }, vi.fn() as never)
+            profiles.push('later_profile')
+            expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
+                activeProfiles: ['runtime_probe'], runtimeMeasurementProbeAuthority: authority,
+                env: { PATH: '/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: host },
+            }), expect.any(Function))
+        })
 
     it('rejects accessor-backed controlled-runtime authority without invoking it', async () => {
         const getter = vi.fn(() => Object.freeze({ kind: 'runtime-measurement-probe-authority' as const }))
@@ -65,10 +67,13 @@ describe('destructive command composition', () => {
         expect(JSON.stringify(adapters)).not.toContain('continuation')
     })
 
-    // A local unix:// DOCKER_HOST is selected through the default context, so only a remote host, a
+    // A local DOCKER_HOST is selected through the default context, so only a remote host, a
     // host beside an explicit context, or a TLS override can diverge from the selected daemon.
     it.each([
         ['a remote host', { DOCKER_HOST: 'tcp://127.0.0.1:2375' }, 'default'],
+        ['a remote pipe server', { DOCKER_HOST: 'npipe:////synthetic.invalid/pipe/docker_engine' }, 'default'],
+        ['a pipe traversal', { DOCKER_HOST: 'npipe:////./pipe/../docker_engine' }, 'default'],
+        ['a pipe beside an explicit context', { DOCKER_HOST: 'npipe:////./pipe/docker_engine', DOCKER_CONTEXT: 'synthetic' }, 'synthetic'],
         ['a local host beside an explicit context', { DOCKER_HOST: 'unix:///tmp/other.sock', DOCKER_CONTEXT: 'synthetic' }, 'synthetic'],
         ['a local host under a named context', { DOCKER_HOST: 'unix:///tmp/other.sock' }, 'synthetic'],
         ['a TLS override', { DOCKER_TLS_VERIFY: '1' }, 'default'],

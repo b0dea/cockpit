@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, realpath } from 'node:fs/promises'
 import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { parseLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import {
@@ -60,7 +61,6 @@ const SHA256 = /^[a-f0-9]{64}$/
 const BUILD_CACHE_ID = /^[a-z0-9]{25}$/
 const RESOURCE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.:@+-]{0,255}$/
 const DOCKER_SELECTOR = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
-const DOCKER_ENDPOINT = /^(?:unix|npipe|tcp|ssh):\/\/[^\0]{1,500}$/
 const REQUIRED_LABELS = Object.freeze({
     stack: 'dev.b0dea.cockpit.stack-id',
     config: 'dev.b0dea.cockpit.config-sha256',
@@ -508,11 +508,9 @@ export interface DockerSelectionProbeInput {
     readonly env: Readonly<Record<string, string>>
     readonly timeoutMs: number
     readonly context: string
-    /** A local unix:// DOCKER_HOST, selected through Docker's `default` context, which reports it. */
+    /** A local DOCKER_HOST, selected through Docker's `default` context, which reports it exactly. */
     readonly host?: string
 }
-
-const LOCAL_DOCKER_HOST = /^unix:\/\/\/\S+$/
 
 const contextSelectionFormat = '{"context":{{json .Name}},"endpoint":{{json .Endpoints.docker.Host}}}'
 
@@ -524,7 +522,7 @@ export function createDockerSelectionSteps(rawInput: DockerSelectionProbeInput):
     const env = safeEnvironment(input.env)
     const host = input.host
     if (executable === undefined || env === undefined || !DOCKER_SELECTOR.test(input.context)
-        || host !== undefined && (typeof host !== 'string' || !LOCAL_DOCKER_HOST.test(host) || input.context !== 'default')
+        || host !== undefined && (parseLocalDockerEndpoint(host) === undefined || input.context !== 'default')
         || !validExecutionInput(executable, input.cwd, input.env, input.timeoutMs)) return undefined
     // Only the selection reads DOCKER_HOST; discovery and actions address the admitted endpoint
     // with --host, so the rest of the plan keeps a daemon-free environment.
@@ -581,7 +579,7 @@ export function admitDockerSelection(
         const [context] = rows
         if (context === undefined || !exactKeys(context, ['context', 'endpoint'])
             || context.context !== plan.context
-            || typeof context.endpoint !== 'string' || !DOCKER_ENDPOINT.test(context.endpoint)
+            || typeof context.endpoint !== 'string' || parseLocalDockerEndpoint(context.endpoint) === undefined
             || plan.host !== undefined && context.endpoint !== plan.host
             || !isCanonicalTimestamp(startedAt) || !isCanonicalTimestamp(finishedAt)
             || Date.parse(finishedAt) < Date.parse(startedAt) || Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined

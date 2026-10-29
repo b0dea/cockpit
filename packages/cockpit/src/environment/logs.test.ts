@@ -286,10 +286,36 @@ describe('runtime logs', () => {
     })
 
     it('reads logs from the local socket or context the lifecycle selected', () => {
-        for (const env of [{ PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic/docker.sock' }, { PATH: '/usr/bin', DOCKER_CONTEXT: 'synthetic' }] as Readonly<Record<string, string>>[]) {
+        for (const env of [
+            { PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic/docker.sock' },
+            { PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic home/docker.sock' },
+            { PATH: '/usr/bin', DOCKER_HOST: 'unix:///synthetic/docker%23?#.sock' },
+            { PATH: '/usr/bin', DOCKER_HOST: 'npipe:////./pipe/docker_engine' },
+            { PATH: '/usr/bin', DOCKER_HOST: 'npipe:////./pipe/dockerDesktopLinuxEngine' },
+            { PATH: '/usr/bin', DOCKER_HOST: `npipe:////./pipe/${'x'.repeat(247)}` },
+            { PATH: '/usr/bin', DOCKER_CONTEXT: 'synthetic' },
+        ] as Readonly<Record<string, string>>[]) {
             const result = planLogs({ ...input, env })
             expect(result.kind, JSON.stringify(env)).toBe('planned')
             if (result.kind === 'planned') expect(result.step.env).toEqual(env)
+        }
+    })
+
+    it('refuses remote, ambiguous and malformed Docker endpoints before planning logs', () => {
+        for (const endpoint of [
+            'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid',
+            'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////localhost/pipe/docker_engine',
+            'npipe://./pipe/docker_engine', 'npipe:////./pipe/', 'npipe:////./pipe/docker_engine/extra',
+            'npipe:////./pipe/../docker_engine', 'npipe:////./pipe/%64ocker_engine',
+            'npipe:////./pipe/docker_engine?query', 'npipe:////./pipe/docker_engine#fragment',
+            'npipe:////./pipe/docker_engine ', 'npipe:////./pipe/docker_engine\\extra',
+            'npipe:////./pipe/C:docker_engine', 'C:\\pipe\\docker_engine',
+            `npipe:////./pipe/${'x'.repeat(248)}`,
+            'unix://synthetic.invalid/socket', 'unix:////synthetic.invalid/socket', 'unix:///',
+            'unix:///tmp/docker.sock\0', 'unix:///tmp/docker.sock\n',
+        ]) {
+            expect(planLogs({ ...input, env: { PATH: '/usr/bin', DOCKER_HOST: endpoint } }), endpoint)
+                .toMatchObject({ kind: 'unavailable' })
         }
     })
 

@@ -546,21 +546,35 @@ describe('runtime discovery authority', () => {
             const rebound = await observe()
             expect(rebound.authority).toBeDefined()
             expect(admitReclaimDiscovery(container, containerOutcome, 'container', rebound.authority!)).toBeUndefined()
+            await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: 'changed-context', endpoint: dockerEndpoint })}\n`)
+            expect((await observe()).authority).toBeUndefined()
+            for (const endpoint of [
+                'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid',
+                'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////./pipe/../docker_engine',
+                'npipe:////./pipe/docker_engine ', 'unix:///tmp/docker.sock\0',
+            ]) {
+                await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint })}\n`)
+                expect((await observe()).authority, JSON.stringify(endpoint)).toBeUndefined()
+            }
             await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
         } finally {
             await rm(root, { recursive: true, force: true })
         }
     })
 
-    it('selects a local unix:// DOCKER_HOST through the default context and admits only that socket', async () => {
+    it.each([
+        'unix:///tmp/synthetic-rootless.sock',
+        'npipe:////./pipe/docker_engine',
+        'npipe:////./pipe/dockerDesktopLinuxEngine',
+    ])('selects the exact local DOCKER_HOST %s through the default context', async (host) => {
         const root = await canonicalTemp('cockpit-selection-host-')
-        const host = 'unix:///tmp/synthetic-rootless.sock'
         try {
             const script = join(root, 'docker')
-            const bytes = Buffer.from('#!/bin/sh\nprintf \'{"context":"default","endpoint":"%s"}\\n\' "$DOCKER_HOST"\n')
+            const bytes = Buffer.from('#!/bin/sh\n/bin/cat -- "$PWD/selection.context"\n')
             await writeFile(script, bytes, { mode: 0o700 })
             const runtime = { canonicalPath: script, invocationPath: script, sha256: sha(bytes.toString()), executionMode: 'staged' as const }
             const select = async (input: { readonly context: string; readonly host: string }) => {
+                await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: 'default', endpoint: input.host })}\n`)
                 const steps = createDockerSelectionSteps({
                     executable: runtime, cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000,
                     context: input.context, host: input.host,
@@ -573,6 +587,21 @@ describe('runtime discovery authority', () => {
             expect(await select({ context: 'default', host })).toBeDefined()
             expect(await select({ context: dockerContext, host })).toBeUndefined()
             expect(await select({ context: 'default', host: 'tcp://elsewhere:2375' })).toBeUndefined()
+            const admitted = await select({ context: 'default', host })
+            expect(admitted).toBeDefined()
+            const discovery = createReclaimDiscoverySteps({
+                executable: runtime, cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000,
+                selectionAuthority: admitted!,
+            })
+            expect(discovery?.every((step) => step.argv[1] === '--host' && step.argv[2] === host)).toBe(true)
+            const changed = createDockerSelectionSteps({
+                executable: runtime, cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000,
+                context: 'default', host,
+            })
+            if (changed === undefined) throw new Error('local host selection unavailable')
+            await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: 'default', endpoint: 'unix:///tmp/rebound.sock' })}\n`)
+            const evidence = await Promise.all(changed.map(async (step) => ({ step, outcome: await executeProbe(step) })))
+            expect(admitDockerSelection(changed, evidence)).toBeUndefined()
         } finally {
             await rm(root, { recursive: true, force: true })
         }

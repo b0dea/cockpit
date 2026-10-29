@@ -22,17 +22,18 @@ const CONFIG = [
 ].join('\n')
 
 // A docker stand-in answering only the reads the measure command makes before it hands over to the probe.
-async function measuredHost() {
+async function measuredHost(endpoint = 'unix:///synthetic/docker.sock') {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-runtime-measure-test-')))
     roots.push(root)
     const configPath = join(root, 'cockpit.toml')
     await writeFile(configPath, CONFIG)
+    await writeFile(join(root, 'endpoint'), `${endpoint}\n`)
     const docker = join(root, 'docker')
     await writeFile(docker, [
         '#!/bin/sh',
         'case "$1 $2" in',
         '  "context show") printf "synthetic\\n" ;;',
-        '  "context inspect") printf "unix:///synthetic/docker.sock\\n" ;;',
+        '  "context inspect") /bin/cat \"$PWD/endpoint\" ;;',
         '  "version --format") printf "29.4.0\\n" ;;',
         '  "compose version") printf "5.1.2\\n" ;;',
         `  "info --format") printf '%s\\n' '["OrbStack","orbstack","linux"]' ;;`,
@@ -90,6 +91,52 @@ describe('runtime measurement recording', () => {
             runtime: 'orbstack', compose_floor: '5.1.2', measured_on: new Date().toISOString().slice(0, 10),
             candidate: 'passed', broken_control: 'rejected', status: 'supported',
         }])
+    })
+
+    it('passes the exact local pipe selection to the runtime probe without changing endpoint identity', async () => {
+        const endpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+        const host = await measuredHost(endpoint)
+        const selections: (string | undefined)[] = []
+        for (const env of [host.env, { ...host.env, DOCKER_HOST: endpoint }]) {
+            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: false, env }, {
+                execute: executeProbe,
+                probe: async (request) => {
+                    selections.push(request.env.DOCKER_HOST)
+                    return verdict(true, request.executable.sha256)
+                },
+            })
+            expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        }
+        expect(selections).toEqual([undefined, endpoint])
+        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+    })
+
+    it('refuses context endpoint whitespace instead of trimming it into a different identity', async () => {
+        const host = await measuredHost('unix:///synthetic/docker.sock ')
+        let calls = 0
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: false, env: host.env }, {
+            execute: executeProbe, probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
+        })
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+        expect(calls).toBe(0)
+        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+    })
+
+    it('refuses malformed local endpoints without invoking the runtime probe or writing configuration', async () => {
+        const host = await measuredHost()
+        let calls = 0
+        for (const endpoint of [
+            'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////./pipe/docker_engine/../other',
+            'npipe:////./pipe/docker_engine ', 'unix://synthetic.invalid/docker.sock', 'unix:///tmp/docker.sock\0',
+        ]) {
+            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true,
+                env: { ...host.env, DOCKER_HOST: endpoint } }, {
+                execute: executeProbe, probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
+            })
+            expect(outcome, JSON.stringify(endpoint)).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+        }
+        expect(calls).toBe(0)
+        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
 
     it('writes nothing when the candidate fails', async () => {

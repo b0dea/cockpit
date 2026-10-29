@@ -293,7 +293,7 @@ describe('installed container-runtime capability promotion', () => {
     it('refuses a remote DOCKER_HOST before any runtime command', () => {
         const verdict = installedChildProbe(request({ env: { ...runtimeEnvironment(), DOCKER_HOST: 'tcp://127.0.0.1:2375' } }))
         expect(verdict.status).toBe('unavailable')
-        expect(verdict.operatorAction?.reason).toBe('DOCKER_HOST names a non-local endpoint (only a unix:// socket is local); unset it or point it at a local socket')
+        expect(verdict.operatorAction?.reason).toBe('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket or Windows named pipe')
         expect(verdict.evidence?.runtimeVersion).toBeNull()
         expect(readdirSync(liveDirectory)).toEqual([])
     })

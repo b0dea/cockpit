@@ -8,6 +8,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
+import { parseLocalDockerEndpoint } from './environment/docker-endpoint.js'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
@@ -449,10 +450,15 @@ const defaultSetupAdapters: SetupCommandAdapters = {
 
 // Destructive commands must name the daemon they delete from; refusing here names the fix instead of
 // the generic authority refusal an empty context selection produced.
-function destructiveDaemonUnset(runtime: CliRuntime): CommandOutcome | undefined {
+function destructiveDaemonSelectionRefusal(runtime: CliRuntime): CommandOutcome | undefined {
     const env = runtime.env ?? process.env
+    if (env.DOCKER_HOST !== undefined && parseLocalDockerEndpoint(env.DOCKER_HOST) === undefined) {
+        return usageOutcome('CLI_USAGE_INVALID',
+            'down and reset require a local Docker endpoint so deletion cannot target a remote daemon; fix: unset DOCKER_HOST and set DOCKER_CONTEXT, or set DOCKER_HOST to a local Unix socket or Windows named pipe',
+            'DOCKER_HOST')
+    }
     return env.DOCKER_CONTEXT === undefined && env.DOCKER_HOST === undefined ? usageOutcome('CLI_USAGE_INVALID',
-        'down and reset need an explicit Docker daemon: set DOCKER_CONTEXT (for example DOCKER_CONTEXT="$(docker context show)") or a local unix:// DOCKER_HOST',
+        'down and reset need an explicit Docker daemon: set DOCKER_CONTEXT (for example DOCKER_CONTEXT="$(docker context show)") or a local DOCKER_HOST',
         'DOCKER_CONTEXT') : undefined
 }
 
@@ -463,7 +469,7 @@ function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId:
         env,
         sessionId,
         timeoutMs: 10_000,
-        // A local unix:// DOCKER_HOST is reached through Docker's `default` context, which reports it.
+        // A local DOCKER_HOST is reached through Docker's `default` context, which reports it exactly.
         dockerContext: env.DOCKER_CONTEXT ?? (env.DOCKER_HOST === undefined ? '' : 'default'),
     }, executeProbe)
 }
@@ -634,7 +640,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         down: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
-            const unset = destructiveDaemonUnset(runtime)
+            const unset = destructiveDaemonSelectionRefusal(runtime)
             if (unset) return Promise.resolve(unset)
             const configPath = resolve(input.configPath)
             return runDownApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
@@ -642,7 +648,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         reset: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
-            const unset = destructiveDaemonUnset(runtime)
+            const unset = destructiveDaemonSelectionRefusal(runtime)
             if (unset) return Promise.resolve(unset)
             const configPath = resolve(input.configPath)
             return runResetApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))

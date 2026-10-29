@@ -3,6 +3,7 @@ import { open, readFile, readdir, realpath, rm, mkdir, writeFile } from 'node:fs
 import { arch, platform } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseLocalDockerEndpoint } from './docker-endpoint.js'
 import { executeProbe, executionOutcomeMatches, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type StackId } from './contract.js'
 import { isResolvedDockerExecutable, isResolvedGitExecutable, type ResolvedExecutable } from './executable.js'
@@ -181,7 +182,8 @@ function confined(root: string, target: string): boolean {
 
 function decode(outcome: ExecuteProbeOutcome): string | undefined {
     if (outcome.kind !== 'complete') return undefined
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).trim() } catch { return undefined }
+    // Preserve endpoint-edge whitespace so locality admission can refuse identity aliases.
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).replace(/\r?\n$/, '') } catch { return undefined }
 }
 
 function refusalCategory(outcome: ExecuteProbeOutcome): string {
@@ -446,12 +448,11 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const fail = (reason: string): never => { throw new RuntimeProbeFailure(reason) }
     const fresh = (): void => { if (Date.now() >= mutationDeadline) fail('the runtime mutation window closed to reserve authenticated cleanup') }
     try {
-        // Rootless Docker and the VM products (OrbStack, Colima) are reached through a local socket
-        // that DOCKER_HOST may name directly; only a unix:// socket is local. tcp://, ssh:// and other
-        // schemes reach a daemon elsewhere, whose behaviour says nothing about this machine.
+        // A remote daemon's behaviour says nothing about this machine. Keep the selected endpoint
+        // exact so a host override cannot borrow a different context's runtime evidence.
         const dockerHost = input.env.DOCKER_HOST
-        if (dockerHost !== undefined && !/^unix:\/\/\/[^\s]+$/.test(dockerHost)) {
-            fail('DOCKER_HOST names a non-local endpoint (only a unix:// socket is local); unset it or point it at a local socket')
+        if (dockerHost !== undefined && parseLocalDockerEndpoint(dockerHost) === undefined) {
+            fail('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket or Windows named pipe')
         }
         await Promise.all([
             mkdir(siblingPath, { recursive: true, mode: 0o700 }),
@@ -478,7 +479,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
         const endpoint = dockerContext === '' ? undefined
             : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
-        checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && endpoint?.startsWith('unix://') === true
+        checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && parseLocalDockerEndpoint(endpoint) !== undefined
             && (dockerHost === undefined || endpoint === dockerHost)
         if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
 

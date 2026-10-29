@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseLocalDockerEndpoint } from './docker-endpoint.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
@@ -86,7 +87,8 @@ async function readDocker(execute: RuntimeMeasureDependencies['execute'], step: 
     let stdout = ''
     let stderr = ''
     try {
-        stdout = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).trim()
+        // Docker's final line ending is transport framing; trimming would rewrite endpoint identity.
+        stdout = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).replace(/\r?\n$/, '')
         stderr = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stderr).trim()
     } catch { return { kind: 'failed', detail: 'docker wrote output that is not UTF-8' } }
     if (outcome.kind !== 'complete') {
@@ -158,7 +160,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (git.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, git.reason, 'git')
     const cwd = dirname(configPath)
 
-    // Refuse a remote endpoint before minutes of probing. The endpoint is reported, never forced on the
+    // Refuse a remote endpoint before minutes of probing. The endpoint is observed, never forced on the
     // probe: cockpit's owners hand Docker no HOME, so the CLI resolves the operator's selected context
     // itself, and down and reset select by context name. Pinning DOCKER_HOST here would leave them
     // resolving the "default" context instead.
@@ -177,9 +179,9 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         dockerHost = endpoint.text
         endpointSource = `docker context ${context.kind === 'complete' ? context.text : ''}`
     }
-    if (!/^unix:\/\/\/\S+$/.test(dockerHost)) {
+    if (parseLocalDockerEndpoint(dockerHost) === undefined) {
         return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            `the Docker endpoint ${JSON.stringify(dockerHost)} (from ${endpointSource}) is not a local unix:// socket; only a local runtime can be measured`, endpointSource)
+            `the Docker endpoint from ${endpointSource} is not a local Docker endpoint; only a local runtime can be measured. Select a local context with docker context use <name> or set a local DOCKER_HOST`, endpointSource)
     }
     const runtimeEnv = Object.freeze({ PATH: path, ...(input.env.DOCKER_HOST === undefined ? {} : { DOCKER_HOST: input.env.DOCKER_HOST }) })
 

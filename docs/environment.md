@@ -232,8 +232,15 @@ evidence. `reset` first shows an exact preview of generated volumes and declared
 host paths. Normal and JSON reset calls do not delete anything. Interactive reset requires a
 human terminal outside CI; approval remains in the process that showed the preview and is
 revalidated before an action. Set `DOCKER_CONTEXT` explicitly for destructive commands, or a local
-`unix://` `DOCKER_HOST` with `DOCKER_CONTEXT` unset, so discovery and deletion address the same
-Docker daemon. A remote or conflicting Docker host and a TLS override are refused.
+`DOCKER_HOST` with `DOCKER_CONTEXT` unset, so discovery and deletion address the same Docker
+daemon. Local endpoint syntax admits an absolute `unix://` socket path or
+`npipe:////./pipe/<name>` with a single pipe name containing letters, digits, underscores, dots or
+hyphens and beginning with a letter or digit. Only the dot server denotes a local named pipe.
+Named-pipe endpoints refuse remote servers, encoded aliases and traversal. Conflicting selections
+are refused. Unix socket paths retain literal internal spaces and punctuation. Cockpit preserves the exact endpoint
+spelling when binding the context and issuing discovery or deletion commands. Native Windows
+lifecycle remains unsupported; named-pipe syntax admission does not implement its ownership or
+execution primitives. A TLS override is refused.
 
 Every destructive action starts behind a durable execution fence. If cockpit itself is interrupted,
 the detached supervisor retains that exact attempt identity. The next `sleep`, `down`, or approved
@@ -277,8 +284,8 @@ that one row was added; it also refuses when the runtime already has a row or th
 while the probe ran. A failed measurement writes nothing.
 
 The probe runs only from an installed `@b0dea/cockpit` package and only against a local runtime:
-the selected Docker context or `DOCKER_HOST` must be a `unix://` socket, and `DOCKER_CONTEXT` must be
-unset (select the context with `docker context use`).
+the selected Docker context or `DOCKER_HOST` must pass the [local endpoint policy](#lifecycle-and-ownership),
+and `DOCKER_CONTEXT` must be unset (select the context with `docker context use`).
 
 ## Secret sources and environment schemas
 

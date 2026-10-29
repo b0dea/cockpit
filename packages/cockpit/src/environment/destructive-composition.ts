@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { parseLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load.js'
 import {
@@ -120,10 +121,10 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
                 || typeof entry !== 'string' || entry.includes('\0')) return undefined
             env[name] = entry
         }
-        // A local unix:// DOCKER_HOST (rootless Docker, OrbStack, Colima) is selected through Docker's
-        // `default` context, which reports that socket; dropping it addressed whatever the default
-        // context named instead. TLS and remote hosts stay refused.
-        if (env.DOCKER_HOST !== undefined && (!/^unix:\/\/\/\S+$/.test(env.DOCKER_HOST)
+        // A local DOCKER_HOST is selected through Docker's `default` context, which reports that
+        // endpoint; dropping it addressed whatever the default context named instead. TLS and
+        // remote hosts stay refused.
+        if (env.DOCKER_HOST !== undefined && (parseLocalDockerEndpoint(env.DOCKER_HOST) === undefined
                 || dockerContext !== 'default' || env.DOCKER_CONTEXT !== undefined)
             || env.DOCKER_TLS_VERIFY !== undefined || env.DOCKER_CERT_PATH !== undefined
             || env.DOCKER_CONTEXT !== undefined && env.DOCKER_CONTEXT !== dockerContext) return undefined
