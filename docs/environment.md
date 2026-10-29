@@ -108,6 +108,13 @@ lease still occupies its numeric ports. Retained leases keep their original fami
 conflicting reservations. Other users and separate state roots, including different Linux
 `XDG_STATE_HOME` selections, are outside this coordination.
 
+To change a running stack's ports, end every `cockpit session` or have each holder run
+`cockpit sleep --config cockpit.toml --json` with the current declaration. Wait for the final
+holder to report `change: "stopped"`; `"retained"` means another holder remains. Then edit
+`[ports.bases]`, have a human run `cockpit sync --config cockpit.toml` in a terminal, and run
+`cockpit up --config cockpit.toml --json`. Use the newly returned entrypoints. Release before
+editing because the active lease authenticates the original port declaration.
+
 IPv4 loopback listener checks observe availability; they do not reserve a socket or detect an
 IPv6-only listener. Another process can bind after the check. If startup reports a bind failure,
 inspect the conflicting process and rerun `cockpit up --config cockpit.toml` after resolving it.
