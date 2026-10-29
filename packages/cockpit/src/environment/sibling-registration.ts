@@ -116,9 +116,10 @@ export async function initializeLocalGitRepository(
     input: Readonly<{ path: string; env: Readonly<Record<string, string | undefined>> }>,
     dependencies: SiblingDependencies,
 ): Promise<GitRepositoryInitializationOutcome> {
+    const searchEnvironment = input.env
     const refuse = (reason: string): GitRepositoryInitializationOutcome => ({ kind: 'refusal',
         reason: `${input.path}: ${reason}; choose an empty directory or an existing local Git repository` })
-    const git = await resolveGitExecutable({ PATH: input.env.PATH ?? '' })
+    const git = await resolveGitExecutable(searchEnvironment)
     if (git.state !== 'available') return refuse(git.reason)
     try {
         const directory = await lstat(input.path)
@@ -251,6 +252,7 @@ async function commit(path: string, sha256: string, prepared: Prepared, verb: st
 }
 
 export async function runSiblingAdd(input: SiblingAddInput, dependencies: SiblingDependencies): Promise<SiblingOutcome> {
+    const searchEnvironment = input.env
     const modes = [input.create, input.from !== undefined, input.remote !== undefined].filter(Boolean).length
     if (modes > 1) return usage('--create, --from and --remote are mutually exclusive; choose the one that matches where the repository is')
     const slug = Sibling.shape.slug.safeParse(input.slug)
@@ -320,7 +322,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     let mode: 'existing' | 'create' | 'from' | 'remote' = 'existing'
     let remote: string | undefined
     let source: string | undefined
-    const git = await resolveGitExecutable({ PATH: input.env.PATH ?? '' })
+    const git = await resolveGitExecutable(searchEnvironment)
 
     if (input.create) {
         mode = 'create'

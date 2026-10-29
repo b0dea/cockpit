@@ -3,13 +3,61 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
+import type { ExecutionStep } from './contract.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput } from './sibling-registration.js'
 
 const roots: string[] = []
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
+const windowsFilesystem = vi.hoisted(() => ({
+    files: new Set<string>(),
+    candidatePaths: [] as string[],
+    identityPaths: [] as string[],
+}))
+
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    const windowsPath = (path: string) => process.platform === 'win32' && /^[A-Za-z]:\\/.test(path)
+    return {
+        ...actual,
+        lstat: async (...args: Parameters<typeof actual.lstat>) => {
+            const path = String(args[0])
+            if (!windowsPath(path)) return actual.lstat(...args)
+            windowsFilesystem.candidatePaths.push(path)
+            if (!windowsFilesystem.files.has(path)) {
+                throw Object.assign(new Error(`synthetic Windows candidate is absent: ${path}`), { code: 'ENOENT' })
+            }
+            return { isFile: () => true, isSymbolicLink: () => false }
+        },
+        realpath: async (...args: Parameters<typeof actual.realpath>) => {
+            const path = String(args[0])
+            if (!windowsPath(path)) return actual.realpath(...args)
+            windowsFilesystem.identityPaths.push(path)
+            throw new Error(`Windows candidate reached identity resolution: ${path}`)
+        },
+        open: async (...args: Parameters<typeof actual.open>) => {
+            const path = String(args[0])
+            if (!windowsPath(path)) return actual.open(...args)
+            windowsFilesystem.identityPaths.push(path)
+            throw new Error(`Windows candidate reached identity reads: ${path}`)
+        },
+    }
+})
+
+afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+    windowsFilesystem.files.clear()
+    windowsFilesystem.candidatePaths.length = 0
+    windowsFilesystem.identityPaths.length = 0
+})
+
+async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+    if (descriptor === undefined) throw new Error('process.platform descriptor is unavailable')
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
+}
 
 // The generated service pins `api` as referenced; `docs` is declared and unreferenced.
 const CONFIG = [
@@ -67,6 +115,97 @@ async function treeDigest(root: string): Promise<string> {
     await walk(root)
     return hash.digest('hex')
 }
+
+describe('sibling Git executable search', () => {
+    it.each(['repository', 'sibling create'] as const)('preserves native search aliases before refusing unavailable Windows identity for %s', async owner => {
+        const { root, configPath } = await estate()
+        const target = join(root, 'dedicated')
+        await mkdir(target)
+        const before = await treeDigest(root)
+        const selected = String.raw`C:\Tools\git.EXE`
+        windowsFilesystem.files.add(selected)
+        const execute = vi.fn(executeProbe)
+        const search = { Path: String.raw`C:\Tools`, PathExt: '.EXE' }
+
+        const reason = await withPlatform('win32', async () => {
+            if (owner === 'repository') {
+                const outcome = await initializeLocalGitRepository({ path: target, env: search }, { execute })
+                expect(outcome.kind).toBe('refusal')
+                return outcome.kind === 'refusal' ? outcome.reason : ''
+            }
+            const outcome = await runSiblingAdd({ configPath, slug: 'worker', create: true, purpose: 'Synthetic worker', env: search }, { execute })
+            expect(outcome.status).toBe(2)
+            expect(outcome.diagnostics[0]?.code).toBe('RUNTIME_UNAVAILABLE')
+            return outcome.diagnostics[0]?.message ?? ''
+        })
+
+        expect(reason).toContain(`Windows native executable identity authority is unavailable: ${selected}`)
+        expect(windowsFilesystem.candidatePaths).toEqual([selected])
+        expect(windowsFilesystem.identityPaths).toEqual([])
+        expect(execute).not.toHaveBeenCalled()
+        expect(await treeDigest(root)).toBe(before)
+    })
+
+    it.each([
+        ['defined PATH aliases', 'PATH', { PATH: String.raw`C:\Tools`, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
+        ['undefined Path alias', 'PATH', { PATH: String.raw`C:\Tools`, Path: undefined, PATHEXT: '.EXE' }],
+        ['undefined PATH alias', 'PATH', { PATH: undefined, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
+        ['defined PATHEXT aliases', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: '.EXE' }],
+        ['undefined PathExt alias', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: undefined }],
+        ['undefined PATHEXT alias', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: undefined, PathExt: '.EXE' }],
+    ] as const)('preserves ambiguous %s before any candidate inspection', async (_label, variable, search) => {
+        const { root, configPath } = await estate()
+        const target = join(root, 'dedicated')
+        await mkdir(target)
+        const before = await treeDigest(root)
+        const execute = vi.fn(executeProbe)
+
+        for (const owner of ['repository', 'sibling create', 'sibling from'] as const) {
+            const reason = await withPlatform('win32', async () => {
+                if (owner === 'repository') {
+                    const outcome = await initializeLocalGitRepository({ path: target, env: search }, { execute })
+                    expect(outcome.kind).toBe('refusal')
+                    return outcome.kind === 'refusal' ? outcome.reason : ''
+                }
+                const outcome = await runSiblingAdd({ configPath, slug: 'worker', create: owner === 'sibling create',
+                    ...(owner === 'sibling from' ? { from: target } : {}), purpose: 'Synthetic worker', env: search }, { execute })
+                expect(outcome.status).toBe(2)
+                expect(outcome.diagnostics[0]?.code).toBe('RUNTIME_UNAVAILABLE')
+                return outcome.diagnostics[0]?.message ?? ''
+            })
+
+            expect(reason, owner).toContain(`Executable search environment has ambiguous ${variable} spellings`)
+        }
+        expect(windowsFilesystem.candidatePaths).toEqual([])
+        expect(windowsFilesystem.identityPaths).toEqual([])
+        expect(execute).not.toHaveBeenCalled()
+        expect(await treeDigest(root)).toBe(before)
+    })
+
+    it('keeps all POSIX sibling Git children restricted to the original PATH', async () => {
+        const { root, configPath } = await estate()
+        const target = join(root, 'dedicated')
+        await mkdir(target)
+        const search = { ...env, Path: '/ignored-case-alias', PathExt: '.CMD;.EXE', PATHEXT: '.EXE',
+            GIT_CONFIG_GLOBAL: 'synthetic-config-canary', UNRELATED: 'synthetic-environment-canary' }
+        const steps: ExecutionStep[] = []
+        const execute = async (step: ExecutionStep) => {
+            steps.push(step)
+            return executeProbe(step)
+        }
+
+        expect(await initializeLocalGitRepository({ path: target, env: search }, { execute })).toEqual({ kind: 'complete' })
+        const created = await runSiblingAdd({ configPath, slug: 'worker', create: true, purpose: 'Synthetic worker', env: search }, { execute })
+        expect(created.status).toBe(0)
+        execFileSync('git', ['-C', target, 'remote', 'add', 'origin', 'https://git.invalid/team/tools.git'])
+        const imported = await runSiblingAdd({ configPath, slug: 'tools', create: false, from: target,
+            purpose: 'Synthetic tools', env: search }, { execute })
+        expect(imported.status).toBe(0)
+
+        expect(steps.map(step => step.id)).toEqual(['repository:init', 'repository:root', 'sibling:init', 'sibling:origin'])
+        expect(steps.map(step => step.env)).toEqual(Array.from({ length: 4 }, () => ({ PATH: env.PATH ?? '' })))
+    })
+})
 
 describe('local repository initialization', () => {
     it.each(['symlink', 'gitfile', 'unrelated'] as const)('refuses %s content before adopting a dedicated directory', async kind => {
