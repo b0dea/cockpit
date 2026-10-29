@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -73,7 +73,7 @@ function npmPackage(root: string) {
 }
 
 function windowsNpmFixture() {
-    const root = mkdtempSync(join(tmpdir(), 'cockpit npm runtime '))
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit npm runtime ')))
     scratch.push(root)
     const node = join(root, 'node.exe')
     writeFileSync(node, 'synthetic node executable\n')
@@ -95,6 +95,21 @@ describe('the supply-chain readiness detector', () => {
             executable: fixture.node,
             prefix: [fixture.cli],
         })
+    })
+
+    it('retains canonical Node and npm identities when their input paths cross an ancestor alias', () => {
+        const fixture = windowsNpmFixture()
+        const alias = join(fixture.root, 'runtime alias')
+        symlinkSync(fixture.root, alias, 'dir')
+
+        expect(resolveNpmLaunch({ platform: 'win32', nodePath: join(alias, 'node.exe'), env: {} })).toEqual({
+            executable: fixture.node,
+            prefix: [fixture.cli],
+        })
+        expect(resolveNpmLaunch({
+            platform: 'win32', nodePath: join(alias, 'node.exe'),
+            env: { npm_node_execpath: join(alias, 'node.exe'), npm_execpath: join(alias, relative(fixture.root, fixture.cli)) },
+        })).toEqual({ executable: fixture.node, prefix: [fixture.cli] })
     })
 
     it('accepts npm-run metadata only when it names a valid npm package for the current Node executable', () => {
@@ -135,12 +150,14 @@ describe('the supply-chain readiness detector', () => {
 
     it('uses current Node and the validated npm entrypoint for both Windows package operations', () => {
         const fixture = windowsNpmFixture()
+        const alias = join(fixture.root, 'runtime alias')
+        symlinkSync(fixture.root, alias, 'dir')
         const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
         const execPath = Object.getOwnPropertyDescriptor(process, 'execPath')!
         const npmExecPath = process.env.npm_execpath
         const npmNodeExecPath = process.env.npm_node_execpath
         Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-        Object.defineProperty(process, 'execPath', { ...execPath, value: fixture.node })
+        Object.defineProperty(process, 'execPath', { ...execPath, value: join(alias, 'node.exe') })
         delete process.env.npm_execpath
         delete process.env.npm_node_execpath
         childProcess.execFileSync

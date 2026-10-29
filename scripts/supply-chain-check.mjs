@@ -140,11 +140,11 @@ export function resolveNpmLaunch({
         }
         npmCli = env.npm_execpath
     } else {
-        npmCli = join(dirname(nodePath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+        npmCli = join(dirname(canonicalNode), 'node_modules', 'npm', 'bin', 'npm-cli.js')
     }
 
-    canonicalNpmLaunchFile(npmCli, 'npm CLI entrypoint')
-    const packageRoot = dirname(dirname(npmCli))
+    const canonicalNpmCli = canonicalNpmLaunchFile(npmCli, 'npm CLI entrypoint')
+    const packageRoot = dirname(dirname(canonicalNpmCli))
     const binRoot = join(packageRoot, 'bin')
     const manifestPath = join(packageRoot, 'package.json')
     npmLaunchEntry(packageRoot, 'npm package directory', 'isDirectory')
@@ -162,10 +162,10 @@ export function resolveNpmLaunch({
         throw npmLaunchInvalid(`npm package manifest has an unexpected name or bin.npm at ${manifestPath}`)
     }
     const declaredCli = resolve(packageRoot, manifest.bin.npm)
-    if (declaredCli !== npmCli || relative(packageRoot, declaredCli) !== join('bin', 'npm-cli.js')) {
+    if (declaredCli !== canonicalNpmCli || relative(packageRoot, declaredCli) !== join('bin', 'npm-cli.js')) {
         throw npmLaunchInvalid(`npm package bin.npm does not identify the validated entrypoint: ${manifestPath}`)
     }
-    return Object.freeze({ executable: nodePath, prefix: Object.freeze([npmCli]) })
+    return Object.freeze({ executable: canonicalNode, prefix: Object.freeze([canonicalNpmCli]) })
 }
 
 function runNpm(args, options) {
