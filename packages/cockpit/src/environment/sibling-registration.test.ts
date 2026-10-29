@@ -285,6 +285,26 @@ describe('sibling add', () => {
         expect(outcome.artifact).toContain(publish.recordRemote)
     })
 
+    it('derives a safe sibling variable and refuses an explicit runtime control', async () => {
+        const { configPath, siblings } = await estate()
+        await mkdir(join(siblings, 'compose-product'))
+
+        const outcome = await add({ configPath, slug: 'compose-product', purpose: 'Synthetic Compose application' })
+
+        expect(outcome).toMatchObject({ status: 0, diagnostics: [], result: {
+            sibling: { slug: 'compose-product', var: 'SIBLING_COMPOSE_PRODUCT_DIR' },
+        } })
+        expect((await loaded(configPath)).sibling.find(({ slug }) => slug === 'compose-product')?.var)
+            .toBe('SIBLING_COMPOSE_PRODUCT_DIR')
+        const before = await readFile(configPath, 'utf8')
+        const refused = await add({ configPath, slug: 'worker', purpose: 'Synthetic worker', varName: 'DOCKER_HOST' })
+        expect(refused).toMatchObject({ status: 2, diagnostics: [{
+            code: 'CLI_USAGE_INVALID', target: '--var',
+            message: expect.stringContaining('must not control Docker, Compose or the host process'),
+        }] })
+        expect(await readFile(configPath, 'utf8')).toBe(before)
+    })
+
     it('--create grows a cockpit whose only sibling is its own root', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-sibling-genesis-')))
         roots.push(root)

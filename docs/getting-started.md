@@ -311,9 +311,12 @@ where the repository is:
 ./node_modules/.bin/cockpit sibling add api --config ./cockpit.toml --remote git@example.com:team/api.git --purpose "HTTP API for orders"
 ```
 
-`--dir <relative dir>` sets the directory under the siblings root (default: the slug), `--var <NAME>`
-the exported variable (default: the slug as `API_DIR`). `--purpose "<text>"` says what the
-repository is for; it is required for a new sibling and never defaulted.
+`--dir <relative dir>` sets the directory under the siblings root (default: the slug), and
+`--var <NAME>` sets the exported variable (default: the slug as `API_DIR`). A slug whose default
+would begin with a Docker, Compose or host-process control prefix gets `SIBLING_` prepended;
+cockpit refuses an explicit control variable because handing it to Compose could change the
+authenticated runtime plan. `--purpose "<text>"` says what the repository is for; it is required
+for a new sibling and never defaulted.
 `--instruction-pointer` opts a separate sibling into a marked link from its **AGENTS.md** to the
 cockpit instructions. This changes what agents in that repository load, so setup first reports the
 proposal without writing it:

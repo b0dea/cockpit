@@ -37,6 +37,8 @@ export const mechanism = {
         'DataMode',
         'VendorPosture',
         'Environment',
+        'SiblingVariable',
+        'deriveSiblingVariable',
         'Sibling',
         'Ports',
         'Guards',
@@ -672,6 +674,18 @@ export function requiresOperatorGate(sibling: { mount: Mount; purpose: string })
     return sibling.mount === 'host' || OPERATOR_GATE_RISK_RE.test(sibling.purpose)
 }
 
+// Runtime supplies sibling variables to Compose, so declarations must never overlap variables
+// that can change Docker, Compose or the host process before cockpit's authenticated plan runs.
+export const SiblingVariable = z.string().regex(
+    /^(?!(?:DOCKER_|COMPOSE_|LD_|DYLD_|LIBPATH$|SHLIB_PATH$|NODE_OPTIONS$|NODE_PATH$|BASH_ENV$|ENV$|PATH$|IFS$))[A-Z][A-Z0-9_]*$/,
+    'expected an uppercase environment variable that is not a Docker, Compose or host process control',
+)
+
+export function deriveSiblingVariable(slug: string): string {
+    const candidate = `${slug.toUpperCase().replaceAll('-', '_')}_DIR`
+    return SiblingVariable.safeParse(candidate).success ? candidate : `SIBLING_${candidate}`
+}
+
 export const Sibling = z
     .object({
         // Also the projection filename prefix (`.sibling-<slug>-CLAUDE.md`), which is why it
@@ -693,7 +707,7 @@ export const Sibling = z
         // The exported `*_DIR`. Recorded because it does not follow from the slug — a
         // `renderer` sibling may export ENGINE_DIR, and deriving RENDERER_DIR instead would
         // leave every consumer reading an unset variable.
-        var: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+        var: SiblingVariable,
         toolchain: Toolchain.default('none'),
         gate: Gate.optional(),
         // Why this repository cannot join the stack. Required on a host lane, because that

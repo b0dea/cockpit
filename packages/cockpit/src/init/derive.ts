@@ -8,6 +8,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
+import { deriveSiblingVariable } from '../schema.js'
 
 export const mechanism = {
     id: 'init-inference',
@@ -331,7 +332,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     // point the cockpit's own guides at themselves. The purpose is the human's to state.
     const rootName = basename(configurationRoot)
     if ((input.repositories.length === 0 || ownRoot?.slug === rootName) && SIBLING_SLUG.test(rootName)) facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
-        value: { slug: rootName, dir: '.', mount: 'none', acquire: 'none', var: `${rootName.toUpperCase().replaceAll('-', '_')}_DIR` },
+        value: { slug: rootName, dir: '.', mount: 'none', acquire: 'none', var: deriveSiblingVariable(rootName) },
         provenance: { kind: 'inferred', source: '.', reason: ownRoot
             ? 'the cockpit lives inside this product repository, so the repository is its own first sibling; add its purpose'
             : 'no directory under the root has a package manifest, so the cockpit root itself is the first repository; add its purpose' } })

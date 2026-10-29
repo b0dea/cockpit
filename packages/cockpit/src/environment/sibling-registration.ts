@@ -17,7 +17,7 @@ import { loadCockpitConfig } from '../config/load.js'
 import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type SiblingEdit, type SiblingTableRow } from '../config/sibling-toml.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { CockpitConfig, Sibling } from '../schema.js'
+import { CockpitConfig, deriveSiblingVariable, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 
@@ -170,11 +170,6 @@ export async function initializeLocalGitRepository(
     }
 }
 
-/** `FOO-bar` becomes `FOO_BAR_DIR`; a slug that cannot start a variable name must be given one with --var. */
-function deriveVar(slug: string): string {
-    return `${slug.toUpperCase().replaceAll('-', '_')}_DIR`
-}
-
 function remoteProblem(remote: string): string | undefined {
     if (remote.startsWith('-')) return 'a remote that starts with "-" would be read as a git option'
     if (/\s/.test(remote) || FREE_TEXT_UNSAFE.test(remote)) return 'a remote cannot contain whitespace or control characters'
@@ -308,9 +303,9 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     const dir = input.dir ?? slug.data
     const dirCheck = Sibling.shape.dir.safeParse(dir)
     if (!dirCheck.success) return usage(`--dir ${JSON.stringify(dir)} must be "." or a confined relative path without dot segments`, '--dir')
-    const varName = input.varName ?? deriveVar(slug.data)
+    const varName = input.varName ?? deriveSiblingVariable(slug.data)
     if (!Sibling.shape.var.safeParse(varName).success) {
-        return usage(`variable ${JSON.stringify(varName)} is not an uppercase environment variable name${input.varName === undefined ? `; it was derived from the slug, so pass --var <NAME>` : ''}`, '--var')
+        return usage(`variable ${JSON.stringify(varName)} must be uppercase and must not control Docker, Compose or the host process; use a sibling-specific name such as ${deriveSiblingVariable(slug.data)}`, '--var')
     }
     for (const sibling of config.sibling) {
         if (sibling.dir === dir) return refused('SIBLING_DIR_DUPLICATE', `dir "${dir}" is already used by sibling "${sibling.slug}"; choose another with --dir`, '--dir')

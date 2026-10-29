@@ -21,6 +21,13 @@ describe('bounded exact project command declarations', () => {
         expect(Sibling.parse(sibling).instruction_pointer).toBe(false)
         expect(Sibling.parse({ ...sibling, instruction_pointer: true }).instruction_pointer).toBe(true)
         expect(Sibling.safeParse({ ...sibling, dir: '.', instruction_pointer: true }).success).toBe(false)
+        for (const variable of [
+            'DOCKER_HOST', 'COMPOSE_PRODUCT_DIR', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'LIBPATH',
+            'SHLIB_PATH', 'NODE_OPTIONS', 'NODE_PATH', 'BASH_ENV', 'ENV', 'PATH', 'IFS',
+        ]) {
+            expect(Sibling.safeParse({ ...sibling, var: variable }).success, variable).toBe(false)
+        }
+        expect(Sibling.safeParse({ ...sibling, var: 'SIBLING_COMPOSE_PRODUCT_DIR' }).success).toBe(true)
     })
 
     it('bounds build and test by Unicode scalars without changing install or load probes', () => {

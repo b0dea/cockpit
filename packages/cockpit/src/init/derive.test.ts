@@ -96,6 +96,11 @@ describe('inferred interview answers', () => {
         expect(byTarget(facts, 'sibling.product-notes')).toEqual({ fields: ['sibling'], target: 'sibling.product-notes',
             value: { slug: 'product-notes', dir: '.', mount: 'none', acquire: 'none', var: 'PRODUCT_NOTES_DIR' },
             provenance: expect.objectContaining({ kind: 'inferred', source: '.' }) })
+        mkdirSync(join(parent, 'compose-product'))
+        const reserved = await deriveInferredFacts({ root: join(parent, 'compose-product'), repositories: [] })
+        expect(byTarget(reserved.facts, 'sibling.compose-product')).toMatchObject({
+            value: { slug: 'compose-product', dir: '.', var: 'SIBLING_COMPOSE_PRODUCT_DIR' },
+        })
         const observed = await deriveInferredFacts({ root, repositories: api })
         expect(observed.facts.filter(fact => fact.fields.includes('sibling'))).toEqual([])
     })
