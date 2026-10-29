@@ -204,15 +204,27 @@ function observedFreshVolume(outcome: Extract<ExecuteProbeOutcome, { kind: 'comp
 
 function exactComposePrefix(argv: readonly string[], checkoutRoot: string): boolean {
     if (argv.length < 6 || argv[1] !== 'compose' || argv[2] !== '--project-directory'
-        || argv[3] !== checkoutRoot || argv.at(-2) !== '--project-name'
-        || typeof argv.at(-1) !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(argv.at(-1)!)) return false
-    const fileArgs = argv.slice(4, -2)
+        || argv[3] !== checkoutRoot) return false
+    const projectIndex = argv.indexOf('--project-name', 4)
+    const projectName = argv[projectIndex + 1]
+    if (projectIndex < 6 || typeof projectName !== 'string'
+        || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(projectName)) return false
+    const fileArgs = argv.slice(4, projectIndex)
     if (fileArgs.length % 2 !== 0) return false
     for (let index = 0; index < fileArgs.length; index += 2) {
         const path = fileArgs[index + 1]
         if (fileArgs[index] !== '--file' || path === undefined || !isAbsolute(path) || !inside(checkoutRoot, path)) return false
     }
-    return true
+    const profileArgs = argv.slice(projectIndex + 2)
+    if (profileArgs.length % 2 !== 0) return false
+    const profiles = []
+    for (let index = 0; index < profileArgs.length; index += 2) {
+        const profile = profileArgs[index + 1]
+        if (profileArgs[index] !== '--profile' || typeof profile !== 'string'
+            || !/^[a-z0-9][a-z0-9-]{0,127}$/.test(profile)) return false
+        profiles.push(profile)
+    }
+    return new Set(profiles).size === profiles.length
 }
 
 function hasBoundExecutable(step: ExecutionStep): boolean {

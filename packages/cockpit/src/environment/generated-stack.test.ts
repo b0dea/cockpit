@@ -99,6 +99,8 @@ async function generatedAuthority(result: Extract<GeneratedEnvironmentResult, { 
     }
     await writeFile(docker, `#!${process.execPath}
 const args = process.argv.slice(2)
+const profile = args.indexOf('--profile')
+if ((args.includes('config') || args.includes('exec')) && (profile < 0 || args[profile + 1] !== 'application')) process.exit(6)
 if (${executeData} && (process.env.COCKPIT_OWNER_ID !== ${JSON.stringify(cockpitId)} || process.env.COCKPIT_STACK_ID !== ${JSON.stringify(stackId)} || process.env.APP_HOST_PORT !== '4110')) process.exit(8)
 if (args.includes('config')) process.stdout.write(${JSON.stringify(JSON.stringify(topologyConfig))})
 else if (${executeData} && args.includes('exec')) {
@@ -118,6 +120,7 @@ else process.exit(7)
         operation: 'validate', cwd: root, composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: compose, source: result.compose, sha256: composeSha256 }],
         projectName: 'synthetic', env: {}, labels: { stackId, configSha256: sourceSha256, batchId }, timeoutMs: 5_000,
         stackId, coldStartLimitMillis: 60_000, expectedMountSources,
+        activeProfiles: result.replay.profiles,
         ports: effectivePort === undefined ? [] : [effectivePort],
     }, {
         generatedComposeAuthority: projectGeneratedComposeArtifactAuthority(result)!,
@@ -277,6 +280,10 @@ describe('generated environment rendering', () => {
             const goodExecution = createGeneratedObservationExecution({ authority: good.authority, observation })
             if (goodExecution.kind !== 'planned') throw new Error(goodExecution.reason)
             expect(goodExecution.step.env.COMPOSE_DISABLE_ENV_FILE).toBe('1')
+            expect(goodExecution.step.argv.slice(goodExecution.step.argv.indexOf('--project-name') + 2, -3))
+                .toEqual(['--profile', 'application'])
+            expect(goodExecution.step.consumedFiles[1]?.argvIndexes).toEqual([5])
+            expect(goodExecution.step.argv[5]).toBe(goodExecution.step.consumedFiles[1]?.path)
             expect(admitGeneratedObservation({ execution: goodExecution, outcome: await executeProbe(goodExecution.step) }))
                 .toMatchObject({ kind: 'complete', id: 'compose-variables' })
 
@@ -370,7 +377,11 @@ describe('generated environment rendering', () => {
             cwd: root, env: {}, labels: {}, ports: [], compensation: [],
         })
         expect(dataStep?.argv.slice(0, 2)).toEqual([harness.runtime.executable.canonicalPath, 'compose'])
+        expect(dataStep?.argv.slice(dataStep.argv.indexOf('--project-name') + 2, dataStep.argv.indexOf('exec')))
+            .toEqual(['--profile', 'application'])
         expect(dataStep?.consumedFiles[1]?.sha256).toBe(result.manifest.find(({ path }) => path === generated.compose_file)?.sha256)
+        expect(dataStep?.consumedFiles[1]?.argvIndexes).toEqual([5])
+        expect(dataStep?.argv[5]).toBe(dataStep?.consumedFiles[1]?.path)
         expect(resolveGeneratedDataOperation({ authority: { ...authority }, operation: dataOperation, context: { id: 'data:empty:probe:0', phase: 'probe' } })).toBeUndefined()
         expect(resolveGeneratedDataOperation({
             authority, operation: { ...dataOperation, argv: [...dataOperation.argv, '--undeclared'] }, context: { id: 'data:empty:probe:0', phase: 'probe' },
@@ -554,6 +565,10 @@ describe('generated environment rendering', () => {
             // the service's working directory, as in the rendered healthcheck.
             const probe = generated.services[0]!.health.probe
             expect(execution.step.argv).not.toContain('--workdir')
+            expect(execution.step.argv.slice(execution.step.argv.indexOf('--project-name') + 2, execution.step.argv.indexOf('exec')))
+                .toEqual(['--profile', 'application'])
+            expect(execution.step.consumedFiles[1]?.argvIndexes).toEqual([5])
+            expect(execution.step.argv[5]).toBe(execution.step.consumedFiles[1]?.path)
             expect(execution.step.argv.slice(execution.step.argv.indexOf('-T') + 2)).toEqual(probe.cwd === '.'
                 ? probe.argv : ['/bin/sh', '-c', 'cd -- "$0" && exec "$@"', probe.cwd, ...probe.argv])
             const admission = admitGeneratedObservation({ execution, outcome: await executeProbe(execution.step) })

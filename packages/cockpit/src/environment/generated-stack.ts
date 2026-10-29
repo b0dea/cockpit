@@ -336,9 +336,24 @@ if (process.argv[3] === 'mount-lstat') {
 }
 `
 
+function generatedComposePrefix(
+    runtime: GeneratedObservationRuntime,
+    docker: ResolvedExecutable,
+    activeProfiles: readonly string[],
+): readonly [string, ...string[]] {
+    const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
+    const profileArgs = [...new Set(activeProfiles)].sort().flatMap((profile) => ['--profile', profile])
+    const prefix: [string, ...string[]] = [
+        docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
+        '--project-name', runtime.projectName, ...profileArgs,
+    ]
+    return Object.freeze(prefix)
+}
+
 function generatedObservationStep(
     observation: GeneratedObservationPlan,
     runtime: GeneratedObservationRuntime,
+    activeProfiles: readonly string[],
     declaredPortVariables: ReadonlySet<string>,
     hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>,
 ): ExecutionStep | undefined {
@@ -395,10 +410,8 @@ function generatedObservationStep(
         }])
     } else if (observation.kind === 'compose-variable') {
         usesCompose = true
-        const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
         argv = Object.freeze([
-            docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
-            '--project-name', runtime.projectName, 'config', '--format', 'json',
+            ...generatedComposePrefix(runtime, docker, activeProfiles), 'config', '--format', 'json',
         ]) as readonly [string, ...string[]]
         argv0 = docker.invocationPath
         timeoutMs = 5_000
@@ -425,10 +438,9 @@ function generatedObservationStep(
             }])
         } else {
             usesCompose = true
-            const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
             argv = Object.freeze([
-                docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
-                '--project-name', runtime.projectName, 'exec', '-T', operation.service!, ...inStackCommand(operation.cwd, operation.argv),
+                ...generatedComposePrefix(runtime, docker, activeProfiles),
+                'exec', '-T', operation.service!, ...inStackCommand(operation.cwd, operation.argv),
             ]) as readonly [string, ...string[]]
             argv0 = docker.invocationPath
             consumedFiles = Object.freeze([
@@ -670,10 +682,10 @@ export function resolveGeneratedDataOperation(input: {
     } else {
         const docker = resolvedDockerExecutable(runtime.executable)
         if (!docker || operation.service === undefined) return undefined
-        const fileArgs = runtime.composeFiles.flatMap(({ path }) => ['--file', path])
+        const activeProfiles = envelope.declaration.services.flatMap(({ profiles }) => profiles)
         argv = Object.freeze([
-            docker.canonicalPath, 'compose', '--project-directory', runtime.root, ...fileArgs,
-            '--project-name', runtime.projectName, 'exec', '--no-TTY', operation.service, ...inStackCommand(operation.cwd, operation.argv),
+            ...generatedComposePrefix(runtime, docker, activeProfiles),
+            'exec', '--no-TTY', operation.service, ...inStackCommand(operation.cwd, operation.argv),
         ]) as readonly [string, ...string[]]
         argv0 = docker.invocationPath
         stepCwd = runtime.root
@@ -709,9 +721,10 @@ export function createGeneratedObservationExecution(input: {
     }
     const declaredPortVariables = new Set(generatedAuthority.declaration.services
         .flatMap((service) => service.ports.map(({ host_variable }) => host_variable)))
+    const activeProfiles = generatedAuthority.declaration.services.flatMap(({ profiles }) => profiles)
     const plan = effectiveObservationPlan(observation as GeneratedObservationPlan, generatedAuthority.runtime)
     if (!plan) return Object.freeze({ kind: 'unavailable', id: (observation as GeneratedObservationPlan).id, reason: 'generated observation has no authentic executable plan' })
-    const step = generatedObservationStep(plan, generatedAuthority.runtime, declaredPortVariables, generatedAuthority.hostInputRoots)
+    const step = generatedObservationStep(plan, generatedAuthority.runtime, activeProfiles, declaredPortVariables, generatedAuthority.hostInputRoots)
     if (!step) return Object.freeze({ kind: 'unavailable', id: plan.id, reason: 'generated observation has no authentic executable plan' })
     const execution = Object.freeze({ kind: 'planned' as const, id: plan.id, step })
     issuedObservationExecutions.set(execution, Object.freeze({
