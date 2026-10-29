@@ -404,7 +404,9 @@ describe('generated environment rendering', () => {
         const reordered = await declaration()
         reordered.services[0]!.mounts.reverse()
         expect(renderGeneratedEnvironment({ declaration: reordered, ...resolvedInput })).toMatchObject({ kind: 'complete', compose: result.compose })
-        expect(result.compose).toContain('${APP_HOST_PORT:-4100}:3000')
+        expect(parseYaml(result.compose).services.app.ports).toEqual([{
+            host_ip: '127.0.0.1', target: 3000, published: '${APP_HOST_PORT:-4100}', protocol: 'tcp',
+        }])
         expect(result.compose).toContain('node@sha256:83f487e0a63425e5')
         expect(result.compose).toContain("[ -n \"$${MESSAGES_TOKEN:-}\" ] || unset MESSAGES_TOKEN")
         expect(result.compose).toContain("timeout 30s 'node' 'vendor.mjs' 'tls-generate'")
@@ -462,10 +464,10 @@ describe('generated environment rendering', () => {
         expect(first.kind).toBe('complete')
         expect(second.kind).toBe('complete')
         if (first.kind !== 'complete' || second.kind !== 'complete') return
-        const firstPort = (parseYaml(first.compose) as { services: { app: { ports: string[] } } }).services.app.ports[0]
-        const secondPort = (parseYaml(second.compose) as { services: { app: { ports: string[] } } }).services.app.ports[0]
-        expect(firstPort).toBe('${APP_HOST_PORT:-4100}:3000')
-        expect(secondPort).toBe('${APP_HOST_PORT:-4200}:3000')
+        const firstPort = (parseYaml(first.compose) as { services: { app: { ports: { host_ip: string; target: number; published: string; protocol: string }[] } } }).services.app.ports[0]
+        const secondPort = (parseYaml(second.compose) as { services: { app: { ports: { host_ip: string; target: number; published: string; protocol: string }[] } } }).services.app.ports[0]
+        expect(firstPort).toEqual({ host_ip: '127.0.0.1', target: 3000, published: '${APP_HOST_PORT:-4100}', protocol: 'tcp' })
+        expect(secondPort).toEqual({ host_ip: '127.0.0.1', target: 3000, published: '${APP_HOST_PORT:-4200}', protocol: 'tcp' })
         expect(renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, stackId: 'stack:invalid' })).toMatchObject({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID' })
         const otherConfig = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, sourceSha256: 'f'.repeat(64) })
         expect(otherConfig.kind).toBe('complete')
