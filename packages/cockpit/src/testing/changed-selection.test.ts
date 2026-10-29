@@ -92,7 +92,7 @@ describe('changed adjacent-owner test runner', () => {
         expect(JSON.parse(readFileSync(fixture.capture, 'utf8'))).toContain('packages/cockpit/src/example.test.ts')
     })
 
-    it('dispatches changed and explicitly affected owners once with bounded workers', () => {
+    it.each([false, true])('selects changed and explicitly affected owners once (list: %s)', list => {
         const fixture = repository({
             'packages/cockpit/src/example.ts': 'export const value = 1\n',
             'packages/cockpit/src/example.test.ts': 'example\n',
@@ -101,19 +101,50 @@ describe('changed adjacent-owner test runner', () => {
         writeFileSync(join(fixture.root, 'packages/cockpit/src/example.ts'), 'export const value = 2\n')
         writeFileSync(join(fixture.root, 'packages/cockpit/src/untracked.test.ts'), 'untracked\n')
 
-        const result = fixture.run('--extra-test', 'packages/cockpit/src/shared.test.ts', '--extra-test', 'packages/cockpit/src/shared.test.ts')
+        const result = fixture.run('--extra-test', 'packages/cockpit/src/shared.test.ts',
+            ...(list ? ['--list'] : []), '--extra-test', 'packages/cockpit/src/shared.test.ts')
 
         expect(result.status, result.stderr).toBe(0)
-        expect(JSON.parse(readFileSync(fixture.capture, 'utf8'))).toEqual([
-            'run', ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/shared.test.ts',
-            'packages/cockpit/src/untracked.test.ts', '--maxWorkers=4', '--allowOnly=false',
-            '--reporter=default', `--reporter=${join(dirname(SCRIPT), 'immediate-failure-reporter.mjs')}`,
-            '--reporter=json', expect.stringMatching(/^--outputFile\.json=/),
-        ])
-        expect(result.stdout).toContain('adjacent-owner tests: 4 owner files')
-        expect(result.stdout).toContain([ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/shared.test.ts',
-            'packages/cockpit/src/untracked.test.ts'].join('\n'))
-        expect(result.stdout).toContain('Adjacent tests only; review non-adjacent dependents and shared seams separately.')
+        if (list) {
+            expect(JSON.parse(result.stdout)).toEqual([ARCHITECTURE, 'packages/cockpit/src/example.test.ts',
+                'packages/cockpit/src/shared.test.ts', 'packages/cockpit/src/untracked.test.ts'])
+            expect(existsSync(fixture.capture)).toBe(false)
+            expect(existsSync(join(fixture.root, '.vitest-reports'))).toBe(false)
+        } else {
+            expect(JSON.parse(readFileSync(fixture.capture, 'utf8'))).toEqual([
+                'run', ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/shared.test.ts',
+                'packages/cockpit/src/untracked.test.ts', '--maxWorkers=4', '--allowOnly=false',
+                '--reporter=default', `--reporter=${join(dirname(SCRIPT), 'immediate-failure-reporter.mjs')}`,
+                '--reporter=json', expect.stringMatching(/^--outputFile\.json=/),
+            ])
+            expect(result.stdout).toContain('adjacent-owner tests: 4 owner files')
+            expect(result.stdout).toContain([ARCHITECTURE, 'packages/cockpit/src/example.test.ts', 'packages/cockpit/src/shared.test.ts',
+                'packages/cockpit/src/untracked.test.ts'].join('\n'))
+            expect(result.stdout).toContain('Adjacent tests only; review non-adjacent dependents and shared seams separately.')
+        }
+    })
+
+    it('lists an empty inventory without dispatch when no owners changed', () => {
+        const fixture = repository({})
+
+        const result = fixture.run('--list')
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(JSON.parse(result.stdout)).toEqual([])
+        expect(existsSync(fixture.capture)).toBe(false)
+    })
+
+    it.each([['--list', '--list'], ['--list', '--unknown'], ['--list', '--extra-test'],
+        ['--list', '--extra-test', 'packages/cockpit/src/missing.test.ts'],
+        ['--extra-test', '--list']])('refuses invalid inventory arguments %j before dispatch', (...args) => {
+        const fixture = repository({})
+
+        const result = fixture.run(...args)
+
+        expect(result.status).toBe(2)
+        expect(result.stderr).toContain('CHANGED_TEST_SELECTION_INVALID:')
+        expect(result.stdout).toBe('')
+        expect(existsSync(fixture.capture)).toBe(false)
     })
 
     it('selects every split adjacent owner for one changed implementation', () => {
@@ -171,18 +202,26 @@ describe('changed adjacent-owner test runner', () => {
             rmSync(join(fixture.root, '.vitest-reports'), { recursive: true, force: true })
         }
 
-        const unknown = fixture.runFrom('no-such-revision')
-        expect(unknown.status).toBe(2)
-        expect(unknown.stderr).toContain('CHANGED_TEST_SELECTION_INVALID: base does not identify a commit: no-such-revision')
+        for (const args of [[], ['--list']]) {
+            const unknown = fixture.runFrom('no-such-revision', ...args)
+            expect(unknown.status).toBe(2)
+            expect(unknown.stderr).toContain('CHANGED_TEST_SELECTION_INVALID: base does not identify a commit: no-such-revision')
+            expect(unknown.stdout).toBe('')
+            expect(existsSync(fixture.capture)).toBe(false)
+        }
 
         execFileSync('git', ['checkout', '--quiet', '--orphan', 'unrelated'], { cwd: fixture.root })
         execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'unrelated root'], { cwd: fixture.root })
-        const notAncestor = fixture.runFrom('base-branch')
-        expect(notAncestor.status).toBe(2)
-        expect(notAncestor.stderr).toContain('base must be an ancestor of HEAD')
+        for (const args of [[], ['--list']]) {
+            const notAncestor = fixture.runFrom('base-branch', ...args)
+            expect(notAncestor.status).toBe(2)
+            expect(notAncestor.stderr).toContain('base must be an ancestor of HEAD')
+            expect(notAncestor.stdout).toBe('')
+            expect(existsSync(fixture.capture)).toBe(false)
+        }
     })
 
-    it('names every path without an owner and refuses before dispatch', () => {
+    it.each([false, true])('names every path without an owner and refuses before dispatch (list: %s)', list => {
         const fixture = repository({
             'scripts/orphan.mjs': 'export const value = 1\n',
             'scripts/task.sh': '#!/bin/sh\nexit 0\n',
@@ -194,7 +233,7 @@ describe('changed adjacent-owner test runner', () => {
         writeFileSync(join(fixture.root, 'tools/helper.txt'), 'after\n')
         writeFileSync(join(fixture.root, 'fixtures/lonely/data.json'), '{"changed":true}\n')
 
-        const result = fixture.run()
+        const result = fixture.run(...(list ? ['--list'] : []))
 
         expect(result.status).toBe(2)
         expect(result.stderr.match(/CHANGED_TEST_OWNER_UNMAPPED:/g)).toHaveLength(4)
@@ -202,6 +241,7 @@ describe('changed adjacent-owner test runner', () => {
             expect(result.stderr).toContain(`CHANGED_TEST_OWNER_UNMAPPED: ${path}`)
         }
         expect(result.stderr).toContain('--extra-test adds supplemental affected owners but does not resolve an unmapped path')
+        expect(result.stdout).toBe('')
         expect(existsSync(fixture.capture)).toBe(false)
     })
 

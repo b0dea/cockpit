@@ -62,14 +62,22 @@ function existingFile(root, path) {
 function parseArguments(argv) {
     const [base, ...rest] = argv
     if (!base || base.startsWith('-')) {
-        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--extra-test <test-path>]...')
+        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--list] [--extra-test <test-path>]...')
     }
     const extraTests = []
-    for (let index = 0; index < rest.length; index += 2) {
-        if (rest[index] !== '--extra-test' || !rest[index + 1]) throw new Error('extra affected owners require --extra-test <test-path>')
-        extraTests.push(rest[index + 1])
+    let list = false
+    for (let index = 0; index < rest.length; index += 1) {
+        if (rest[index] === '--list') {
+            if (list) throw new Error('--list was provided more than once')
+            list = true
+            continue
+        }
+        if (rest[index] !== '--extra-test' || !rest[index + 1] || rest[index + 1].startsWith('-')) {
+            throw new Error('extra affected owners require --extra-test <test-path>')
+        }
+        extraTests.push(rest[++index])
     }
-    return { base, extraTests }
+    return { base, extraTests, list }
 }
 
 function changedPaths(root, baseCommitIsh) {
@@ -245,7 +253,7 @@ function ownerTests(root, paths, extras) {
 
 export async function runChangedTestsCli(argv) {
     try {
-        const { base, extraTests } = parseArguments(argv)
+        const { base, extraTests, list } = parseArguments(argv)
         const root = repositoryRoot()
         const paths = changedPaths(root, base)
         const owners = ownerTests(root, paths, extraTests)
@@ -253,6 +261,10 @@ export async function runChangedTestsCli(argv) {
             for (const path of owners.unmapped) console.error(`CHANGED_TEST_OWNER_UNMAPPED: ${path}`)
             console.error('adjacent-owner tests refused before dispatch; --extra-test adds supplemental affected owners but does not resolve an unmapped path')
             return 2
+        }
+        if (list) {
+            console.log(JSON.stringify(owners.selected))
+            return 0
         }
         if (!owners.selected.length) {
             console.log('adjacent-owner tests: no executable or test owners changed; no tests dispatched')

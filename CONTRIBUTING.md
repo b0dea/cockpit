@@ -87,6 +87,15 @@ their owners. A change to the Vitest configuration or shared Git-isolation setup
 package test because it can change how all tests run. Unmapped paths still refuse before dispatch;
 review their ownership rather than treating an empty selection as a pass.
 
+`node scripts/run-changed-tests.mjs <base-commit> --list` prints the same validated owner
+selection as a JSON array without running tests; it also accepts `--extra-test <test-path>`.
+This inventory is not execution evidence. To avoid repeating tests when a suite needs several
+bounded invocations, partition complete test files and run each batch with `npm test -- <paths>`.
+Keep the commit, working tree, dependencies and test configuration unchanged throughout. Preserve
+each successful report before the next invocation replaces it, and verify that their file sets
+cover the entire required inventory with every assertion accounted for. Changed-owner coverage
+requires every selected owner; full-suite coverage requires every configured test file.
+
 The generated references (the CLI, configuration, command list, capability matrix and the
 troubleshooting index) are checked against committed `HEAD`, so `npm run lint:docs` refuses while
 an implementation change is uncommitted. Commit the change, rebuild (`npm run build`), run `npm run references`, commit the regenerated
