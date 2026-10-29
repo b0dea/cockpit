@@ -1,6 +1,6 @@
 import { createConnection } from 'node:net'
 import { z } from 'zod'
-import { type EntrypointKind } from '../entrypoint-kinds.js'
+import { isEntrypointKind, type EntrypointKind } from '../entrypoint-kinds.js'
 import { EntrypointDerivative, STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
     addCoordinationHolder,
@@ -1306,7 +1306,7 @@ export function deriveEntrypoints(input: {
     const names = new Set(values.map(({ name }) => name))
     const diagnostics: EnvironmentDiagnostic[] = []
     for (const declaration of snapshot.declarations) {
-        if (!EntrypointDerivative.safeParse(declaration).success) {
+        if (!isEntrypointKind(declaration.kind) || !EntrypointDerivative.safeParse(declaration).success) {
             return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'entrypoint declaration is malformed', declaration.name)
         }
         if (names.has(declaration.name)) {
