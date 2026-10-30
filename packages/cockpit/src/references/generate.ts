@@ -295,12 +295,13 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const configuration = documentHeading('Configuration reference')
             + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version.\n\n'
             + '## Defaults\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
-            + '## Governed standing cost\n\n'
-            + `Collection authority: ${code(sourcePath(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`
-            + '| Target | Metric | Cap | Displacement |\n| --- | --- | --- | --- |\n' + caps + '\n'
-            + '| Entrypoint | Metric | Cap | Displacement |\n| --- | --- | --- | --- |\n' + entrypoints + '\n'
-            + `Terminal ${code(sourcePath(collection.terminal.path))}: loading=pull; budget=uncapped; SHA-256 ${code(collection.terminal.sha256)}.\n\n`
-            + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} derives from the registry schema (default ${defaults.cockpit.guide_cap} lines); measured guide costs are instance-specific and come from the sibling projection owner.\n\n` + guideCosts
+            + '## Skill size limits\n\n'
+            + 'Agent tools load every skill\'s frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. '
+            + `The limits come from ${code(sourcePath(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`
+            + '| Target | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + caps + '\n'
+            + '| Skill entry point | Measured as | Limit | Detail moved to |\n| --- | --- | --- | --- |\n' + entrypoints + '\n'
+            + `The procedure ${code(sourcePath(collection.terminal.path))} is read on demand and has no size limit; SHA-256 ${code(collection.terminal.sha256)}.\n\n`
+            + `<!-- cockpit:ref schema=cockpit.guide_cap --> ${code('cockpit.guide_cap')} limits always-loaded guidance to ${defaults.cockpit.guide_cap} lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.\n\n` + guideCosts
             + '\n## JSON Schema\n\n```json\n' + renderCockpitSchema().trim() + '\n```\n'
         const list = documentHeading('Command list')
             + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'

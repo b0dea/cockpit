@@ -146,8 +146,8 @@ describe('reference generation', () => {
         expect(rendered.kind).toBe('complete')
         if (rendered.kind !== 'complete') return
         const configuration = rendered.files[1]!.bytes
-        expect(configuration).toContain('Collection authority: `packages/cockpit/surfaces/skills/collection.json`')
-        expect(configuration).toContain('Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped')
+        expect(configuration).toContain('The limits come from `packages/cockpit/surfaces/skills/collection.json`')
+        expect(configuration).toContain('The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit')
         for (const entry of skills.entrypoints) {
             const name = entry.path.split('/')[1]
             expect(configuration).toContain(`| \`packages/cockpit/surfaces/skills/${name}.skill.md\` | lines | ${entry.cap} | \`packages/cockpit/surfaces/skills/procedures/onboarding.md\` |`)
@@ -254,7 +254,7 @@ describe('reference generation', () => {
         expect(first.files[1]!.bytes).toContain(renderCockpitSchema().trim())
         expect(first.files[1]!.bytes).toContain(String(configurationDefaults().cockpit.guide_cap))
         expect(first.files[1]!.bytes).toContain(skills.source.sha256)
-        expect(first.files[1]!.bytes).toContain('loading=pull; budget=uncapped')
+        expect(first.files[1]!.bytes).toContain('is read on demand and has no size limit')
         expect(first.files[3]!.bytes).toContain('unavailable')
         expect(first.troubleshooting.document.slice(0, prose.indexOf(begin))).toBe(prose.slice(0, prose.indexOf(begin)))
         expect(first.troubleshooting.document.slice(first.troubleshooting.document.indexOf(end) + end.length)).toBe(prose.slice(prose.indexOf(end) + end.length))
