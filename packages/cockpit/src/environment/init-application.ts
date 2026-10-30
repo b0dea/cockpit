@@ -196,6 +196,8 @@ export interface InterviewPlan {
     readonly answered: readonly string[]
     readonly outstanding: readonly OutstandingField[]
     readonly inferenceSkipped: readonly Readonly<{ source: string; reason: string }>[]
+    /** Where the accepted cockpit lives, when init runs for a product repository; it is kept like any other answer. */
+    readonly cockpitRoot?: CockpitRootAnswer
 }
 
 export interface InitResult {
@@ -325,6 +327,7 @@ async function interviewPlan(
             inferred: Object.freeze((inference?.facts ?? []).filter(fact => fact.fields.includes(field))
                 .map(({ target, value, provenance }) => Object.freeze({ target, value, provenance }))) }))),
         inferenceSkipped: inference?.skipped ?? [],
+        ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
     })
 }
 
@@ -509,19 +512,27 @@ export async function runInitApplication(
     if (!input.accepted && (current?.value.greenfield === undefined || current.value.stage !== 'surface-published')) {
         const diagnostics = [...(resumed?.diagnostics ?? prepared!.diagnostics)]
         let interview: InterviewPlan | undefined
+        let estate: GreenfieldResult | undefined
         const stage = current?.value.stage ?? 'surface-previewed'
+        const recorded = current?.value.greenfield?.answers ?? []
         // Questions are only asked after acceptance, but listing them now lets an unattended caller
-        // prepare every answer before it consents. The observation is read-only.
-        if (boundInput.registry === undefined && adapters.classifyEstate && (stage === 'surface-previewed' || stage === 'surface-published')) {
+        // prepare every answer before it consents. The observation is read-only. Once cockpit.toml is
+        // prepared the interview is over, and it still lists the recorded answers: without them a
+        // resumed run reported every field of the same answers file as never asked.
+        if (boundInput.registry === undefined && adapters.classifyEstate
+            && (stage === 'surface-previewed' || stage === 'surface-published' || current?.value.greenfield !== undefined)) {
             const classified = await adapters.classifyEstate(estateInput(boundInput))
-            if (classified.kind === 'complete') interview = await interviewPlan(boundInput, adapters, classified.result, 0)
-            else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
+            if (classified.kind === 'complete') {
+                interview = await interviewPlan(boundInput, adapters, classified.result, recorded.length)
+                if (recorded.length > 0) estate = greenfieldResult(classified.result,
+                    (classified.result as IssuedEstateClassificationResult).sourceObservationSha256, recorded)
+            } else diagnostics.push({ severity: 'warning', code: 'INIT_INTERVIEW_PREVIEW_UNAVAILABLE',
                 message: `the interview could not be previewed (${classified.diagnostics.map(row => row.code).join(', ')}); each question is still reported when accepting reaches it`,
                 target: input.root })
         }
         return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics,
             result: result(stage, projection, undefined,
-                interview === undefined ? undefined : { interview }) }
+                interview === undefined ? undefined : { interview, ...(estate === undefined ? {} : { estate }) }) }
     }
     if (input.accepted && (!SHA256.test(input.acceptedPreviewSha256 ?? '') || input.acceptedPreviewSha256 !== projection.previewSha256)) {
         return refused('INIT_PREVIEW_CHANGED', 'selected bootstrap preview changed after acceptance', input.root)

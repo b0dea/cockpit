@@ -302,6 +302,48 @@ describe('init application', () => {
         })
     })
 
+    it.each(['dedicated', 'in-repo'] as const)('accepts the same answers file on every run of a %s init without reporting applied answers unused', async placement => {
+        const f = fixture()
+        const dedicated = resolve(f.root, '..', 'checkout-cockpit')
+        const root = placement === 'dedicated' ? dedicated : f.root
+        let preparedRoot = f.root
+        const rooted = <T extends { kind: string; result: unknown }>(outcome: T, root: string): T => outcome.kind === 'complete'
+            ? { ...outcome, result: { ...outcome.result as object, root } } : outcome
+        const adapters: InitApplicationAdapters = {
+            ...f.adapters,
+            observeRoot: async ({ root }) => root === f.root ? 'product-repository' : 'cockpit-root',
+            prepareBootstrap: async input => {
+                preparedRoot = input.root
+                return rooted(await f.adapters.prepareBootstrap(input), input.root)
+            },
+            applyBootstrap: async authority => rooted(await f.adapters.applyBootstrap(authority), preparedRoot),
+            resumeBootstrap: async input => rooted(await f.adapters.resumeBootstrap(input), input.root),
+            classifyEstate: async input => estate(input.root, 'one-sibling'),
+            document: interviewDocument(join(root, 'cockpit.toml')),
+        }
+        const io: InitCommandIo = { terminal: false, confirm: async () => undefined,
+            createCockpitRoot: async path => { mkdirSync(path, { recursive: true }) },
+            // The persisted draft is 'name = "synthetic"\n'; writing it makes the destination match.
+            writeArtifact: async () => f.setDestination({ kind: 'available', sha256: '010fb9b6053c7bfa4b9936cf8c372cc028feddd5bf4b848f65de048f198c1a3e' }) }
+        const run = (answers: Record<string, unknown>) => runInitOperatorCommand({ root: f.root, target: 'codexcli',
+            sessionId: 'separate-public-invocation', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
+        { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers } }, io,
+        input => runInitApplication(input, adapters))
+        const answers = { cockpit: { root: placement }, sibling: [] }
+
+        expect(await run({ cockpit: answers.cockpit })).toMatchObject({ kind: 'pending', result: { root, question: { field: 'sibling' } } })
+        for (const attempt of ['completes', 'resumes']) {
+            const outcome = await run(answers)
+            expect(outcome, `${attempt}: ${JSON.stringify(outcome.diagnostics)}`).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
+            expect(outcome.diagnostics.map(row => row.code), attempt).not.toContain('INIT_ANSWER_UNUSED')
+        }
+        // An applied answer stays in force, so the file cannot quietly change it after the fact.
+        expect(await run({ ...answers, sibling: [{ slug: 'checkout' }] })).toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'INIT_ANSWER_CONFLICT', message: expect.stringContaining('sibling') }] })
+        if (placement === 'in-repo') expect(await run({ ...answers, cockpit: { root: 'dedicated' } })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_CONFLICT', message: expect.stringContaining('cockpit.root') }] })
+    })
+
     it('resumes durable init state when init-created files make the root look like a product repository', async () => {
         const f = fixture()
         let rootKind: 'cockpit-root' | 'product-repository' = 'cockpit-root'

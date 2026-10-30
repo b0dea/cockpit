@@ -89,6 +89,7 @@ function refusal(code: string, message: string): InitApplicationOutcome {
 function noteInterview(asked: Set<string>, outcome: InitApplicationOutcome): void {
     const interview = outcome.result?.interview
     if (!interview) return
+    if (interview.cockpitRoot !== undefined) asked.add('cockpit.root')
     for (const field of [...interview.answered, ...interview.outstanding.map(row => row.field)]) {
         asked.add(field)
         // Compose-first answers the generated-environment question under its own field name.
@@ -133,20 +134,27 @@ const canonicalJson = (value: unknown): string => Array.isArray(value) ? `[${val
  * accepted quietly: the person approved the file's bytes, not the recorded ones.
  */
 function recordedAnswerConflict(
+    input: Pick<InitCommandInput, 'root' | 'target'>,
     preview: InitApplicationOutcome,
     supplied: ReadonlyMap<string, unknown>,
     unattended: UnattendedInit,
 ): InitApplicationOutcome | undefined {
+    const placement = preview.result?.interview?.cockpitRoot
+    const suppliedPlacement = supplied.get('cockpit.root')
+    if (placement !== undefined && suppliedPlacement !== undefined && suppliedPlacement !== placement) return refusal('INIT_ANSWER_CONFLICT',
+        `the answers file gives cockpit.root = ${JSON.stringify(suppliedPlacement)}, but this cockpit was created ${placement === 'in-repo' ? 'inside the product repository' : 'in a dedicated folder'}; init does not move an existing cockpit, so drop cockpit.root from the answers file or set it to ${JSON.stringify(placement)}`)
     const answered = preview.result?.interview?.answered ?? []
     const recorded = preview.result?.estate?.answers ?? []
     for (const [index, field] of answered.entries()) {
+        // The defaults are accepted by digest, not by the answers file, and are bound to the draft they confirmed.
+        if (field === 'configuration.defaults') continue
         const now = unattendedAnswer(field, undefined, supplied, unattended)
         if (now.kind === 'refusal') return now.outcome
         if (now.kind !== 'answer' || recorded[index] === undefined) continue
         let same = false
         try { same = canonicalJson(JSON.parse(now.bytes)) === canonicalJson(JSON.parse(recorded[index]!.bytes)) } catch { same = false }
         if (!same) return refusal('INIT_ANSWER_CONFLICT',
-            `the answers file gives a different value for ${field} than the answer an earlier run recorded; drop ${field} from the answers file to keep the recorded answer. init has no command to reset a recorded answer`)
+            `the answers file gives a different value for ${field} than the answer an earlier run recorded; drop ${field} from the answers file to keep the recorded answer, or, before cockpit.toml is prepared, preview a reset with npx --no cockpit init ${input.root} --target ${input.target} --reset-answer ${field} --json`)
     }
     return undefined
 }
@@ -253,7 +261,7 @@ async function drive(
         return refusal('INIT_PREVIEW_NOT_ACCEPTED', '--accept-preview does not equal the digest of the pending preview; rerun without it to read the current digest')
     }
     if (unattended && supplied) {
-        const conflict = recordedAnswerConflict(preview, supplied.fields, unattended)
+        const conflict = recordedAnswerConflict(input, preview, supplied.fields, unattended)
         if (conflict) return conflict
     }
     if (preview.result?.question === undefined && !unattended) {
