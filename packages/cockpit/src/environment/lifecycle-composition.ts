@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
+import { redirectedBindSources } from './compose-topology.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
@@ -130,19 +131,36 @@ function mountMismatchDiagnostics(
                 severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
                 target: sibling ? `sibling:${sibling.slug}` : source,
                 message: sibling
-                    ? `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${source}, so cockpit will not vouch for this stack`
+                    ? `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${source} or a directory inside it, so cockpit will not vouch for this stack`
                     : `${source} is declared for the stack to mount, but no Compose service bind-mounts it, so cockpit will not vouch for this stack`,
                 fix: sibling
-                    ? `bind-mount \${${sibling.var}} in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>`
+                    ? `bind-mount \${${sibling.var}}, or a directory inside it, in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>`
                     : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run npx --no cockpit sync --config <your cockpit.toml>',
             })
         }),
         ...mismatch.unexpected.map((source) => Object.freeze({
             severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: source,
-            message: `a Compose service bind-mounts ${source}, which no mount = "always" sibling or environment.generated_host_paths entry declares, so cockpit will not hand it to a container`,
-            fix: 'declare it as a mount = "always" sibling or an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync --config <your cockpit.toml>',
+            message: `a Compose service bind-mounts ${source}, which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry, so cockpit will not hand it to a container`,
+            fix: 'move the bind inside a mount = "always" sibling, declare it as one or as an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync --config <your cockpit.toml>',
         })),
     ])
+}
+
+/** Names the sibling a redirected bind sits in, so the refusal says which checkout holds the link. */
+function redirectedMountDiagnostics(
+    redirected: readonly Readonly<{ bind: string; holder: string }>[],
+    config: CockpitConfig,
+    siblingsRoot: string,
+): readonly EnvironmentDiagnostic[] {
+    const bySource = new Map(config.sibling.map((sibling) => [resolve(siblingsRoot, sibling.dir), sibling]))
+    return Object.freeze(redirected.map(({ bind, holder }) => {
+        const sibling = bySource.get(holder)
+        return Object.freeze({
+            severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: bind,
+            message: `a Compose service bind-mounts ${bind}, which resolves through a symbolic link to a path outside ${sibling ? `sibling ${sibling.slug}` : holder}, so cockpit will not hand that path to a container`,
+            fix: `replace the link with a real directory, or bind the path it points at directly and declare it as a mount = "always" sibling or an environment.generated_host_paths entry; then run ${cockpitCommand('check')}`,
+        })
+    }))
 }
 
 export interface LifecycleCommandCompositionInput {
@@ -1004,6 +1022,11 @@ export function createLifecycleCommandAdapters(
                 return runtimeReadiness(context, use, ports, refuse, purpose, Object.freeze(resolved))
             }
             return refuse?.(mountMismatchDiagnostics(mismatch, currentBinding.config, currentBinding.siblingsRoot))
+        }
+        if (purpose !== 'teardown') {
+            const redirected = await redirectedBindSources(
+                topology.topology.services.flatMap(({ bindMountSources }) => bindMountSources), expectedMountSources)
+            if (redirected.length > 0) return refuse?.(redirectedMountDiagnostics(redirected, currentBinding.config, currentBinding.siblingsRoot))
         }
         if (generatedApplication) {
             const step = runtime.plan.steps[0]

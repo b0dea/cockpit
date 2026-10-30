@@ -74,10 +74,14 @@ automatic loading of the project `.env` file, because a file cockpit has not che
 change the topology it has checked. The topology check does not read service `env_file` contents
 either, so service secrets never enter cockpit's records; Compose still passes those files to the
 containers when the stack runs. Any other `${VAR}` reference needs a `:-default`. Each sibling
-declared with `mount = "always"` must be bind-mounted, because that is what the declaration
-promises: `check` fails with `COMPOSE_SIBLING_NOT_MOUNTED` when no service mounts one, and `up`
-refuses to start the stack. Mount it through its variable, as in `"${WORKER_DIR}:/srv/worker"`, or
-set `mount = "none"` on the row.
+declared with `mount = "always"` must be bind-mounted, whole or a directory inside it, because that
+is what the declaration promises: `check` fails with `COMPOSE_SIBLING_NOT_MOUNTED` when no service
+mounts one, and `up` refuses to start the stack. Mount it through its variable, as in
+`"${WORKER_DIR}:/srv/worker"` or `"${WORKER_DIR}/src:/app"`, through a path relative to the cockpit
+root, as in `"./worker:/srv/worker"`, or set `mount = "none"` on the row. The reverse holds too:
+a container gets only what `cockpit.toml` declares, so a bind outside every `mount = "always"`
+sibling and every `environment.generated_host_paths` entry, or one that leaves its sibling through
+a symbolic link, fails `check` with `COMPOSE_BIND_UNDECLARED`, and `up` refuses it.
 
 ## Local URLs and port families
 

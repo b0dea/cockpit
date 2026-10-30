@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -283,6 +283,34 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         if (context.kind !== 'complete') throw new Error(JSON.stringify(context))
         const readiness = await teardown.withRuntimeReadiness(context.result, async (value) => value, undefined, undefined, 'teardown')
         expect(readiness?.topology.services.map(({ id }) => id)).toEqual(['api'])
+    })
+
+    it('refuses from up a bind inside an always sibling whose real path leaves the sibling', async () => {
+        const candidate = await fixture()
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await publishComposeOwnership(candidate.checkout, loaded.result)
+        const escape = join(candidate.checkout, 'siblings', 'api', 'escape')
+        await mkdir(join(candidate.checkout, 'siblings', 'api'), { recursive: true })
+        await symlink(candidate.home, escape, 'dir')
+        await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({ services: { api: {
+            labels: {
+                'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
+                'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+            },
+            volumes: [{ type: 'bind', source: escape, target: '/cache' }],
+        } } }))
+
+        expect(await runUp({ configPath: candidate.configPath }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'MOUNT_POSTURE_UNAVAILABLE', target: escape,
+            message: expect.stringContaining('resolves through a symbolic link to a path outside sibling api'),
+        }] })
     })
 
     it('binds the public path and session identity and fails closed on unauthenticated runtime output', async () => {

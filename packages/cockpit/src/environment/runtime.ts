@@ -33,6 +33,7 @@ import {
     type CockpitId,
     type StackId,
 } from './contract.js'
+import { compareBindSources } from './compose-topology.js'
 import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     inspectDrainAttemptAuthority,
@@ -173,7 +174,7 @@ export function observeRuntimeExecution(input: {
             sources = [...new Set(values)].sort()
         } catch { sources = undefined }
         mountObserved = sources
-            ? { state: 'available', value: JSON.stringify(sources) === JSON.stringify(expectedMountSources), observedAt }
+            ? { state: 'available', value: mountSourcesMatch(sources, expectedMountSources), observedAt }
             : { state: 'failed', reason: 'runtime mount output is malformed or unreadable', observedAt }
     }
     observations.push(issueObservation({
@@ -1645,8 +1646,13 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
     }
 }
 
-/** Declared mount sources no service binds, and bind sources nothing declares. */
+/** Declared mount sources no service binds inside, and bind sources inside no declared one. */
 export type RuntimeMountMismatch = Readonly<{ missing: readonly string[]; unexpected: readonly string[] }>
+
+function mountSourcesMatch(binds: readonly string[], declared: readonly string[]): boolean {
+    const { missing, unexpected } = compareBindSources(binds, declared)
+    return missing.length === 0 && unexpected.length === 0
+}
 
 export function admitRuntimeTopology(input: {
     readonly plan: RuntimeTopologyPlan
@@ -1675,17 +1681,14 @@ export function admitRuntimeTopology(input: {
             || now < windowStart || now > windowEnd) return unavailable()
         const projected = parseTopology(outcome.stdout, contract.stackId, contract.configSha256, contract.runtime.activeProfiles)
         if (!projected) return unavailable()
-        const declaredBindSources = [...new Set(projected.services.flatMap(({ bindMountSources }) => bindMountSources))].sort()
-        const expected = contract.runtime.expectedMountSources
+        const mounts = compareBindSources(projected.services.flatMap(({ bindMountSources }) => bindMountSources),
+            contract.runtime.expectedMountSources)
         // The caller can name the sibling or host path behind each difference; a bare refusal here
         // left `up` reporting only that readiness authority was unavailable.
-        if (JSON.stringify(declaredBindSources) !== JSON.stringify(expected)) return Object.freeze({
+        if (mounts.missing.length > 0 || mounts.unexpected.length > 0) return Object.freeze({
             kind: 'unavailable' as const,
             reason: 'the bind mounts Compose resolves differ from the declared mount sources',
-            mounts: Object.freeze({
-                missing: Object.freeze(expected.filter((source) => !declaredBindSources.includes(source))),
-                unexpected: Object.freeze(declaredBindSources.filter((source) => !expected.includes(source))),
-            }),
+            mounts,
         })
         const topology = Object.freeze({
             stackId: contract.stackId,

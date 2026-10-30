@@ -6,17 +6,19 @@
 //
 // The runtime topology admitted by runtime.ts serves `up` and keeps only what readiness needs; it
 // drops published ports and image references, which are exactly what these detectors judge.
-import { resolve } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { readAnchoredBatches } from '../generated-environment/transaction.js'
 import { snapshotExecutionStep, type Diagnostic, type ExecutionStep } from './contract.js'
 import type { ResolvedExecutable } from './executable.js'
 import { redactSensitiveText } from './sensitive.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'compose-topology',
     module: 'packages/cockpit/src/environment/compose-topology.ts',
-    exports: ['observeComposeTopology', 'assessComposeTopology'],
+    exports: ['observeComposeTopology', 'assessComposeTopology', 'composeBindPath', 'compareBindSources', 'redirectedBindSources'],
 } as const
 
 export interface ComposeTopologyInput {
@@ -221,28 +223,144 @@ function suggestedVariable(service: string): string {
     return `${service.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_HOST_PORT`
 }
 
+const LEADING_VARIABLE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?+])([^}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))/
+
+/**
+ * Where a volume's host side lands, read from its source as written or as Compose reports it
+ * uninterpolated. `variables` are the values cockpit hands Compose (the sibling directories); any
+ * other variable resolves to its own default, as it does in `up`, or cannot be resolved at all.
+ * Returns the absolute host path of a bind, `'volume'` for a named volume, and `undefined` when the
+ * host side cannot be known.
+ */
+export function composeBindPath(source: string, root: string, variables: Readonly<Record<string, string>>): string | 'volume' | undefined {
+    let text = source
+    const lead = LEADING_VARIABLE.exec(source)
+    if (lead) {
+        const name = (lead[1] ?? lead[4])!
+        const operator = lead[2]
+        const base = Object.hasOwn(variables, name) && operator !== '+' && operator !== ':+' ? variables[name]
+            : operator === '-' || operator === ':-' ? lead[3] : undefined
+        if (base === undefined) return undefined
+        text = base + source.slice(lead[0].length)
+    }
+    if (text.includes('$')) return undefined
+    if (isAbsolute(text)) return resolve(text)
+    if (text === '.' || text === '..' || text.startsWith('./') || text.startsWith('../')) return resolve(root, text)
+    // `~` is the invoking user's home, which cockpit never hands a container; anything else is a volume name.
+    return text.startsWith('~') ? undefined : 'volume'
+}
+
+function contains(parent: string, path: string): boolean {
+    return path === parent || path.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`)
+}
+
+function holder(bind: string, declared: readonly string[]): string | undefined {
+    return declared.filter(source => contains(source, bind)).sort((left, right) => right.length - left.length)[0]
+}
+
+/**
+ * Pairs each bind with the deepest declared mount source holding it. A bind of a directory inside
+ * a mount = "always" checkout (`./api` of the repository) mounts that checkout, so it counts for
+ * it; a bind inside no declared source is undeclared, and a declared source no bind lands in is
+ * missing. Both `check` and `up` judge their binds with this one rule.
+ */
+export function compareBindSources(binds: readonly string[], declared: readonly string[]): Readonly<{
+    missing: readonly string[]; unexpected: readonly string[]
+}> {
+    const used = new Set<string>()
+    const unexpected: string[] = []
+    for (const bind of new Set(binds)) {
+        const owner = holder(bind, declared)
+        if (owner === undefined) unexpected.push(bind)
+        else used.add(owner)
+    }
+    return Object.freeze({
+        missing: Object.freeze([...new Set(declared)].filter(source => !used.has(source)).sort()),
+        unexpected: Object.freeze(unexpected.sort()),
+    })
+}
+
+async function canonicalPath(path: string): Promise<string> {
+    try { return await realpath(path) }
+    catch (error) {
+        // Compose creates a missing bind source, so the nearest existing ancestor decides where it lands.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(path) === path) throw error
+        return join(await canonicalPath(dirname(path)), basename(path))
+    }
+}
+
+/**
+ * The binds inside a declared source whose real path leaves it. Containment above is lexical, and
+ * Docker follows a symbolic link in the bind source, so `./api/cache -> /` would otherwise hand
+ * the host root to a container under a mount = "always" checkout.
+ */
+export async function redirectedBindSources(binds: readonly string[], declared: readonly string[]): Promise<readonly Readonly<{
+    bind: string; holder: string
+}>[]> {
+    const redirected: { bind: string; holder: string }[] = []
+    for (const bind of new Set(binds)) {
+        if (declared.includes(bind)) continue
+        const owner = holder(bind, declared)
+        if (owner === undefined) continue
+        let inside: boolean
+        try { inside = contains(await canonicalPath(owner), await canonicalPath(bind)) }
+        catch { inside = false }
+        if (!inside) redirected.push(Object.freeze({ bind, holder: owner }))
+    }
+    return Object.freeze(redirected.sort((left, right) => left.bind.localeCompare(right.bind)))
+}
+
+export interface ComposeTopologyDeclarations {
+    /** Canonical cockpit root; a relative bind source, or a variable's relative default, resolves against it. */
+    readonly root: string
+    readonly portVariables: readonly string[]
+    readonly siblings: readonly ComposeSiblingMount[]
+    /** The absolute `environment.generated_host_paths`, which `up` hands to containers beside the checkouts. */
+    readonly hostPaths: readonly string[]
+}
+
 /**
  * Judges a cockpit's own Compose topology. A host port that is not drawn from a leased
  * `ports.bases` variable is the same number in every worktree and parallel stack, so the second
  * stack to start fails to bind it; the remaining findings are warnings about what cockpit can
  * then promise, not about whether the stack runs.
  */
-export function assessComposeTopology(
+export async function assessComposeTopology(
     services: readonly ComposeServiceTopology[],
-    portVariables: readonly string[],
-    siblings: readonly ComposeSiblingMount[],
-): readonly Diagnostic[] {
-    const leased = new Set(portVariables)
+    declarations: ComposeTopologyDeclarations,
+): Promise<readonly Diagnostic[]> {
+    const leased = new Set(declarations.portVariables)
     const diagnostics: Diagnostic[] = []
-    // `up` admits the topology only when its bind sources are exactly the mount = "always" checkouts,
-    // so a declared row no service mounts passed check and then refused every runtime command.
-    const sources = services.flatMap(service => service.mountSources)
-    for (const sibling of siblings) {
-        if (sibling.mount !== 'always' || sources.some(source => source === sibling.path || variableName(source) === sibling.var)) continue
+    // `up` admits the topology only when every bind lands inside a mount = "always" checkout or a
+    // generated host path, and every such checkout is mounted; check judges the same binds the same
+    // way, or a configuration check accepts refuses every runtime command.
+    const always = declarations.siblings.filter(sibling => sibling.mount === 'always')
+    const declared = [...always.map(sibling => sibling.path), ...declarations.hostPaths]
+    const variables = Object.fromEntries(declarations.siblings.map(sibling => [sibling.var, sibling.path]))
+    const binds = services.flatMap(service => service.mountSources.map(source => ({
+        service: service.id, source, path: composeBindPath(source, declarations.root, variables) })))
+        .filter(bind => bind.path !== 'volume')
+    const resolved = binds.flatMap(bind => bind.path === undefined ? [] : [bind.path])
+    const { missing, unexpected } = compareBindSources(resolved, declared)
+    const redirected = (await redirectedBindSources(resolved, declared)).map(({ bind }) => bind)
+    for (const sibling of always) {
+        if (!missing.includes(sibling.path)) continue
         diagnostics.push(Object.freeze({
             severity: 'error' as const, code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: `sibling:${sibling.slug}`,
-            message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path}; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
-            fix: `bind-mount it in a service of the Compose file (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>`,
+            message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path} or a directory inside it; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
+            fix: `bind-mount it in a service of the Compose file, whole or a directory inside it (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run ${cockpitCommand('sync')}`,
+        }))
+    }
+    for (const bind of binds) {
+        const why = bind.path === undefined
+            ? 'whose host side names a variable cockpit does not supply and gives it no default'
+            : unexpected.includes(bind.path) ? 'which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry'
+                : redirected.includes(bind.path) ? 'which resolves through a symbolic link to a path outside the sibling that holds it' : undefined
+        if (why === undefined) continue
+        diagnostics.push(Object.freeze({
+            severity: 'error' as const, code: 'COMPOSE_BIND_UNDECLARED', target: `compose:${bind.service}:${bind.source}`,
+            message: `service ${bind.service} bind-mounts ${bind.path ?? bind.source}, ${why}; up hands a container only the checkouts and host paths cockpit.toml declares, so it would refuse to start`,
+            fix: `bind a directory inside a mount = "always" sibling (its variable, as in "\${VAR}/path", or a path relative to the cockpit root), list the path under environment.generated_host_paths, or remove the bind mount from service ${bind.service}; then run ${cockpitCommand('check')}`,
         }))
     }
     for (const service of services) {

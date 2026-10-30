@@ -2653,6 +2653,24 @@ fi
         ] } } }, [], { expectedMountSources: ['/workspace/worker', '/workspace/应用'] })
         expect(unmounted.admitted).toEqual({ kind: 'unavailable', reason: 'the bind mounts Compose resolves differ from the declared mount sources',
             mounts: { missing: ['/workspace/worker'], unexpected: [] } })
+
+        // A bind inside a declared checkout mounts it; a sibling directory sharing its name prefix does not.
+        const subpath = await topologyEvidence({ services: { api: { volumes: [
+            { type: 'bind', source: '/workspace/应用/api', target: '/app' },
+        ] } } }, [], { expectedMountSources: ['/workspace/应用'] })
+        expect(subpath.admitted.kind).toBe('complete')
+        const prefixed = await topologyEvidence({ services: { api: { volumes: [
+            { type: 'bind', source: '/workspace/应用/api', target: '/app' },
+            { type: 'bind', source: '/workspace/应用-copy', target: '/copy' },
+        ] } } }, [], { expectedMountSources: ['/workspace/应用'] })
+        expect(prefixed.admitted).toEqual({ kind: 'unavailable', reason: 'the bind mounts Compose resolves differ from the declared mount sources',
+            mounts: { missing: [], unexpected: ['/workspace/应用-copy'] } })
+        // The deeper checkout owns a nested bind, so the outer one still has to be mounted itself.
+        const nested = await topologyEvidence({ services: { api: { volumes: [
+            { type: 'bind', source: '/workspace/应用/worker/src', target: '/app' },
+        ] } } }, [], { expectedMountSources: ['/workspace/应用', '/workspace/应用/worker'] })
+        expect(nested.admitted).toEqual({ kind: 'unavailable', reason: 'the bind mounts Compose resolves differ from the declared mount sources',
+            mounts: { missing: ['/workspace/应用'], unexpected: [] } })
     })
 
     it('rejects service evidence after the clock moves before its observation window', async () => {
