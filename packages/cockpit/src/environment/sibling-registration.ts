@@ -13,7 +13,7 @@ import { lstat, readdir, readFile, realpath } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { parse } from 'smol-toml'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { loadCockpitConfig } from '../config/load.js'
+import { loadCockpitConfig, readBoundedInput } from '../config/load.js'
 import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type SiblingEdit, type SiblingTableRow } from '../config/sibling-toml.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
@@ -416,10 +416,12 @@ async function sourceText(path: string, sha256: string): Promise<string | Siblin
 
 interface Reference { readonly where: string; readonly detail: string }
 
+const siblingVariable = (row: Sibling) => new RegExp(`(?<![A-Z0-9_])${row.var}(?![A-Z0-9_])`)
+
 /** Every place outside the row itself that names the sibling by slug, exported variable or projection file. */
 function referencesTo(config: CockpitConfig, index: number): Reference[] {
     const row = config.sibling[index]!
-    const variable = new RegExp(`(?<![A-Z0-9_])${row.var}(?![A-Z0-9_])`)
+    const variable = siblingVariable(row)
     const found: Reference[] = []
     const walk = (value: unknown, path: string) => {
         if (typeof value === 'string') {
@@ -438,6 +440,45 @@ function referencesTo(config: CockpitConfig, index: number): Reference[] {
     return found
 }
 
+/**
+ * A compose-first cockpit's own Compose files consume the sibling through its exported variable,
+ * which cockpit.toml alone cannot show; removing the row would leave Compose an unset variable.
+ */
+async function composeReferencesTo(configDir: string, config: CockpitConfig, row: Sibling): Promise<Reference[] | SiblingOutcome> {
+    const variable = siblingVariable(row)
+    const found: Reference[] = []
+    for (const composeFile of config.environment.compose_files) {
+        const path = resolve(configDir, composeFile)
+        let text: string
+        try {
+            const read = await readBoundedInput(path)
+            if (read.kind === 'too-large') throw new Error('it exceeds the structured input limit')
+            text = Buffer.from(read.bytes).toString('utf8')
+        } catch (error) {
+            return refused('COMPOSE_TOPOLOGY_UNAVAILABLE',
+                `${path} could not be read (${(error as NodeJS.ErrnoException).code ?? (error instanceof Error ? error.message : 'unknown error')}), so cockpit cannot tell whether it still uses ${row.var}; nothing was written`, composeFile)
+        }
+        if (variable.test(text)) found.push({ where: composeFile, detail: `mentions ${row.var}` })
+    }
+    return found
+}
+
+/** Projections exist only for guides a mounted sibling actually had, so the list is read from disk. */
+async function existingGuideProjections(configDir: string, row: Sibling): Promise<string[]> {
+    const flagged: string[] = []
+    for (const guide of row.guides) {
+        const name = `.sibling-${row.slug}-${guide.replaceAll('/', '-')}`
+        try {
+            await lstat(resolve(configDir, name))
+            flagged.push(`${name} (guide projection)`)
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+            flagged.push(`${name} (guide projection; could not be inspected: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`)
+        }
+    }
+    return flagged
+}
+
 export async function runSiblingRemove(input: SiblingRemoveInput): Promise<SiblingOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
@@ -448,7 +489,9 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
         return refused('SIBLING_NOT_FOUND', `no sibling "${input.slug}" in ${configPath}; declared: ${config.sibling.map((sibling) => sibling.slug).join(', ')}`, input.slug)
     }
     const row = config.sibling[index]!
-    const references = referencesTo(config, index)
+    const composeReferences = await composeReferencesTo(dirname(configPath), config, row)
+    if (!Array.isArray(composeReferences)) return composeReferences
+    const references = [...referencesTo(config, index), ...composeReferences]
     if (references.length > 0) {
         return Object.freeze({ ...refused('SIBLING_REFERENCED',
             `sibling "${row.slug}" is still referenced, so its table was not removed. Remove or repoint these first: ${references.map((reference) => `${reference.where} (${reference.detail})`).join('; ')}`, row.slug),
@@ -463,11 +506,11 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
     if (failure) return failure
 
     const flagged = [
-        ...row.guides.map((guide) => `.sibling-${row.slug}-${guide.replaceAll('/', '-')} (guide projection)`),
+        ...await existingGuideProjections(dirname(configPath), row),
         ...(row.derives?.generated ? [`the generated environment files derived from ${row.slug}'s generated row`] : []),
     ]
     const message = `removed sibling "${row.slug}" from ${configPath}. The checkout at ${resolve(dirname(configPath), config.cockpit.siblings_root, row.dir)} and every generated file were left alone.\n`
-        + `The next sync will flag these for review: ${flagged.join('; ')}.\n`
+        + (flagged.length > 0 ? `The next sync will flag these for review: ${flagged.join('; ')}.\n` : '')
         + 'Comments above the removed table were kept. Run `cockpit sync --dry-run` to see exactly what changes before syncing.\n'
     return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: message,
         result: Object.freeze({ action: 'removed', config: configPath, slug: row.slug, dir: row.dir, flaggedForReview: flagged, next: `cockpit sync --config ${configPath} --dry-run` }) })

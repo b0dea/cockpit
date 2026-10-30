@@ -464,6 +464,42 @@ describe('sibling remove', () => {
         expect(after).toContain('# Machine floor, measured once.')
         expect(after).toContain('# Port leases.\n[ports.bases]')
         expect(removed.artifact).toContain('sync --dry-run')
-        expect(removed.artifact).toContain('.sibling-docs-CLAUDE.md')
+        // docs is never mounted, so no guide projection of it exists and none is flagged.
+        expect(removed.result).toMatchObject({ flaggedForReview: [] })
+        expect(removed.artifact).not.toContain('.sibling-docs-')
+    })
+
+    it('flags only the guide projections that exist beside cockpit.toml', async () => {
+        const { root, configPath } = await estate()
+        await writeFile(join(root, '.sibling-docs-AGENTS.md'), 'projected guide\n')
+
+        const removed = await runSiblingRemove({ configPath, slug: 'docs' })
+
+        expect(removed.status).toBe(0)
+        expect(removed.result).toMatchObject({ flaggedForReview: ['.sibling-docs-AGENTS.md (guide projection)'] })
+    })
+
+    it('refuses while the cockpit\'s own Compose file uses the sibling\'s variable', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-sibling-compose-')))
+        roots.push(root)
+        const configPath = join(root, 'cockpit.toml')
+        await writeFile(configPath, [
+            '[cockpit]', 'name = "compose-siblings"', 'siblings_root = "."', '',
+            '[[sibling]]', 'slug = "api"', 'dir = "api"', 'mount = "always"', 'acquire = "none"', 'var = "API_DIR"', 'purpose = "Synthetic API"', '',
+            '[[sibling]]', 'slug = "web"', 'dir = "web"', 'mount = "always"', 'acquire = "none"', 'var = "WEB_DIR"', 'purpose = "Synthetic web"', '',
+            '[ports.bases]', 'API_HOST_PORT = 4100', '',
+            '[environment]', 'compose_files = ["compose.yml"]', '',
+        ].join('\n'))
+        await mkdir(join(root, 'api'))
+        await mkdir(join(root, 'web'))
+        await writeFile(join(root, 'compose.yml'), 'services:\n  web:\n    build: ${WEB_DIR}\n  api:\n    build: ${API_DIR}\n')
+        const before = await readFile(configPath, 'utf8')
+
+        const blocked = await runSiblingRemove({ configPath, slug: 'web' })
+
+        expect(blocked.status).toBe(2)
+        expect(blocked.diagnostics[0]).toMatchObject({ code: 'SIBLING_REFERENCED',
+            message: expect.stringContaining('compose.yml (mentions WEB_DIR)') })
+        expect(await readFile(configPath, 'utf8')).toBe(before)
     })
 })
