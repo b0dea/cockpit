@@ -150,6 +150,10 @@ describe('surface ownership', () => {
         expect(renderSharedPostimage(before, entry, prior)).toEqual({
             kind: 'complete', bytes: 'human prefix\n<!-- cockpit:instructions:start -->\nreplacement\n<!-- cockpit:instructions:end -->\nhuman suffix\n',
         })
+        // An edit inside cockpit's own markers is named as an edit with its recovery, not as foreign content.
+        expect(renderSharedPostimage(before.replace('old\n', 'hand edit\n'), entry, prior)).toMatchObject({ kind: 'refusal', diagnostic: {
+            code: 'SURFACE_STATE_CONFLICT', message: expect.stringContaining('was edited by hand since cockpit last wrote it'),
+        } })
         expect(renderSharedPostimage('human\n<!-- cockpit:instructions:start -->\n', entry)).toMatchObject({ kind: 'refusal' })
         expect(renderSharedPostimage(`${before}<!-- cockpit:instructions:start -->\n<!-- cockpit:instructions:end -->\n`, entry)).toMatchObject({ kind: 'refusal' })
     })
@@ -284,7 +288,9 @@ describe('confined generated ownership', () => {
         if (projected.kind !== 'complete') throw new Error('expected facts')
         const observe = (row: unknown) => classifyGeneratedPaths(projected.facts, [row])
         expect(observe({ path: 'raw.bin', kind: 'file', bytes, confinement: 'confined', identity: 'inode' })).toMatchObject({ kind: 'complete', paths: [{ state: 'unchanged' }] })
-        expect(observe({ path: 'raw.bin', kind: 'file', bytes: Uint8Array.of(0xff), confinement: 'confined', identity: 'inode' })).toMatchObject({ kind: 'complete', paths: [{ state: 'modified' }] })
+        expect(observe({ path: 'raw.bin', kind: 'file', bytes: Uint8Array.of(0xff), confinement: 'confined', identity: 'inode' })).toMatchObject({ kind: 'complete', paths: [{ state: 'modified', diagnostics: [
+            expect.objectContaining({ message: expect.stringContaining('undo the edit or delete the file, then rerun cockpit sync') }),
+        ] }] })
         expect(observe({ path: 'raw.bin', kind: 'missing', confinement: 'confined' })).toMatchObject({ kind: 'complete', paths: [{ state: 'missing', diagnostics: [] }] })
         for (const confinement of ['escaping', 'dangling', 'unknown']) {
             expect(observe({ path: 'raw.bin', kind: 'file', bytes, confinement, identity: 'inode' })).toMatchObject({ kind: 'complete', paths: [{ state: 'unknown', diagnostics: [expect.objectContaining({ target: 'raw.bin' })] }] })

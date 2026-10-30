@@ -248,6 +248,8 @@ describe('the public synthetic cockpit', () => {
         expect(guide).toContain('cockpit test-run --select <kind>:<value>')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
+        // Sync refuses a hand edit rather than replacing it, so the guide must not promise an overwrite.
+        expect(guide).toContain('sync refuses to overwrite it; to recover, undo the edit')
         for (const skill of ['cockpit-setup', 'cockpit-explain', 'cockpit-fix', 'cockpit-work']) expect(guide).toMatch(new RegExp(`- \`${skill}\`: Use when `))
         expect(guide.split('\n').length).toBeLessThanOrEqual(60)
         expectNoDevelopmentMarkers(root)

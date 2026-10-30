@@ -67,7 +67,7 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         `- Do not push to ${pushRefusedBranches.map(code).join(' or ')}. The guard refuses it, because those branches are shared and a bad push reaches everyone.`,
     )
     lines.push(
-        `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. Sync overwrites hand edits and \`cockpit check\` reports them as drift.`,
+        `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. \`cockpit check\` reports a hand edit as drift and sync refuses to overwrite it; to recover, undo the edit (or delete a file cockpit wrote whole), then sync.`,
         '',
         '# Skills', '',
         ...input.skills.map(skill => `- ${code(skill.name)}: ${skill.description ? inline(skill.description) : 'not declared'}`),
