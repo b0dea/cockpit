@@ -5,6 +5,8 @@ import { chmod, link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink } from '
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { readFenceMarkerFile } from '../../libexec/fence-marker.cjs'
 import {
     ENVIRONMENT_CODES,
     EXECUTION_FAILURE_CODES,
@@ -88,25 +90,9 @@ function exactFenceMarker(value: unknown, fence: ExecutionFence, identity: {
     return marker as unknown as FenceMarker
 }
 
-async function readFenceMarker(fence: ExecutionFence): Promise<FenceMarker | undefined> {
-    let handle: Awaited<ReturnType<typeof open>> | undefined
-    try {
-        handle = await open(fence.markerPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-        const before = await handle.stat({ bigint: true })
-        if (!before.isFile() || before.size > 1_024n) return undefined
-        const bytes = Buffer.alloc(Number(before.size) + 1)
-        const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
-        const after = await handle.stat({ bigint: true })
-        const named = await lstat(fence.markerPath, { bigint: true })
-        const parent = await lstat(dirname(fence.markerPath), { bigint: true })
-        if (bytesRead !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
-            || !named.isFile() || named.dev !== before.dev || named.ino !== before.ino
-            || !parent.isDirectory() || parent.isSymbolicLink()) return undefined
-        const identity = { markerDev: String(before.dev), markerIno: String(before.ino), parentDev: String(parent.dev), parentIno: String(parent.ino) }
-        return exactFenceMarker(JSON.parse(bytes.subarray(0, bytesRead).toString('utf8')), fence, identity)
-    } catch { return undefined } finally {
-        try { await handle?.close() } catch { /* unreadable marker */ }
-    }
+function readFenceMarker(fence: ExecutionFence): FenceMarker | undefined {
+    const read = readFenceMarkerFile(fence.markerPath)
+    return read && exactFenceMarker(read.value, fence, read.identity)
 }
 
 async function pathAbsent(path: string): Promise<boolean> {
@@ -141,7 +127,7 @@ async function publishFenceMarker(
         await unlink(prepared)
         const directory = await open(dirname(fence.markerPath), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
         try { await directory.sync() } finally { await directory.close() }
-        const authenticated = await readFenceMarker(fence)
+        const authenticated = readFenceMarker(fence)
         return authenticated?.status === status && authenticated.supervisorPid === supervisorPid ? authenticated : undefined
     } catch {
         try { await handle?.close() } catch { /* incomplete prepared marker */ }
@@ -154,34 +140,9 @@ const writeActiveFence = (fence: ExecutionFence, supervisorPid: number) =>
     publishFenceMarker(fence, 'active', supervisorPid)
 const writeCancelledFence = (fence: ExecutionFence) => publishFenceMarker(fence, 'cancelled')
 
-const FENCED_GROUP_RUNNER = String.raw`
-const { spawn } = require('node:child_process'); const fs = require('node:fs'); const path = require('node:path')
-const c = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8'))
-process.on('SIGTERM', () => {}); process.on('SIGINT', () => {})
-const expired = c.spawnNotAfter !== undefined && Date.now() > Date.parse(c.spawnNotAfter)
-const child = expired ? undefined : spawn(c.command, c.args, { argv0: c.argv0, cwd: c.cwd, env: process.env, stdio: ['ignore', 'inherit', 'inherit'] })
-let reported = false; const report = code => { if (!reported) { reported = true; fs.writeSync(3, 'DONE ' + (Number.isInteger(code) ? code : 1) + '\n') } }
-if (expired) fs.writeSync(3, 'EXPIRED\n'); else { child.once('error', () => report(1)); child.once('close', code => report(code)) }
-const readActive = () => { let fd; try { fd = fs.openSync(c.fence.markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); const before = fs.fstatSync(fd, { bigint: true }); if (!before.isFile() || before.size > 1024n) return; const bytes = Buffer.alloc(Number(before.size) + 1); const count = fs.readSync(fd, bytes, 0, bytes.length, 0); const after = fs.fstatSync(fd, { bigint: true }); const named = fs.lstatSync(c.fence.markerPath, { bigint: true }); const parent = fs.lstatSync(path.dirname(c.fence.markerPath), { bigint: true }); if (count !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || !named.isFile() || named.dev !== before.dev || named.ino !== before.ino || !parent.isDirectory() || parent.isSymbolicLink()) return; const current = JSON.parse(bytes.subarray(0, count).toString('utf8')); if (current.format !== 'cockpit-executor/v1' || current.attemptId !== c.fence.attemptId || current.supervisorPid !== c.approved.supervisorPid || current.status !== 'active' || current.markerDev !== c.approved.markerDev || current.markerIno !== c.approved.markerIno || current.parentDev !== c.approved.parentDev || current.parentIno !== c.approved.parentIno || current.markerDev !== String(before.dev) || current.markerIno !== String(before.ino) || current.parentDev !== String(parent.dev) || current.parentIno !== String(parent.ino)) return; return current } catch { return } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} } }
-const publishTerminating = () => { const current = readActive(); if (!current) return false; const temporary = c.fence.markerPath + '.runner-' + process.pid; let fd; try { fd = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600); const identity = fs.fstatSync(fd, { bigint: true }); fs.writeFileSync(fd, JSON.stringify({ ...current, markerDev: String(identity.dev), markerIno: String(identity.ino), status: 'terminating', groupPid: process.pid }) + '\n'); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined; if (!readActive()) return false; fs.renameSync(temporary, c.fence.markerPath); const directory = fs.openSync(path.dirname(c.fence.markerPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.fsyncSync(directory); fs.closeSync(directory); try { fs.unlinkSync(c.fence.socketPath) } catch (error) { if (error.code !== 'ENOENT') return false }; const socketDirectory = fs.openSync(path.dirname(c.fence.socketPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.fsyncSync(socketDirectory); fs.closeSync(socketDirectory); return true } catch { return false } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {}; try { fs.unlinkSync(temporary) } catch {} } }
-let stopping = false; let controlled = false; const stop = fallback => { if (stopping) return; if (fallback) publishTerminating(); stopping = true; process.kill(-process.pid, 'SIGTERM'); setTimeout(() => process.kill(-process.pid, 'SIGKILL'), 50) }
-let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; if (stopping || !input.includes('\n')) return; if (input !== 'STOP\n') return stop(true); controlled = true; stop(false) }); process.stdin.on('end', () => { if (!controlled) stop(true) }); setInterval(() => {}, 1000)
-`
-
-const FENCED_SUPERVISOR = String.raw`
-const { spawn } = require('node:child_process'); const { createServer } = require('node:net'); const fs = require('node:fs'); const path = require('node:path')
-const c = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8')); let action; let approved; let started = false; let finished = false; let terminating = false; let expired = false; let actionCode = 1
-const gone = pid => { try { process.kill(-pid, 0); return false } catch (e) { return e.code === 'ESRCH' } }
-const cleanup = () => { try { fs.unlinkSync(c.fence.socketPath) } catch {} }
-const readActive = () => { let fd; try { fd = fs.openSync(c.fence.markerPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); const before = fs.fstatSync(fd, { bigint: true }); if (!before.isFile() || before.size > 1024n) return; const bytes = Buffer.alloc(Number(before.size) + 1); const count = fs.readSync(fd, bytes, 0, bytes.length, 0); const after = fs.fstatSync(fd, { bigint: true }); const named = fs.lstatSync(c.fence.markerPath, { bigint: true }); const parent = fs.lstatSync(path.dirname(c.fence.markerPath), { bigint: true }); if (count !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || !named.isFile() || named.dev !== before.dev || named.ino !== before.ino || !parent.isDirectory() || parent.isSymbolicLink()) return; const current = JSON.parse(bytes.subarray(0, count).toString('utf8')); if (current.format !== 'cockpit-executor/v1' || current.attemptId !== c.fence.attemptId || current.supervisorPid !== process.pid || current.status !== 'active' || current.markerDev !== String(before.dev) || current.markerIno !== String(before.ino) || current.parentDev !== String(parent.dev) || current.parentIno !== String(parent.ino)) return; return current } catch { return } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} } }
-const durable = () => { const current = readActive(); if (!current || !approved || current.markerDev !== approved.markerDev || current.markerIno !== approved.markerIno || current.parentDev !== approved.parentDev || current.parentIno !== approved.parentIno) return false; const temporary = c.fence.markerPath + '.supervisor-' + process.pid; let fd; try { fd = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600); const identity = fs.fstatSync(fd, { bigint: true }); fs.writeFileSync(fd, JSON.stringify({ ...current, markerDev: String(identity.dev), markerIno: String(identity.ino), status: 'terminated', finishedAt: new Date().toISOString() }) + '\n'); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined; const latest = readActive(); if (!latest || latest.markerDev !== approved.markerDev || latest.markerIno !== approved.markerIno || latest.parentDev !== approved.parentDev || latest.parentIno !== approved.parentIno) return false; fs.renameSync(temporary, c.fence.markerPath); const directory = fs.openSync(path.dirname(c.fence.markerPath), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); fs.fsyncSync(directory); fs.closeSync(directory); return true } catch { return false } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {}; try { fs.unlinkSync(temporary) } catch {} } }
-const finish = deadline => { if (finished) return; if (action && !gone(action.pid)) { if (Date.now() >= deadline) { cleanup(); return process.exit(125) } return setTimeout(() => finish(deadline), 10) } finished = true; server.close(); cleanup(); if (!durable()) process.exit(125); if (expired) fs.writeSync(3, 'EXPIRED\n'); process.exit(actionCode) }
-const terminate = code => { if (!action || terminating) return; terminating = true; actionCode = Number.isInteger(code) ? code : 1; try { action.stdin.end('STOP\n') } catch { cleanup(); process.exit(125) } }
-const server = createServer(socket => { let input = ''; socket.setEncoding('utf8'); socket.on('data', chunk => { input += chunk; if (input.length > 256) return socket.destroy(); if (!input.includes('\n')) return; if (input.trim() !== c.fence.attemptId) return socket.destroy(); socket.end(JSON.stringify({ attemptId: c.fence.attemptId, supervisorPid: process.pid }) + '\n'); terminate() }) })
-try { fs.unlinkSync(c.fence.socketPath) } catch (e) { if (e.code !== 'ENOENT') process.exit(125) }
-server.listen(c.fence.socketPath, () => fs.writeSync(3, 'READY\n'))
-process.stdin.setEncoding('utf8'); let input = ''; process.stdin.on('data', chunk => { input += chunk; if (started || !input.includes('\n')) return; const fields = input.trim().split(' '); if (fields.length !== 6 || (fields[0] !== 'GO' && fields[0] !== 'CANCEL') || fields[1] !== c.fence.attemptId || fields.slice(2).some(value => !/^[0-9]+$/.test(value))) { cleanup(); return process.exit(125) }; approved = { markerDev: fields[2], markerIno: fields[3], parentDev: fields[4], parentIno: fields[5] }; started = true; if (fields[0] === 'CANCEL' || c.spawnNotAfter !== undefined && Date.now() > Date.parse(c.spawnNotAfter)) { expired = true; return finish(Date.now() + 2000) }; const encoded = Buffer.from(JSON.stringify({ command: c.command, args: c.args, argv0: c.argv0, cwd: c.cwd, spawnNotAfter: c.spawnNotAfter, fence: c.fence, approved: { ...approved, supervisorPid: process.pid } })).toString('base64url'); action = spawn(process.execPath, ['-e', c.runner, encoded], { cwd: c.cwd, env: process.env, stdio: ['pipe', 'inherit', 'inherit', 'pipe'], detached: true }); let control = ''; action.stdio[3].setEncoding('utf8'); action.stdio[3].on('data', chunk => { control += chunk; if (control.length > 64) { cleanup(); return process.exit(125) }; if (!control.includes('\n')) return; if (control === 'EXPIRED\n') { expired = true; return terminate(1) }; const match = /^DONE (-?[0-9]+)\n$/.exec(control); if (!match) { cleanup(); return process.exit(125) }; terminate(Number(match[1])) }); action.once('error', () => { cleanup(); process.exit(125) }); action.once('close', () => { if (!terminating) { cleanup(); return process.exit(125) }; finish(Date.now() + 2000) }) }); process.stdin.on('end', () => { if (!started) { cleanup(); process.exit(125) } }); process.on('SIGTERM', () => terminate(1)); process.on('SIGINT', () => terminate(1))
-`
+// The supervisor and its group runner are separate programs so a fenced action outlives this
+// process; see libexec/fenced-supervisor.cjs for their protocol.
+const FENCED_SUPERVISOR = fileURLToPath(new URL('../../libexec/fenced-supervisor.cjs', import.meta.url))
 
 async function waitForFenceReady(child: ReturnType<typeof spawn>): Promise<boolean> {
     const control = child.stdio[3]
@@ -204,8 +165,8 @@ async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string
     const fence = step.executionFence
     if (!fence || !validExecutionFence(fence) || process.platform === 'win32' || !await secureFenceSocketDirectory(fence)) return undefined
     const [command, ...args] = argv
-    const encoded = Buffer.from(JSON.stringify({ command, args, argv0: step.argv0, cwd: step.cwd, spawnNotAfter: step.spawnNotAfter, fence, runner: FENCED_GROUP_RUNNER })).toString('base64url')
-    const supervisor = spawn(process.execPath, ['-e', FENCED_SUPERVISOR, encoded], {
+    const encoded = Buffer.from(JSON.stringify({ command, args, argv0: step.argv0, cwd: step.cwd, spawnNotAfter: step.spawnNotAfter, fence })).toString('base64url')
+    const supervisor = spawn(process.execPath, ['--', FENCED_SUPERVISOR, encoded], {
         cwd: step.cwd, env: step.env, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
     })
     const active = supervisor.pid === undefined || !await waitForFenceReady(supervisor)
@@ -232,10 +193,10 @@ export async function repairFencedExecution(fence: ExecutionFence): Promise<
     | { readonly kind: 'refusal'; readonly code: typeof ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
 > {
     if (!validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-    let marker = await readFenceMarker(fence)
+    let marker = readFenceMarker(fence)
     if (!marker) {
         if (!await pathAbsent(fence.markerPath)) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-        marker = await writeCancelledFence(fence) ?? await readFenceMarker(fence)
+        marker = await writeCancelledFence(fence) ?? readFenceMarker(fence)
         if (!marker) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
     }
     if (marker.status === 'active') {
@@ -251,7 +212,7 @@ export async function repairFencedExecution(fence: ExecutionFence): Promise<
     }
     const deadline = Date.now() + FENCE_REPAIR_MS
     while (Date.now() <= deadline) {
-        marker = await readFenceMarker(fence)
+        marker = readFenceMarker(fence)
         if (marker?.status === 'cancelled' && await pathAbsent(fence.socketPath)) return { kind: 'complete', evidence: issueFencedTermination(fence) }
         if (marker?.status === 'terminated' && fencedProcessGone(marker.supervisorPid!)) return { kind: 'complete', evidence: issueFencedTermination(fence) }
         if (marker?.status === 'terminating' && fencedProcessGone(marker.supervisorPid!)
@@ -265,7 +226,7 @@ export async function repairFencedExecution(fence: ExecutionFence): Promise<
 
 export async function cleanupFencedExecution(fence: ExecutionFence): Promise<boolean> {
     if (!validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return false
-    const marker = await readFenceMarker(fence)
+    const marker = readFenceMarker(fence)
     if (!marker) return await pathAbsent(fence.markerPath) && await pathAbsent(fence.socketPath)
     if (marker.status === 'active' || marker.status === 'terminated' && !fencedProcessGone(marker.supervisorPid!)
         || marker.status === 'terminating' && (!fencedProcessGone(marker.supervisorPid!) || !fencedProcessGone(-marker.groupPid!))
