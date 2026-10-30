@@ -38,7 +38,9 @@ const REVIEWED_EXECUTABLE_LOCK_NODES = Object.freeze([
     {"path": "node_modules/which", "version": "2.0.2", "hasInstallScript": false, "bin": {"node-which": "bin/node-which"}},
     {"path": "node_modules/why-is-node-running", "version": "3.2.1", "hasInstallScript": false, "bin": {"why-is-node-running": "cli.js"}},
     {"path": "node_modules/yaml", "version": "2.9.1", "hasInstallScript": false, "bin": {"yaml": "bin.mjs"}},
-    {"path": "packages/cockpit", "version": "0.0.0", "hasInstallScript": false, "bin": {"cockpit": "bin/cockpit.mjs"}},
+    // The workspace's own version is read from its manifest: every release moves it, and the
+    // lockfile must move with it.
+    {"path": "packages/cockpit", "hasInstallScript": false, "bin": {"cockpit": "bin/cockpit.mjs"}},
 ])
 // Only gates no file in this repository can prove. The source-revision stamp, provenance
 // and dependency cooldown are checked by `releaseDiagnostics` and are not listed here.
@@ -427,7 +429,7 @@ function releaseDiagnostics(root) {
         if (!provenance || job.permissions?.['id-token'] !== 'write') {
             diagnostics.push(diagnostic('RELEASE_PROVENANCE_MISSING', '.github/workflows/release.yml', 'the release job must publish with provenance (NPM_CONFIG_PROVENANCE or --provenance) and hold id-token: write'))
         }
-        const evidence = steps.find(step => step.name === 'attach authenticated release evidence')
+        const evidence = steps.find(step => step.name === 'upload the release record to the GitHub release')
         const evidenceBody = typeof evidence?.run === 'string' ? evidence.run : ''
         if (evidence?.if !== "steps.changesets.outputs.published == 'true'"
             || evidence?.env?.PUBLISHED_PACKAGES !== '${{ steps.changesets.outputs.published-packages }}'
@@ -492,7 +494,8 @@ export function inspectSupplyChain(root, packFiles) {
     if (JSON.stringify(sortedRecord(rootManifest.allowScripts)) !== JSON.stringify(reviewedAllowScripts())) {
         diagnostics.push(diagnostic('ALLOW_SCRIPTS_POLICY_MISMATCH', 'package.json', 'allowScripts must exactly match the reviewed executable dependency policy'))
     }
-    const reviewedLockNodes = REVIEWED_EXECUTABLE_LOCK_NODES.map(({ allowScript: _allowScript, ...row }) => row)
+    const reviewedLockNodes = REVIEWED_EXECUTABLE_LOCK_NODES.map(({ allowScript: _allowScript, ...row }) =>
+        row.path === 'packages/cockpit' ? { path: row.path, version: packageManifest.version, ...row } : row)
     if (JSON.stringify(executableLockNodes(lock)) !== JSON.stringify(reviewedLockNodes)) {
         diagnostics.push(diagnostic('LOCK_EXECUTABLE_POLICY_CHANGED', 'package-lock.json', 'installer and binary lock nodes require explicit policy review'))
     }

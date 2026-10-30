@@ -4,6 +4,12 @@ name: Release
 # script below, which publishes with npm trusted publishing (OIDC, no stored token) and
 # attaches provenance. While packages/cockpit is `private: true` the script logs that and
 # publishes nothing, so this pipeline can sit ready until the package is made public.
+#
+# Two limits of the token this job holds, both handled by hand and described in
+# docs/contributing/releasing.md: trusted publishing cannot create a package, so the first
+# publication is a manual bootstrap; and a pull request opened with GITHUB_TOKEN starts no
+# workflows, so CI (and the required ci-ok check) runs on the Version Packages pull request only
+# after a maintainer closes and reopens it.
 on:
   push:
     branches: [main]
@@ -43,17 +49,21 @@ jobs:
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          version-script: bash .github/scripts/release-version.sh
           publish-script: bash .github/scripts/release-publish.sh
           pr-title: Version Packages
           commit-message: Version Packages
         env:
           NPM_CONFIG_PROVENANCE: 'true'
-      - name: attach authenticated release evidence
+      # The record names the exact published version and its registry integrity, so `cockpit
+      # upgrade` can compare two releases offline. See docs/release-policy.md.
+      - name: upload the release record to the GitHub release
         if: steps.changesets.outputs.published == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
         run: |
+          # shellcheck disable=SC2016 # the single quotes hold a JavaScript template literal for node, not shell
           IFS=$'\t' read -r package_name version < <(node -e '
             const published = JSON.parse(process.env.PUBLISHED_PACKAGES)
             if (!Array.isArray(published) || published.length !== 1

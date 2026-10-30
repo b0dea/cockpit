@@ -34,13 +34,14 @@ function fixture() {
     scratch.push(root)
     for (const path of [
         'package.json', 'package-lock.json', '.github/workflows/ci.yml', '.github/workflows/external-links.yml',
-        '.github/workflows/release.yml', '.github/workflows/dependabot-automerge.yml', '.github/scripts/release-publish.sh', '.github/dependabot.yml',
+        '.github/workflows/release.yml', '.github/workflows/dependabot-automerge.yml', '.github/dependabot.yml',
     ]) {
         mkdirSync(dirname(join(root, path)), { recursive: true })
         cpSync(join(repositoryRoot, path), join(root, path))
     }
     cpSync(join(repositoryRoot, 'packages/cockpit'), join(root, 'packages/cockpit'), { recursive: true })
     cpSync(join(repositoryRoot, '.github/actions'), join(root, '.github/actions'), { recursive: true })
+    cpSync(join(repositoryRoot, '.github/scripts'), join(root, '.github/scripts'), { recursive: true })
     return root
 }
 
@@ -125,6 +126,14 @@ describe('the supply-chain readiness detector', () => {
         expect(result.operatorGaps).toEqual([
             'package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation',
         ])
+    })
+
+    it('accepts a release version bump recorded in both manifest and lockfile and refuses a stale lockfile', () => {
+        const root = fixture()
+        mutate(root, 'packages/cockpit/package.json', value => { value.version = '0.1.0' })
+        expect(inspect(root, PACK_FILES).diagnostics.map(row => row.code)).toContain('LOCK_EXECUTABLE_POLICY_CHANGED')
+        mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].version = '0.1.0' })
+        expect(inspect(root, PACK_FILES).diagnostics).toEqual([])
     })
 
     it('admits the shipped release-evidence helper and refuses an inventory that omits it', () => {
@@ -383,4 +392,53 @@ it('reads both supported npm pack inventories and refuses ambiguous or malformed
             expect(result.stderr).toContain('[PACK_METADATA_INVALID]')
         }
     }
+})
+
+it('stops the release publish before stamping when the package does not exist on npm yet', () => {
+    // npm trusted publishing cannot create a package, so the first publication is a manual
+    // bootstrap. Without this stop the run would fail later with an authentication error that
+    // does not say why.
+    const root = mkdtempSync(join(tmpdir(), 'cockpit-release-publish-'))
+    scratch.push(root)
+    mkdirSync(join(root, 'packages/cockpit'), { recursive: true })
+    const manifest = join(root, 'packages/cockpit/package.json')
+    writeFileSync(manifest, `${JSON.stringify({ name: '@b0dea/cockpit', version: '0.1.0', cockpitSourceRevision: 'development' }, null, 2)}\n`)
+    const bin = join(root, 'fake-bin')
+    mkdirSync(bin)
+    const published = join(root, 'changeset-publish-ran')
+    const run = (registry: 'absent' | 'present' | 'unreachable') => {
+        writeFileSync(join(bin, 'npm'), [
+            '#!/usr/bin/env bash',
+            'if [[ "$1" == --version ]]; then echo 11.6.0; exit 0; fi',
+            `if [[ "$1" == view ]]; then case ${registry} in`,
+            '  absent) echo "npm error code E404" >&2; exit 1 ;;',
+            '  unreachable) echo "npm error code ECONNREFUSED" >&2; exit 1 ;;',
+            '  present) echo "$2"; exit 0 ;;',
+            'esac; fi',
+            'exit 9', '',
+        ].join('\n'))
+        writeFileSync(join(bin, 'npx'), `#!/usr/bin/env bash\n[[ "$*" == "changeset publish" ]] && : > ${JSON.stringify(published)}\n`)
+        chmodSync(join(bin, 'npm'), 0o755)
+        chmodSync(join(bin, 'npx'), 0o755)
+        return spawnSync('bash', [join(repositoryRoot, '.github/scripts/release-publish.sh')], {
+            cwd: root, encoding: 'utf8',
+            env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_SHA: 'a'.repeat(40) },
+        })
+    }
+
+    const absent = run('absent')
+    expect(absent.status).toBe(1)
+    expect(absent.stderr).toContain('@b0dea/cockpit does not exist on npm yet')
+    expect(absent.stderr).toContain('docs/contributing/releasing.md')
+    const unreachable = run('unreachable')
+    expect(unreachable.status).toBe(1)
+    expect(unreachable.stderr).toContain('could not read @b0dea/cockpit from the npm registry')
+    expect(unreachable.stderr).toContain('ECONNREFUSED')
+    expect(JSON.parse(readFileSync(manifest, 'utf8')).cockpitSourceRevision).toBe('development')
+    expect(existsSync(published)).toBe(false)
+
+    const present = run('present')
+    expect(present.status, present.stderr).toBe(0)
+    expect(JSON.parse(readFileSync(manifest, 'utf8')).cockpitSourceRevision).toBe('a'.repeat(40))
+    expect(existsSync(published)).toBe(true)
 })

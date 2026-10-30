@@ -31,6 +31,19 @@ if ! node -e '
   exit 1
 fi
 
+# Trusted publishing cannot create a package: npm accepts an OIDC publish only for a package
+# that already exists and lists this workflow as its trusted publisher. Stop with that reason
+# instead of failing later with an authentication error that does not give one.
+package_name="$(node -p "require('./$manifest').name")"
+if ! registry_error="$(npm view "$package_name" name 2>&1 >/dev/null)"; then
+  if [[ "$registry_error" == *E404* ]]; then
+    echo "::error::$package_name does not exist on npm yet, and trusted publishing cannot create it. Nothing was published. Follow 'First publication' in docs/contributing/releasing.md, then re-run this workflow." >&2
+  else
+    echo "::error::could not read $package_name from the npm registry, so nothing was published: $registry_error" >&2
+  fi
+  exit 1
+fi
+
 # Stamp the exact commit into the artifact manifest, as docs/release-policy.md requires. The
 # checkout is discarded after the job, so the source commit is never modified.
 REVISION="$revision" MANIFEST="$manifest" node -e '
