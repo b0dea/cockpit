@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -26,8 +26,28 @@ describe('test git isolation', () => {
         expect(leaked.stdout.trim()).toBe('')
     })
 
-    // Runs as the child of the case above; in an ordinary run there is no fixture directory and
-    // nothing to write, and the runner forbids skipped tests, so it returns early instead.
+    it('keeps the developer shell startup file out of the shells fixtures spawn', () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-shell-isolation-'))
+        scratch.push(directory)
+        const startup = join(directory, 'startup.sh')
+        writeFileSync(startup, `: > ${JSON.stringify(join(directory, 'sourced'))}\n`)
+
+        const run = spawnSync(join(root, 'node_modules/.bin/vitest'),
+            ['run', 'packages/cockpit/src/test-support/git-isolation.test.ts', '-t', 'fixture runs a shell'],
+            { cwd: root, encoding: 'utf8', env: { ...process.env, BASH_ENV: startup, ENV: startup, [PROBE]: directory } })
+
+        expect(run.status, run.stderr + run.stdout).toBe(0)
+        expect(existsSync(join(directory, 'sourced'))).toBe(false)
+    })
+
+    // These run as children of the cases above; in an ordinary run there is no fixture directory
+    // and nothing to do, and the runner forbids skipped tests, so they return early instead.
+    it('fixture runs a shell', () => {
+        if (!process.env[PROBE]) return
+        execFileSync('bash', ['-c', 'true'])
+        execFileSync('sh', ['-c', 'true'])
+    })
+
     it('fixture writes its own config', () => {
         const directory = process.env[PROBE]
         if (!directory) return
