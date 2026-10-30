@@ -7,7 +7,7 @@ import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evid
 import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import { isResolvedDockerExecutable, type ResolvedExecutable } from './executable.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
+import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
 
 export const mechanism = { id: 'runtime-logs', module: 'packages/cockpit/src/environment/logs.ts', exports: ['planLogs', 'collectLogs', 'planFailureLogs', 'admitFailureLogs'] } as const

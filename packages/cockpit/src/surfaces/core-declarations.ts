@@ -20,7 +20,6 @@ export const CORE_SKILL_ASSETS = Object.freeze([
 ] as const)
 export const CORE_SURFACE_ASSET_PATHS = Object.freeze([CORE_EVALUATOR_ASSET, ...CORE_SKILL_ASSETS] as const)
 
-export type CoreSurfaceAssetPath = typeof CORE_SURFACE_ASSET_PATHS[number]
 type CoreAsset = Readonly<{ bytes: string }>
 
 export function shippedSkillNames(assets: ReadonlyMap<string, CoreAsset>): readonly string[] | undefined {

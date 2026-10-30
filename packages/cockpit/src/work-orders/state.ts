@@ -48,7 +48,6 @@ const State = z.object({
 
 export type WorkOrderWriter = z.infer<typeof Writer>
 export type WorkOrderRepository = z.infer<typeof Repository>
-export type WorkOrderProof = z.infer<typeof Proof>
 export type WorkOrderExecutionState = z.infer<typeof State>
 export type WorkOrderStateCode = 'WO_POLICY_INVALID' | 'WO_CONTRACT_INVALID' | 'WO_STATE_INVALID' | 'WO_STATE_CONTRADICTION' | 'WO_STATE_PERSIST_FAILED' | 'WO_STATE_CONFLICT' | 'WO_ROOT_CAUSE_REQUIRED'
 export interface WorkOrderStateRefusal { readonly kind: 'refusal'; readonly code: WorkOrderStateCode; readonly message: string }

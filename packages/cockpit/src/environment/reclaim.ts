@@ -51,7 +51,7 @@ export const mechanism = {
         'createImageInspectionSteps', 'admitImageInspections', 'createVolumeInspectionSteps',
         'admitVolumeInspections', 'createNetworkInspectionSteps', 'admitNetworkInspections',
         'combineReclaimDiscoveries', 'inspectionOverflow',
-        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'reconcileTeardownAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
+        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
     ],
 } as const
 
@@ -2764,8 +2764,6 @@ export function reconcileReclaimAction(input: {
         kind: 'complete', continuation: expectedRemainder.length === 0 ? null : pending.continuation, authority: resultAuthority,
     })
 }
-
-export const reconcileTeardownAction = reconcileReclaimAction
 
 export function consumeReclaimCompleted(authority: object): DrainOutcomeAuthority | undefined {
     if (!authority || typeof authority !== 'object') return undefined

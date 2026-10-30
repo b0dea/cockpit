@@ -333,10 +333,6 @@ export interface ClaimHolder {
     readonly pid?: number
 }
 
-export interface ClaimRecord {
-    readonly holders: readonly ClaimHolder[]
-}
-
 export interface PortLeaseRecord {
     readonly offset: number
     readonly ports: Readonly<Record<string, number>>

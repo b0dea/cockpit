@@ -105,7 +105,7 @@ import {
     type GeneratedHostInputRoot,
     type GeneratedEnvironmentResult,
 } from './generated-stack.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
+import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { projectPersonaOutputs, type DataStepContext } from './data-plane.js'
 import { decodeLifecycleRecord, resolveLifecycleStage } from './lifecycle-stage.js'
 import { authenticateStatePublication, observeConfiguration, readState, selectStateRoot,

@@ -15,8 +15,7 @@ export const mechanism = {
     id: 'environment-contract',
     module: 'packages/cockpit/src/environment/contract.ts',
     exports: [
-        'OUTCOME_KINDS', 'OBSERVATION_STATES', 'OBSERVATION_LIFECYCLE_STAGES', 'STABILITY_VERDICTS', 'OWNERSHIP_VERDICTS',
-        'TEMPLATE_RESULTS', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
+        'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
         'REFUSAL_CODES', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT',
         'isCanonicalTimestamp', 'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
@@ -129,19 +128,7 @@ export type CheckoutId = BrandedIdentity<'CheckoutId'>
 export type StackId = BrandedIdentity<'StackId'>
 export type HolderId = BrandedIdentity<'HolderId'>
 
-export interface EnvironmentIdentity {
-    cockpitId: CockpitId
-    checkoutId: CheckoutId
-    stackId: StackId
-    holderId: HolderId
-}
-
-export const OUTCOME_KINDS = ['complete', 'preview', 'refusal'] as const
-export const OBSERVATION_STATES = ['available', 'unavailable', 'failed'] as const
 export const OBSERVATION_LIFECYCLE_STAGES = ['bootstrap', 'steady'] as const
-export const STABILITY_VERDICTS = ['stable', 'void', 'unavailable'] as const
-export const OWNERSHIP_VERDICTS = ['owned-live', 'owned-dead', 'unknown', 'unowned', 'malformed', 'escaped'] as const
-export const TEMPLATE_RESULTS = ['created', 'unchanged', 'gap'] as const
 export const SETUP_ACTION_KINDS = ['clone', 'wire-remote', 'report'] as const
 export const OBSERVATION_PRODUCER_BYTE_LIMIT = 256
 export const OBSERVATION_REASON_BYTE_LIMIT = 1_024
@@ -342,12 +329,7 @@ export const REFUSAL_CODES = Object.freeze([
     ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH,
 ] as const)
 
-export type OutcomeKind = typeof OUTCOME_KINDS[number]
-export type ObservationState = typeof OBSERVATION_STATES[number]
 export type ObservationLifecycleStage = typeof OBSERVATION_LIFECYCLE_STAGES[number]
-export type StabilityVerdict = typeof STABILITY_VERDICTS[number]
-export type OwnershipVerdict = typeof OWNERSHIP_VERDICTS[number]
-export type TemplateResult = typeof TEMPLATE_RESULTS[number]
 export type SetupActionKind = typeof SETUP_ACTION_KINDS[number]
 export type EnvironmentCode = typeof ENVIRONMENT_CODES[keyof typeof ENVIRONMENT_CODES]
 export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number]
@@ -877,10 +859,6 @@ export type EnvironmentCommandOutcome<Result> =
           result: null
           plan?: never
       }
-
-export interface EnvironmentAdapter {
-    observePath(path: string): Promise<Observation<'absent' | 'directory' | 'repository' | 'symlink'>>
-}
 
 /**
  * The command `compose exec` runs for an in-stack operation. Its cwd is relative to the service's

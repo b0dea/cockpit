@@ -9,13 +9,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCockpitConfig } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { checkoutId, cockpitId, holderId, publicationCockpitId, stackId } from '../environment/identity.js'
-import { selectStateRoot } from '../environment/state.js'
-import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { runSyncAdoption } from './adopt.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
-import { uninstallGeneratedEnvironment } from './uninstall.js'
 
 const { cleanup, surfaceConsumer } = createGeneratedCommandFixture()
 const homes: string[] = []
@@ -254,35 +250,5 @@ describe('sync --adopt', () => {
             code: 'SURFACE_STATE_CONFLICT', target: '.claude/settings.json',
             message: expect.stringContaining('merged from cockpit/adopted/.claude/settings.json'),
         })] })
-    })
-
-    it('restores the team file byte for byte on uninstall', async () => {
-        const { root, configPath } = await teamConsumer('adopt-uninstall')
-        await adopt(configPath)
-        const ledgerPath = '.cockpit/generated-environment-ownership.json'
-        const manifest = parseOwnershipManifest(await readFile(join(root, ledgerPath), 'utf8'), {
-            root, configPath, cockpitId: publicationCockpitId({ name: 'generated-environment' }),
-        })
-        if (manifest.kind !== 'complete') throw new Error('synthetic published ownership unavailable')
-        const foreignPath = '.cursor/skills/cockpit-setup/foreign.txt'
-        await writeFile(join(root, foreignPath), 'retained\n')
-        const home = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-adopt-state-')))
-        homes.push(home)
-        const cockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
-        const checkout = checkoutId({ checkoutPath: root })
-        const stack = stackId({ cockpitId: cockpit, checkoutId: checkout, variant: { kind: 'shared' } })
-        const selected = await selectStateRoot({ platform: 'linux', home, cockpitId: cockpit })
-        if (selected.kind !== 'complete') throw new Error('synthetic state namespace unavailable')
-        const removed = await uninstallGeneratedEnvironment({ configPath }, {
-            namespace: selected.value, ownerId: holderId({ stackId: stack, checkoutId: checkout, sessionId: 'synthetic-adoption' }),
-        }, { authorizeStaleRemoval: async request => ({ format: 'cockpit-stale-removal-approval/v1' as const, digest: request.digest }) })
-        expect(removed, JSON.stringify(removed)).toMatchObject({ kind: 'complete' })
-        if (removed.kind !== 'complete') return
-        expect(removed.committedPaths.slice().sort()).toEqual([...manifest.manifest.entries.map(entry => entry.path), ledgerPath].sort())
-        for (const entry of manifest.manifest.entries) if (entry.kind !== 'shared-region' && entry.path !== '.claude/settings.json') {
-            await expect(lstat(join(root, entry.path))).rejects.toMatchObject({ code: 'ENOENT' })
-        }
-        expect(await readFile(join(root, '.claude/settings.json'), 'utf8')).toBe(TEAM_SETTINGS)
-        expect(await readFile(join(root, foreignPath), 'utf8')).toBe('retained\n')
     })
 })

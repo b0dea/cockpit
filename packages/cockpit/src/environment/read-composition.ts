@@ -13,7 +13,7 @@ import {
     type LogsCommandAdapters,
 } from './application.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
-import type { GeneratedComposeArtifactAuthority } from './generated-compose-authority.js'
+import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
 import { RuntimeNotDeclaredError } from './declaration.js'
