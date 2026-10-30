@@ -691,7 +691,8 @@ describe('maintained prose detectors', () => {
         expect(workflow).not.toContain('pull_request:')
         expect(workflow).toContain('permissions:\n  contents: read')
         expect(workflow).toContain('node scripts/docs-lint.mjs --external-report')
-        expect(workflow).toContain('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9')
+        // Any pinned release: Dependabot moves the SHA, and the loop below checks it is a full commit.
+        expect(workflow).toMatch(/uses: actions\/upload-artifact@[0-9a-f]{40} /)
         for (const reference of workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/g)) {
             expect(reference[1]).toMatch(/^[0-9a-f]{40}$/)
         }
