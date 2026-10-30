@@ -111,7 +111,7 @@ function captureSearchEnvironment(value: unknown): Readonly<Record<string, strin
         if (keys.length > 4_096) return undefined
         const env: Record<string, string | undefined> = {}
         for (const key of keys) {
-            if (typeof key !== 'string' || !/^(?:PATH|PATHEXT)$/i.test(key)) continue
+            if (key !== 'PATH') continue
             const descriptor = Object.getOwnPropertyDescriptor(value, key)
             if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
                 || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
