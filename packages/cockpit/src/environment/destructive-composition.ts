@@ -13,7 +13,7 @@ import {
     type ResetCommandAdapters,
 } from './application.js'
 import { ENVIRONMENT_CODES, type EnvironmentCommandOutcome, type EnvironmentDiagnostic, type ExecutionStep } from './contract.js'
-import { readActiveStackInventory } from './claims.js'
+import { decodeCoordinationRecord, readActiveStackInventory } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolvePathRemovalExecutable } from './executable.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -148,6 +148,7 @@ function observationRefusal(diagnostics: readonly EnvironmentDiagnostic[]): Dest
 function refusal(
     target: string,
     message = 'destructive run authority is unavailable or does not match current state',
+    code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
 ): EnvironmentCommandOutcome<DestructiveRunContext> {
     return Object.freeze({
         kind: 'refusal' as const,
@@ -155,7 +156,7 @@ function refusal(
         result: null,
         diagnostics: Object.freeze([Object.freeze({
             severity: 'error' as const,
-            code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
+            code,
             message,
             target,
         })]),
@@ -400,12 +401,35 @@ export function createDestructiveCommandAdapters(
                 return loaded.kind === 'refusal' ? loaded : refusal(request.configPath)
             }
             const context = loaded.result
-            const inventory = await readActiveStackInventory(context.namespace)
+            let inventory = await readActiveStackInventory(context.namespace)
             if (inventory.kind !== 'complete') return refusal(context.stackId)
             const currentRecord = inventory.value.find(({ stackId }) => stackId === context.stackId)?.record
             if (!currentRecord?.holders.some(({ holderId, checkoutId }) => (
                 holderId === context.holderId && checkoutId === context.checkoutId
-            ))) return refusal(context.stackId, 'this session holds no claim on the stack; down and reset act only for a holder, so run `cockpit up` first')
+            ))) {
+                // The active inventory omits a stack whose final holder released it, so the
+                // coordination record itself says whether this stack ever ran.
+                const stored = await readState(context.namespace.paths.coordination(context.stackId))
+                if (stored.kind === 'missing') {
+                    return refusal(context.stackId, 'this checkout has never claimed the stack, so down and reset have nothing to act on; run `cockpit up` first')
+                }
+                const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
+                if (!coordination) return refusal(context.stackId)
+                if (coordination.holders.length > 0) {
+                    return refusal(context.stackId, 'another session holds this stack, and down and reset never displace a live holder; end that `cockpit session` or run `cockpit sleep` from it, then retry', ENVIRONMENT_CODES.CLAIM_CO_TENANT)
+                }
+                // `sleep` and an ended `session` release the final holder and stop the runtime,
+                // but its containers, networks and images remain. Claiming the stack here, as
+                // `up` would without starting anything, gives down the holder authority to retire
+                // them; refusing sent the operator to start a stack only to remove it.
+                let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
+                const claimed = await lifecycle.withAcquiredPorts(context, async () => true,
+                    (diagnostics) => { claimRefusal = diagnostics; return undefined })
+                if (claimRefusal) return Object.freeze({ kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: claimRefusal })
+                if (!claimed) return refusal(context.stackId, 'the stopped stack could not be claimed for down or reset')
+                inventory = await readActiveStackInventory(context.namespace)
+                if (inventory.kind !== 'complete') return refusal(context.stackId)
+            }
             const claimInventory = Object.freeze(inventory.value.flatMap(({ stackId, record }) => (
                 record.holders.map(({ checkoutId }) => Object.freeze({ stackId, checkoutId }))
             )))

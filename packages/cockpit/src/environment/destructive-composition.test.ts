@@ -351,11 +351,23 @@ describe('destructive command composition', () => {
         expect(JSON.stringify(preview)).not.toContain('continuation')
         expect(JSON.stringify(preview)).not.toContain('authority')
 
+        // Another session's down must not displace the live holder.
+        await expect(createDestructiveCommandAdapters({ ...input, sessionId: 'synthetic-other-session' }, trackedExecute)
+            .load({ configPath })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT' }] })
+
         if (!acquired || acquired.leaseResult.kind !== 'complete') throw new Error('port acquisition unavailable')
         const released = await ports.compensateAcquiredPortHolder({
             namespace: loaded.result.namespace, leaseResult: acquired.leaseResult,
             now: new Date().toISOString(),
         })
-        expect(released.kind).toBe('complete')
+        expect(released).toMatchObject({ kind: 'complete', remainingHolderIds: [] })
+
+        // Releasing the final holder, as sleep and an ended session do, leaves the stack's
+        // resources with no holder. Down from this checkout claims the stack to retire them, so it
+        // no longer has to start the stack with `up` first.
+        await expect(adapters.load({ configPath })).resolves.toMatchObject({
+            kind: 'complete',
+            result: { instance: { claimInventory: [{ stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId }] } },
+        })
     })
 })
