@@ -506,7 +506,7 @@ describe('portable publication names', () => {
 
     it('refuses nonportable authored names before creating any output', async () => {
         const outcomes: Array<{ segment: string; kind: string }> = []
-        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name', '.gıt', 'node_moduleſ']) {
+        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name']) {
             const fixture = await compactPublication({ paths: [`.cursor/${segment}/SKILL.md`] })
             const admitted = await admitPublicationPlan(fixture.input, { execute: executeProbe })
             outcomes.push({ segment, kind: admitted.kind })
@@ -526,12 +526,14 @@ describe('portable publication names', () => {
         expect(await readFile(join(allowed.root, 'internal/notes.md'), 'utf8')).toBe(allowed.files[0]!.bytes)
 
         // The ownership encoder already refuses to record such a path, so the write names it directly.
-        const reserved = await compactPublication({ paths: ['notes.md'] })
-        const input = { ...reserved.input, mutations: [{ ...reserved.input.mutations[0]!, path: '.GIT/x' }] }
-        expect(await admitPublicationPlan(input, { execute: executeProbe })).toMatchObject({ kind: 'refusal', diagnostics: [
-            expect.objectContaining({ message: 'publication contains an undeclared or non-exact operation' }),
-        ] })
-        await expect(lstat(join(reserved.root, '.GIT'))).rejects.toMatchObject({ code: 'ENOENT' })
+        for (const segment of ['.GIT', '.gıt', 'node_moduleſ']) {
+            const reserved = await compactPublication({ paths: ['notes.md'] })
+            const input = { ...reserved.input, mutations: [{ ...reserved.input.mutations[0]!, path: `${segment}/x` }] }
+            expect(await admitPublicationPlan(input, { execute: executeProbe }), segment).toMatchObject({ kind: 'refusal', diagnostics: [
+                expect.objectContaining({ message: 'publication contains an undeclared or non-exact operation' }),
+            ] })
+            await expect(lstat(join(reserved.root, segment)), segment).rejects.toMatchObject({ code: 'ENOENT' })
+        }
     })
 
     it('refuses normalized and case-folded directory aliases while preserving distinct dotted outputs', async () => {
