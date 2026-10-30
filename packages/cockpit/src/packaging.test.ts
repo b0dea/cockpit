@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { parseNpmPackJson, type NpmPackArtifact } from './test-support/npm-pack-json.js'
+import { cockpitPackageVersion } from './test-support/package-version.js'
 import { expectedPackageFiles } from '../../../scripts/supply-chain-check.mjs'
 
 // What a consumer installs is a different surface from what this repository contains, and
@@ -924,10 +925,10 @@ it('runs installed init for each isolated target and refuses missing roots or br
     execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact',
         join(packScratch, 'artifact', packedArtifact().filename)], { cwd: portable, env, stdio: 'ignore', timeout: 30_000 })
     const teamPackage = JSON.parse(readFileSync(join(portable, 'package.json'), 'utf8'))
-    teamPackage.devDependencies['@b0dea/cockpit'] = '0.0.0'
+    teamPackage.devDependencies['@b0dea/cockpit'] = cockpitPackageVersion
     writeFileSync(join(portable, 'package.json'), `${JSON.stringify(teamPackage, null, 2)}\n`)
     const teamLock = JSON.parse(readFileSync(join(portable, 'package-lock.json'), 'utf8'))
-    teamLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
+    teamLock.packages[''].devDependencies['@b0dea/cockpit'] = cockpitPackageVersion
     writeFileSync(join(portable, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
     const preparedTeam = spawnSync(process.execPath, [launcher, 'sync', '--config', join(portable, 'cockpit.toml'), '--json'], {
         cwd: portable, env, encoding: 'utf8', timeout: 30_000,
@@ -1015,7 +1016,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
             'cockpit:sync': 'cockpit sync --config cockpit.toml',
             'cockpit:check': 'cockpit check --config cockpit.toml',
         },
-        devDependencies: { '@b0dea/cockpit': '0.0.0' },
+        devDependencies: { '@b0dea/cockpit': cockpitPackageVersion },
     })
     expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain(`dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`)
     const check = spawnSync(process.execPath, [launcher, 'check', '--config', join(root, 'cockpit.toml'), '--json'],

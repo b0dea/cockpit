@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     expectedPackageFiles, generateSbom, runSupplyChainCheck,
 } from '../../../scripts/supply-chain-check.mjs'
+import { cockpitPackageVersion } from './test-support/package-version.js'
 
 const childProcess = vi.hoisted(() => ({ execFileSync: vi.fn() }))
 vi.mock('node:child_process', async importOriginal => ({
@@ -130,9 +131,11 @@ describe('the supply-chain readiness detector', () => {
 
     it('accepts a release version bump recorded in both manifest and lockfile and refuses a stale lockfile', () => {
         const root = fixture()
-        mutate(root, 'packages/cockpit/package.json', value => { value.version = '0.1.0' })
+        const [major, minor] = cockpitPackageVersion.split('.').map(Number)
+        const bumped = `${major}.${minor + 1}.0`
+        mutate(root, 'packages/cockpit/package.json', value => { value.version = bumped })
         expect(inspect(root, PACK_FILES).diagnostics.map(row => row.code)).toContain('LOCK_EXECUTABLE_POLICY_CHANGED')
-        mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].version = '0.1.0' })
+        mutate(root, 'package-lock.json', value => { value.packages['packages/cockpit'].version = bumped })
         expect(inspect(root, PACK_FILES).diagnostics).toEqual([])
     })
 

@@ -15,6 +15,7 @@ import type { ExecutionStep, StackId } from './contract.js'
 import { createMachineFloorPlan, collectMachineFloorEvidence, issueMachineFloorAuthority } from './runtime.js'
 import { observeHostCapacity } from './host-observation.js'
 import { projectMachineFloorConfig } from '../config/load.js'
+import { cockpitPackageVersion } from '../test-support/package-version.js'
 type LifecycleOverrides = Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'planAdmittedUp' | 'planSleep' | 'planDown' | 'planResetLifecycle' | 'consumeLifecycleIssuance'>>
 type RuntimeOverrides = Partial<Pick<typeof import('./runtime.js'),
     | 'createRuntimeServicePlan' | 'createRuntimeServiceHealthPlan'
@@ -287,7 +288,7 @@ describe('observation application runners', () => {
             expect(release).toHaveBeenCalledTimes(1)
             expect(result.result).toMatchObject({ verdict: 'unavailable', freshness: {
                 local: { kind: 'refusal' }, release: { kind: 'unknown', reason: 'synthetic registry unavailable' },
-                installedProducer: { package: '@b0dea/cockpit', version: '0.0.0', sourceRevision: 'development' },
+                installedProducer: { package: '@b0dea/cockpit', version: cockpitPackageVersion, sourceRevision: 'development' },
                 repair: { fixes: [], refusal: { kind: 'refusal' } },
             } })
         } finally { prepare.mockRestore() }
