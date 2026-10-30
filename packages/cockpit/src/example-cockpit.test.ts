@@ -365,6 +365,9 @@ describe('cockpits without a generated environment', () => {
         expect(override).toContain('  web:\n    labels:\n      dev.b0dea.cockpit.config-sha256:')
         expect(readFileSync(join(root, 'compose.yml'), 'utf8')).toBe(compose)
         expect(check!.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
+        // cockpit does not rewrite published interfaces, so the example itself binds loopback.
+        expect([...compose.matchAll(/^ {4}ports: \["([^"]+)"\]$/gm)].map(match => match[1]))
+            .toEqual(['127.0.0.1:${API_HOST_PORT:-4200}:3000', '127.0.0.1:${WEB_HOST_PORT:-4300}:3000'])
     })
 
     it('preserves build-beside extensions when sync upgrades producer ownership', () => {
@@ -390,7 +393,7 @@ describe('cockpits without a generated environment', () => {
     it('fails check on a published host port that no ports.bases variable leases', () => {
         const root = syncedComposeFirst('compose-first-port')
         const path = join(root, 'compose.yml')
-        writeFileSync(path, readFileSync(path, 'utf8').replace('"${WEB_HOST_PORT:-4300}:3000"', '"4300:3000"'))
+        writeFileSync(path, readFileSync(path, 'utf8').replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '"127.0.0.1:4300:3000"'))
         const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
         expect(check.status).toBe(2)
         expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
