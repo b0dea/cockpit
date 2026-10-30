@@ -399,6 +399,44 @@ describe('init application', () => {
         expect(JSON.stringify(outcome)).not.toContain('9000')
     })
 
+    it.each([
+        ['Compose-only', {
+            'package.json': JSON.stringify({ scripts: { build: 'node build.mjs' } }),
+            'compose.yml': 'services:\n  app:\n    image: synthetic.invalid/app:1\n',
+        }, 'environment.compose_files'],
+        ['Dockerfile-only', {
+            Dockerfile: 'FROM python:3.13-slim\nEXPOSE 8000\nCMD ["python", "app.py"]\n',
+        }, 'app.command'],
+    ] as const)('keeps a %s product in the public init environment interview', async (_shape, files, inferredTarget) => {
+        const f = fixture()
+        mkdirSync(join(f.root, 'app'))
+        for (const [name, bytes] of Object.entries(files)) await writeFile(join(f.root, 'app', name), bytes)
+        const adapters: InitApplicationAdapters = {
+            ...f.adapters,
+            classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+            document: documentObservedCommand,
+            infer: deriveInferredFacts,
+        }
+        const input = { ...f.input, registry: undefined }
+        const preview = await runInitApplication(input, adapters)
+
+        const outcome = await runInitApplication({ ...input, accepted: true,
+            acceptedPreviewSha256: preview.result!.previewSha256 }, adapters)
+
+        expect(outcome).toMatchObject({ kind: 'pending', result: {
+            estate: { classification: 'one-sibling', runnable: [{ slug: 'app', disposition: 'confirmed' }] },
+            interview: { outstanding: expect.arrayContaining([
+                expect.objectContaining({ field: 'environment.generated', inferred: expect.arrayContaining([
+                    expect.objectContaining({ target: inferredTarget }),
+                ]) }),
+                expect.objectContaining({ field: 'environment.machine' }),
+            ]) },
+        } })
+        expect(outcome.result?.interview?.outstanding).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: 'estate.runnable' }),
+        ]))
+    })
+
     it('names the deferred greenfield dependency without fabricating a configuration', async () => {
         const f = fixture()
         const adapters: InitApplicationAdapters = { ...f.adapters, document: async () => ({

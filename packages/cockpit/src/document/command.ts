@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { snapshotJson } from '../environment/contract.js'
@@ -10,6 +11,7 @@ import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloo
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
 import { renderCompleteDocument, renderIncompleteDocument, type Attribution, type DocumentModel } from './render.js'
+import { readDockerfileFacts } from '../init/derive.js'
 
 export const mechanism = {
     id: 'document-outcome',
@@ -163,7 +165,9 @@ const SAFE_NAME = /^[a-z][a-z0-9-]{0,63}$/
 const SAFE_RELATIVE = /^(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/
 const MAX_ESTATE_EVIDENCE_BYTES = 1024 * 1024
 const MAX_CONFIGURATION_ANSWER_BYTES = 262_144
-const PUBLIC_MANIFESTS = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Gemfile'] as const
+const LANGUAGE_MANIFESTS = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Gemfile'] as const
+const COMPOSE_MANIFESTS = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
+const PUBLIC_RUNNABLE_SOURCES = [...LANGUAGE_MANIFESTS, 'Dockerfile', ...COMPOSE_MANIFESTS] as const
 const PACKAGE_RUN_SCRIPTS = ['dev', 'start', 'serve'] as const
 
 interface EstateRepositoryObservation {
@@ -176,24 +180,35 @@ interface EstateRepositoryObservation {
     readonly sources?: readonly Readonly<{ path: string; sha256: string }>[]
 }
 
-interface RepositoryManifests {
+interface RepositorySources {
     readonly runnable: EstateRepositoryObservation['runnable']
     readonly reasons: readonly string[]
     readonly sources: readonly Readonly<{ path: string; sha256: string }>[]
 }
 
-/** Reads the public manifests one repository carries and whether one of them declares a run command. */
-async function observeRepositoryManifests(repository: string, label: string): Promise<RepositoryManifests> {
+function composeDeclaresServices(text: string): boolean {
+    try {
+        const document: unknown = parseYaml(text)
+        const services = document && typeof document === 'object' && !Array.isArray(document)
+            ? (document as Record<string, unknown>).services : undefined
+        return !!services && typeof services === 'object' && !Array.isArray(services)
+            && Object.keys(services).length > 0
+            && Object.values(services).every(service => !!service && typeof service === 'object' && !Array.isArray(service))
+    } catch { return false }
+}
+
+/** Reads fixed public runnable sources and reports whether one declares a product process. */
+async function observeRepositorySources(repository: string, label: string): Promise<RepositorySources> {
     const sources: { path: string; sha256: string }[] = []
     let runnable: EstateRepositoryObservation['runnable'] = 'absent'
     const reasons: string[] = []
-    for (const manifest of PUBLIC_MANIFESTS) {
+    for (const manifest of PUBLIC_RUNNABLE_SOURCES) {
         const path = resolve(repository, manifest)
         let bytes: Buffer
         try {
             const stat = await lstat(path)
             if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_ESTATE_EVIDENCE_BYTES) {
-                throw new TypeError(`public manifest is not one bounded regular file: ${label}/${manifest}`)
+                throw new TypeError(`public runnable source is not one bounded regular file: ${label}/${manifest}`)
             }
             bytes = await readFile(path)
         } catch (error) {
@@ -201,9 +216,39 @@ async function observeRepositoryManifests(repository: string, label: string): Pr
             continue
         }
         if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) {
-            throw new TypeError(`public manifest exceeds the observation bound: ${label}/${manifest}`)
+            throw new TypeError(`public runnable source exceeds the observation bound: ${label}/${manifest}`)
         }
         sources.push(Object.freeze({ path: manifest, sha256: createHash('sha256').update(bytes).digest('hex') }))
+        if (manifest === 'Dockerfile') {
+            let text: string
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+            catch {
+                if (runnable !== 'confirmed') runnable = 'unknown'
+                reasons.push('Dockerfile is not valid UTF-8')
+                continue
+            }
+            if (readDockerfileFacts(text).command) runnable = 'confirmed'
+            else {
+                if (runnable !== 'confirmed') runnable = 'unknown'
+                reasons.push('Dockerfile final stage declares no CMD or ENTRYPOINT')
+            }
+            continue
+        }
+        if ((COMPOSE_MANIFESTS as readonly string[]).includes(manifest)) {
+            let text: string
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+            catch {
+                if (runnable !== 'confirmed') runnable = 'unknown'
+                reasons.push(`${manifest} is not valid UTF-8`)
+                continue
+            }
+            if (composeDeclaresServices(text)) runnable = 'confirmed'
+            else {
+                if (runnable !== 'confirmed') runnable = 'unknown'
+                reasons.push(`${manifest} is not valid Compose YAML with at least one service`)
+            }
+            continue
+        }
         if (manifest !== 'package.json') {
             if (runnable !== 'confirmed') runnable = 'unknown'
             reasons.push(`${manifest} does not declare a supported runnable command`)
@@ -249,14 +294,14 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
     if (captured.rootIsRepository) {
         const slug = basename(root)
         if (!SAFE_NAME.test(slug)) throw new TypeError(`the repository directory name ${JSON.stringify(slug)} is not a valid sibling slug`)
-        const { runnable, reasons, sources } = await observeRepositoryManifests(root, '.')
+        const { runnable, reasons, sources } = await observeRepositorySources(root, '.')
         const source = sources[0]
         if (source) repositories.push(Object.freeze({ slug, path: '.', evidencePath: source.path, runnable,
             ...(runnable === 'confirmed' ? {} : { why: reasons.join('; ') }), source,
             ...(sources.length > 1 ? { sources: Object.freeze(sources) } : {}) }))
     }
     for (const entry of entries) {
-        const { runnable, reasons, sources } = await observeRepositoryManifests(resolve(root, entry.name), entry.name)
+        const { runnable, reasons, sources } = await observeRepositorySources(resolve(root, entry.name), entry.name)
         const source = sources[0]
         if (!source) continue
         repositories.push(Object.freeze({ slug: entry.name, path: entry.name, evidencePath: source.path, runnable,
@@ -280,7 +325,7 @@ export async function observeCockpitRoot(input: Readonly<{ root: string }>): Pro
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
     if (!git) return 'cockpit-root'
-    const { sources } = await observeRepositoryManifests(input.root, '.')
+    const { sources } = await observeRepositorySources(input.root, '.')
     return sources.length > 0 ? 'product-repository' : 'cockpit-root'
 }
 
@@ -350,10 +395,10 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
         if (source.path !== row.evidencePath || typeof source.sha256 !== 'string' || !SHA256.test(source.sha256)
             || typeof row.why === 'string' && redactSensitiveText(row.why) !== row.why) return undefined
         const sources = row.sources
-        if (sources !== undefined && (!Array.isArray(sources) || sources.length < 2 || sources.length > PUBLIC_MANIFESTS.length
+        if (sources !== undefined && (!Array.isArray(sources) || sources.length < 2 || sources.length > PUBLIC_RUNNABLE_SOURCES.length
             || sources.some(value => !value || typeof value !== 'object' || Array.isArray(value)
                 || Object.keys(value).sort().join(',') !== 'path,sha256'
-                || typeof value.path !== 'string' || !PUBLIC_MANIFESTS.includes(value.path)
+                || typeof value.path !== 'string' || !(PUBLIC_RUNNABLE_SOURCES as readonly string[]).includes(value.path)
                 || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256))
             || new Set(sources.map(value => value.path)).size !== sources.length
             || sources[0].path !== source.path || sources[0].sha256 !== source.sha256)) return undefined
@@ -372,7 +417,7 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
         const candidates = scope.rootIsRepository ? [{ name: '.' }] : await estateDirectories(root, scope.repositories)
         for (const directory of candidates) {
             const manifests: string[] = []
-            for (const manifest of PUBLIC_MANIFESTS) {
+            for (const manifest of PUBLIC_RUNNABLE_SOURCES) {
                 try {
                     const stat = await lstat(resolve(root, directory.name, manifest))
                     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
@@ -465,7 +510,7 @@ export async function classifyEstateObservation(
             : unknown.length > 0 ? 'incomplete-multi-repository' : 'ready-multi-repository'
     const gaps = classification === 'no-runnable-product'
         ? [Object.freeze(rows.length === 0
-            ? { field: 'runnable-product', source: '.', why: `no directory under the root carries ${PUBLIC_MANIFESTS.join(', ')}` }
+            ? { field: 'runnable-product', source: '.', why: 'no directory under the root carries a supported language manifest, Dockerfile or Compose file' }
             : { field: 'runnable-product', source: rows.map(row => `${row.slug}/${row.source.path}`).join(', '),
                 why: rows.map(row => row.why).filter(Boolean).join('; ') })]
         : unknown.map(row => Object.freeze({ field: `${row.slug}.runnable`, source: `${row.slug}/${row.source.path}`, why: row.why! }))

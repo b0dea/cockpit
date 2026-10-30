@@ -238,6 +238,27 @@ describe('estate observation classification', () => {
 })
 
 describe('public estate observation', () => {
+    it('binds Compose runnable evidence to current bounded regular bytes', async () => {
+        const estateRoot = temporaryPath('compose-estate')
+        mkdirSync(join(estateRoot, 'app'), { recursive: true })
+        writeFileSync(join(estateRoot, 'app/package.json'), JSON.stringify({ scripts: { build: 'node build.mjs' } }))
+        writeFileSync(join(estateRoot, 'app/compose.yml'), 'services:\n  app:\n    image: synthetic.invalid/app:1\n')
+        const canonical = realpathSync(estateRoot)
+        const observed = await observePublicEstate({ root: canonical })
+        expect(observed).toMatchObject({ repositories: [{ slug: 'app', runnable: 'confirmed', sources: [
+            { path: 'package.json', sha256: expect.any(String) },
+            { path: 'compose.yml', sha256: expect.any(String) },
+        ] }] })
+
+        writeFileSync(join(estateRoot, 'app/compose.yml'), 'services:\n  app:\n    image: synthetic.invalid/app:2\n')
+        expect(await classifyEstateObservation({ root: canonical }, { observe: async () => observed }))
+            .toMatchObject({ kind: 'refusal', status: 2 })
+        rmSync(join(estateRoot, 'app/compose.yml'))
+        symlinkSync(join(estateRoot, 'app/package.json'), join(estateRoot, 'app/compose.yml'))
+        expect(await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate }))
+            .toMatchObject({ kind: 'refusal', status: 2 })
+    })
+
     it('refuses a manifest appearing inside an omitted candidate during observation', async () => {
         const estateRoot = temporaryPath('changing-estate')
         mkdirSync(join(estateRoot, 'web'), { recursive: true })
@@ -1057,6 +1078,10 @@ describe('operator-confirmed document completion', () => {
         mkdirSync(join(parent, 'shop/.git'))
         expect(await observeCockpitRoot({ root: join(parent, 'shop') })).toBe('product-repository')
         expect(await observeCockpitRoot({ root: join(parent, 'shop-cockpit') })).toBe('cockpit-root')
+        mkdirSync(join(parent, 'worker'))
+        mkdirSync(join(parent, 'worker/.git'))
+        writeFileSync(join(parent, 'worker/Dockerfile'), 'FROM python:3.13-slim\nCMD ["python", "worker.py"]\n')
+        expect(await observeCockpitRoot({ root: join(parent, 'worker') })).toBe('product-repository')
 
         const scoped = await classifyEstateObservation({ root: parent, repositories: ['shop'] }, { observe: observePublicEstate })
         expect(scoped).toMatchObject({ kind: 'complete', result: { classification: 'no-runnable-product',

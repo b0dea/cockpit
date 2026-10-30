@@ -139,9 +139,9 @@ function instructionArgv(argument: string): string[] | undefined {
     } catch { return shellForm }
 }
 
-interface DockerfileFacts { readonly command?: string[]; readonly ports: number[] }
+export interface DockerfileFacts { readonly command?: string[]; readonly ports: number[] }
 
-function readDockerfile(text: string): DockerfileFacts {
+export function readDockerfileFacts(text: string): DockerfileFacts {
     // Only the final build stage describes the image that runs.
     let ports: number[] = []
     let entrypoint: string[] | undefined
@@ -229,7 +229,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             const dockerfile = await read(directory.path, 'Dockerfile')
             if (dockerfile !== undefined) {
                 const source = relative(directory.path, 'Dockerfile')
-                const parsed = readDockerfile(dockerfile)
+                const parsed = readDockerfileFacts(dockerfile)
                 if (parsed.command) facts.push({ fields: ['estate.runnable', 'environment.generated'], target: `${slug}.command`,
                     value: parsed.command, provenance: { kind: 'inferred', source,
                         reason: 'the final stage of the Dockerfile sets this ENTRYPOINT/CMD' } })

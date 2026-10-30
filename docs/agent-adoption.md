@@ -173,7 +173,8 @@ is where the product's notes and decisions live until its repositories exist.
 Done when the human has chosen the cockpit root and `init` reports `environment-verified`
 from that root, or has stopped at a named gap you have reported.
 
-A Git checkout with a package manifest at its root is a product repository. Run in it, the
+A Git checkout with a language manifest, a runnable final Dockerfile stage, or a Compose file
+with services at its root is a product repository. Run in it, the
 `--json` preview carries `result.cockpitRoot` before anything else: the question, both options
 with the exact paths each writes, and `recommended = "dedicated"`. Relay it to the human with
 both trade-offs; [Where the cockpit lives](concepts.md#where-the-cockpit-lives) states them. Never
@@ -203,8 +204,8 @@ row, then asks the same runtime questions as
 Done when `cockpit check --config cockpit.toml --json` exits 0 and `cockpit up` refuses with
 `ENVIRONMENT_NOT_DECLARED`.
 
-A repository with no package manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`,
-`Gemfile`) has nothing runnable. Run `init` from the repository itself and follow
+A repository with no language manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`,
+`Gemfile`), runnable Dockerfile or Compose services has nothing runnable. Run `init` from the repository itself and follow
 [Empty directory](#empty-directory) steps 1 to 3: the documents repository is the cockpit root
 and its own first sibling. [Environment modes](environment.md#environment-modes) explains what
 surfaces-only publishes. The runtime commands refuse with `ENVIRONMENT_NOT_DECLARED`, which is the

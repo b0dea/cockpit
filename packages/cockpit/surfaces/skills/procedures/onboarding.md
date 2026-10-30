@@ -47,7 +47,8 @@ if it has one, show the marked block that would be appended without changing the
 approval, record `instruction_pointer = true` on that sibling and follow **Add a repository** to
 apply it. An in-repository cockpit already uses the root guide and must not point it at itself.
 
-When init runs inside a product repository (a git checkout with a root package manifest), its
+When init runs inside a product repository (a git checkout with a root language manifest, a
+runnable final Dockerfile stage, or a Compose file with services), its
 `--json` preview carries `result.cockpitRoot`: a question, its options and a recommended answer.
 Relay that question to the human and write their answer under the `cockpit.root` key of the answers
 file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
