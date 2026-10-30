@@ -5,6 +5,7 @@ import { isProxy, isUint8Array } from "node:util/types"
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { safeSurfacePath as safePath } from './contract.js'
 import { SURFACE_TARGETS } from './harness-registry.js'
 
 export const mechanism = {
@@ -134,12 +135,6 @@ function exact(value: JsonSnapshotObject, required: readonly string[]): boolean 
     const keys = Object.keys(value).sort()
     const expected = [...required].sort()
     return keys.length === expected.length && keys.every((key, index) => key === expected[index])
-}
-
-function safePath(value: string): boolean {
-    return value.length > 0 && value.length <= 4096 && !value.startsWith('/') && !/^[a-z]:[/\\]/i.test(value)
-        && !/[\\\x00-\x1f\x7f]/.test(value)
-        && value.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !['.git', 'internal', 'node_modules'].includes(part))
 }
 
 function digest(value: string | Uint8Array): string { return createHash('sha256').update(value).digest('hex') }

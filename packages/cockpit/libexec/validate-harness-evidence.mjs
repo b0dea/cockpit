@@ -790,12 +790,13 @@ function validateSelftestHarness(value, name, errors) {
         for (const field of ['declarationSha256', 'sourceSha256']) {
             if (!isText(value[field]) || !SELFTEST_DIGEST.test(value[field])) errors.push(`${name}.${field} must be a lowercase SHA-256 digest`)
         }
+        // Mirrors reservedPathSegment in surfaces/contract.ts; this standalone module cannot import it.
         const moduleSegments = isText(value.module) ? value.module.split('/') : []
         if (!isText(value.module) || Buffer.byteLength(value.module) > 4_096 || isAbsolute(value.module)
             || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value.module) || value.module.includes('\\')
             || /[\x00-\x1f\x7f]/.test(value.module)
             || moduleSegments.some(segment => segment === '' || segment === '.' || segment === '..'
-                || ['.git', 'internal', 'node_modules'].includes(segment))) {
+                || ['.git', 'node_modules'].includes(segment.toLowerCase()))) {
             errors.push(`${name}.module must be a confined relative path`)
         }
         if (!isText(value.export) || !SELFTEST_EXPORT.test(value.export)) errors.push(`${name}.export is invalid`)

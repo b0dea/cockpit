@@ -23,7 +23,7 @@ function digest(bytes: string): string {
     return createHash('sha256').update(bytes).digest('hex')
 }
 
-async function customConsumer(name: string, count: number): Promise<{ root: string; configPath: string }> {
+async function customConsumer(name: string, count: number, extraPath?: string): Promise<{ root: string; configPath: string }> {
     const root = await realpath(await mkdtemp(join(tmpdir(), `cockpit-custom-batch-${name}-`)))
     roots.push(root)
     const configPath = join(root, 'cockpit.toml')
@@ -36,6 +36,7 @@ async function customConsumer(name: string, count: number): Promise<{ root: stri
         const bytes = `${path}\n`
         return { path, bytes, sha256: digest(bytes), scope: 'always' }
     })
+    if (extraPath !== undefined) outputs.push({ path: extraPath, bytes: 'extra\n', sha256: digest('extra\n'), scope: 'always' })
     await writeFile(join(root, 'adapters/synthetic.mjs'), `export async function renderRules(input) {
   if (input.harness !== "synthetic-harness" || input.feature !== "rules" || !Array.isArray(input.sources)) throw new Error("invalid custom input")
   return { kind: "complete", files: ${JSON.stringify(outputs)} }
@@ -278,6 +279,15 @@ mcp_sources = [{ path = ".mcp.json", format = "mcp-json", provenance = { source 
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_SOURCE_CHANGED' })] })
         expect(await readFile(modulePath, 'utf8')).toBe(`${original}\n`)
         await expect(readFile(join(root, 'custom/rules-000.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it.each([
+        { path: 'custom/.GIT/hooks/pre-commit' },
+        { path: 'custom/Node_Modules/rules.md' },
+    ])('refuses custom output $path through a case-folded reserved segment', async ({ path }) => {
+        const { configPath } = await customConsumer('reserved', 1, path)
+        const result = await syncGeneratedEnvironment({ configPath, dryRun: true }, { execute: executeProbe })
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'SURFACE_CUSTOM_REFUSED' })] })
     })
 
     it('authenticates thirty-two ordered custom outputs in one bounded batch', async () => {

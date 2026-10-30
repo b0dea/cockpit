@@ -1383,6 +1383,13 @@ describe('versioned harness selftest evidence', () => {
             expect(validateSelftestEvidenceBundle(
                 customBundle, customExpectation, fixture.root, fixture.options,
             ).errors).toEqual([])
+            const moduleRefused = (module: string) => validateSelftestEvidenceBundle(customBundle, {
+                ...customExpectation,
+                cells: customExpectation.cells.map((cell, index) => index === 0 ? { ...cell, harness: { ...custom, module } } : cell),
+            }, fixture.root, fixture.options).errors.some(error => error.endsWith('.module must be a confined relative path'))
+            expect(moduleRefused('.GIT/hooks/review-shell.mjs')).toBe(true)
+            expect(moduleRefused('adapters/Node_Modules/review-shell.mjs')).toBe(true)
+            expect(moduleRefused('internal/review-shell.mjs')).toBe(false)
             customRecord.harness = { ...custom, sourceSha256: 'e'.repeat(64) }
             const authority = customRecord.authority
             if (authority.kind !== 'custom-module') throw new Error('custom authority fixture was not installed')

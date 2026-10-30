@@ -191,6 +191,8 @@ it('refuses empty, malformed, colliding, escaped, or hash-incoherent rendered se
         [{ ...file, target: 'unknown' }],
         [{ ...file, path: '../AGENTS.md' }],
         [{ ...file, path: '.git/config' }],
+        [{ ...file, path: '.GIT/hooks/pre-commit' }],
+        [{ ...file, path: 'rules/Node_Modules/x.md' }],
         [{ ...file, sha256: '0'.repeat(64) }],
         [file, file],
         Array.from({ length: 4_097 }, (_, index) => ({
@@ -199,4 +201,6 @@ it('refuses empty, malformed, colliding, escaped, or hash-incoherent rendered se
             sha256: sha256('codex'),
         })),
     ]) expect(bundleSurfaceFiles(candidate as readonly RenderedSurfaceFile[])).toBeUndefined()
+    // `internal` is an ordinary directory name in a consumer's repository, not a reserved one.
+    expect(bundleSurfaceFiles([{ ...file, path: 'internal/skill.md' }])).toEqual([{ path: 'codexcli/internal/skill.md', bytes: 'codex' }])
 })

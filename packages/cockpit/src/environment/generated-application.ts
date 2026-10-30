@@ -1952,6 +1952,8 @@ function nativeGrantPaths(targets: readonly SurfaceTarget[]): Readonly<Partial<R
     return Object.freeze(Object.fromEntries(targets.map(target => [target, harnessFact(target).outputs.permissions[0]])))
 }
 
+// The worker runs in its own process and cannot import modules; `safe` mirrors safeSurfacePath in
+// surfaces/contract.ts, including its case-folded reserved segments.
 const CUSTOM_SURFACE_WORKER = String.raw`
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -1959,7 +1961,7 @@ const path = require('node:path');
 const request = JSON.parse(process.argv[1]);
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const own = value => value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
-const safe = value => typeof value === 'string' && value.length > 0 && !path.isAbsolute(value) && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part && part !== '.' && part !== '..' && !['.git','internal','node_modules'].includes(part));
+const safe = value => typeof value === 'string' && value.length > 0 && !path.isAbsolute(value) && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part && part !== '.' && part !== '..' && !['.git','node_modules'].includes(part.toLowerCase()));
 (async () => {
   const source = fs.readFileSync(process.argv[2]);
   if (digest(source) !== request.sourceSha256) throw new Error('module changed');

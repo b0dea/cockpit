@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { ADOPTABLE_SURFACE_PATHS } from './contract.js'
+import { ADOPTABLE_SURFACE_PATHS, safeSurfacePath as safePath } from './contract.js'
 import {
     classifySurfaceOwnership,
     removeSharedOwnership,
@@ -52,12 +52,6 @@ function exact(value: JsonSnapshotObject, required: readonly string[]): boolean 
 }
 
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
-
-function safePath(value: string): boolean {
-    return value.length > 0 && value.length <= 4096 && !value.startsWith('/') && !/^[a-z]:[/\\]/i.test(value)
-        && !/[\\\x00-\x1f\x7f]/.test(value) && value.split('/').every(part => part !== '' && part !== '.' && part !== '..'
-            && !['.git', 'internal', 'node_modules'].includes(part))
-}
 
 function refuse(message: string, target?: string): SurfaceChangePlanResult {
     return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code: 'SURFACE_STATE_CONFLICT', message, ...(target === undefined ? {} : { target }) }) })

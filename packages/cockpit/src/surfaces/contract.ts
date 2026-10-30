@@ -11,7 +11,7 @@ export const mechanism = {
     exports: [
         'SURFACE_TARGETS', 'SURFACE_FEATURES', 'SURFACE_FILE_MAX_BYTES', 'SURFACE_OUTPUT_MAX_BYTES',
         'SURFACE_OUTPUT_MAX_FILES', 'SURFACE_BUNDLE_FORMATS', 'captureSurfaceBatch', 'captureSurfaceBundleBatch',
-        'bundleSurfaceFiles', 'surfaceSourcesMatchFeature', 'ADOPTABLE_SURFACE_PATHS', 'ADOPTED_SURFACE_ROOT',
+        'bundleSurfaceFiles', 'surfaceSourcesMatchFeature', 'reservedPathSegment', 'safeSurfacePath', 'ADOPTABLE_SURFACE_PATHS', 'ADOPTED_SURFACE_ROOT',
     ],
 } as const
 
@@ -62,7 +62,22 @@ const SHA256 = /^[a-f0-9]{64}$/
 const RULE_PATH = /^rules\/[^/]+\.md$/
 const SUBAGENT_PATH = /^subagents\/[^/]+\.md$/
 const SKILL_PATH = /^skills\/([a-z0-9][a-z0-9-]*)\/(.+)$/
-const PRIVATE_SEGMENTS = new Set(['.git', 'internal', 'node_modules'])
+// A generated file under Git's directory could install a hook; one under node_modules would be
+// shadowed or wiped by the next install. Folded because the default macOS and Windows filesystems
+// resolve `.GIT` and `Node_Modules` to the same directories.
+const RESERVED_SEGMENTS = new Set(['.git', 'node_modules'])
+
+/** Whether a path segment names a directory no surface may read or write through. */
+export function reservedPathSegment(segment: string): boolean {
+    return RESERVED_SEGMENTS.has(segment.toLowerCase())
+}
+
+/** A bounded relative POSIX path with no empty, dot, parent or reserved segment. */
+export function safeSurfacePath(value: unknown): value is string {
+    return typeof value === 'string' && value.length > 0 && value.length <= 4096 && !value.startsWith('/')
+        && !/^[a-z]:[/\\]/i.test(value) && !/[\\\x00-\x1f\x7f]/.test(value)
+        && value.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !reservedPathSegment(part))
+}
 
 function exactKeys(value: JsonSnapshotObject, expected: readonly string[]): boolean {
     const keys = Object.keys(value).sort()
@@ -82,13 +97,6 @@ function stringArray(value: JsonSnapshot | undefined): readonly string[] | undef
 
 function uniqueValues<T>(values: readonly T[]): boolean {
     return new Set(values).size === values.length
-}
-
-function safeRelativePath(path: string): boolean {
-    if (path.length === 0 || path.startsWith('/') || /^[a-z]:\//i.test(path)
-        || path.includes('\\') || /[\x00-\x1f\x7f]/.test(path)) return false
-    const segments = path.split('/')
-    return segments.every(segment => segment.length > 0 && segment !== '.' && segment !== '..' && !PRIVATE_SEGMENTS.has(segment))
 }
 
 function sourceFeature(path: string): SurfaceFeature | undefined {
@@ -112,7 +120,7 @@ function validSourceFiles(value: JsonSnapshot | undefined, requested: ReadonlySe
         if (!isObject(item) || !exactKeys(item, ['path', 'bytes'])
             || typeof item.path !== 'string' || typeof item.bytes !== 'string'
             || Buffer.byteLength(item.bytes) > SURFACE_FILE_MAX_BYTES
-            || !safeRelativePath(item.path) || paths.has(item.path)) return false
+            || !safeSurfacePath(item.path) || paths.has(item.path)) return false
         const feature = sourceFeature(item.path)
         if (!feature || !requested.has(feature)) return false
         paths.add(item.path)
@@ -140,7 +148,7 @@ function validExpectedOutputs(
     if (!isObject(value) || !exactKeys(value, targets)) return false
     for (const target of targets) {
         const paths = stringArray(value[target])
-        if (!paths || !uniqueValues(paths) || paths.some(path => !safeRelativePath(path))) return false
+        if (!paths || !uniqueValues(paths) || paths.some(path => !safeSurfacePath(path))) return false
     }
     return true
 }
@@ -168,7 +176,7 @@ export function captureSurfaceBundleBatch(input: unknown): SurfaceBundleBatch | 
     const expectedOutputs = stringArray(snapshot.expectedOutputs)
     if (!features || !uniqueValues(features)
         || !features.every(feature => CLAUDE_PLUGIN_FEATURES.has(feature as SurfaceFeature))
-        || !expectedOutputs || !uniqueValues(expectedOutputs) || expectedOutputs.some(path => !safeRelativePath(path))
+        || !expectedOutputs || !uniqueValues(expectedOutputs) || expectedOutputs.some(path => !safeSurfacePath(path))
         || !validSourceFiles(snapshot.sources, new Set(features as readonly SurfaceFeature[]))) return undefined
     return snapshot as unknown as SurfaceBundleBatch
 }
@@ -176,7 +184,7 @@ export function captureSurfaceBundleBatch(input: unknown): SurfaceBundleBatch | 
 function renderedFile(value: JsonSnapshot): RenderedSurfaceFile | undefined {
     if (!isObject(value) || !exactKeys(value, ['target', 'path', 'bytes', 'sha256'])
         || typeof value.target !== 'string' || !TARGETS.has(value.target as SurfaceTarget)
-        || typeof value.path !== 'string' || !safeRelativePath(value.path)
+        || typeof value.path !== 'string' || !safeSurfacePath(value.path)
         || typeof value.bytes !== 'string' || Buffer.byteLength(value.bytes) > SURFACE_FILE_MAX_BYTES
         || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256)
         || createHash('sha256').update(value.bytes).digest('hex') !== value.sha256) return undefined

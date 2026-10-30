@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { parseDocument } from 'yaml'
 
 import { snapshotJson } from '../environment/contract.js'
-import { SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
+import { reservedPathSegment, SURFACE_TARGETS, type SurfaceSourceFile, type SurfaceTarget } from './contract.js'
 import { harnessFact } from './harness-registry.js'
 
 export const mechanism = {
@@ -17,7 +17,7 @@ const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
 const ServerName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128)
 const RelativePath = z.string().min(1).max(4096).refine(path => !isAbsolute(path)
     && !/[\\\x00-\x1f\x7f]/.test(path) && !/^[a-z]:/i.test(path)
-    && path.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !['.git', 'internal', 'node_modules'].includes(part)))
+    && path.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !reservedPathSegment(part)))
 const ShellToken = z.string().min(1).max(4096).refine(value => !/[\x00-\x1f\x7f]|\$\(|\$\{|`/.test(value))
 const WorkingDirectory = ShellToken.refine(isAbsolute)
 const Sha256 = z.string().regex(/^[a-f0-9]{64}$/)

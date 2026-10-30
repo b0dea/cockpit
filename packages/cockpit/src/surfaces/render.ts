@@ -4,7 +4,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { CustomHarness, type CustomHarness as CustomHarnessValue } from '../schema.js'
-import type { SurfaceFeature, SurfaceTarget } from './contract.js'
+import { safeSurfacePath as safePath, type SurfaceFeature, type SurfaceTarget } from './contract.js'
 import { GUARD_SURFACE_TARGETS, SURFACE_TARGETS, harnessFact } from './harness-registry.js'
 import type { SurfaceGenerationOutcome, SurfaceGenerationWarning } from './generator-adapter.js'
 import type { SurfaceMergeResult } from './merge.js'
@@ -118,12 +118,6 @@ export function surfaceModelSha256(value: unknown): string | undefined {
 
 function refuse(code: SurfaceDiagnostic['code'], message: string, target?: string): SurfaceRenderResult {
     return Object.freeze({ kind: 'refusal', diagnostic: Object.freeze({ code, message, ...(target === undefined ? {} : { target }) }) })
-}
-
-function safePath(value: unknown): value is string {
-    return typeof value === 'string' && value.length > 0 && value.length <= 4096 && !value.startsWith('/')
-        && !/^[a-z]:[/\\]/i.test(value) && !/[\\\x00-\x1f\x7f]/.test(value)
-        && value.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !['.git', 'internal', 'node_modules'].includes(part))
 }
 
 function validFileFields(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
