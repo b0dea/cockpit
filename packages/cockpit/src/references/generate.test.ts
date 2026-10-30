@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { diagnosticInventory } from '../../../../scripts/docs-lint.mjs'
 import { commands } from '../command-table.js'
@@ -10,12 +10,19 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from '../environment/executable.js'
 import type { GeneratedSurfaceSelftestProjection } from '../environment/generated-application.js'
 import { captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority } from '../generated-environment/transaction.js'
-import { installedPackageMetadata } from '../package-metadata.js'
 import { configurationDefaults } from '../schema.js'
 import { renderCockpitSchema } from '../schema-json.js'
 import { inspectSkillSet, type AdmittedSkillCollection } from '../surfaces/skill-contract.js'
 import { classifySurfaceOwnership } from '../surfaces/ownership.js'
 import { prepareCommittedCapabilityProjection, renderReferences, writeReferences, validateTroubleshootingIndex, type CommittedCapabilityProjection, type RenderedReferences } from './generate.js'
+
+// Every render in this file runs as a release-bumped package: the committed references are
+// regenerated at one version and must stay byte-identical after the next bump.
+const BUMPED_VERSION = vi.hoisted(() => '99.0.0')
+vi.mock('../package-metadata.js', async (importOriginal) => {
+    const original = await importOriginal<typeof import('../package-metadata.js')>()
+    return { ...original, installedPackageMetadata: Object.freeze({ ...original.installedPackageMetadata, version: BUMPED_VERSION }) }
+})
 
 const roots: string[] = []
 const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex')
@@ -236,7 +243,10 @@ describe('reference generation', () => {
         expect(first.kind, JSON.stringify(first)).toBe('complete')
         if (first.kind !== 'complete') return
         expect(first.files.map(file => file.path)).toEqual(wholePaths)
-        for (const file of first.files) expect(file.bytes).toContain(`<!-- cockpit:verified version=${installedPackageMetadata.version} -->`)
+        for (const file of first.files) {
+            expect(file.bytes).not.toContain('cockpit:verified')
+            expect(file.bytes).not.toContain(BUMPED_VERSION)
+        }
         const cli = first.files[0]!.bytes
         for (const command of commands) {
             expect(cli).toContain(`cockpit ${command.name}`)
