@@ -15,6 +15,8 @@ export declare function coverage(site: string[] | null): string
 export declare function scanText(body: string, needle: RegExp): number[]
 export declare function scanPathText(path: string, body: string, site: string[]): number[]
 export declare function scanPublicationPathText(path: string, body: string): number[]
+export declare function commitMessageText(raw: string): string
+export declare function scanCommitMessage(raw: string, rootUrl?: URL): { coverage: string; identifying: number[]; ceremony: number[] }
 export declare function trackedContents(root?: string): Map<string, string>
 export declare function untrackedPaths(root?: string): string[]
 export declare function scanGitHistory(root?: string): {

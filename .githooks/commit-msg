@@ -8,12 +8,22 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 const messagePath = process.argv[2]
-const scannerUrl = new URL('scripts/hygiene-scan.mjs', pathToFileURL(`${process.cwd()}/`))
-const { scanPublicationPathText } = await import(scannerUrl)
-const hits = scanPublicationPathText('commit-message', readFileSync(messagePath, 'utf8'))
-
-if (hits.length > 0) {
-    console.error(`commit-msg: private development ceremony found on line${hits.length === 1 ? '' : 's'} ${hits.join(', ')}`)
+const rootUrl = pathToFileURL(`${process.cwd()}/`)
+const { scanCommitMessage } = await import(new URL('scripts/hygiene-scan.mjs', rootUrl))
+const plural = (lines) => `line${lines.length === 1 ? '' : 's'} ${lines.join(', ')}`
+let result
+try {
+    result = scanCommitMessage(readFileSync(messagePath, 'utf8'), rootUrl)
+} catch (error) {
+    console.error(`commit-msg: could not scan the message: ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(2)
+}
+if (result.identifying.length > 0) {
+    console.error(`commit-msg: consumer-identifying material (${result.coverage}) on ${plural(result.identifying)}`)
+    process.exit(1)
+}
+if (result.ceremony.length > 0) {
+    console.error(`commit-msg: private development ceremony or a non-public link on ${plural(result.ceremony)}`)
     process.exit(1)
 }
 NODE

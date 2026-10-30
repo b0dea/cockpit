@@ -22,6 +22,8 @@ export const IMPLEMENTED_MECHANISMS = Object.freeze([
             'scanText',
             'scanPathText',
             'scanPublicationPathText',
+            'commitMessageText',
+            'scanCommitMessage',
             'trackedContents',
             'untrackedPaths',
             'scanGitHistory',
@@ -174,7 +176,17 @@ function publicationNeedle(commitMessage = false) {
         '\\.[a-z][a-z0-9_-]*[/\\\\](?:STATE|PLAN|REQUIREMENTS)\\.md\\b',
         '\\.(?:claude|codex)[/\\\\]worktrees(?:[/\\\\]|\\b)',
     ]
-    if (commitMessage) patterns.push('\\b[a-z]+\\(\\d{2}-\\d{2}(?:-\\d{2})?\\)')
+    if (commitMessage) {
+        patterns.push(
+            '\\b[a-z]+\\(\\d{2}-\\d{2}(?:-\\d{2})?\\)',
+            // Agent tools append links to the private conversation that produced a commit.
+            'claude\\.ai/code/session',
+            '\\bClaude-Session:',
+            'chatgpt\\.com/codex',
+            // Any other link in a message points at something a public reader cannot open.
+            'https?://(?!github\\.com/b0dea/cockpit(?![\\w.-]))',
+        )
+    }
     return new RegExp(patterns.join('|'), 'i')
 }
 
@@ -196,6 +208,34 @@ export function scanPublicationPathText(path, body) {
         if (needle.test(line)) bodyHits.push(index + 1)
     }
     return [...new Set([...pathHits, ...bodyHits])].sort((a, b) => a - b)
+}
+
+const SCISSORS = /^# -{24} >8 -{24}$/
+
+/**
+ * The part of a commit-msg hook's input that Git will keep. Git runs the hook before stripping
+ * comment lines, so a verbose commit still carries its diff below the scissors line; scanning that
+ * would reject any commit whose diff contains a link. Lines are blanked, not removed, so reported
+ * line numbers still match the file the author edits.
+ */
+export function commitMessageText(raw) {
+    const lines = raw.split('\n')
+    const cut = lines.findIndex((line) => SCISSORS.test(line))
+    return (cut < 0 ? lines : lines.slice(0, cut)).map((line) => (line.startsWith('#') ? '' : line)).join('\n')
+}
+
+/** Both classes for one commit message: credentials and private names, then development ceremony. */
+export function scanCommitMessage(raw, rootUrl = ROOT_URL) {
+    const site = siteTerms(rootUrl)
+    if (hasInternal(rootUrl) && (site === null || site.length === 0)) {
+        throw new Error(`hygiene-scan: ${SITE_NEEDLES} must be a readable, non-empty file when ${INTERNAL}/ exists`)
+    }
+    const body = commitMessageText(raw)
+    return {
+        coverage: coverage(site),
+        identifying: scanPathText('commit-message', body, site ?? []),
+        ceremony: scanPublicationPathText('commit-message', body),
+    }
 }
 
 /** Batched object reads preserve NUL-delimited paths and avoid a subprocess per file. */
@@ -360,12 +400,22 @@ export function scanGitHistory(root = ROOT) {
                 gaps.push(`${row.commit}:${JSON.stringify(row.path)} is binary or invalid UTF-8`)
                 continue
             }
-            for (const line of scanPathText(row.path, text, site ?? [])) {
+            const found = scanPathText(row.path, text, site ?? []).map(line => ({ kind: 'consumer-identifier', line }))
+            if (row.path === '(commit)' || row.path === '(tag)') {
+                // Object headers precede the message; line numbers stay relative to the whole object.
+                const headerEnd = text.indexOf('\n\n')
+                const headerLines = headerEnd < 0 ? text.split('\n').length : text.slice(0, headerEnd + 2).split('\n').length - 1
+                const message = headerEnd < 0 ? '' : text.slice(headerEnd + 2)
+                for (const line of scanPublicationPathText('commit-message', message)) {
+                    found.push({ kind: 'development-ceremony', line: headerLines + line })
+                }
+            }
+            for (const { kind, line } of found) {
                 if (findings.length >= 10_000) {
                     if (!gaps.includes('history findings exceed 10000')) gaps.push('history findings exceed 10000')
                     break
                 }
-                findings.push({ commit: row.commit, path: row.path, kind: 'consumer-identifier', line })
+                findings.push({ commit: row.commit, path: row.path, kind, line })
             }
             if (scanPathText(row.path, row.path, site ?? []).length > 0) findings.push({
                 commit: row.commit, path: row.path, kind: 'consumer-identifier', line: 0,

@@ -81,6 +81,19 @@ describe('reachable history hygiene', () => {
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 
+    it('finds development ceremony in reachable commit messages', () => {
+        const { root, git } = repository()
+        try {
+            writeFileSync(join(root, 'clean.txt'), 'ordinary synthetic prose\n')
+            git('add', '--', 'clean.txt'); git('commit', '--quiet', '-m', 'Add clean content', '-m', 'Claude-' + 'Session: 01AbCdEf')
+            const leaking = git('rev-parse', 'HEAD')
+            git('commit', '--quiet', '--allow-empty', '-m', 'Keep ordinary history')
+            const report = scanGitHistory(root)
+            expect(report).toMatchObject({ complete: true, clean: false, commits: 2 })
+            expect(report.findings).toEqual([expect.objectContaining({ commit: leaking, path: '(commit)', kind: 'development-ceremony' })])
+        } finally { rmSync(root, { recursive: true, force: true }) }
+    })
+
     it('accepts complete clean history and rejects shallow, binary and oversized coverage', () => {
         const { root, git } = repository()
         try {
@@ -616,25 +629,49 @@ describe('published tree contains product truth, not development ceremony', () =
         expect(scanPublicationPathText('.gitignore', '!/.claude/work' + 'trees/state.md')).toEqual([1])
     })
 
-    it('blocks private development labels in commit messages', () => {
+    it.each([
+        ['an agent session link', 'Session: https://claude.ai/code/' + 'session_01AbCdEf'],
+        ['a session link without a scheme', 'claude.ai/code/' + 'session_01AbCdEf'],
+        ['a session trailer', 'Claude-' + 'Session: 01AbCdEf'],
+        ['a hosted agent task link', 'chatgpt.com/' + 'codex/tasks/task_e_0123'],
+        ['an arbitrary URL', 'Context: https://' + 'tracker.example.invalid/browse/X-1'],
+    ])('rejects %s in a commit message only', (_kind, planted) => {
+        expect(scanPublicationPathText('commit-message', planted)).toEqual([1])
+        expect(scanPublicationPathText('docs/product.md', 'See https://' + 'docs.example.invalid/guide')).toEqual([])
+    })
+
+    it('allows links to the public repository in commit messages', () => {
+        expect(scanPublicationPathText('commit-message', 'Fixes https://github.com/b0dea/cockpit/issues/12')).toEqual([])
+        expect(scanPublicationPathText('commit-message', 'See https://github.com/b0dea/cockpit-fork/pull/1')).toEqual([1])
+    })
+
+    it('blocks private development labels and credentials in commit messages', () => {
         const tmp = mkdtempSync(join(tmpdir(), 'cockpit-commit-message-'))
         const bad = join(tmp, 'bad-message')
+        const leaked = join(tmp, 'leaked-message')
         const good = join(tmp, 'good-message')
+        const hook = (message: string) => spawnSync('sh', [fileURLToPath(new URL(COMMIT_MESSAGE_HOOK, ROOT_URL)), message], {
+            cwd: ROOT,
+            encoding: 'utf8',
+        })
         try {
             writeFileSync(bad, 'fix(' + '03-07): internal label\n')
-            writeFileSync(good, 'fix: preserve environment lock ownership\n')
+            writeFileSync(leaked, 'Rotate the key\n\nOld value sk_' + 'live_synthetic\n')
+            // Git hands the hook the message before it strips comments, so a verbose commit's diff is still present.
+            writeFileSync(good, 'fix: preserve environment lock ownership\n'
+                + '# Please enter the commit message. https://' + 'example.invalid/help\n'
+                + '# ------------------------ >8 ------------------------\n'
+                + '+See https://' + 'example.invalid/diff-line\n')
 
-            const rejected = spawnSync('sh', [fileURLToPath(new URL(COMMIT_MESSAGE_HOOK, ROOT_URL)), bad], {
-                cwd: ROOT,
-                encoding: 'utf8',
-            })
-            const accepted = spawnSync('sh', [fileURLToPath(new URL(COMMIT_MESSAGE_HOOK, ROOT_URL)), good], {
-                cwd: ROOT,
-                encoding: 'utf8',
-            })
+            const rejected = hook(bad)
+            const identified = hook(leaked)
+            const accepted = hook(good)
 
             expect(rejected.status).toBe(1)
             expect(rejected.stderr).toContain('private development ceremony')
+            expect(identified.status).toBe(1)
+            expect(identified.stderr).toContain('consumer-identifying material')
+            expect(identified.stderr).not.toContain('sk_' + 'live_')
             expect(accepted.status, accepted.stderr).toBe(0)
         } finally {
             rmSync(tmp, { recursive: true, force: true })
