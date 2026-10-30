@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
-import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, type GuardSurfaceTarget } from './harness-registry.js'
+import { GUARD_SURFACE_TARGETS as INSTRUCTION_TARGETS, HARNESS_REGISTRY, type GuardSurfaceTarget, type HarnessRegistryRow } from './harness-registry.js'
 
 export const mechanism = {
     id: 'sibling-projection',
@@ -117,8 +117,8 @@ export interface NativeProjection {
 export interface ShippedInstructionCapability {
     readonly target: SurfaceTarget
     readonly mechanism: NativeProjection['mechanism'] | 'rulesync-rules'
-    readonly capability: NativeProjection['capability'] | 'unavailable'
-    readonly evidence: NativeProjection['evidence'] | 'not_applicable'
+    readonly capability: NativeProjection['capability'] | 'generated'
+    readonly evidence: NativeProjection['evidence']
     readonly characterizedOn: string
     readonly provenance: string
 }
@@ -701,6 +701,8 @@ function linkPath(slug: string, guide: string): string {
     return `.sibling-${slug}-${guide.replaceAll('/', '-')}`
 }
 
+const GENERATED_ONLY_HARNESSES = HARNESS_REGISTRY.filter((row): row is Extract<HarnessRegistryRow, { readonly native: { readonly state: 'generated' } }> =>
+    row.native.state === 'generated')
 const INSTRUCTION_CAPABILITIES = Object.freeze([
     Object.freeze({
         target: 'claudecode', mechanism: 'claude-relative-import', capability: 'instructed', evidence: 'pending_evidence',
@@ -714,14 +716,10 @@ const INSTRUCTION_CAPABILITIES = Object.freeze([
         target: 'opencode', mechanism: 'opencode-instructions', capability: 'instructed', evidence: 'pending_evidence',
         characterizedOn: '2026-09-26', provenance: 'source instructions-list loading measurement',
     }),
-    Object.freeze({
-        target: 'cursor', mechanism: 'rulesync-rules', capability: 'unavailable', evidence: 'not_applicable',
-        characterizedOn: '2026-10-28', provenance: 'no authenticated native candidate and broken-control probe is committed',
-    }),
-    Object.freeze({
-        target: 'grokcli', mechanism: 'rulesync-rules', capability: 'unavailable', evidence: 'not_applicable',
-        characterizedOn: '2026-10-28', provenance: 'no authenticated native candidate and broken-control probe is committed',
-    }),
+    ...GENERATED_ONLY_HARNESSES.map(row => Object.freeze({
+        target: row.target, mechanism: 'rulesync-rules' as const, capability: row.native.state, evidence: 'pending_evidence' as const,
+        characterizedOn: row.native.measuredOn, provenance: row.native.reason,
+    })),
 ] as const satisfies readonly ShippedInstructionCapability[])
 const issuedInstructionCapabilities = new WeakSet<object>()
 

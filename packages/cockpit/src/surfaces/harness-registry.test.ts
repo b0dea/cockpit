@@ -29,8 +29,8 @@ describe('shipped harness registry', () => {
             ['claudecode', 'Claude Code', 'claudecode', 'CLAUDE.md', '.claude/skills', '.mcp.json', ['.claude/settings.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
             ['codexcli', 'Codex', 'codexcli', 'AGENTS.md', '.agents/skills', '.codex/config.toml', ['.codex/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'instructed', 'pending_evidence', '2026-09-26'],
             ['opencode', 'OpenCode', 'opencodev1', 'AGENTS.md', '.opencode/skills', 'opencode.jsonc', ['opencode.jsonc'], ['rules', 'mcp', 'subagents', 'skills', 'hooks'], 'instructed', 'pending_evidence', '2026-09-26'],
-            ['cursor', 'Cursor', 'cursor', '.cursor/rules', '.cursor/skills', '.cursor/mcp.json', ['.cursor/cli.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'unavailable', '2026-10-28'],
-            ['grokcli', 'Grok Build', 'grokcli', 'AGENTS.md', '.grok/skills', '.grok/config.toml', ['.grok/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'unavailable', '2026-10-28'],
+            ['cursor', 'Cursor', 'cursor', '.cursor/rules', '.cursor/skills', '.cursor/mcp.json', ['.cursor/cli.json'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'generated', '2026-10-28'],
+            ['grokcli', 'Grok Build', 'grokcli', 'AGENTS.md', '.grok/skills', '.grok/config.toml', ['.grok/config.toml'], ['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'], 'unavailable', 'generated', '2026-10-28'],
         ])
         expect(GUARD_SURFACE_TARGETS).toEqual(['claudecode', 'codexcli', 'opencode'])
         expect(SURFACE_PUBLICATION_ANCHORS).toEqual(['.agents', '.claude', '.codex', '.cursor', '.grok', '.opencode'])

@@ -16,9 +16,8 @@ The AI coding tool an agent runs in. The [capability matrix](capability-matrix.m
 built-in target identifiers and records what is confirmed for each feature. An
 instructions-only tool can read the shared guide without gaining guard or permission enforcement;
 see [Capability states](harness-surfaces.md#capability-states). cockpit fully supports Claude
-Code, Codex CLI and OpenCode. It also writes Cursor and Grok Build files, which are generated but
-not yet verified: nobody has confirmed those tools load them, and cockpit installs no guard for
-them. The matrix currently shows them as `unavailable` until a check confirms otherwise.
+Code, Codex CLI and OpenCode. It also writes Cursor and Grok Build files, which the matrix marks
+`generated`: nobody has confirmed those tools load them, and cockpit installs no guard for them.
 
 ### Sibling repository
 
@@ -80,9 +79,9 @@ A stable synthetic identity used in seed data and signed-in tests, such as a tes
 a known role. Personas come from one declared source file and are generated into typed outputs
 the product's tests can import.
 
-### Enforced, instructed and unavailable
+### Enforced, instructed, generated and unavailable
 
-The three states of a harness feature. See
+The four states of a harness feature. See
 [Cockpit harness capability state](#cockpit-harness-capability-state).
 
 ## Cockpit checkout root
@@ -171,6 +170,8 @@ The confirmed status of one feature for one agent harness:
 
 - `enforced`: a mechanism refuses the prohibited operation, and a dated check shows it doing so.
 - `instructed`: cockpit emits the guidance or setting, but enforcement has not been confirmed.
+- `generated`: cockpit emits the file for a harness with no guard adapter or loading test, so
+  nobody has verified that the tool even loads it.
 - `unavailable`: the harness offers no mechanism, so cockpit emits nothing and records why.
 
 Generating a file never promotes a feature to `enforced`; only a probe of the real tool does.

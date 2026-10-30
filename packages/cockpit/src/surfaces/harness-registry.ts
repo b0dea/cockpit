@@ -10,10 +10,17 @@ const pendingNative = (measuredOn: '2026-09-26') => Object.freeze({
     reason: 'native loading and enforcement require a paired candidate and broken-control probe',
 })
 
-const unavailableNative = Object.freeze({
-    state: 'unavailable' as const,
+// Cockpit writes rules, skills, MCP and permission files for these harnesses through the
+// generator, so `unavailable` (nothing emitted) would be false; nothing yet shows the tool reads them.
+const generatedNative = Object.freeze({
+    state: 'generated' as const,
     measuredOn: '2026-10-28' as const,
-    reason: 'no authenticated native candidate and broken-control probe is committed',
+    reason: 'cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it',
+})
+const noGuardAdapter = Object.freeze({
+    capability: 'unavailable' as const,
+    measuredOn: '2026-10-28' as const,
+    reason: 'no guard adapter is checked in, so cockpit generates no guard hook',
 })
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
@@ -41,13 +48,13 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: '.cursor/rules', skills: '.cursor/skills', mcp: '.cursor/mcp.json', permissions: Object.freeze(['.cursor/cli.json']) }),
-        guard: Object.freeze({ capability: 'unavailable' as const }), native: unavailableNative,
+        guard: noGuardAdapter, native: generatedNative,
     }),
     Object.freeze({
         target: 'grokcli', type: 'agent' as const, displayName: 'Grok Build', rulesyncTarget: 'grokcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.grok/skills', mcp: '.grok/config.toml', permissions: Object.freeze(['.grok/config.toml']) }),
-        guard: Object.freeze({ capability: 'unavailable' as const }), native: unavailableNative,
+        guard: noGuardAdapter, native: generatedNative,
     }),
 ] as const)
 

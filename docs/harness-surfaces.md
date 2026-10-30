@@ -63,14 +63,16 @@ left alone. Writing the bundle does not show that Claude loaded it; that needs a
 
 ## Capability states
 
-Each feature (rules, MCP servers, subagents, skills, hooks, permissions) has one of three states
+Each feature (rules, MCP servers, subagents, skills, hooks, permissions) has one of four states
 per harness. The same words are defined in
-[Concepts](concepts.md#enforced-instructed-and-unavailable).
+[Concepts](concepts.md#enforced-instructed-generated-and-unavailable).
 
 - `enforced`: the harness has a mechanism that can refuse the forbidden operation, and a dated
   test with a deliberately broken control has confirmed it.
 - `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the
   harness obeys it.
+- `generated`: cockpit writes the file for a harness that has no guard adapter or loading test,
+  so nobody has verified that the tool even loads it.
 - `unavailable`: cockpit writes nothing for this feature and records why the harness cannot
   provide it.
 
@@ -82,13 +84,11 @@ Codex and OpenCode). The guard scripts deny, and fail closed, whenever a harness
 each harness actually runs them on a tool call is not yet confirmed for any harness: every
 guard-firing cell is `instructed`, pending a test.
 
-Cursor and Grok Build are different. Cockpit does generate rules, skills, subagents, hooks, MCP
-and permission files for them (`rulesyncFeatures` in
-[the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts)). Nobody has verified
-that either tool loads those files, and cockpit installs no guard hook for them. The generated
-[capability matrix](capability-matrix.md) currently lists them as `unavailable`, which by the
-definition above would mean cockpit emits nothing. That label is wrong for these two harnesses. The
-accurate state is "generated, not yet verified", and this page uses it below.
+Cursor and Grok Build are `generated`. Cockpit writes rules, skills, subagents, hooks, MCP and
+permission files for them (`rulesyncFeatures` in
+[the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts)), but nobody has
+verified that either tool loads those files. Cockpit installs no guard hook for them, so their
+guard-firing cells in the [capability matrix](capability-matrix.md) are `unavailable`.
 
 A custom harness must declare exactly one row for every feature. Each row that is not
 `unavailable` names a test date, the output spelling, a deliberately broken control, and the
@@ -105,17 +105,17 @@ confirming real enforcement still needs a separate paired test of the tool.
 
 ### Built-in capability matrix
 
-The renderer writes output for all five built-in harnesses. Cursor and Grok Build read "generated,
-not yet verified" for the reason given in [Capability states](#capability-states).
+The renderer writes output for all five built-in harnesses. Cursor and Grok Build read `generated`
+for the reason given in [Capability states](#capability-states).
 
 | Feature | Claude Code | Codex | OpenCode | Cursor | Grok Build | Still unconfirmed |
 |---|---|---|---|---|---|---|
-| Rules | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | Whether the tool loads the instructions needs a paired test. |
-| MCP | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | Your approval controls which servers are enabled in the generated files; loading by the tool is unproven. |
-| Subagents | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | How the tool applies the role needs a test. |
-| Skills | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | Matching behaviour across tools and the required human reviews are still pending. |
-| Hooks | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | A generated hook file does not show that the harness runs it. |
-| Permissions | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | A generated permission file does not show that the tool loads it. Cursor and Grok Build have no guard adapter, so no guard is generated for them. |
+| Rules | instructed | instructed | instructed | generated | generated | Whether the tool loads the instructions needs a paired test. |
+| MCP | instructed | instructed | instructed | generated | generated | Your approval controls which servers are enabled in the generated files; loading by the tool is unproven. |
+| Subagents | instructed | instructed | instructed | generated | generated | How the tool applies the role needs a test. |
+| Skills | instructed | instructed | instructed | generated | generated | Matching behaviour across tools and the required human reviews are still pending. |
+| Hooks | instructed | instructed | instructed | generated | generated | A generated hook file does not show that the harness runs it. |
+| Permissions | instructed | instructed | instructed | generated | generated | A generated permission file does not show that the tool loads it. Cursor and Grok Build have no guard adapter, so no guard is generated for them. |
 
 The checked-in guard adapters (the
 [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),

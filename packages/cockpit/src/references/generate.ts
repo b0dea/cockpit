@@ -119,9 +119,9 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
         for (const row of restrictions.targets) cells.push(Object.freeze({ target: row.target, capability: 'guard-firing', skill: 'n/a',
             state: row.capability, evidence: row.evidenceStatus, provenance: row.provenance, measuredOn: row.measuredOn, measuredVersion: row.measuredVersion }))
         for (const target of SURFACE_TARGETS) {
-            const native = harnessFact(target).native
-            if (native.state === 'unavailable') cells.push(Object.freeze({ target, capability: 'guard-firing', skill: 'n/a',
-                state: native.state, evidence: 'not_applicable', provenance: native.reason, measuredOn: native.measuredOn, measuredVersion: null }))
+            const guard = harnessFact(target).guard
+            if (guard.capability === 'unavailable') cells.push(Object.freeze({ target, capability: 'guard-firing', skill: 'n/a',
+                state: guard.capability, evidence: 'not_applicable', provenance: guard.reason, measuredOn: guard.measuredOn, measuredVersion: null }))
         }
         const instructions = shippedInstructionCapabilities()
         if (instructions.length !== SURFACE_TARGETS.length || new Set(instructions.map(row => row.target)).size !== SURFACE_TARGETS.length
@@ -132,9 +132,9 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
             const file = skills.files.find(row => row.target === target && row.path.endsWith(`/${skill}/SKILL.md`))
             if (!file) return refusal(`shipped skill output is missing for ${target}:${skill}`, 'surfaces/skills')
             const native = harnessFact(target).native
-            cells.push(native.state === 'unavailable'
-                ? Object.freeze({ target, capability: 'skill-parity', skill, state: native.state, evidence: 'not_applicable',
-                    provenance: native.reason, measuredOn: native.measuredOn, measuredVersion: null })
+            cells.push(native.state === 'generated'
+                ? Object.freeze({ target, capability: 'skill-parity', skill, state: native.state, evidence: 'pending_evidence',
+                    provenance: `inspectSkillSet rendered ${file.path}; SHA-256 ${file.sha256}; ${native.reason}`, measuredOn: native.measuredOn, measuredVersion: null })
                 : Object.freeze({ target, capability: 'skill-parity', skill, state: 'instructed', evidence: 'human_needed',
                     provenance: `inspectSkillSet rendered ${file.path}; SHA-256 ${file.sha256}; operator parity judgment pending`, measuredOn: 'unmeasured', measuredVersion: null }))
         }
@@ -306,11 +306,16 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
             + commands.map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
             + '\n## Consumer documentation pipeline\n\n```yaml\ndocumentation-pipeline:\n  generate: <declared producer command>\n  check: <declared byte comparison command>\n  named-references: <declared reference validation command>\n```\n'
-        const matrixOpening = 'This generated matrix is for users checking what each harness can enforce, instruct or cannot provide. '
-        const matrix = committed ? documentHeading('Capability matrix') + matrixOpening + 'Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.\n\n'
+        const matrixOpening = 'This generated matrix is for users checking how far each harness feature is confirmed to work. The State column has four values:\n\n'
+            + '- `enforced`: a dated test with a deliberately broken control showed the harness refusing the forbidden operation.\n'
+            + '- `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the harness obeys it.\n'
+            + '- `generated`: cockpit writes the file for a harness that has no guard adapter or loading test, so nobody has verified that the tool even loads it.\n'
+            + '- `unavailable`: cockpit writes nothing for this cell; the Provenance column says why.\n\n'
+            + 'The Evidence column names what would confirm a cell: `pending_evidence` needs a paired test of the real tool, `human_needed` needs a person\'s review, and `not_applicable` means there is nothing to confirm. Generating a file or passing repository tests never promotes a cell.\n\n'
+        const matrix = committed ? documentHeading('Capability matrix') + matrixOpening
             + `Source manifest: ${code(committed.sha256)}.\n\n| Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n`
             + committed.cells.map(row => `| ${cell(row.target)} | ${cell(row.capability)} | ${cell(row.skill)} | ${cell(row.state)} | ${cell(row.evidence)} | ${cell(row.provenance)} | ${cell(row.measuredOn)} | ${cell(row.measuredVersion ?? 'unmeasured')} |\n`).join('')
-            : documentHeading('Capability matrix') + matrixOpening + 'This projection describes declared surfaces and pending probe cells. A probe expectation grants no enforced capability; missing or unavailable native evidence remains non-authorizing.\n\n'
+            : documentHeading('Capability matrix') + matrixOpening + 'This version lists the cells that `cockpit selftest` would test for one configuration. Listing a cell confirms nothing, and a missing test result never counts as confirmation.\n\n'
             + `Source manifest: ${code(expectation!.generatedManifestSha256)}.\n\n| Harness | Capability | Skill | Evidence |\n| --- | --- | --- | --- |\n`
             + expectation!.cells.map(row => `| ${cell(row.harness.kind === 'builtin' ? row.harness.name : row.harness.id)} | ${row.capability} | ${row.capability === 'skill-parity' ? row.skill : 'n/a'} | instructed; native probe pending |\n`).join('')
             + '\nCustom declarations retain their recorded state and measurement date; a declaration alone supplies no native proof.\n\n'

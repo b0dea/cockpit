@@ -109,8 +109,8 @@ changes.
 
 ## Harness capabilities
 
-Support for each agent tool is a matrix of capabilities; a cell is *enforced*, *instructed* or
-*unavailable*. Establish which by driving the tool, not by reading its docs or symbols. Follow
+Support for each agent tool is a matrix of capabilities; a cell is *enforced*, *instructed*,
+*generated* (emitted, never checked) or *unavailable* (nothing emitted). Establish which by driving the tool, not by reading its docs or symbols. Follow
 `.agents/skills/verify-harness-capability/SKILL.md`, keep a deliberately broken control file
 beside the real one, never claim a capability the matrix has not measured, and date every
 measurement. The matrix is `docs/capability-matrix.md`.

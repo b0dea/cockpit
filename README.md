@@ -144,9 +144,8 @@ section.
 ## Generated agent-tool targets
 
 Claude Code, Codex CLI and OpenCode are the fully supported targets. cockpit also writes Cursor
-and Grok Build files, but they are generated, not yet verified: nobody has confirmed those tools
-load them, and cockpit installs no guard for them. The capability matrix currently lists them as
-`unavailable` until a check confirms otherwise.
+and Grok Build files, which the capability matrix marks `generated`: nobody has confirmed those
+tools load them, and cockpit installs no guard for them.
 
 | Harness | Target name | Where cockpit writes its surfaces |
 |---|---|---|
@@ -157,8 +156,8 @@ load them, and cockpit installs no guard for them. The capability matrix current
 | Grok Build | `grokcli` | AGENTS.md and .grok/ (skills, MCP and permissions) |
 
 Generating a file is not the same as the tool enforcing it. The
-[capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed* or
-*unavailable*; see
+[capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*,
+*generated* or *unavailable*; see
 [Status and limits](#status-and-limits) before relying on a generated control.
 
 ## Status and limits
@@ -182,8 +181,8 @@ repository carries only synthetic fixtures. What is true today:
   [prerequisites](docs/getting-started.md#install-cockpit) and the
   [runtime identity and measurement table](docs/environment.md#measure-the-container-runtime).
 - **Generating a file does not prove the tool uses it.** The
-  [capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*
-  or *unavailable* for its target. Generated files and passing tests alone do not prove
+  [capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*,
+  *generated* or *unavailable* for its target. Generated files and passing tests alone do not prove
   that a tool loads or enforces them. [Harness surfaces](docs/harness-surfaces.md#capability-states)
   explains the states and how `cockpit selftest` checks them.
 - **Not a sandbox.** Guards, Git ignore rules and file permissions stop mistakes, not malicious

@@ -74,8 +74,8 @@ Every `init` command needs your harness's target identifier. The
 [capability matrix](capability-matrix.md) names built-in targets and separates generated surfaces
 from native enforcement that has been confirmed. For example, Codex uses `codexcli`; substitute
 your tool's target in the examples. Claude Code, Codex CLI and OpenCode are fully supported;
-Cursor and Grok Build files are generated but not yet verified, and cockpit installs no guard for
-them. For an instructions-only tool, follow
+Cursor and Grok Build files are `generated` (nobody has verified those tools load them), and
+cockpit installs no guard for them. For an instructions-only tool, follow
 [Capability states](harness-surfaces.md#capability-states); generation alone does not establish
 guard or permission enforcement.
 

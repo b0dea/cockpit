@@ -170,7 +170,7 @@ describe('reference generation', () => {
         expect(files.get('docs/cli-reference.md')).toContain('for users looking up an exact command, flag, exit code or diagnostic')
         expect(files.get('docs/configuration-reference.md')).toContain('for users authoring or reviewing `cockpit.toml`')
         expect(files.get('docs/command-list.md')).toContain('for users choosing the command that owns their next operation')
-        expect(files.get('docs/capability-matrix.md')).toContain('for users checking what each harness can enforce, instruct or cannot provide')
+        expect(files.get('docs/capability-matrix.md')).toContain('for users checking how far each harness feature is confirmed to work')
     })
     it('preserves the exact CRLF marker boundary when replacing its bounded index', () => {
         const source = prose.replace(`${begin}\n`, `${begin}\r\n`)
@@ -210,9 +210,12 @@ describe('reference generation', () => {
         const matrix = rendered.files.find(file => file.path === 'docs/capability-matrix.md')!.bytes
         expect(matrix).toContain('human_needed')
         expect(matrix).toContain('pending_evidence')
-        expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
-        expect(matrix).toContain('| grokcli | instruction-loading | n/a | unavailable | not_applicable | rulesync-rules: no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
-        expect(matrix).toContain('| cursor | skill-parity | cockpit-setup | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |')
+        // Cursor and Grok Build get generated rules and skills but no guard hook: the matrix must not
+        // call emitted files unavailable, nor call the absent guard anything else.
+        expect(matrix).toContain('| cursor | instruction-loading | n/a | generated | pending_evidence | rulesync-rules: cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |')
+        expect(matrix).toMatch(/\| grokcli \| skill-parity \| cockpit-setup \| generated \| pending_evidence \| inspectSkillSet rendered \.grok\/skills\/cockpit-setup\/SKILL\.md; SHA-256 [0-9a-f]{64}; cockpit generates this file;/)
+        expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | 2026-10-28 | unmeasured |')
+        expect(matrix).not.toMatch(/\| (?:cursor|grokcli) \| (?:instruction-loading|skill-parity) \| [^|]+ \| unavailable \|/)
         expect(matrix).not.toContain('| enforced |')
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')
