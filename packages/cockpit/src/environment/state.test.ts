@@ -12,6 +12,7 @@ import {
     authenticateStatePublication,
     lifecycleHistoryAddress,
     readState,
+    refreshBootstrapObservation,
     resetBootstrapAnswer,
     inspectStateLock,
     issueStateScopedLock,
@@ -531,6 +532,102 @@ describe('bootstrap state', () => {
         expect(await resetBootstrapAnswer(namespace, address, { ownerId, field: 'ports.bases', updatedAt: '2026-09-07T12:01:00.000Z',
             acceptedPreviewSha256: preview.kind === 'pending' ? preview.preview.previewSha256 : '' }))
             .toMatchObject({ kind: 'refusal', code: 'BOOTSTRAP_ANSWER_RESET_STALE' })
+    })
+
+    it('replaces one exact stale estate interview without changing bootstrap publication identity', async () => {
+        const { namespace, address } = await selectedBootstrapNamespace()
+        const ownerId = bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'observation-refresh-session' })
+        const staleQuestion = { id: `question:${'5'.repeat(64)}`, field: 'sibling',
+            source: 'configuration:stale', why: 'the sibling declaration is unresolved' }
+        const stale: BootstrapStateRecord = { ...bootstrapRecord(address), value: { ...bootstrapRecord(address).value,
+            stage: 'surface-published', destination: null, artifactBytes: null, artifactSha256: null,
+            greenfield: { stage: 'question-pending', classification: 'no-runnable-product',
+                sourceObservationSha256: '6'.repeat(64), notice: 'no runnable product was observed',
+                questions: [staleQuestion], answers: [] },
+        } }
+        expect(await transactState(namespace, address, { ownerId }, () => stale)).toMatchObject({ kind: 'complete' })
+        const answerBytes = '[]'
+        const answered: BootstrapStateRecord = { ...stale, revision: 1, value: { ...stale.value,
+            greenfield: { ...stale.value.greenfield!, stage: 'answers-recorded', answers: [{
+                questionId: staleQuestion.id, bytes: answerBytes,
+                sha256: createHash('sha256').update(answerBytes).digest('hex'), provenance: 'operator-confirmed',
+            }] },
+        } }
+        expect(await transactState(namespace, address, { ownerId }, () => answered)).toMatchObject({ kind: 'complete' })
+        const freshQuestion = { id: `question:${'7'.repeat(64)}`, field: 'sibling',
+            source: 'configuration:fresh', why: 'the runnable sibling declaration is unresolved' }
+        const fresh = { stage: 'question-pending' as const, classification: 'one-sibling' as const,
+            sourceObservationSha256: '8'.repeat(64), notice: 'one runnable product was observed',
+            questions: [freshQuestion], answers: [] }
+
+        expect(await refreshBootstrapObservation(namespace, address, { ownerId,
+            expectedRevision: 0,
+            expectedSourceObservationSha256: '6'.repeat(64), greenfield: fresh,
+            updatedAt: '2026-09-07T12:01:00.000Z' })).toMatchObject({ kind: 'refusal', reason: 'stale' })
+        expect(await readState(address)).toEqual({ kind: 'complete', value: answered })
+        expect(await refreshBootstrapObservation(namespace, address, { ownerId,
+            expectedRevision: 1,
+            expectedSourceObservationSha256: '6'.repeat(64),
+            greenfield: { ...fresh, sourceObservationSha256: '6'.repeat(64) },
+            updatedAt: '2026-09-07T12:01:00.000Z' })).toMatchObject({ kind: 'refusal', reason: 'invalid' })
+        const refreshed = await refreshBootstrapObservation(namespace, address, { ownerId,
+            expectedRevision: 1,
+            expectedSourceObservationSha256: '6'.repeat(64), greenfield: fresh,
+            updatedAt: '2026-09-07T12:01:00.000Z' })
+        expect(refreshed).toMatchObject({ kind: 'complete', value: { revision: 2, value: {
+            stage: 'surface-published', checkoutRoot: stale.value.checkoutRoot, target: stale.value.target,
+            sources: stale.value.sources, commandSha256: stale.value.commandSha256,
+            previewSha256: stale.value.previewSha256, published: stale.value.published,
+            destination: null, artifactBytes: null, artifactSha256: null, greenfield: fresh,
+        } } })
+        expect(await refreshBootstrapObservation(namespace, address, { ownerId,
+            expectedRevision: 0,
+            expectedSourceObservationSha256: '6'.repeat(64), greenfield: fresh,
+            updatedAt: '2026-09-07T12:02:00.000Z' })).toMatchObject({ kind: 'refusal' })
+        await expect(transactState(namespace, address, { ownerId }, current => ({ ...current!, revision: current!.revision + 1,
+            value: { ...current!.value, greenfield: { ...fresh, sourceObservationSha256: '9'.repeat(64) } },
+        }))).resolves.toMatchObject({ kind: 'refusal' })
+        await expect(transactState(namespace, address, { ownerId }, current => {
+            const { greenfield: _greenfield, ...value } = current!.value
+            return { ...current!, revision: current!.revision + 1, value }
+        })).resolves.toMatchObject({ kind: 'refusal' })
+    })
+
+    it('does not refresh registry interviews or a bootstrap stage that already owns a draft', async () => {
+        const fresh = { stage: 'question-pending' as const, classification: 'one-sibling' as const,
+            sourceObservationSha256: '8'.repeat(64), notice: 'one runnable product was observed', questions: [{
+                id: `question:${'7'.repeat(64)}`, field: 'sibling', source: 'configuration:fresh',
+                why: 'the runnable sibling declaration is unresolved',
+            }], answers: [] }
+        const registrySelection = await selectedBootstrapNamespace()
+        const registryOwner = bootstrapHolderId({ checkoutId: registrySelection.address.checkoutId, sessionId: 'registry-session' })
+        const registry: BootstrapStateRecord = { ...bootstrapRecord(registrySelection.address), value: {
+            ...bootstrapRecord(registrySelection.address).value, stage: 'surface-published', destination: null,
+            artifactBytes: null, artifactSha256: null, greenfield: { mode: 'registry', stage: 'question-pending',
+                sourceObservationSha256: '6'.repeat(64), questions: [{ id: `question:${'5'.repeat(64)}`,
+                    field: 'sibling', source: 'registry', why: 'the sibling declaration is unresolved' }], answers: [] },
+        } }
+        expect(await transactState(registrySelection.namespace, registrySelection.address, { ownerId: registryOwner }, () => registry))
+            .toMatchObject({ kind: 'complete' })
+        expect(await refreshBootstrapObservation(registrySelection.namespace, registrySelection.address, {
+            ownerId: registryOwner, expectedRevision: 0, expectedSourceObservationSha256: '6'.repeat(64),
+            greenfield: fresh, updatedAt: '2026-09-07T12:01:00.000Z',
+        })).toMatchObject({ kind: 'refusal', reason: 'stale' })
+
+        const draftSelection = await selectedBootstrapNamespace()
+        const draftOwner = bootstrapHolderId({ checkoutId: draftSelection.address.checkoutId, sessionId: 'draft-session' })
+        const draftBase = bootstrapRecord(draftSelection.address)
+        const draft: BootstrapStateRecord = { ...draftBase, value: { ...draftBase.value, greenfield: {
+            stage: 'question-pending', classification: 'one-sibling', sourceObservationSha256: '6'.repeat(64),
+            notice: 'one runnable product was observed', questions: [{ id: `question:${'5'.repeat(64)}`,
+                field: 'sibling', source: 'configuration:stale', why: 'the runnable sibling declaration is unresolved' }], answers: [],
+        } } }
+        expect(await transactState(draftSelection.namespace, draftSelection.address, { ownerId: draftOwner },
+            () => draft)).toMatchObject({ kind: 'complete' })
+        expect(await refreshBootstrapObservation(draftSelection.namespace, draftSelection.address, {
+            ownerId: draftOwner, expectedRevision: 0, expectedSourceObservationSha256: '6'.repeat(64),
+            greenfield: fresh, updatedAt: '2026-09-07T12:01:00.000Z',
+        })).toMatchObject({ kind: 'refusal', reason: 'stale' })
     })
 
     it('refuses target, root, record, owner, size and filesystem authority substitution', async () => {

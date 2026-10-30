@@ -429,7 +429,7 @@ describe('init application', () => {
         expect(resumed.result?.question).toBeUndefined()
     })
 
-    it('refuses copied, unproven, oversized and changed-observation greenfield answers', async () => {
+    it('refuses copied, unproven and oversized greenfield answers, then restarts a changed-source interview', async () => {
         const f = fixture()
         let observed = estate(f.root, 'incomplete-multi-repository')
         const adapters: InitApplicationAdapters = { ...f.adapters, classifyEstate: async () => observed,
@@ -457,12 +457,54 @@ describe('init application', () => {
         ])
         const original = estate(f.root, 'incomplete-multi-repository')
         if (original.kind !== 'complete') throw new Error('expected complete synthetic observation')
+        const selected = await selectBootstrapStateRoot({ platform: 'linux', home: f.input.home,
+            xdgStateHome: f.input.xdgStateHome, checkoutRoot: f.root, target: 'codexcli' })
+        if (selected.kind !== 'complete') throw new Error('expected selected bootstrap namespace')
+        const address = selected.value.paths.bootstrap('codexcli')
+        const before = await readState(address)
+        observed = { kind: 'complete', status: 0, diagnostics: [], result: {
+            ...original.result, classification: 'one-sibling',
+        } }
+        expect(await runInitApplication({ ...accepted, accepted: false }, adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'GREENFIELD_OBSERVATION_CHANGED' }],
+        })
+        expect(await readState(address)).toEqual(before)
         observed = { kind: 'complete', status: 0, diagnostics: [], result: { ...original.result,
             sourceObservationSha256: digest('8'),
             gaps: [{ field: 'api.runnable', source: 'api/package.json', why: 'observation changed' }],
         } }
+        const preview = await runInitApplication({ ...accepted, accepted: false }, adapters)
+        expect(preview).toMatchObject({ kind: 'pending', result: {
+            estate: { sourceObservationSha256: digest('8'), answers: [] },
+            interview: { answered: [] },
+        } })
+        expect(preview.result?.interview?.outstanding).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'sibling' })]))
+        expect(preview.result).not.toHaveProperty('question')
+        expect(await readState(address)).toEqual(before)
+
+        const staleAnswer = await runInitApplication({ ...accepted, greenfieldAnswer: {
+            questionId: id, bytes: '[]', provenance: 'operator-confirmed',
+        } }, adapters)
+        expect(staleAnswer).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'GREENFIELD_ANSWER_INVALID', message: expect.stringContaining('same cockpit init command'),
+        }] })
+        expect(await readState(address)).toEqual(before)
+
         const changed = await runInitApplication(accepted, adapters)
-        expect(changed).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GREENFIELD_OBSERVATION_CHANGED' }] })
+        expect(changed).toMatchObject({ kind: 'pending', result: { question: {
+            id: `question:${createHash('sha256').update(`${digest('8')}:0`).digest('hex')}`,
+        },
+            estate: { sourceObservationSha256: digest('8'), answers: [] }, interview: { answered: [] } } })
+        const refreshed = await readState(address)
+        if (before.kind !== 'complete') throw new Error('expected persisted stale interview')
+        expect(refreshed).toMatchObject({ kind: 'complete', value: { revision: before.value.revision + 1, value: {
+            stage: 'surface-published', greenfield: { stage: 'question-pending', sourceObservationSha256: digest('8'),
+                questions: [{ field: 'sibling' }], answers: [] },
+        } } })
+        const resumed = await runInitApplication({ ...accepted, accepted: false }, adapters)
+        expect(resumed).toMatchObject({ kind: 'pending', result: { question: {
+            id: `question:${createHash('sha256').update(`${digest('8')}:0`).digest('hex')}`,
+        }, estate: { sourceObservationSha256: digest('8'), answers: [] }, interview: { answered: [] } } })
     })
 
     it('persists more than one interview round and keeps every unaccepted call byte-for-byte read-only', async () => {

@@ -808,6 +808,50 @@ it('runs installed init for each isolated target and refuses missing roots or br
             })
         }
     }
+    const changingRequested = join(packScratch, 'init-no-runnable-to-runnable')
+    mkdirSync(changingRequested)
+    const changingRoot = realpathSync(changingRequested)
+    const changingRepository = join(changingRoot, 'library')
+    mkdirSync(changingRepository)
+    const changingManifest = join(changingRepository, 'package.json')
+    writeFileSync(changingManifest, `${JSON.stringify({
+        name: 'synthetic-changing-library', version: '0.0.0', scripts: { test: 'node test.mjs' },
+    })}\n`)
+    const changingAnswers = join(packScratch, 'changing-estate-answers.toml')
+    writeFileSync(changingAnswers, [
+        '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
+        'var = "LIBRARY_DIR"', 'purpose = "Synthetic changing service"', '',
+    ].join('\n'))
+    const changingRun = (...args: string[]) => spawnSync(process.execPath,
+        [launcher, 'init', changingRoot, '--target', 'codexcli', ...args, '--json'],
+        { cwd: changingRoot, env, encoding: 'utf8' })
+    const changingFirst = changingRun()
+    expect(changingFirst.status, changingFirst.stdout + changingFirst.stderr).toBe(0)
+    const changingPreview = JSON.parse(changingFirst.stdout).result
+    const changingPending = changingRun('--accept-preview', changingPreview.previewSha256, '--answers', changingAnswers)
+    expect(changingPending.status, changingPending.stdout + changingPending.stderr).toBe(0)
+    expect(JSON.parse(changingPending.stdout).result).toMatchObject({
+        estate: { classification: 'no-runnable-product', answers: [expect.objectContaining({ provenance: 'operator-confirmed' })] },
+        question: { field: 'ports.bases' },
+    })
+
+    writeFileSync(changingManifest, `${JSON.stringify({
+        name: 'synthetic-changing-library', version: '0.0.0', scripts: { start: 'node server.mjs' },
+    })}\n`)
+    const changedPreviewRun = changingRun()
+    expect(changedPreviewRun.status, changedPreviewRun.stdout + changedPreviewRun.stderr).toBe(0)
+    const changedPreview = JSON.parse(changedPreviewRun.stdout).result
+    expect(changedPreview).toMatchObject({
+        estate: { classification: 'one-sibling', answers: [] }, interview: { answered: [] },
+    })
+    expect(changedPreview).not.toHaveProperty('question')
+    const changedAccepted = changingRun('--accept-preview', changedPreview.previewSha256, '--answers', changingAnswers)
+    expect(changedAccepted.status, changedAccepted.stdout + changedAccepted.stderr).toBe(0)
+    const refreshed = JSON.parse(changedAccepted.stdout).result
+    expect(refreshed).toMatchObject({
+        estate: { classification: 'one-sibling', answers: [expect.objectContaining({ provenance: 'operator-confirmed' })] },
+        question: { field: 'ports.bases' },
+    })
     // An agent has no terminal at any point: three runs, each given only what the previous one printed.
     mkdirSync(join(packScratch, 'init-headless'))
     const headless = realpathSync(join(packScratch, 'init-headless'))

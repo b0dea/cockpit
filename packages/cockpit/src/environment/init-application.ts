@@ -12,6 +12,7 @@ import { bootstrapHolderId } from './identity.js'
 import {
     authenticateStatePublication,
     readState,
+    refreshBootstrapObservation,
     resetBootstrapAnswer,
     selectBootstrapStateRoot,
     transactState,
@@ -551,9 +552,22 @@ export async function runInitApplication(
         }
         let state = current.value.greenfield
         const mode = boundInput.registry === undefined ? 'estate' as const : 'registry' as const
+        let staleSourceObservationSha256: string | undefined
         if (state && ((state.mode ?? 'estate') !== mode || state.sourceObservationSha256 !== sourceObservationSha256
             || state.classification !== classification?.classification)) {
-            return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration source changed after the interview was persisted', address.path)
+            if (mode !== 'estate' || (state.mode ?? 'estate') !== 'estate') {
+                return refused('GREENFIELD_OBSERVATION_CHANGED', 'configuration source changed after the interview was persisted', address.path)
+            }
+            if (state.sourceObservationSha256 === sourceObservationSha256) {
+                return refused('GREENFIELD_OBSERVATION_CHANGED',
+                    'configuration classification changed while its source observation digest stayed the same; rerun the same cockpit init command to re-observe the current interview, and report the invariant failure if it persists', address.path)
+            }
+            if (input.greenfieldAnswer !== undefined) {
+                return refused('GREENFIELD_ANSWER_INVALID',
+                    'configuration source changed, so the answer for the earlier pending question was not applied; rerun the same cockpit init command to review the fresh observation before answering again', address.path)
+            }
+            staleSourceObservationSha256 = state.sourceObservationSha256
+            state = undefined
         }
         const priorAnswers = state?.answers ?? []
         const proposed = input.greenfieldAnswer
@@ -590,7 +604,8 @@ export async function runInitApplication(
             const interview = classification ? await interviewPlan(boundInput, adapters, classification, answers.length) : undefined
             const estate = classification ? greenfieldResult(classification, sourceObservationSha256, answers) : undefined
             const pendingResult = result('surface-published', projection, undefined,
-                { question: surfacedQuestion, ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
+                { ...(staleSourceObservationSha256 !== undefined && !input.accepted ? {} : { question: surfacedQuestion }),
+                    ...(estate ? { estate } : {}), ...(interview ? { interview } : {}),
                     ...(!input.accepted && appliedReset ? { resetAnswer: appliedReset } : {}) })
             if (snapshotJson(pendingResult) === undefined) {
                 return refused('INIT_DRAFT_INVALID', `configuration review cannot be shown exactly within the bounded human output; ${draftRemedy}`, destination)
@@ -601,8 +616,19 @@ export async function runInitApplication(
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]
             const nextState = { ...(mode === 'registry' ? { mode } : {}), stage: 'question-pending' as const, sourceObservationSha256,
                 ...(classification ? { classification: classification.classification, notice: classification.notice } : {}), questions, answers }
-            const recorded = await persist(namespace, address, boundInput, projection, adapters, 'surface-published', current,
-                { published: current.value.published, greenfield: nextState })
+            const recorded = staleSourceObservationSha256 === undefined
+                ? await persist(namespace, address, boundInput, projection, adapters, 'surface-published', current,
+                    { published: current.value.published, greenfield: nextState })
+                : await refreshBootstrapObservation(namespace, address, {
+                    ownerId: bootstrapHolderId({ checkoutId: namespace.checkoutId, sessionId: input.sessionId }),
+                    expectedRevision: current.revision,
+                    expectedSourceObservationSha256: staleSourceObservationSha256,
+                    greenfield: nextState, updatedAt: adapters.now(),
+                })
+            if (recorded.kind === 'refusal' && 'reason' in recorded) {
+                return refused('GREENFIELD_OBSERVATION_CHANGED',
+                    `${recorded.message}; rerun the same cockpit init command to review the fresh observation before answering again`, address.path)
+            }
             if (recorded.kind !== 'complete') return stateFailure(recorded)
             return { kind: 'pending', status: 0, artifact: null, destination: null,
                 diagnostics: documented.diagnostics, result: pendingResult }
@@ -615,6 +641,27 @@ export async function runInitApplication(
             sourceObservationSha256, ...(classification ? { classification: classification.classification,
                 notice: classification.notice } : {}),
             questions: [...(state?.questions ?? [])], answers }
+        if (!input.accepted && staleSourceObservationSha256 !== undefined) {
+            const interview = classification ? await interviewPlan(boundInput, adapters, classification, 0) : undefined
+            const estate = classification ? greenfieldResult(classification, sourceObservationSha256, []) : undefined
+            return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: documented.diagnostics,
+                result: result('surface-published', projection, undefined,
+                    { ...(estate ? { estate } : {}), ...(interview ? { interview } : {}) }) }
+        }
+        if (staleSourceObservationSha256 !== undefined) {
+            const refreshed = await refreshBootstrapObservation(namespace, address, {
+                ownerId: bootstrapHolderId({ checkoutId: namespace.checkoutId, sessionId: input.sessionId }),
+                expectedRevision: current.revision,
+                expectedSourceObservationSha256: staleSourceObservationSha256,
+                greenfield: resolvedState, updatedAt: adapters.now(),
+            })
+            if (refreshed.kind === 'refusal' && 'reason' in refreshed) {
+                return refused('GREENFIELD_OBSERVATION_CHANGED',
+                    `${refreshed.message}; rerun the same cockpit init command to review the fresh observation before answering again`, address.path)
+            }
+            if (refreshed.kind !== 'complete') return stateFailure(refreshed)
+            current = refreshed.value
+        }
         const artifactSha256 = sha256(documented.artifact)
         const persisted = await persist(namespace, address, boundInput, projection, adapters, 'draft-prepared', current, {
             published: current.value.published, destination: 'cockpit.toml', artifactBytes: documented.artifact, artifactSha256,

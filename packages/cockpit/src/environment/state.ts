@@ -26,7 +26,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -40,6 +40,7 @@ const issuedNamespacePaths = new WeakMap<object, StateNamespace>()
 const issuedBootstrapNamespaces = new WeakSet<object>()
 const issuedScopedLocks = new WeakMap<object, Readonly<{ namespace: StateNamespace; path: string }>>()
 const issuedBootstrapAnswerResets = new WeakSet<object>()
+const issuedBootstrapObservationRefreshes = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
@@ -1230,7 +1231,8 @@ function validateRecordForAddress(
                     const delta = stages.indexOf(nextGreenfield.stage) - stages.indexOf(currentGreenfield.stage)
                     return delta === 0 || delta === 1
                 })()
-        const authorizedReset = currentBootstrap !== null && issuedBootstrapAnswerResets.has(value as object)
+        const authorizedReset = currentBootstrap !== null
+            && (issuedBootstrapAnswerResets.has(value as object) || issuedBootstrapObservationRefreshes.has(value as object))
         return record.checkoutId === address.checkoutId && record.target === address.target
             && record.value.checkoutRoot === address.checkoutRoot && record.value.target === address.target
             && record.revision === expectedRevision && immutableEvidenceMatches && stageAdvances
@@ -1334,6 +1336,68 @@ export async function resetBootstrapAnswer(
     if (!acceptedPreview) return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_STALE',
         'recorded answer reset did not retain its authenticated preview', address.path)
     return Object.freeze({ kind: 'complete', preview: acceptedPreview, record: outcome.value })
+}
+
+type BootstrapObservationRefreshRefusal = Readonly<{
+    kind: 'refusal'
+    reason: 'invalid' | 'stale'
+    message: string
+}>
+
+export type BootstrapObservationRefreshResult = StateResult<BootstrapStateRecord> | BootstrapObservationRefreshRefusal
+
+function observationRefreshRefusal(
+    reason: BootstrapObservationRefreshRefusal['reason'],
+    message: string,
+): BootstrapObservationRefreshRefusal {
+    return Object.freeze({ kind: 'refusal', reason, message })
+}
+
+export async function refreshBootstrapObservation(
+    namespace: BootstrapStateNamespace,
+    address: BootstrapStateAddress,
+    input: Readonly<{
+        ownerId: BootstrapLockOwnerId
+        expectedRevision: number
+        expectedSourceObservationSha256: string
+        greenfield: NonNullable<BootstrapStateRecord['value']['greenfield']>
+        updatedAt: string
+    }>,
+): Promise<BootstrapObservationRefreshResult> {
+    let stableInput: typeof input
+    try {
+        const parsed = GreenfieldStateSchema.safeParse(input.greenfield)
+        if (!parsed.success || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0
+            || !digest.test(input.expectedSourceObservationSha256)
+            || !isCanonicalTimestamp(input.updatedAt) || parsed.data.answers.length !== 0
+            || (parsed.data.mode ?? 'estate') !== 'estate'
+            || parsed.data.sourceObservationSha256 === input.expectedSourceObservationSha256) {
+            return observationRefreshRefusal('invalid', 'fresh estate observation replacement is malformed')
+        }
+        stableInput = Object.freeze({ ownerId: input.ownerId, expectedRevision: input.expectedRevision,
+            expectedSourceObservationSha256: input.expectedSourceObservationSha256,
+            greenfield: Object.freeze(parsed.data), updatedAt: input.updatedAt })
+    } catch {
+        return observationRefreshRefusal('invalid', 'fresh estate observation replacement could not be read safely')
+    }
+    const outcome = await transactState(namespace, address, { ownerId: stableInput.ownerId }, current => {
+        const greenfield = current?.value.greenfield
+        if (current === null || current.revision !== stableInput.expectedRevision
+            || current.value.stage !== 'surface-published' || !greenfield
+            || (greenfield.mode ?? 'estate') !== 'estate'
+            || greenfield.sourceObservationSha256 !== stableInput.expectedSourceObservationSha256) {
+            return abortStateTransaction(observationRefreshRefusal('stale',
+                'bootstrap estate observation no longer matches the exact persisted interview'))
+        }
+        const record: BootstrapStateRecord = {
+            ...current, revision: current.revision + 1, updatedAt: stableInput.updatedAt,
+            value: { ...current.value, greenfield: stableInput.greenfield },
+        }
+        issuedBootstrapObservationRefreshes.add(record)
+        return record
+    })
+    if ('aborted' in outcome) return outcome.value as BootstrapObservationRefreshRefusal
+    return outcome
 }
 
 async function inspectLock(
