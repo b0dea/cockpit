@@ -1724,7 +1724,20 @@ fi
         const pinnedStart = createRuntimeServicePlan({ topology: pinnedEvidence.topology, service: 'api' })
         if (pinnedStart.kind !== 'planned') throw new Error('pinned service plan unavailable')
         expect(pinnedStart).not.toHaveProperty('build')
-        expect(pinnedStart.start.timeoutMs).toBe(20_000)
+        // `up --wait` returns only once the service is running and healthy, and a first start of a
+        // pinned image may pull it, so every start is held to the declared cold start. Holding the
+        // rest to the command budget killed a first `up` moments before its container became healthy.
+        expect(pinnedStart.start.timeoutMs).toBe(70_000)
+        const composeFirst = { services: { api: {
+            build: { context: directory, dockerfile: 'Dockerfile' },
+            labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
+            healthcheck: { test: ['CMD', 'true'], interval: '25s' },
+        } } }
+        const composeFirstEvidence = (await topologyEvidence(composeFirst, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
+        if (composeFirstEvidence.kind !== 'complete') throw new Error(composeFirstEvidence.reason)
+        const composeFirstStart = createRuntimeServicePlan({ topology: composeFirstEvidence.topology, service: 'api' })
+        if (composeFirstStart.kind !== 'planned') throw new Error('compose-first service plan unavailable')
+        expect(composeFirstStart.start.timeoutMs).toBe(70_000)
         for (const build of [{ context: 'relative', dockerfile: 'Dockerfile' }, { context: directory }, { context: directory, dockerfile: 'Dockerfile', args: {} }]) {
             expect((await topologyEvidence({ ...topology, services: { api: { ...unpinned, build } } })).admitted.kind).toBe('unavailable')
         }

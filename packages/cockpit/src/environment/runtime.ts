@@ -1980,17 +1980,16 @@ function runtimeServiceInitialSteps(
     service: RuntimeTopologyService,
     issuanceId: string,
 ): RuntimeServiceInitialSteps | undefined {
-    // Compose builds a generated service's image inside its first start, and the declared
-    // cold_start_seconds already bounds start through health, so a built service's start gets that
-    // bound instead of the ordinary command budget, which a first build outruns. When the service's
-    // configuration changed since its container was created, `up` first stops that container and
-    // pays its stop grace; a start held to the command budget alone was killed mid-recreate after
-    // a fixed `up`, leaving the replacement container created but never started.
-    const built = typeof service.generation === 'string' && service.image === null
+    // `up --wait` returns only once the service runs and its healthcheck passes, after Compose has
+    // built or pulled its image, and the declared cold_start_seconds bounds exactly that. The
+    // ordinary command budget does not: a first `up` was killed and reported "did not become
+    // healthy" seconds before its container turned healthy. When the service's configuration
+    // changed since its container was created, `up` first stops that container and pays its stop
+    // grace; a start without that grace was killed mid-recreate, leaving the replacement container
+    // created but never started.
     const start = derivedComposeStep(
-        { ...topologyContract.step, timeoutMs: COMPOSE_STOP_GRACE_MS + (built
-            ? Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis)
-            : topologyContract.step.timeoutMs) },
+        { ...topologyContract.step, timeoutMs: COMPOSE_STOP_GRACE_MS
+            + Math.max(topologyContract.step.timeoutMs, topologyContract.runtime.coldStartLimitMillis) },
         `runtime:docker-compose:start:${service.id}`,
         'up',
         ['--progress', 'quiet', 'up', '--detach', '--wait', '--no-deps', service.id],
