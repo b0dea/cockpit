@@ -286,7 +286,7 @@ async function refuseWhileStackRecorded(loaded: LoadedConfig, env: SiblingAddInp
     if (!lifecycle) return refused(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'lifecycle progress record is malformed; nothing was written', address.path)
     if (lifecycle.value.teardownComplete === true) return undefined
     return refused('SIBLING_STACK_RECORDED',
-        `a stack started from ${configPath} is still recorded, and cockpit removes a stack only under the exact cockpit.toml that started it, so this edit would leave it unremovable; nothing was written — fix: run \`${cockpitCommand('down', { config: configPath })}\`, then rerun this command`,
+        `a stack started from ${configPath} is still recorded, and adding or removing a repository would change the environment underneath it; nothing was written — fix: run \`${cockpitCommand('down', { config: configPath })}\`, then rerun this command`,
         configPath)
 }
 
