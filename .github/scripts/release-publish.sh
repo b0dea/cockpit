@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Publish step of the release workflow. Run by changesets/action only when the Version
-# Packages pull request has merged, so every pending changeset is already folded in.
+# Publish step of the release workflow. Its publish job runs it only when select-mode found a
+# version that is not on npm yet, which is after the Version Packages pull request has merged, so
+# every pending changeset is already folded in. A private package never reaches it: select-mode
+# leaves private packages out of the publish plan.
 #
-# Owns: the private-package guard, the npm version guard, the source-revision stamp, and the
+# Owns: the npm version guard, the first-publication guard, the source-revision stamp, and the
 # handoff to `changeset publish`. Must not: write to the source commit (the stamp lives in the
 # working tree only) or authenticate with a stored token (publishing is OIDC).
 set -euo pipefail
@@ -13,11 +15,6 @@ revision="${GITHUB_SHA:?GITHUB_SHA is required: this script runs inside the rele
 if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
   echo "::error::GITHUB_SHA is not a full 40-character commit id: $revision" >&2
   exit 1
-fi
-
-if [[ "$(node -p "require('./$manifest').private === true")" == true ]]; then
-  echo "::notice::$manifest is private: true. Nothing was published. Set private to false (and run the one-time npm trusted publisher setup) to enable publishing."
-  exit 0
 fi
 
 # npm trusted publishing needs npm 11.5.1 or newer. An older npm would fall through to a

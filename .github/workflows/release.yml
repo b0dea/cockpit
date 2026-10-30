@@ -1,11 +1,16 @@
 name: Release
 
-# Changesets keeps a "Version Packages" pull request open on main. Merging it runs the publish
-# script below, which publishes with npm trusted publishing (OIDC, no stored token) and
-# attaches provenance. While packages/cockpit is `private: true` the script logs that and
-# publishes nothing, so this pipeline can sit ready until the package is made public.
+# Changesets keeps a "Version Packages" pull request open on main. Merging it publishes with npm
+# trusted publishing (OIDC, no stored token) and attaches provenance. While packages/cockpit is
+# `private: true` there is nothing to publish, so this pipeline can sit ready until the package is
+# made public.
 #
-# Two limits of the token this job holds, both handled by hand and described in
+# The work is split into jobs so the OIDC token exists only where it is spent. `select-mode`
+# decides, holding no write scope; `version` maintains the pull request and never holds id-token;
+# `publish` alone holds id-token, and only under the `npm` deployment environment, which the npm
+# trusted publisher names, so a token minted by any other job is refused by the registry.
+#
+# Two limits of the token these jobs hold, both handled by hand and described in
 # docs/contributing/releasing.md: trusted publishing cannot create a package, so the first
 # publication is a manual bootstrap; and a pull request opened with GITHUB_TOKEN starts no
 # workflows, so CI (and the required ci-ok check) runs on the Version Packages pull request only
@@ -23,36 +28,90 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# No job restores a dependency cache: a release job must not restore state a pull request could
+# have written. Node 24 ships the npm that trusted publishing needs; the publish script verifies
+# the version rather than assuming it.
 jobs:
-  release:
-    name: version pull request or publish
+  # `version` while changesets are pending, `publish` once the Version Packages pull request has
+  # merged and its version is not on npm yet, `none` otherwise. A private package is never in the
+  # publish plan, so it reads `none`.
+  select-mode:
+    name: select release mode
     if: github.repository == 'b0dea/cockpit'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
-      contents: write       # tags, GitHub releases and the version branch
-      pull-requests: write  # open and update the Version Packages pull request
-      id-token: write       # npm trusted publishing and provenance (OIDC)
+      contents: read
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # No dependency cache: a release job must not restore state a pull request could have
-      # written. Node 24 ships the npm that trusted publishing needs; the publish script
-      # verifies the version rather than assuming it.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - id: mode
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+      - name: say why a private package publishes nothing
+        if: steps.mode.outputs.mode == 'none'
+        run: |
+          if [[ "$(node -p "require('./packages/cockpit/package.json').private === true")" == true ]]; then
+            echo "::notice::packages/cockpit/package.json is private: true, so nothing was published. Set private to false and follow 'First publication' in docs/contributing/releasing.md to enable publishing."
+          fi
+
+  version:
+    name: version pull request
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'version'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write       # the version branch
+      pull-requests: write  # open and update the Version Packages pull request
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: bash .github/scripts/release-version.sh
+          pr-title: Version Packages
+          commit-message: Version Packages
+
+  # The package is built here, under the OIDC token, by its prepack script. A separate pack job
+  # without the token would not contain a compromised build: the tarball it produced is what this
+  # job publishes. So the build stays where the stamp and the publish are, in one checkout.
+  publish:
+    name: publish to npm
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: write  # tags and the GitHub release
+      id-token: write  # npm trusted publishing and provenance (OIDC)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
       - run: npm ci --ignore-scripts
       - id: changesets
-        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          version-script: bash .github/scripts/release-version.sh
-          publish-script: bash .github/scripts/release-publish.sh
-          pr-title: Version Packages
-          commit-message: Version Packages
+          script: bash .github/scripts/release-publish.sh
         env:
           NPM_CONFIG_PROVENANCE: 'true'
       # The record names the exact published version and its registry integrity, so `cockpit

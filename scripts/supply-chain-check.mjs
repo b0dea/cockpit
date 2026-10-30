@@ -91,12 +91,16 @@ const STATIC_PACKAGE_FILES = Object.freeze([
 ])
 // The only jobs allowed to hold a write scope, and exactly which ones. Everything else is
 // read-only. Widening this list is a security-policy change: review it as one.
+// The release workflow splits its grants so the OIDC token is held only by the job that publishes.
 const WRITE_GRANTS = Object.freeze({
-    '.github/workflows/release.yml#release': Object.freeze(['contents', 'pull-requests', 'id-token']),
+    '.github/workflows/release.yml#version': Object.freeze(['contents', 'pull-requests']),
+    '.github/workflows/release.yml#publish': Object.freeze(['contents', 'id-token']),
     '.github/workflows/dependabot-automerge.yml#automerge': Object.freeze(['contents', 'pull-requests']),
 })
 // The only job allowed to publish, or to invoke a repository script that does.
-const PUBLICATION_JOBS = new Set(['.github/workflows/release.yml#release'])
+const PUBLICATION_JOBS = new Set(['.github/workflows/release.yml#publish'])
+// The Changesets publish action runs `changeset publish` itself when no script is given.
+const PUBLICATION_ACTION = /^changesets\/action\/publish@/
 const PUBLICATION_COMMAND = /(?:npm\s+(?:publish|login)|(?:changeset|pnpm|yarn)\s+publish|registry\.npmjs\.org)/i
 const EXACT_VERSION = /^(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?|workspace:\*)$/
 
@@ -344,19 +348,20 @@ function workflowDiagnostics(root, rootManifest) {
                 }
                 if (typeof step.uses === 'string') inspectAction(step.uses, path)
                 if (typeof step.run === 'string' && /npm run lint:supply-chain(?:\s|$)/.test(step.run)) invokesDetector = true
-                // Changesets action command inputs are scanned like `run`. Legacy input names
-                // remain included here so an ignored but dangerous-looking command cannot hide.
-                // A repository script named by any of them is
-                // scanned too: moving a publish command into a script must not hide it.
-                const commands = [step.run, step.with?.['publish-script'], step.with?.['version-script'], step.with?.publish, step.with?.version]
+                // Changesets action command inputs are scanned like `run`, ignored input names
+                // included, so an ignored but dangerous-looking command cannot hide. A repository
+                // script named by any of them is scanned too: moving a publish command into a
+                // script must not hide it.
+                const commands = [step.run, step.with?.script, step.with?.['publish-script'], step.with?.['version-script'], step.with?.publish, step.with?.version]
                     .filter(value => typeof value === 'string')
                 if (!publishes) {
-                    if (typeof step.with?.['publish-script'] === 'string' || typeof step.with?.publish === 'string') {
-                        add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release job may run a publish command')
+                    if (typeof step.with?.['publish-script'] === 'string' || typeof step.with?.publish === 'string'
+                        || (typeof step.uses === 'string' && PUBLICATION_ACTION.test(step.uses))) {
+                        add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release publish job may run a publish command')
                     }
                     for (const command of commands) {
                         if (PUBLICATION_COMMAND.test(command)) {
-                            add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release job may contain a registry or publication command')
+                            add('PUBLICATION_PATH_PRESENT', `${path}#${jobName}`, 'only the release publish job may contain a registry or publication command')
                         }
                         for (const script of command.match(/\.github\/scripts\/[A-Za-z0-9_./-]+/g) ?? []) {
                             const scriptPath = resolve(root, script)
@@ -390,9 +395,9 @@ function workflowDiagnostics(root, rootManifest) {
     return diagnostics
 }
 
-// Detectors for the release properties that used to be listed as operator gaps: the release
-// job stamps the source revision, publishes with provenance, and dependency updates wait out
-// a cooldown. Each is read from the files that implement it.
+// Detectors for the release properties that used to be listed as operator gaps: the publish
+// job stamps the source revision, publishes with provenance from the npm environment, and
+// dependency updates wait out a cooldown. Each is read from the files that implement it.
 function releaseDiagnostics(root) {
     const diagnostics = []
     const record = value => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -404,13 +409,15 @@ function releaseDiagnostics(root) {
         }
     }
     const workflow = readYaml('.github/workflows/release.yml')
-    const job = record(workflow?.jobs) ? workflow.jobs.release : undefined
+    const job = record(workflow?.jobs) ? workflow.jobs.publish : undefined
     if (workflow !== undefined && !record(job)) {
-        diagnostics.push(diagnostic('RELEASE_JOB_MISSING', '.github/workflows/release.yml', 'the release workflow must define a job named release'))
+        diagnostics.push(diagnostic('RELEASE_JOB_MISSING', '.github/workflows/release.yml', 'the release workflow must define a job named publish'))
     }
     if (record(job)) {
         const steps = Array.isArray(job.steps) ? job.steps.filter(record) : []
-        const commands = steps.flatMap(step => [step.run, step.with?.['publish-script'], step.with?.['version-script']]
+        // Only inputs the steps actually run: a script under an input the action ignores never
+        // stamps anything.
+        const commands = steps.flatMap(step => [step.run, step.with?.script]
             .filter(value => typeof value === 'string'))
         const bodies = [...commands]
         for (const script of new Set(commands.flatMap(command => command.match(/\.github\/scripts\/[A-Za-z0-9_./-]+/g) ?? []))) {
@@ -418,16 +425,22 @@ function releaseDiagnostics(root) {
                 if (script.includes('..') || lstatSync(resolve(root, script)).isSymbolicLink()) throw new Error('linked or escaping path')
                 bodies.push(readFileSync(resolve(root, script), 'utf8'))
             } catch {
-                diagnostics.push(diagnostic('RELEASE_SCRIPT_INVALID', script, 'script named by the release job is missing, linked, or outside .github/scripts'))
+                diagnostics.push(diagnostic('RELEASE_SCRIPT_INVALID', script, 'script named by the publish job is missing, linked, or outside .github/scripts'))
             }
         }
         if (!bodies.some(body => body.includes('cockpitSourceRevision'))) {
-            diagnostics.push(diagnostic('RELEASE_STAMP_MISSING', '.github/workflows/release.yml', 'the release job must stamp cockpitSourceRevision with the commit before publishing'))
+            diagnostics.push(diagnostic('RELEASE_STAMP_MISSING', '.github/workflows/release.yml', 'the publish job must stamp cockpitSourceRevision with the commit before publishing'))
+        }
+        // The npm trusted publisher names this environment, so the registry refuses an OIDC
+        // token minted outside it, and its deployment-branch rule keeps the job on main.
+        const environment = record(job.environment) ? job.environment.name : job.environment
+        if (environment !== 'npm') {
+            diagnostics.push(diagnostic('RELEASE_ENVIRONMENT_MISSING', '.github/workflows/release.yml', 'the publish job must run in the npm deployment environment that the npm trusted publisher names'))
         }
         const envs = [job.env, ...steps.map(step => step.env)].filter(record)
         const provenance = envs.some(env => String(env.NPM_CONFIG_PROVENANCE) === 'true') || bodies.some(body => /--provenance\b/.test(body))
         if (!provenance || job.permissions?.['id-token'] !== 'write') {
-            diagnostics.push(diagnostic('RELEASE_PROVENANCE_MISSING', '.github/workflows/release.yml', 'the release job must publish with provenance (NPM_CONFIG_PROVENANCE or --provenance) and hold id-token: write'))
+            diagnostics.push(diagnostic('RELEASE_PROVENANCE_MISSING', '.github/workflows/release.yml', 'the publish job must publish with provenance (NPM_CONFIG_PROVENANCE or --provenance) and hold id-token: write'))
         }
         const evidence = steps.find(step => step.name === 'upload the release record to the GitHub release')
         const evidenceBody = typeof evidence?.run === 'string' ? evidence.run : ''

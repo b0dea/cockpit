@@ -18,10 +18,12 @@ Releases are automated with Changesets and GitHub Actions.
    version in `package-lock.json`.
 3. **A maintainer starts CI on the Version Packages pull request** by closing and reopening it,
    as described in [Merging the Version Packages pull request](#merging-the-version-packages-pull-request).
-4. **Merging the Version Packages pull request publishes.** The workflow publishes to npm through
-   Trusted Publishing (OIDC, with provenance, no stored token), stamps the source commit into the
-   package's `cockpitSourceRevision`, creates the GitHub release, and uploads the release record
-   that `cockpit upgrade` reads.
+4. **Merging the Version Packages pull request publishes.** The workflow's `publish` job
+   publishes to npm through Trusted Publishing (OIDC, with provenance, no stored token), stamps
+   the source commit into the package's `cockpitSourceRevision`, creates the GitHub release, and
+   uploads the release record that `cockpit upgrade` reads. It is the only job that can request
+   the OIDC token, and it runs in the `npm` deployment environment, which the trusted publisher
+   names, so a token from any other job or branch cannot publish.
 
 After the [first publication](#first-publication), nobody runs `npm publish` by hand. A release
 is a merge of the Version Packages pull request.
@@ -65,10 +67,21 @@ Version Packages pull request is open but not merged:
    ```
 
    npm may point `latest` at the placeholder until the first release replaces it.
-2. On npmjs.com, open the package's **Settings**, add a trusted publisher for GitHub Actions with
-   organization or user `b0dea`, repository `cockpit`, workflow filename `release.yml`, and no
-   environment. Allow it to publish with `npm publish`: the release workflow runs `npm publish`
-   through Changesets, and a new trusted publisher allows only staged publishing by default.
+2. Create the `npm` deployment environment, limited to the `main` branch, then name it in the
+   trusted publisher. Create the environment in the repository's **Settings**, **Environments**,
+   with **Deployment branches and tags** set to `main` only, or with:
+
+   ```sh
+   printf '%s' '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' \
+     | gh api -X PUT repos/b0dea/cockpit/environments/npm --input -
+   gh api -X POST repos/b0dea/cockpit/environments/npm/deployment-branch-policies -f name=main -f type=branch
+   ```
+
+   On npmjs.com, open the package's **Settings**, add a trusted publisher for GitHub Actions with
+   organization or user `b0dea`, repository `cockpit`, workflow filename `release.yml`, and
+   environment `npm`. Allow it to publish with `npm publish`: the release workflow runs
+   `npm publish` through Changesets, and a new trusted publisher allows only staged publishing by
+   default.
 3. Within two days, merge the Version Packages pull request as described above. An unused trusted
    publisher configuration expires after two days.
 4. When the release run finishes, check that `npm view @b0dea/cockpit dist-tags` shows the new
@@ -119,8 +132,8 @@ push starts CI; merge by hand once `ci-ok` passes.
 
 The automation above needs these settings, done once by the maintainer:
 
-- **npm:** the [first publication](#first-publication), which also registers the release workflow
-  as the package's trusted publisher.
+- **npm:** the [first publication](#first-publication), which also creates the `npm` deployment
+  environment and registers the release workflow in it as the package's trusted publisher.
 - **Package:** remove `"private": true` from the package manifest and set `access` to `public` in
   the Changesets configuration.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`

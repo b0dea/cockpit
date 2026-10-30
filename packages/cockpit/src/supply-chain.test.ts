@@ -178,13 +178,15 @@ describe('the supply-chain readiness detector', () => {
         const codes = (root: string) => inspect(root, PACK_FILES).diagnostics.map(row => row.code)
 
         it.each([
-            ['a release job that never stamps the source revision', '.github/scripts/release-publish.sh', (text: string) => text.replaceAll('cockpitSourceRevision', 'sourceRevisionRemoved'), 'RELEASE_STAMP_MISSING'],
-            ['a release job without provenance', '.github/workflows/release.yml', (text: string) => text.replace("NPM_CONFIG_PROVENANCE: 'true'", "NPM_CONFIG_PROVENANCE: 'false'"), 'RELEASE_PROVENANCE_MISSING'],
-            ['a release job without the OIDC token scope', '.github/workflows/release.yml', (text: string) => text.replace(/ +id-token: write[^\n]*\n/, ''), 'RELEASE_PROVENANCE_MISSING'],
-            ['a release workflow with no release job', '.github/workflows/release.yml', (text: string) => text.replace('  release:\n', '  other:\n'), 'RELEASE_JOB_MISSING'],
-            ['a release job using a legacy ignored publish input', '.github/workflows/release.yml',
-                (text: string) => text.replace('publish-script:', 'publish:'), 'RELEASE_STAMP_MISSING'],
-            ['a release job that never attaches authenticated release evidence', '.github/workflows/release.yml',
+            ['a publish job that never stamps the source revision', '.github/scripts/release-publish.sh', (text: string) => text.replaceAll('cockpitSourceRevision', 'sourceRevisionRemoved'), 'RELEASE_STAMP_MISSING'],
+            ['a publish job without provenance', '.github/workflows/release.yml', (text: string) => text.replace("NPM_CONFIG_PROVENANCE: 'true'", "NPM_CONFIG_PROVENANCE: 'false'"), 'RELEASE_PROVENANCE_MISSING'],
+            ['a publish job without the OIDC token scope', '.github/workflows/release.yml', (text: string) => text.replace(/ +id-token: write[^\n]*\n/, ''), 'RELEASE_PROVENANCE_MISSING'],
+            ['a release workflow with no publish job', '.github/workflows/release.yml', (text: string) => text.replace('  publish:\n', '  other:\n'), 'RELEASE_JOB_MISSING'],
+            ['a publish script under an input the publish action ignores', '.github/workflows/release.yml',
+                (text: string) => text.replace('script: bash .github/scripts/release-publish.sh', 'publish-script: bash .github/scripts/release-publish.sh'), 'RELEASE_STAMP_MISSING'],
+            ['a publish job outside the npm deployment environment', '.github/workflows/release.yml',
+                (text: string) => text.replace('    environment: npm\n', ''), 'RELEASE_ENVIRONMENT_MISSING'],
+            ['a publish job that never attaches authenticated release evidence', '.github/workflows/release.yml',
                 (text: string) => text.replace('gh release upload "$tag" release-evidence.json release-evidence.json.sha256', 'echo evidence-not-uploaded'),
                 'RELEASE_EVIDENCE_MISSING'],
             ['release evidence before a confirmed publication', '.github/workflows/release.yml',
@@ -222,10 +224,11 @@ describe('the supply-chain readiness detector', () => {
         ].join('\n')
 
         it.each([
-            ['an extra scope in the release job', 'release', (text: string) => text.replace('id-token: write ', 'packages: write\n      id-token: write ')],
+            ['an extra scope in the publish job', 'release', (text: string) => text.replace('id-token: write ', 'packages: write\n      id-token: write ')],
             ['id-token in the auto-merge job', 'dependabot-automerge', (text: string) => text.replace('pull-requests: write', 'pull-requests: write\n      id-token: write')],
-            ['a scope widened past the release job', 'ci', (text: string) => text.replace('permissions:\n      contents: read', 'permissions:\n      contents: write')],
-            ['the release grants under another job name', 'release', (text: string) => text.replace('  release:\n', '  publish:\n')],
+            ['a scope widened past the release jobs', 'ci', (text: string) => text.replace('permissions:\n      contents: read', 'permissions:\n      contents: write')],
+            ['the OIDC token in the version job', 'release', (text: string) => text.replace('pull-requests: write', 'pull-requests: write\n      id-token: write')],
+            ['the publish grants under another job name', 'release', (text: string) => text.replace('  publish:\n', '  release:\n')],
             ['a write default for the whole workflow', 'release', (text: string) => text.replace('permissions:\n  contents: read', 'permissions:\n  contents: write')],
         ])('refuses %s', (_name, workflow, update) => {
             const root = fixture()
@@ -233,7 +236,7 @@ describe('the supply-chain readiness detector', () => {
             expect(codes(root)).toContain('WORKFLOW_PERMISSIONS_BROAD')
         })
 
-        it('refuses a publish command in any workflow but the release job', () => {
+        it('refuses a publish command in any workflow but the publish job', () => {
             const root = fixture()
             writeWorkflow(root, 'other', publisher(['      - run: npm publish --provenance']))
             expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
@@ -247,13 +250,18 @@ describe('the supply-chain readiness detector', () => {
             expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
         })
 
-        it('refuses the release action publish input outside the release job', () => {
-            const root = fixture()
-            writeWorkflow(root, 'other', publisher([
+        it.each([
+            ['the combined action publish input', [
                 '      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51',
                 '        with:',
                 '          publish-script: node ship.mjs',
-            ]))
+            ]],
+            ['the publish action, which publishes without any script', [
+                '      - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51',
+            ]],
+        ])('refuses %s outside the publish job', (_name, steps) => {
+            const root = fixture()
+            writeWorkflow(root, 'other', publisher(steps))
             expect(codes(root)).toContain('PUBLICATION_PATH_PRESENT')
         })
 
