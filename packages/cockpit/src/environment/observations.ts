@@ -237,11 +237,36 @@ export function observationSatisfiesExpectation(observation: EnvironmentObservat
         && (expectation.kind === 'minimum' ? measured >= expectation.value : measured <= expectation.value)
 }
 
+function boundedJson(value: JsonSnapshot): string {
+    const text = JSON.stringify(value)
+    return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+// The diagnostic message is this reason, so a bare "does not satisfy" left a human to dig the
+// measured value (such as a dirty-file count) out of the JSON result before acting on it.
+function mismatchDetail(measured: JsonSnapshot, expectation: EnvironmentObservation['expectation']): string | undefined {
+    if (expectation.kind === 'minimum') return `measured ${boundedJson(measured)} (expected at least ${expectation.value})`
+    if (expectation.kind === 'maximum') return `measured ${boundedJson(measured)} (expected at most ${expectation.value})`
+    if (expectation.kind !== 'equal') return undefined
+    const expected = expectation.value
+    const isRecord = (value: JsonSnapshot): value is Readonly<Record<string, JsonSnapshot>> =>
+        value !== null && typeof value === 'object' && !Array.isArray(value)
+    if (!isRecord(measured) || !isRecord(expected)) return `measured ${boundedJson(measured)} (expected ${boundedJson(expected)})`
+    const fields = [...new Set([...Object.keys(expected), ...Object.keys(measured)])]
+        .filter((key) => !jsonEqual(measured[key] ?? null, expected[key] ?? null))
+    if (fields.length === 0) return undefined
+    const shown = fields.slice(0, 8).map((key) =>
+        `${key} is ${boundedJson(measured[key] ?? null)} (expected ${boundedJson(expected[key] ?? null)})`)
+    return fields.length > shown.length ? `${shown.join(', ')}, and ${fields.length - shown.length} more` : shown.join(', ')
+}
+
 function reasonFor(observation: EnvironmentObservation, verdict: EvaluatedObservation['verdict']): string {
     if (observation.applicability.state === 'not-applicable') return observation.applicability.reason
     if (observation.observed.state !== 'available') return observation.observed.reason
     if (observation.freshness.state !== 'current') return observation.freshness.reason
-    return verdict === 'pass' ? 'expectation satisfied' : 'observed value does not satisfy the expectation'
+    if (verdict === 'pass') return 'expectation satisfied'
+    const detail = mismatchDetail(observation.observed.value, observation.expectation)
+    return detail ? `observed value does not satisfy the expectation: ${detail}` : 'observed value does not satisfy the expectation'
 }
 
 function evaluate(observation: EnvironmentObservation): EvaluatedObservation {

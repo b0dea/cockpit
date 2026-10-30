@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { createServer } from 'node:net'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObservation, type HolderId, type ObservationDeclaration, type StackId } from './contract.js'
 import {
@@ -23,7 +23,8 @@ import { coordinationStateRecord, observeClaimState } from './claims.js'
 import { leasePortFamily, observePortFamily } from './ports.js'
 import { observeEnvironmentKeys, observeSiblingPresence } from './templates.js'
 import { createRuntimeAdapter, observeRuntimeExecution } from './runtime.js'
-import { resolvedExecutable } from './executable.js'
+import { resolveGitExecutable, resolvedExecutable } from './executable.js'
+import { createGitObservationStep, observeGit } from './git-observation.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { observeStateSeed, recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, stackId as deriveStackId } from './identity.js'
@@ -938,6 +939,31 @@ describe('deterministic preflight and doctor', () => {
         expect(result.checks.length).toBe(allObservationDeclarations.length + 2)
         expect(result.checks.filter(({ owner }) => owner === 'posture-requirements').every(({ verdict }) => verdict === 'pass')).toBe(true)
         expect(result.checks.filter(({ verdict }) => verdict === 'unavailable').length).toBeGreaterThan(0)
+    })
+
+    it('names the differing measured fields when a checkout working tree fails', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'cockpit-observation-git-'))
+        temporaryPaths.push(root)
+        execFileSync('git', ['init', '-b', 'main'], { cwd: root })
+        await writeFile(join(root, 'tracked.txt'), 'stable\n')
+        execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
+        execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture'], { cwd: root })
+        await writeFile(join(root, 'tracked.txt'), 'changed\n')
+        await writeFile(join(root, 'first.txt'), 'new\n')
+        await writeFile(join(root, 'second.txt'), 'new\n')
+        const posture = await context(stackId, 'always', validConfigSource, new Date().toISOString())
+        const resolved = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
+        if (resolved.state !== 'available') throw new Error('fixture Git executable unavailable')
+        const step = createGitObservationStep({ executable: resolved.value, checkoutRoot: root, env: {}, timeoutMs: 10_000,
+            stackId, source: root, checkoutId })
+        if (!step) throw new Error('fixture Git step unavailable')
+        const observed = observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })
+        if (observed.kind !== 'complete') throw new Error('fixture Git evidence unavailable')
+        expect(evaluatePreflight(observed.observations, posture).checks.find(({ code }) => code === ENVIRONMENT_CODES.GIT_STATE_UNHEALTHY))
+            .toMatchObject({
+                verdict: 'fail',
+                reason: 'observed value does not satisfy the expectation: trackedDirtyCount is 1 (expected 0), untrackedCount is 2 (expected 0)',
+            })
     })
 
     it('makes state seeding not applicable only under issued bootstrap authority', async () => {
