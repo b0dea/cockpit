@@ -28,7 +28,6 @@ export interface InstancePathTarget {
 export interface RestrictionPolicy {
     readonly hosted_db_hosts: readonly string[]
     readonly protected_branches: readonly string[]
-    readonly ask_is_deny_on: readonly ('claude' | 'codex')[]
     readonly readonly: { readonly kind: 'agent'; readonly name: string }
 }
 
@@ -135,7 +134,7 @@ export interface RestrictionExpansionComplete {
 
 export interface RestrictionExpansionRefusal {
     readonly kind: 'refusal'
-    readonly code: 'RESTRICTION_INPUT_INVALID' | 'RESTRICTION_POLICY_UNSUPPORTED'
+    readonly code: 'RESTRICTION_INPUT_INVALID'
         | 'RESTRICTION_ADAPTER_INVALID' | 'RESTRICTION_EVENT_UNADAPTED'
         | 'RESTRICTION_TEMPLATE_INVALID' | 'RESTRICTION_OUTPUT_LIMIT'
     readonly message: string
@@ -206,23 +205,19 @@ function boundedUniqueStrings(value: JsonSnapshot | undefined, pattern: RegExp, 
     return new Set(strings).size === strings.length ? strings : undefined
 }
 
-function capturePolicy(value: JsonSnapshot | undefined): RestrictionPolicy | 'unsupported' | undefined {
-    if (!object(value) || !exactKeys(value, ['hosted_db_hosts', 'protected_branches', 'ask_is_deny_on', 'readonly'])) return undefined
+function capturePolicy(value: JsonSnapshot | undefined): RestrictionPolicy | undefined {
+    if (!object(value) || !exactKeys(value, ['hosted_db_hosts', 'protected_branches', 'readonly'])) return undefined
     const hosted = value.hosted_db_hosts
     if (!Array.isArray(hosted) || hosted.length > GUARD_HOST_LIMITS.rows || !hosted.every(isGuardHost)
         || new Set(hosted.map(normalizeGuardHost)).size !== hosted.length) return undefined
     const branches = boundedUniqueStrings(value.protected_branches, BRANCH, MAX_POLICY_ROWS)
-    if (!hosted || !branches || !Array.isArray(value.ask_is_deny_on) || value.ask_is_deny_on.length > 2
+    if (!hosted || !branches
         || !object(value.readonly) || !exactKeys(value.readonly, ['kind', 'name']) || value.readonly.kind !== 'agent'
         || typeof value.readonly.name !== 'string' || !NAME.test(value.readonly.name)) return undefined
-    const ask = value.ask_is_deny_on
-    if (new Set(ask).size !== ask.length || ask.some((item) => item !== 'claude' && item !== 'codex') || !ask.includes('codex')) {
-        return 'unsupported'
-    }
     return value as unknown as RestrictionPolicy
 }
 
-function capturedInput(input: unknown): CapturedRestrictionExpansionInput | 'unsupported' | undefined {
+function capturedInput(input: unknown): CapturedRestrictionExpansionInput | undefined {
     const value = snapshotJson(input)
     if (!object(value)) return undefined
     const inputKeys = ['canonicalProjectRoot', 'guardTemplate', 'guardPath', 'instances', 'policy', 'adapters', 'configFile']
@@ -255,7 +250,6 @@ function capturedInput(input: unknown): CapturedRestrictionExpansionInput | 'uns
         instances.push({ kind: 'instance', name: target.name, root, path: target.path })
     }
     const policy = capturePolicy(value.policy)
-    if (policy === 'unsupported') return 'unsupported'
     return policy ? {
         ...value as unknown as RestrictionExpansionInput,
         allowedProjectRoots: allowedProjectRoots as readonly string[],
@@ -425,11 +419,12 @@ function opencodeBytes(guardPath: string): string {
 }
 
 function registration(adapter: NativeRestrictionAdapter, input: RestrictionExpansionInput): RestrictionFile {
-    const askTarget = adapter.target === 'claudecode' ? 'claude' : 'codex'
     // The measured shapes pair OpenCode with its plugin and the other targets with hooks.json.
+    // Codex and OpenCode have no ask tier, so a prompt they cannot show refuses instead of proceeding;
+    // Claude Code shows the prompt.
     const bytes = adapter.target === 'opencode'
         ? opencodeBytes(input.guardPath)
-        : hooksBytes(adapter.target, adapter.registration.matcher, input.guardPath, input.policy.ask_is_deny_on.includes(askTarget))
+        : hooksBytes(adapter.target, adapter.registration.matcher, input.guardPath, adapter.target === 'codexcli')
     return file(adapter.registration.path, bytes)
 }
 
@@ -477,9 +472,6 @@ function outputWithinLimits(value: RestrictionExpansionComplete): boolean {
 
 export function expandRestrictions(input: unknown): RestrictionExpansionResult {
     const captured = capturedInput(input)
-    if (captured === 'unsupported') {
-        return refusal('RESTRICTION_POLICY_UNSUPPORTED', 'restriction policy requests an unsupported ask-to-deny target')
-    }
     if (!captured) return refusal('RESTRICTION_INPUT_INVALID', 'restriction input must be bounded own data with confined instance paths and an authenticated root')
     const capabilities = inspectShippedRestrictionCapabilities({
         guardTemplate: captured.guardTemplate,

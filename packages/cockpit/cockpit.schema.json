@@ -2539,15 +2539,6 @@
             "type": "string"
           }
         },
-        "ask_is_deny_on": {
-          "default": [
-            "codex"
-          ],
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "allow": {
           "default": [],
           "maxItems": 64,

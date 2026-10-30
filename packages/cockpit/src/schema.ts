@@ -846,8 +846,6 @@ export const Guards = z
         hosted_db_hosts: GuardHosts.default([]),
         vendor_endpoint_hosts: GuardHosts.default([]),
         protected_branches: z.array(z.string()).default(['main', 'master']),
-        // Codex has no `ask` tier. A prompt that cannot be shown must refuse, not proceed.
-        ask_is_deny_on: z.array(z.string()).default(['codex']),
         allow: z.array(GuardAllow).max(64).default([]),
         deny: z.array(GuardDeny).max(64).default([]),
     })

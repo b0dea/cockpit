@@ -61,7 +61,7 @@ function pureInput(shipped: Awaited<ReturnType<typeof shippedInputs>>): Restrict
         guardPath: '.cockpit/guards/bash-guard.sh',
         instances: [{ kind: 'instance', name: 'service-instance', path: 'env/service.env' }],
         policy: {
-            hosted_db_hosts: ['db.example.test'], protected_branches: ['main'], ask_is_deny_on: ['codex'],
+            hosted_db_hosts: ['db.example.test'], protected_branches: ['main'],
             readonly: { kind: 'agent', name: 'evaluator' },
         },
         adapters: shipped.adapters,
@@ -83,7 +83,6 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
         policy: {
             hosted_db_hosts: ['db.example.test'],
             protected_branches: ['main'],
-            ask_is_deny_on: ['codex'],
             readonly: { kind: 'agent', name: 'evaluator' },
         },
         adapters: await Promise.all(['claude', 'codex', 'opencode'].map(async (name) =>
@@ -112,7 +111,7 @@ async function input(overrides: Partial<RestrictionExpansionInput> = {}): Promis
             return { slug: `repo-${index}`, dir: relative(dirname(canonical), path), mount: 'always', acquire: 'none', var: `REPO_${index}_DIR`, purpose: 'Synthetic checkout',
                 ...(files.length ? { environment_files: files } : {}) }
         }),
-        guards: { hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches], ask_is_deny_on: [...value.policy.ask_is_deny_on] },
+        guards: { hosted_db_hosts: [...value.policy.hosted_db_hosts], protected_branches: [...value.policy.protected_branches] },
         ports: { bases: { APP_PORT: 4100 } },
     })
     const configPath = join(canonical, 'cockpit.toml')
@@ -440,12 +439,6 @@ describe('restriction expansion', () => {
         expect(runGuard(branchChanged, bash('git push origin release')).stdout)
             .toContain('permissionDecision":"deny')
 
-        const denyClaude = complete(expandRestrictions(await input({ policy: {
-            ...baseInput.policy, ask_is_deny_on: ['codex', 'claude'],
-        } })))
-        expect(target(denyClaude, 'claudecode').files[0]!.bytes).toContain('COCKPIT_ASK_IS_DENY=1')
-        expect(target(denyClaude, 'claudecode').files[0]!.sha256).not.toBe(target(result, 'claudecode').files[0]!.sha256)
-
         const reviewer = complete(expandRestrictions(await input({ policy: {
             ...baseInput.policy, readonly: { kind: 'agent', name: 'reviewer' },
         } })))
@@ -630,6 +623,8 @@ while (Date.now() < end) {
             .toContain('permissionDecision":"deny')
         expect(target(result, 'codexcli').files[0]!.bytes).toContain('COCKPIT_ASK_IS_DENY=1')
         expect(target(result, 'opencode').files[0]!.bytes).toContain('COCKPIT_ASK_IS_DENY: "1"')
+        // Claude Code can show the prompt, so its registration leaves ask as ask.
+        expect(target(result, 'claudecode').files[0]!.bytes).not.toContain('COCKPIT_ASK_IS_DENY')
     })
 
     it('bounds rendered UTF-8 output and keeps quote-bearing checkout paths out of it', async () => {
@@ -675,8 +670,8 @@ while (Date.now() < end) {
 
     it('refuses unsupported policy, malformed payloads, foreign adapters and policy-bearing adapters', async () => {
         const value = await input()
-        expect(expandRestrictions({ ...value, policy: { ...value.policy, ask_is_deny_on: ['foreign'] } })).toMatchObject({
-            kind: 'refusal', code: 'RESTRICTION_POLICY_UNSUPPORTED',
+        expect(expandRestrictions({ ...value, policy: { ...value.policy, ask_is_deny_on: ['codex'] } })).toMatchObject({
+            kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID',
         })
         expect(expandRestrictions({ ...value, instances: [{ kind: 'template', name: 'template', path: 'env/service.env.example' }] })).toMatchObject({
             kind: 'refusal', code: 'RESTRICTION_INPUT_INVALID',

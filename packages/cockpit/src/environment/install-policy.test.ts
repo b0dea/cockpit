@@ -85,7 +85,7 @@ describe('install policy resolution', () => {
             canonicalProjectRoot: directory, guardPath, configFile: 'cockpit.toml',
             guardTemplate: await fixture('bash-guard.sh'), instances: [],
             policy: { hosted_db_hosts: ['db.example.test'], protected_branches: ['main'],
-                ask_is_deny_on: ['codex'], readonly: { kind: 'agent', name: 'evaluator' } },
+                readonly: { kind: 'agent', name: 'evaluator' } },
             adapters: await Promise.all(['claude', 'codex', 'opencode'].map(async name => JSON.parse(await fixture(`${name}.adapter.json`)))),
         })
         expect(expansion.kind).toBe('complete')

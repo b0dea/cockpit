@@ -2560,7 +2560,7 @@ async function prepareSurfaces(
             kind: 'instance' as const, name: `${row.slug}-${sha256(row.path).slice(0, 12)}`, root: siblingRoots.get(row.slug)!, path: row.path,
         })),
         policy: { hosted_db_hosts: config.guards.hosted_db_hosts, protected_branches: config.guards.protected_branches,
-            ask_is_deny_on: config.guards.ask_is_deny_on as readonly ('claude' | 'codex')[], readonly: { kind: 'agent', name: 'evaluator' } },
+            readonly: { kind: 'agent', name: 'evaluator' } },
         adapters: RESTRICTION_ASSETS.slice(1).map(path => JSON.parse(asset(path).bytes)),
         configFile: relative(prepared.root, prepared.configPath),
     })

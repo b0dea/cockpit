@@ -2728,7 +2728,6 @@ function guardArchitectureViolations(
         ['vendor_endpoint_hosts', { path: APPLICATION_MODULE, target: 'vendorHosts' }],
         ['allow', { path: APPLICATION_MODULE, target: 'declaredAllows' }],
         ['deny', { path: APPLICATION_MODULE, target: 'declaredDenies' }],
-        ['ask_is_deny_on', { path: generated, target: 'ask_is_deny_on' }],
     ])
     const consumed = new Set<string>()
     const guardFields = new Set<string>()

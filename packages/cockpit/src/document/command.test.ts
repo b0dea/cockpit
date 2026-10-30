@@ -60,7 +60,6 @@ const schemaDefaultTargets = [
     'guards.hosted_db_hosts',
     'guards.vendor_endpoint_hosts',
     'guards.protected_branches',
-    'guards.ask_is_deny_on',
     'guards.allow',
     'guards.deny',
     'mcp.approved',
@@ -761,7 +760,6 @@ describe('document round trip inventory', () => {
                     hosted_db_hosts: [],
                     vendor_endpoint_hosts: [],
                     protected_branches: ['main', 'master'],
-                    ask_is_deny_on: ['codex'],
                     allow: [],
                     deny: [],
                 })
