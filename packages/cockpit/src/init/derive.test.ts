@@ -125,6 +125,36 @@ describe('inferred interview answers', () => {
         expect(facts.filter(fact => fact.target === 'guards.hosted_db_hosts')).toHaveLength(1)
     })
 
+    // check refuses a mount = "none" sibling a service binds, and a published port no [ports.bases]
+    // variable leases, so the proposal reads both from the Compose file it proposes.
+    it('proposes mounting the in-repo sibling a proposed Compose file binds, and its host-port variables as bases', async () => {
+        const parent = estate({ 'shop/api/server.mjs': '', 'shop/compose.yml': [
+            'services:',
+            '  api:',
+            '    build: ./api',
+            '    ports: ["127.0.0.1:${API_HOST_PORT:-4200}:3000", { target: 9229, published: "${DEBUG_HOST_PORT:-9229}" }]',
+            '    volumes: ["./api:/app", "cache:/cache"]',
+            '  web:',
+            '    image: synthetic.invalid/web:1',
+            '    ports: ["${WEB_HOST_PORT}:80"]',
+            'volumes: { cache: {} }', ''].join('\n') })
+        const root = join(parent, 'shop')
+        const { facts, skipped } = await deriveInferredFacts({ root, repositories: [{ slug: 'shop', path: '.' }] })
+        expect(byTarget(facts, 'sibling.shop')).toMatchObject({ value: { dir: '.', mount: 'always' },
+            provenance: { reason: expect.stringContaining('compose.yml bind-mounts') } })
+        expect(byTarget(facts, 'ports.bases')).toEqual({ fields: ['ports.bases'], target: 'ports.bases',
+            value: { API_HOST_PORT: 4200, DEBUG_HOST_PORT: 9229 },
+            provenance: expect.objectContaining({ kind: 'inferred', source: 'compose.yml' }) })
+        expect(skipped).toContainEqual({ source: 'compose.yml',
+            reason: expect.stringContaining('publishes a host port from ${WEB_HOST_PORT} with no default') })
+
+        // Binding only a named volume, or a directory outside the repository, does not mount it.
+        const unmounted = estate({ 'shop/compose.yml': 'services:\n  db:\n    image: synthetic.invalid/db:1\n    volumes: ["data:/var/lib/db", "../elsewhere:/x"]\n' })
+        const proposed = await deriveInferredFacts({ root: join(unmounted, 'shop'), repositories: [{ slug: 'shop', path: '.' }] })
+        expect(byTarget(proposed.facts, 'sibling.shop')).toMatchObject({ value: { mount: 'none' } })
+        expect(byTarget(proposed.facts, 'ports.bases')).toBeUndefined()
+    })
+
     it('reports an unreadable input instead of dropping it', async () => {
         const root = estate({ '.github/workflows/ci.yml': 'jobs: [unclosed', 'api/real.txt': 'x' })
         symlinkSync(join(root, 'api/real.txt'), join(root, 'api/Dockerfile'))

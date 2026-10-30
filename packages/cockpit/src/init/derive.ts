@@ -8,6 +8,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
+import { bindHolder, composeBindPath, splitComposeShort } from '../environment/compose-topology.js'
 import { deriveSiblingVariable } from '../schema.js'
 
 export const mechanism = {
@@ -191,6 +192,65 @@ function workflowServices(document: unknown): Array<{ job: string; name: string;
     return found
 }
 
+const PORT_VARIABLE = /^\$\{([A-Z][A-Z0-9_]*)(?:(:?-)(\d{1,5}))?\}$|^\$([A-Z][A-Z0-9_]*)$/
+
+function entries(value: unknown): readonly unknown[] {
+    return Array.isArray(value) ? value : []
+}
+
+/**
+ * Reads the bind sources and published host-port variables of the Compose files init proposes.
+ * Bind sources resolve as `up` resolves them: against the cockpit root, with each proposed sibling
+ * variable set to its directory and any other variable to its own default.
+ */
+function composeFacts(
+    files: readonly Readonly<{ source: string; document: unknown }>[],
+    root: string,
+    variables: Readonly<Record<string, string>>,
+    skipped: SkippedInference[],
+): Readonly<{ binds: readonly Readonly<{ source: string; path: string }>[]; bases: ReadonlyMap<string, number>; basesSource?: string }> {
+    const binds: { source: string; path: string }[] = []
+    const bases = new Map<string, number>()
+    const conflicting = new Set<string>()
+    let basesSource: string | undefined
+    for (const { source, document } of files) {
+        const services = (document as { services?: unknown } | null)?.services
+        if (!services || typeof services !== 'object' || Array.isArray(services)) continue
+        for (const service of Object.values(services as Record<string, unknown>)) {
+            if (!service || typeof service !== 'object') continue
+            for (const volume of entries((service as { volumes?: unknown }).volumes)) {
+                const segments = typeof volume === 'string' ? splitComposeShort(volume) : undefined
+                const raw = segments && segments.length >= 2 ? segments[0]
+                    : volume && typeof volume === 'object' && (volume as { type?: unknown }).type === 'bind'
+                        ? (volume as { source?: unknown }).source : undefined
+                const path = typeof raw === 'string' ? composeBindPath(raw, root, variables) : undefined
+                if (path !== undefined && path !== 'volume') binds.push({ source, path })
+            }
+            for (const port of entries((service as { ports?: unknown }).ports)) {
+                const segments = typeof port === 'string' ? splitComposeShort(port) : undefined
+                const published = segments && segments.length >= 2 ? segments[segments.length - 2]
+                    : port && typeof port === 'object' ? (port as { published?: unknown }).published : undefined
+                const match = typeof published === 'string' ? PORT_VARIABLE.exec(published) : null
+                if (!match) continue
+                const name = (match[1] ?? match[4])!
+                const base = match[3] === undefined ? undefined : Number(match[3])
+                if (base === undefined || base < 1 || base > 65_535) {
+                    skipped.push({ source, reason: `publishes a host port from \${${name}} with no default, so its base port cannot be read; declare ${name} under [ports.bases]` })
+                    continue
+                }
+                if (bases.has(name) && bases.get(name) !== base) conflicting.add(name)
+                bases.set(name, base)
+                basesSource ??= source
+            }
+        }
+    }
+    for (const name of conflicting) {
+        bases.delete(name)
+        skipped.push({ source: basesSource!, reason: `publishes \${${name}} with different defaults, so its base port cannot be read; declare ${name} under [ports.bases]` })
+    }
+    return Object.freeze({ binds: Object.freeze(binds), bases, ...(basesSource === undefined ? {} : { basesSource }) })
+}
+
 export async function deriveInferredFacts(input: InferenceInput): Promise<InferenceResult> {
     const facts: InferredFact[] = []
     const skipped: SkippedInference[] = []
@@ -220,7 +280,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             return undefined
         }
     }
-    const composeFiles: string[] = []
+    const composeFiles: { source: string; document: unknown }[] = []
     const seenServices = new Set<string>()
 
     for (const directory of directories) {
@@ -281,11 +341,12 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             const source = relative(directory.path, name)
             const text = await read(directory.path, name)
             if (text === undefined) continue
-            if (parseYamlText(source, text) !== undefined) {
+            const document = parseYamlText(source, text)
+            if (document !== undefined) {
                 if (source === '..' || source.startsWith('../') || isAbsolute(source)) {
                     skipped.push({ source,
                         reason: 'is outside the cockpit root, so environment.compose_files cannot represent it; choose generated environment configuration, or place a reviewed Compose file inside the cockpit root and rerun the same cockpit init command' })
-                } else composeFiles.push(source)
+                } else composeFiles.push({ source, document })
             }
             break
         }
@@ -328,25 +389,38 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     // the product will grow in, or a repository of documents. The schema needs one sibling, and
     // declaring the root itself (dir ".") says what is true instead of inventing a child directory
     // or allowing a cockpit with no repositories that every sibling consumer would have to special-case.
-    // mount "none" because the agent already works in the root: mounting or projecting it would
-    // point the cockpit's own guides at themselves. The purpose is the human's to state.
     const rootName = basename(configurationRoot)
-    if ((input.repositories.length === 0 || ownRoot?.slug === rootName) && SIBLING_SLUG.test(rootName)) facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
-        value: { slug: rootName, dir: '.', mount: 'none', acquire: 'none', var: deriveSiblingVariable(rootName) },
-        provenance: { kind: 'inferred', source: '.', reason: ownRoot
-            ? 'the cockpit lives inside this product repository, so the repository is its own first sibling; add its purpose'
-            : 'no directory under the root has a package manifest, so the cockpit root itself is the first repository; add its purpose' } })
+    const proposesRoot = (input.repositories.length === 0 || ownRoot?.slug === rootName) && SIBLING_SLUG.test(rootName)
+    const others = input.repositories.filter(repository => repository !== ownRoot && SIBLING_SLUG.test(repository.slug))
+    const siblingPaths = new Map([...proposesRoot ? [[deriveSiblingVariable(rootName), configurationRoot] as const] : [],
+        ...others.map(repository => [deriveSiblingVariable(repository.slug), resolve(input.root, repository.path)] as const)])
+    const compose = composeFacts(composeFiles, configurationRoot, Object.fromEntries(siblingPaths), skipped)
+    if (proposesRoot) {
+        // The agent already works in the root, so mounting it buys nothing by itself; but check and
+        // up refuse a bind inside a mount = "none" sibling, so a Compose file that binds the root, or
+        // a directory of it, makes it a mount = "always" sibling.
+        const bind = compose.binds.find(row => bindHolder(row.path, [...siblingPaths.values()]) === configurationRoot)
+        const placed = ownRoot ? 'the cockpit lives inside this product repository, so the repository is its own first sibling'
+            : 'no directory under the root has a package manifest, so the cockpit root itself is the first repository'
+        facts.push({ fields: ['sibling'], target: `sibling.${rootName}`,
+            value: { slug: rootName, dir: '.', mount: bind ? 'always' : 'none', acquire: 'none', var: deriveSiblingVariable(rootName) },
+            provenance: { kind: 'inferred', source: bind?.source ?? '.', reason: bind
+                ? `${placed}; ${bind.source} bind-mounts ${bind.path === configurationRoot ? 'it' : `${pathRelative(configurationRoot, bind.path).split(sep).join('/')} inside it`}, so it is mounted; add its purpose`
+                : `${placed}; add its purpose` } })
+    }
     // Each observed repository is a checkout the agent works in from the cockpit, so it is mounted;
     // acquire "none" because it already exists here and no remote was read. The purpose is the human's.
-    for (const repository of input.repositories) {
-        if (repository === ownRoot || !SIBLING_SLUG.test(repository.slug)) continue
+    for (const repository of others) {
         facts.push({ fields: ['sibling'], target: `sibling.${repository.slug}`,
             value: { slug: repository.slug, dir: repository.path, mount: 'always', acquire: 'none', var: deriveSiblingVariable(repository.slug) },
             provenance: { kind: 'inferred', source: relative(repository.path),
                 reason: 'this repository was observed in the estate, so it is proposed as a sibling with its directory name; add its purpose' } })
     }
-    if (composeFiles.length > 0) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: composeFiles,
-        provenance: { kind: 'inferred', source: composeFiles[0]!,
+    if (compose.bases.size > 0) facts.push({ fields: ['ports.bases'], target: 'ports.bases', value: Object.fromEntries(compose.bases),
+        provenance: { kind: 'inferred', source: compose.basesSource!,
+            reason: 'the Compose file publishes these host ports from variables with these defaults; check requires every published host port to come from a [ports.bases] variable, so each stack leases its own' } })
+    if (composeFiles.length > 0) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: composeFiles.map(file => file.source),
+        provenance: { kind: 'inferred', source: composeFiles[0]!.source,
             reason: composeFiles.length === 1 ? 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment'
                 : 'these Compose files already exist, so compose-first mode can run them instead of a rendered environment' } })
     return Object.freeze({ facts: Object.freeze(facts), skipped: Object.freeze(skipped) })

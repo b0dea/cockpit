@@ -18,7 +18,7 @@ import { cockpitCommand } from '../fix-catalogue.js'
 export const mechanism = {
     id: 'compose-topology',
     module: 'packages/cockpit/src/environment/compose-topology.ts',
-    exports: ['observeComposeTopology', 'assessComposeTopology', 'composeBindPath', 'compareBindSources', 'redirectedBindSources'],
+    exports: ['observeComposeTopology', 'assessComposeTopology', 'composeBindPath', 'compareBindSources', 'redirectedBindSources', 'splitComposeShort', 'bindHolder'],
 } as const
 
 export interface ComposeTopologyInput {
@@ -113,10 +113,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-// Compose keeps a port it could not interpolate in its short `[ip:]host:container[/proto]` form,
-// and normalises literal ports to the long form. Both are read here; variable references and
-// bracketed IPv6 addresses are kept whole so their colons do not split the mapping.
-function shortPort(value: string): ComposePublishedPort | undefined {
+/**
+ * Splits a Compose short-syntax entry (`[ip:]host:container[/proto]`, `source:target[:mode]`) on
+ * its colons. Variable references and bracketed IPv6 addresses are kept whole so their colons do
+ * not split the entry; an unbalanced one returns `undefined`.
+ */
+export function splitComposeShort(value: string): readonly string[] | undefined {
     const segments: string[] = []
     let current = ''
     let depth = 0
@@ -132,8 +134,17 @@ function shortPort(value: string): ComposePublishedPort | undefined {
             current = ''
         } else current += character
     }
-    segments.push(current.replace(/\/(?:tcp|udp|sctp)$/, ''))
-    if (depth !== 0 || bracket || segments.length > 3 || segments.some((segment, index) => segment === '' && index === segments.length - 1)) return undefined
+    segments.push(current)
+    return depth !== 0 || bracket ? undefined : Object.freeze(segments)
+}
+
+// Compose keeps a port it could not interpolate in its short form, and normalises literal ports
+// to the long form. Both are read here.
+function shortPort(value: string): ComposePublishedPort | undefined {
+    const split = splitComposeShort(value)
+    if (!split) return undefined
+    const segments = [...split.slice(0, -1), split[split.length - 1]!.replace(/\/(?:tcp|udp|sctp)$/, '')]
+    if (segments.length > 3 || segments.some((segment, index) => segment === '' && index === segments.length - 1)) return undefined
     if (segments.length === 1) return Object.freeze({ published: null, target: segments[0]! })
     const published = segments[segments.length - 2]!
     return Object.freeze({ published: published === '' ? null : published, target: segments[segments.length - 1]! })
@@ -254,7 +265,8 @@ function contains(parent: string, path: string): boolean {
     return path === parent || path.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`)
 }
 
-function holder(bind: string, declared: readonly string[]): string | undefined {
+/** The deepest declared mount source holding `bind`, or `undefined` when none does. */
+export function bindHolder(bind: string, declared: readonly string[]): string | undefined {
     return declared.filter(source => contains(source, bind)).sort((left, right) => right.length - left.length)[0]
 }
 
@@ -270,7 +282,7 @@ export function compareBindSources(binds: readonly string[], declared: readonly 
     const used = new Set<string>()
     const unexpected: string[] = []
     for (const bind of new Set(binds)) {
-        const owner = holder(bind, declared)
+        const owner = bindHolder(bind, declared)
         if (owner === undefined) unexpected.push(bind)
         else used.add(owner)
     }
@@ -300,7 +312,7 @@ export async function redirectedBindSources(binds: readonly string[], declared: 
     const redirected: { bind: string; holder: string }[] = []
     for (const bind of new Set(binds)) {
         if (declared.includes(bind)) continue
-        const owner = holder(bind, declared)
+        const owner = bindHolder(bind, declared)
         if (owner === undefined) continue
         let inside: boolean
         try { inside = contains(await canonicalPath(owner), await canonicalPath(bind)) }
