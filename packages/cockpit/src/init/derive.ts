@@ -336,6 +336,15 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
         provenance: { kind: 'inferred', source: '.', reason: ownRoot
             ? 'the cockpit lives inside this product repository, so the repository is its own first sibling; add its purpose'
             : 'no directory under the root has a package manifest, so the cockpit root itself is the first repository; add its purpose' } })
+    // Each observed repository is a checkout the agent works in from the cockpit, so it is mounted;
+    // acquire "none" because it already exists here and no remote was read. The purpose is the human's.
+    for (const repository of input.repositories) {
+        if (repository === ownRoot || !SIBLING_SLUG.test(repository.slug)) continue
+        facts.push({ fields: ['sibling'], target: `sibling.${repository.slug}`,
+            value: { slug: repository.slug, dir: repository.path, mount: 'always', acquire: 'none', var: deriveSiblingVariable(repository.slug) },
+            provenance: { kind: 'inferred', source: relative(repository.path),
+                reason: 'this repository was observed in the estate, so it is proposed as a sibling with its directory name; add its purpose' } })
+    }
     if (composeFiles.length > 0) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: composeFiles,
         provenance: { kind: 'inferred', source: composeFiles[0]!,
             reason: composeFiles.length === 1 ? 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment'

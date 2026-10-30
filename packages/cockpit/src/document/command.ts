@@ -974,6 +974,8 @@ function completeConfigurationDocument(
             'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH',
             'the sibling declarations do not match the repository identities and directories in the current estate observation',
             'sibling',
+            `declare exactly one sibling per observed repository: ${estateRunnable
+                .map(row => `slug ${JSON.stringify(row.slug)} with dir ${JSON.stringify(row.path)}`).join('; ')}`,
         )
     }
 

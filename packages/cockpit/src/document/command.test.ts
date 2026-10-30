@@ -440,7 +440,8 @@ describe('public estate observation', () => {
         changedDirectory[0] = { ...changedDirectory[0], dir: 'different-app' }
         expect(await documentObservedCommand({ root: canonical, configuration: { ...configuration,
             answers: [answerQuestion(pending.question!, changedDirectory)] } })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH' }],
+            kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_ESTATE_TOPOLOGY_MISMATCH',
+                fix: 'declare exactly one sibling per observed repository: slug "app" with dir "app"' }],
         })
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await documentObservedCommand({ root: canonical, configuration })

@@ -101,8 +101,19 @@ describe('inferred interview answers', () => {
         expect(byTarget(reserved.facts, 'sibling.compose-product')).toMatchObject({
             value: { slug: 'compose-product', dir: '.', var: 'SIBLING_COMPOSE_PRODUCT_DIR' },
         })
+        // With repositories observed, each one is proposed and the root is not.
         const observed = await deriveInferredFacts({ root, repositories: api })
-        expect(observed.facts.filter(fact => fact.fields.includes('sibling'))).toEqual([])
+        expect(observed.facts.filter(fact => fact.fields.includes('sibling'))).toEqual([expect.objectContaining({ target: 'sibling.api' })])
+    })
+
+    it('proposes the product repository a dedicated cockpit sits beside as its sibling', async () => {
+        const parent = estate({ 'shop/package.json': '{}\n' })
+        mkdirSync(join(parent, 'shop-cockpit'))
+        const { facts } = await deriveInferredFacts({ root: parent, configurationRoot: join(parent, 'shop-cockpit'),
+            repositories: [{ slug: 'shop', path: 'shop' }] })
+        expect(facts.filter(fact => fact.fields.includes('sibling'))).toEqual([{ fields: ['sibling'], target: 'sibling.shop',
+            value: { slug: 'shop', dir: 'shop', mount: 'always', acquire: 'none', var: 'SHOP_DIR' },
+            provenance: expect.objectContaining({ kind: 'inferred', source: '../shop' }) }])
     })
 
     it('reads an in-repo cockpit\'s root once, as the repository at "." that is its own first sibling', async () => {
@@ -119,7 +130,8 @@ describe('inferred interview answers', () => {
         symlinkSync(join(root, 'api/real.txt'), join(root, 'api/Dockerfile'))
         writeFileSync(join(root, 'api/.env.example'), Buffer.from([0xc3, 0x28]))
         const { facts, skipped } = await deriveInferredFacts({ root, repositories: api })
-        expect(facts).toEqual([])
+        // Only the observed repository's own row is proposed; nothing comes from the unreadable files.
+        expect(facts.map(fact => fact.target)).toEqual(['sibling.api'])
         expect(skipped).toEqual(expect.arrayContaining([
             expect.objectContaining({ source: '.github/workflows/ci.yml', reason: expect.stringContaining('not valid YAML') }),
             expect.objectContaining({ source: 'api/Dockerfile', reason: 'is not a regular file' }),
