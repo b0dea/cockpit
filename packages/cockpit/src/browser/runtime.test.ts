@@ -218,6 +218,9 @@ describe('shared browser runtime', () => {
         expect((await attempt(input)).debugger).toEqual({ enabled: false })
         expect((await attempt({ ...input, headed: true })).debugger).toEqual({ enabled: true, separate: true, artifactRoot: '.browser/debugger' })
         await expect(attempt({ ...input, authentication: { policy: 'serialized', states: [] } })).rejects.toThrow('bypassed')
+        // A product with no sign-in drives the browser signed out, like a bypassed one, and says which it is.
+        const open = await fixture('port', 'none', '[{ requirement = "synthetic-browser", addressing = "port" }]')
+        expect((await attempt(open.input)).authentication).toEqual({ posture: 'none', policy: 'none', states: [] })
     })
 
     it('never grants preapproval to restored, shared or production-reaching data', async () => {

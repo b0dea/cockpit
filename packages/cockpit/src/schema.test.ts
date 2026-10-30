@@ -605,6 +605,17 @@ describe('work and browser declarations', () => {
         check({ ...browser, resources: { ...resources, provenance: { ...provenance, kind: 'inferred', confirmed: true } } }, true)
     })
 
+    it('drives a browser signed out for a product with no sign-in, without a requirement tagged for it', () => {
+        const environment = { ...generatedConfig.environment,
+            addressing: 'hostname', authentication: 'none', generated_host_paths: Object.values(browser.artifacts),
+            posture_requirements: [{ requirement: 'local-route', addressing: 'hostname' }],
+        }
+        const signedOut = { ...browser, authentication: { policy: 'none', states: [] },
+            resources: { memory_mb: 768, cpus: 0.5, provenance } }
+        expect(CockpitConfig.safeParse({ ...generatedConfig, environment, browser: signedOut }).success).toBe(true)
+        expect(CockpitConfig.safeParse({ ...generatedConfig, environment, browser: { ...signedOut, authentication: browser.authentication } }).success).toBe(false)
+    })
+
     it('keeps WIP and attempt controls lower-only', () => {
         expect(Workorders.parse({})).toEqual({ attempt_cap: 2, wip_cap: 3, programme_wip_cap: 1 })
         expect(Workorders.parse({ wip_cap: 1, programme_wip_cap: 1 })).toMatchObject({ wip_cap: 1, programme_wip_cap: 1 })

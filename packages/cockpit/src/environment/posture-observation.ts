@@ -7,7 +7,7 @@ import { realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, normalize, relative, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { loadCockpitConfig } from '../config/load.js'
-import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
+import { STRUCTURED_INPUT_ENTRY_LIMIT, type AddressingPosture, type AuthPosture } from '../schema.js'
 import { ENVIRONMENT_CODES, snapshotJson, type CockpitId, type EnvironmentObservation,
     type JsonSnapshot, type ObservationLifecycleStage, type StackId } from './contract.js'
 import { checkoutId, stackId as deriveStackId, type StackVariant } from './identity.js'
@@ -92,13 +92,13 @@ export interface ResolvedPostureAuthority {
     readonly source: string
     readonly postures: readonly string[]
     readonly environmentPostures: Readonly<{
-        addressing: 'hostname' | 'port' | null
-        authentication: 'real' | 'bypassed' | null
+        addressing: AddressingPosture | null
+        authentication: AuthPosture | null
     }>
     readonly postureRequirements: readonly Readonly<{
         requirement: string
-        addressing?: 'hostname' | 'port'
-        authentication?: 'real' | 'bypassed'
+        addressing?: AddressingPosture
+        authentication?: AuthPosture
     }>[]
 }
 
@@ -286,16 +286,19 @@ export function authenticateObservationPostureContext(context: PreflightContext)
         return (['addressing', 'authentication'] as const).map((dimension) => {
             const selected = authority.environmentPostures[dimension]
             const tagged = requirements.filter((requirement) => requirement[dimension] !== undefined)
+            // A stack with no sign-in has nothing that depends on one, so it needs no tagged requirement.
+            const untaggedNone = selected === 'none' && tagged.length === 0 && requirements.length > 0
             const matched = selected !== null && tagged.some((requirement) => requirement[dimension] === selected)
-            const exact = matched && tagged.every((requirement) => requirement[dimension] === selected)
+            const exact = untaggedNone || matched && tagged.every((requirement) => requirement[dimension] === selected)
             const reason = selected === null
                 ? `${dimension} posture is not declared`
                 : requirements.length === 0
                     ? 'posture requirement catalog is not declared'
-                    : tagged.length === 0
-                        ? `${dimension} posture ${selected} is not named by a requirement`
-                        : !exact ? `${dimension} requirement tags do not match selected posture ${selected}`
-                            : 'declared requirement tags match the selected posture'
+                    : untaggedNone ? 'no authentication is declared, and no requirement depends on one'
+                        : tagged.length === 0
+                            ? `${dimension} posture ${selected} is not named by a requirement`
+                            : !exact ? `${dimension} requirement tags do not match selected posture ${selected}`
+                                : 'declared requirement tags match the selected posture'
             return Object.freeze({
                 code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
                 owner: 'posture-requirements',

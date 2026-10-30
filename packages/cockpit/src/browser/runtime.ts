@@ -158,8 +158,9 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
     const states = input.authentication.states
     const storage: Array<Readonly<{ path: string; identity: string }>> = []
     if (!Array.isArray(states) || states.length > 64) throw new TypeError('browser authentication states are invalid')
-    if (authentication === 'bypassed') {
-        if (input.authentication.policy !== 'none' || states.length !== 0) throw new TypeError('bypassed authentication cannot declare persona state or login')
+    const signedOut = authentication === 'bypassed' || authentication === 'none' ? authentication : undefined
+    if (signedOut) {
+        if (input.authentication.policy !== 'none' || states.length !== 0) throw new TypeError(`${signedOut} authentication cannot declare persona state or login`)
     } else {
         if (input.authentication.policy !== 'serialized' && input.authentication.policy !== 'per-worker'
             || states.length !== (input.authentication.policy === 'serialized' ? 1 : input.maxClients)) {
@@ -198,8 +199,8 @@ export function resolveBrowserRuntime(input: BrowserRuntimeInput, coordinationNa
         proxy: proxy.proxy,
         addressing: Object.freeze({ posture: addressing, resolverRules: addressing === 'hostname' ? Object.freeze(input.resolver.map(({ hostname, address }) => `MAP ${hostname} ${address}`)) : null }),
         requirements: authority.postureRequirements,
-        authentication: authentication === 'bypassed'
-            ? Object.freeze({ posture: 'bypassed' as const, policy: 'none' as const, states: Object.freeze([]) })
+        authentication: signedOut
+            ? Object.freeze({ posture: signedOut, policy: 'none' as const, states: Object.freeze([]) })
             : Object.freeze({ posture: 'real' as const, policy: input.authentication.policy, states: Object.freeze(states.map((state) => Object.freeze({ ...state }))), claim: input.authentication.policy === 'serialized' ? 'exclusive' as const : 'per-worker' as const }),
         debugger: input.headed ? Object.freeze({ enabled: true as const, separate: true as const, artifactRoot: input.artifacts.debugger }) : Object.freeze({ enabled: false as const }),
         preapproval: input.requestPreapproval ? 'eligible' as const : 'not-requested' as const,

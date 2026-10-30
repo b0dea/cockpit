@@ -40,7 +40,7 @@ export interface BrowserCommandSurfaceReceipt {
 export interface BrowserCommandReceipt {
     readonly kind: BrowserCommandKind
     readonly activation: 'application'
-    readonly authentication: Readonly<{ posture: 'bypassed' } | { posture: 'real'; role: string; policy: 'serialized' | 'per-worker' }>
+    readonly authentication: Readonly<{ posture: 'bypassed' | 'none' } | { posture: 'real'; role: string; policy: 'serialized' | 'per-worker' }>
     readonly surfaces: readonly Readonly<BrowserCommandSurfaceReceipt>[]
 }
 export type BrowserCommandResult = Readonly<{ kind: 'complete'; receipt: BrowserCommandReceipt }>
@@ -162,11 +162,11 @@ export function issueBrowserRoutePolicy(runtime: BrowserRuntimeProjection, input
     return policy
 }
 
-function authentication(input: BrowserCommandInput): Readonly<{ posture: 'bypassed'; statePath?: undefined } | {
+function authentication(input: BrowserCommandInput): Readonly<{ posture: 'bypassed' | 'none'; statePath?: undefined } | {
     posture: 'real'; role: string; policy: 'serialized' | 'per-worker'; statePath: string
 }> | undefined {
     const auth = input.runtime.authentication
-    if (auth.posture === 'bypassed') return input.role === undefined && input.state === undefined ? Object.freeze({ posture: 'bypassed' as const }) : undefined
+    if (auth.posture !== 'real') return input.role === undefined && input.state === undefined ? Object.freeze({ posture: auth.posture }) : undefined
     if (typeof input.role !== 'string' || auth.policy === 'none') return undefined
     const state = auth.states.find(candidate => candidate.worker === input.role)
     if (!state) return undefined
@@ -174,7 +174,7 @@ function authentication(input: BrowserCommandInput): Readonly<{ posture: 'bypass
 }
 
 function publicAuthentication(value: NonNullable<ReturnType<typeof authentication>>): BrowserCommandReceipt['authentication'] {
-    return value.posture === 'bypassed' ? Object.freeze({ posture: 'bypassed' as const })
+    return value.posture !== 'real' ? Object.freeze({ posture: value.posture })
         : Object.freeze({ posture: 'real' as const, role: value.role, policy: value.policy })
 }
 

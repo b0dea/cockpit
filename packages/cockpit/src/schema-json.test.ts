@@ -337,7 +337,7 @@ describe('the published cockpit schema', () => {
 
     it('keeps addressing, authentication, mount, and acquisition independent', () => {
         expect(AddressingPosture.options).toEqual(['hostname', 'port'])
-        expect(AuthPosture.options).toEqual(['real', 'bypassed'])
+        expect(AuthPosture.options).toEqual(['real', 'bypassed', 'none'])
 
         for (const addressing of AddressingPosture.options) {
             for (const authentication of AuthPosture.options) {
@@ -666,7 +666,7 @@ describe('the published cockpit schema', () => {
         const siblingProperties = object(object(object(properties.sibling).items).properties)
 
         expect(environmentProperties.addressing).toMatchObject({ enum: ['hostname', 'port'] })
-        expect(environmentProperties.authentication).toMatchObject({ enum: ['real', 'bypassed'] })
+        expect(environmentProperties.authentication).toMatchObject({ enum: ['real', 'bypassed', 'none'] })
         expect(siblingProperties).not.toHaveProperty('addressing')
         expect(siblingProperties).not.toHaveProperty('authentication')
     })

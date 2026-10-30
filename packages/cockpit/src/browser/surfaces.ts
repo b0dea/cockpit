@@ -313,7 +313,7 @@ function artifactDirectoryIdentity(path: string): FilesystemIdentity | undefined
 }
 
 function operationStatePath(runtime: BrowserRuntimeProjection, client: BrowserProjectClient, role: string | undefined): string | null | undefined {
-    if (runtime.authentication.posture === 'bypassed') return role === undefined ? undefined : null
+    if (runtime.authentication.posture !== 'real') return role === undefined ? undefined : null
     if (role === undefined || runtime.authentication.policy === 'none') return null
     const state = runtime.authentication.states.find(candidate => candidate.worker === role)
     if (!state) return null
@@ -458,7 +458,7 @@ export async function withBrowserProjectOperationAdmission<T>(client: BrowserPro
     const role = typeof captured.role === 'string' ? captured.role : undefined
     const statePath = operationStatePath(runtime, client, role)
     if (statePath === null || captured.role !== undefined && role === undefined
-        || auth.posture === 'bypassed' && (role !== undefined || state !== undefined)
+        || auth.posture !== 'real' && (role !== undefined || state !== undefined)
         || auth.posture === 'real' && (role === undefined || auth.policy === 'none')
         || auth.posture === 'real' && state === undefined) {
         return Object.freeze({ kind: 'refusal', reason: 'Browser operation admission requires current declared authentication authority' })
@@ -530,8 +530,8 @@ function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonl
         || !template.startsWith('---\nname: cockpit-browser\n') || /^(?:allowed-tools|tools|disallowedTools):/m.test(template)) {
         throw new TypeError('browser skill template must contain one browser marker and retain browser tools')
     }
-    const auth = runtime.authentication.posture === 'bypassed'
-        ? 'Sign-in and persona selection are inapplicable: authentication is bypassed.'
+    const auth = runtime.authentication.posture !== 'real'
+        ? `Sign-in and persona selection are inapplicable: ${runtime.authentication.posture === 'none' ? 'the product has no sign-in' : 'authentication is bypassed'}.`
         : `Use mode-600 stored state from seeded users with transcript-safe sign-in; never print credentials or state contents. The active state policy is ${runtime.authentication.policy}.`
     const addressing = runtime.addressing.posture === 'port' ? 'Browser resolver rules: inapplicable for port addressing.'
         : `Apply browser resolver rules: ${runtime.addressing.resolverRules!.join('; ')}.`

@@ -90,7 +90,9 @@ export const Mount = z
 export const Acquire = z.enum(['auto', 'manual', 'none'])
 
 export const AddressingPosture = z.enum(['hostname', 'port'])
-export const AuthPosture = z.enum(['real', 'bypassed'])
+// `real` signs in through the product's provider, `bypassed` turns an existing sign-in off locally,
+// and `none` is a product with no sign-in at all, so nothing can depend on one.
+export const AuthPosture = z.enum(['real', 'bypassed', 'none'])
 
 // What installs and tests a sibling. The cockpit owns the environment; the toolchain owns
 // the commands, and they are delegated rather than reimplemented. `none` is a real answer —
@@ -1257,8 +1259,10 @@ export const CockpitConfig = z
             if (!cfg.environment.addressing || !cfg.environment.authentication || !cfg.environment.posture_requirements) {
                 ctx.addIssue({ code: 'custom', path: ['browser'], message: 'browser declarations require explicit environment posture declarations' })
             } else {
+                // A stack with no sign-in has no requirement that depends on one, so the row may leave it untagged.
                 if (!cfg.environment.posture_requirements.some((row) => row.addressing === cfg.environment.addressing
-                    && row.authentication === cfg.environment.authentication)) {
+                    && (row.authentication === cfg.environment.authentication
+                        || cfg.environment.authentication === 'none' && row.authentication === undefined))) {
                     ctx.addIssue({ code: 'custom', path: ['browser'], message: 'browser posture requirements must cover the selected environment declarations' })
                 }
                 if (cfg.environment.addressing === 'hostname' && cfg.browser.resolver.length === 0
@@ -1266,7 +1270,7 @@ export const CockpitConfig = z
                     ctx.addIssue({ code: 'custom', path: ['browser', 'resolver'], message: 'browser resolver declarations must match the environment addressing posture' })
                 }
                 const { policy, states } = cfg.browser.authentication
-                if (cfg.environment.authentication === 'bypassed' && (policy !== 'none' || states.length !== 0)
+                if (cfg.environment.authentication !== 'real' && (policy !== 'none' || states.length !== 0)
                     || cfg.environment.authentication === 'real' && (policy === 'none'
                         || states.length !== (policy === 'serialized' ? 1 : cfg.browser.max_clients))) {
                     ctx.addIssue({ code: 'custom', path: ['browser', 'authentication'], message: 'browser authentication declarations must match the environment posture and client cap' })

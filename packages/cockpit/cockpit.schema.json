@@ -3483,7 +3483,8 @@
           "type": "string",
           "enum": [
             "real",
-            "bypassed"
+            "bypassed",
+            "none"
           ]
         },
         "posture_requirements": {
@@ -3510,7 +3511,8 @@
                 "type": "string",
                 "enum": [
                   "real",
-                  "bypassed"
+                  "bypassed",
+                  "none"
                 ]
               }
             },

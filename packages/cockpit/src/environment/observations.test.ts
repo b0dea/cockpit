@@ -233,6 +233,25 @@ describe('observation contract and applicability', () => {
         }
     })
 
+    it('passes a stack with no authentication without inventing a requirement that depends on it', async () => {
+        const open = validConfigSource
+            .replace('authentication = "real"\n', 'authentication = "none"\n')
+            .replace('posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]',
+                'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname" }]')
+        const passed = evaluatePreflight([], await context(stackId, 'always', open))
+        expect(passed.checks.filter(({ owner }) => owner === 'posture-requirements')).toEqual([
+            expect.objectContaining({ verdict: 'pass', measured: 'hostname' }),
+            expect.objectContaining({ verdict: 'pass', measured: 'none', reason: 'no authentication is declared, and no requirement depends on one' }),
+        ])
+
+        // A requirement tagged with a sign-in posture contradicts a stack that has none.
+        const contradicted = evaluatePreflight([], await context(otherStackId, 'always', open.replace(
+            'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname" }]',
+            'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]')))
+        expect(contradicted.checks).toEqual(expect.arrayContaining([expect.objectContaining({ owner: 'posture-requirements',
+            verdict: 'fail', reason: 'authentication requirement tags do not match selected posture none' })]))
+    })
+
     it('rejects posture authority after the authoritative config changes', async () => {
         const issued = await context(stackId, 'always', validConfigSource, new Date().toISOString())
         const authority = issued.authorities[0]!
