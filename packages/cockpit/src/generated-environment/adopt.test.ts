@@ -75,7 +75,9 @@ describe('sync --adopt', () => {
         expect(loaded.result.config.surfaces.adopted).toMatchObject([{ path: '.claude/settings.json', source: 'cockpit/adopted/.claude/settings.json',
             provenance: { kind: 'declared', source: '.claude/settings.json' } }])
         const merged = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
-        expect(merged.permissions).toMatchObject({ allow: ['Bash(npm run lint)'], deny: ['Read(./.env)'] })
+        // The team's deny rule is kept beside cockpit's native read denials, not replaced by them.
+        expect(merged.permissions).toMatchObject({ allow: ['Bash(npm run lint)'],
+            deny: ['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(./.env)'] })
         expect(merged.hooks.PostToolUse).toEqual(JSON.parse(TEAM_SETTINGS).hooks.PostToolUse)
         expect(JSON.stringify(merged.hooks.PreToolUse)).toContain('.cockpit/guards/bash-guard.sh')
         expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
