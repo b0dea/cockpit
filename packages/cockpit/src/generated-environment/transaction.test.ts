@@ -506,7 +506,7 @@ describe('portable publication names', () => {
 
     it('refuses nonportable authored names before creating any output', async () => {
         const outcomes: Array<{ segment: string; kind: string }> = []
-        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name', '.gıt', 'ınternal', 'node_moduleſ']) {
+        for (const segment of ['CON', 'aux.txt', 'NUL.md', 'COM¹.txt', 'LPT²', 'settings:stream', 'trailing.', 'trailing ', 'quote"name', 'left<name', 'pipe|name', '.gıt', 'node_moduleſ']) {
             const fixture = await compactPublication({ paths: [`.cursor/${segment}/SKILL.md`] })
             const admitted = await admitPublicationPlan(fixture.input, { execute: executeProbe })
             outcomes.push({ segment, kind: admitted.kind })
@@ -515,6 +515,24 @@ describe('portable publication names', () => {
         }
         expect(outcomes).toEqual(outcomes.map(({ segment }) => ({ segment, kind: 'refusal' })))
     }, 120_000)
+
+    it('publishes an output under internal/ and refuses one under a case-folded .git', async () => {
+        const allowed = await compactPublication({ paths: ['internal/notes.md'] })
+        const admitted = await admitPublicationPlan(allowed.input, { execute: executeProbe })
+        expect(admitted, JSON.stringify(admitted)).toMatchObject({ kind: 'complete' })
+        if (admitted.kind !== 'complete') return
+        expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true }))
+            .toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(allowed.root, 'internal/notes.md'), 'utf8')).toBe(allowed.files[0]!.bytes)
+
+        // The ownership encoder already refuses to record such a path, so the write names it directly.
+        const reserved = await compactPublication({ paths: ['notes.md'] })
+        const input = { ...reserved.input, mutations: [{ ...reserved.input.mutations[0]!, path: '.GIT/x' }] }
+        expect(await admitPublicationPlan(input, { execute: executeProbe })).toMatchObject({ kind: 'refusal', diagnostics: [
+            expect.objectContaining({ message: 'publication contains an undeclared or non-exact operation' }),
+        ] })
+        await expect(lstat(join(reserved.root, '.GIT'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
 
     it('refuses normalized and case-folded directory aliases while preserving distinct dotted outputs', async () => {
         for (const paths of [

@@ -16,6 +16,7 @@ import { readState, type BootstrapStateAddress } from '../environment/state.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPaths, removeSharedOwnership, renderSharedPostimage,
     type OwnershipAuthority, type OwnershipManifest, type GeneratedPathFact, type SurfaceDesiredEntry } from '../surfaces/ownership.js'
+import { reservedPathSegment } from '../surfaces/contract.js'
 import { isInspectedBootstrapOutputs, type InspectedBootstrapOutputs } from '../surfaces/skill-contract.js'
 import type { SurfaceChange } from '../surfaces/sync.js'
 
@@ -1768,7 +1769,9 @@ function sameIdentity(left: PersonaSourceIdentity, right: PersonaSourceIdentity)
 function exactPath(root: string, path: string): boolean {
     return path.length <= 4096 && !/[\\\x00-\x1f\x7f*?\[\]{}]/.test(path)
         && path.split('/').every(part => safePublicationSegment(part)
-            && !['.GIT', 'INTERNAL', 'NODE_MODULES'].includes(part.normalize('NFC').toUpperCase().normalize('NFC'))) && confined(root, path) !== undefined
+            // Folding to upper case first also catches spellings that only fold onto a reserved
+            // name, such as a dotless i or long s, on case-insensitive filesystems.
+            && !reservedPathSegment(part.normalize('NFC').toUpperCase().normalize('NFC'))) && confined(root, path) !== undefined
 }
 
 function classifyEntry(fact: GeneratedPathFact | undefined, current: AnchoredEntry): string | undefined {
