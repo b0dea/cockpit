@@ -52,7 +52,7 @@ function refusal(code: RefusalCode, message: string, target: string): Environmen
 }
 
 const APPROVED_GIT_ENVIRONMENT = [
-    'PATH', 'HOME', 'SSH_AUTH_SOCK', 'TMPDIR', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT',
+    'PATH', 'HOME', 'SSH_AUTH_SOCK', 'TMPDIR', 'LANG', 'LC_ALL',
 ] as const
 
 const NONE_POSTURE = {

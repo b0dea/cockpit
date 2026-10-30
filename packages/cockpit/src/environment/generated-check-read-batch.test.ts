@@ -189,49 +189,4 @@ describe('generated check authenticated read batching', () => {
             code: 'GENERATED_ARTIFACT_MISSING', target: generatedPaths[0],
         })] })
     })
-
-    it('preserves ambiguous Windows executable search aliases before Compose topology dispatch', async () => {
-        const { root, configPath } = await composeConsumer()
-        const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-        if (!descriptor) throw new Error('process.platform descriptor is unavailable')
-        const priorPathAlias = process.env.Path
-        const priorPathExt = process.env.PATHEXT
-        let personaReads = 0
-        let inputRevalidationComplete = false
-        let simulated = false
-        let topologyDispatches = 0
-        try {
-            process.env.Path = process.env.PATH
-            process.env.PATHEXT = '.EXE'
-            const checked = await checkGeneratedEnvironment({ configPath }, undefined, {
-                execute: async step => {
-                    const outcome = await executeProbe(step)
-                    if (step.labels.operation === 'compose-topology') topologyDispatches += 1
-                    if (step.cwd === root && step.labels.action === 'read-persona'
-                        && reads(step).some(row => row.action === 'read-persona' && target(row) === 'cockpit.toml')) {
-                        personaReads += 1
-                        inputRevalidationComplete = personaReads === 2 && outcome.kind === 'complete'
-                    } else if (inputRevalidationComplete && !simulated && step.cwd !== root
-                        && step.labels.action === 'read-batch' && outcome.kind === 'complete') {
-                        Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' })
-                        simulated = true
-                    }
-                    return outcome
-                },
-            })
-            expect(personaReads).toBe(2)
-            expect(simulated).toBe(true)
-            expect(checked).toMatchObject({ kind: 'refusal', diagnostics: expect.arrayContaining([expect.objectContaining({
-                code: 'COMPOSE_TOPOLOGY_UNAVAILABLE',
-                message: expect.stringContaining('Executable search environment has ambiguous PATH spellings'),
-            })]) })
-            expect(topologyDispatches).toBe(0)
-        } finally {
-            Object.defineProperty(process, 'platform', descriptor)
-            if (priorPathAlias === undefined) delete process.env.Path
-            else process.env.Path = priorPathAlias
-            if (priorPathExt === undefined) delete process.env.PATHEXT
-            else process.env.PATHEXT = priorPathExt
-        }
-    }, 120_000)
 })

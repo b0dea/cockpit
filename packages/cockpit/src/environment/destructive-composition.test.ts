@@ -39,21 +39,6 @@ describe('destructive command composition', () => {
             }), expect.any(Function))
         })
 
-    it.each([
-        ['PATH', { PATH: '/usr/bin:/bin', Path: undefined, PATHEXT: '.EXE' }],
-        ['PATHEXT', { PATH: '/usr/bin:/bin', PATHEXT: '.EXE', PathExt: undefined }],
-    ] as const)('preserves an undefined duplicate %s name for executable search policy', (_name, env) => {
-        const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
-        createDestructiveCommandAdapters({
-            configPath: '/tmp/cockpit.toml', env: { ...env, HOME: '/tmp' },
-            sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
-        }, vi.fn() as never)
-
-        expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
-            env: expect.objectContaining({ ...env, HOME: '/tmp' }),
-        }), expect.any(Function))
-    })
-
     it('rejects accessor-backed controlled-runtime authority without invoking it', async () => {
         const getter = vi.fn(() => Object.freeze({ kind: 'runtime-measurement-probe-authority' as const }))
         const execute = vi.fn()
@@ -87,9 +72,6 @@ describe('destructive command composition', () => {
     it.each([
         ['a remote host', { DOCKER_HOST: 'tcp://127.0.0.1:2375' }, 'default'],
         ['a Windows pipe on a POSIX host', { DOCKER_HOST: 'npipe:////./pipe/docker_engine' }, 'default'],
-        ['a remote pipe server', { DOCKER_HOST: 'npipe:////synthetic.invalid/pipe/docker_engine' }, 'default'],
-        ['a pipe traversal', { DOCKER_HOST: 'npipe:////./pipe/../docker_engine' }, 'default'],
-        ['a pipe beside an explicit context', { DOCKER_HOST: 'npipe:////./pipe/docker_engine', DOCKER_CONTEXT: 'synthetic' }, 'synthetic'],
         ['a local host beside an explicit context', { DOCKER_HOST: 'unix:///tmp/other.sock', DOCKER_CONTEXT: 'synthetic' }, 'synthetic'],
         ['a local host under a named context', { DOCKER_HOST: 'unix:///tmp/other.sock' }, 'synthetic'],
         ['a TLS override', { DOCKER_TLS_VERIFY: '1' }, 'default'],

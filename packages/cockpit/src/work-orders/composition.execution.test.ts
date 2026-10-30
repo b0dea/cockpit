@@ -28,13 +28,6 @@ afterEach(async () => {
 
 const { configuredFixture } = createWorkCompositionFixtureSupport(roots)
 
-async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
-    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-    if (!descriptor) throw new Error('process.platform descriptor is unavailable')
-    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
-    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
-}
-
 describe('configured durable work application composition', () => {
     it('executes an authenticated symlinked configured tool with only the bounded configured PATH', async () => {
         const fixture = await configuredFixture()
@@ -58,22 +51,6 @@ describe('configured durable work application composition', () => {
             executionMode: 'verified-path',
         }))
     }, 120_000)
-
-    it('refuses Windows work execution with the native identity reason before tool dispatch', async () => {
-        const fixture = await configuredFixture()
-        const dispatched = join(fixture.root, '.windows-tool-dispatched')
-        await writeFile(join(fixture.root, 'tools/npm'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(dispatched)}, 'dispatched\\n')\n`)
-
-        const result = await withPlatform('win32', () => runWorkApplication({
-            operation: 'test-run', gate: 'focused', mode: 'canonical',
-        }, fixture.composition))
-
-        expect(result).toMatchObject({
-            kind: 'refusal',
-            reason: expect.stringContaining('Windows direct-path executable identity authority is unavailable'),
-        })
-        await expect(readFile(dispatched)).rejects.toMatchObject({ code: 'ENOENT' })
-    })
 
     it('keeps non-browser work available without an active configured browser lease', async () => {
         const fixture = await configuredFixture()

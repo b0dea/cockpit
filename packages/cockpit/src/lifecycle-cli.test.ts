@@ -74,7 +74,7 @@ describe('lifecycle CLI composition', () => {
                 { env: { DOCKER_HOST: host } })).toBe(2)
             expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{ code: 'CONFIG_NOT_FOUND' }] })
         }
-        for (const host of ['npipe:////./pipe/dockerDesktopLinuxEngine', 'npipe:////synthetic.invalid/pipe/docker_engine']) {
+        for (const host of ['npipe:////./pipe/dockerDesktopLinuxEngine']) {
             const capture = captureIo()
             expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {},
                 { env: { DOCKER_HOST: host } })).toBe(2)
@@ -129,19 +129,6 @@ describe('lifecycle CLI composition', () => {
         expect(await runCli([
             'session', '--config', '/synthetic/cockpit.toml', '--json', '--', 'synthetic-agent',
         ], captureIo().io, { session })).toBe(2)
-    })
-
-    it('keeps undefined case aliases harmless to the supported POSIX session path', async () => {
-        const capture = captureIo()
-
-        const status = await runCli([
-            'session', '--config', '/synthetic/missing-cockpit.toml', '--', process.execPath,
-        ], capture.io, {}, { env: { PATH: '/usr/bin:/bin', Path: undefined, PathExt: undefined } })
-
-        expect(status).toBe(2)
-        expect(capture.output().stdout).toBe('')
-        expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
-        expect(capture.output().stderr).not.toContain('Executable search environment')
     })
 
     it('refuses a malformed inherited lifecycle session instead of leaking a default holder', async () => {

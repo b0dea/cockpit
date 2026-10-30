@@ -645,8 +645,6 @@ describe('setup application choreography', () => {
             PATH: '/synthetic/bin',
             HOME: '/tmp/synthetic-home',
             Path: '/case-preserved-search-only',
-            PathExt: '.EXE',
-            PATHEXT: undefined,
             COCKPIT_TEST_SECRET: 'secret-canary',
         })
 

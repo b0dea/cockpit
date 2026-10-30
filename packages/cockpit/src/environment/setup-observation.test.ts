@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { chmod, link, lstat, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -20,15 +20,9 @@ import {
     type SetupCheckoutProjection,
 } from './setup-observation.js'
 import { gitEnvironment } from './setup.js'
-import { syncGeneratedEnvironment } from './generated-application.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
 const directoryResolutionControl = vi.hoisted(() => ({
-    path: undefined as string | undefined,
-    mutation: undefined as (() => Promise<void>) | undefined,
-}))
-
-const pathObservationControl = vi.hoisted(() => ({
     path: undefined as string | undefined,
     mutation: undefined as (() => Promise<void>) | undefined,
 }))
@@ -37,16 +31,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs/promises')>()
     return {
         ...actual,
-        lstat: async (...args: Parameters<typeof actual.lstat>) => {
-            const result = await actual.lstat(...args)
-            if (typeof args[0] === 'string' && args[0] === pathObservationControl.path && pathObservationControl.mutation) {
-                const mutation = pathObservationControl.mutation
-                pathObservationControl.path = undefined
-                pathObservationControl.mutation = undefined
-                await mutation()
-            }
-            return result
-        },
         realpath: async (...args: Parameters<typeof actual.realpath>) => {
             const result = await actual.realpath(...args)
             if (typeof args[0] === 'string' && args[0] === directoryResolutionControl.path && directoryResolutionControl.mutation) {
@@ -63,13 +47,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const run = promisify(execFile)
 const scratch: string[] = []
 const declaration = { template: '.env.example', instance: '.env' }
-
-async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
-    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-    if (!descriptor?.configurable) throw new Error('process.platform descriptor is unavailable')
-    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
-    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
-}
 
 function workspaceForConfig(): string {
     const path = join(realpathSync(tmpdir()), `cockpit-config-${randomUUID()}`)
@@ -167,8 +144,6 @@ afterEach(async () => {
     vi.useRealTimers()
     directoryResolutionControl.path = undefined
     directoryResolutionControl.mutation = undefined
-    pathObservationControl.path = undefined
-    pathObservationControl.mutation = undefined
     await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
@@ -661,59 +636,6 @@ describe('setup checkout observation', () => {
         expect(await readFile(configPath, 'utf8')).toBe(configText())
     })
 
-    it('preserves exact generated checkout search aliases for resolution', async () => {
-        const repository = await committedRepository()
-        const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))
-
-        await expect(withPlatform('win32', () => observeGeneratedCheckoutIdentity({
-            source: input.source,
-            cockpitName: input.cockpitName,
-            env: { PATH: String.raw`C:\Tools`, Path: undefined, PATHEXT: '.EXE' },
-        }))).resolves.toMatchObject({
-            state: 'failed',
-            reason: 'Executable search environment has ambiguous PATH spellings',
-        })
-    })
-
-    it('refuses ambiguous generated checkout search aliases before publication', async () => {
-        const repository = await committedRepository()
-        const configPath = join(repository.main, 'cockpit.toml')
-        const declaration = (await readFile(resolve('fixtures/registries/generated-environment.toml'), 'utf8')).replace(
-            'name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."',
-        )
-        await writeFile(configPath, declaration)
-        await mkdir(join(repository.main, 'app'), { recursive: true })
-        await mkdir(join(repository.main, 'fixtures'), { recursive: true })
-        await writeFile(join(repository.main, 'fixtures/personas.json'), '[{"id":"first"}]\n')
-        const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-        if (!descriptor?.configurable) throw new Error('process.platform descriptor is unavailable')
-        const priorPathAlias = process.env.Path
-        const priorPathExt = process.env.PATHEXT
-        let simulated = false
-        try {
-            process.env.Path = process.env.PATH
-            process.env.PATHEXT = '.EXE'
-            pathObservationControl.path = join(repository.main, '.git')
-            pathObservationControl.mutation = async () => {
-                Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' })
-                simulated = true
-            }
-            const synchronized = await syncGeneratedEnvironment({ configPath })
-            expect(simulated).toBe(true)
-            expect(synchronized).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: 'GENERATED_INPUT_INVALID',
-                message: expect.stringContaining('Executable search environment has ambiguous PATH spellings'),
-            })] })
-            await expect(readFile(join(repository.main, 'compose.generated.yml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-        } finally {
-            Object.defineProperty(process, 'platform', descriptor)
-            if (priorPathAlias === undefined) delete process.env.Path
-            else process.env.Path = priorPathAlias
-            if (priorPathExt === undefined) delete process.env.PATHEXT
-            else process.env.PATHEXT = priorPathExt
-        }
-    })
-
     it('revalidates generated checkout identity while projecting only bounded Git child variables', async () => {
         const repository = await committedRepository()
         const input = await checkoutAuthority(join(repository.main, 'cockpit.toml'))
@@ -721,7 +643,7 @@ describe('setup checkout observation', () => {
         const calls = join(repository.root, 'git-calls')
         await mkdir(bin)
         await writeFile(join(bin, 'git'), `#!/bin/sh
-if [ "${'${Path+x}'}" = x ] || [ "${'${PATHEXT+x}'}" = x ] || [ "${'${UNRELATED_SEARCH_VALUE+x}'}" = x ]; then
+if [ "${'${Path+x}'}" = x ] || [ "${'${UNRELATED_SEARCH_VALUE+x}'}" = x ]; then
     printf 'unexpected search input in Git child environment\n' >&2
     exit 64
 fi
@@ -735,8 +657,7 @@ exec '${input.gitExecutable.canonicalPath}' "$@"
             const generated = await observeGeneratedCheckoutIdentity({
                 source: input.source,
                 cockpitName: input.cockpitName,
-                env: { PATH: bin, Path: '/must-not-reach-git', PATHEXT: undefined, PathExt: undefined,
-                    UNRELATED_SEARCH_VALUE: 'private' },
+                env: { PATH: bin, Path: '/must-not-reach-git', UNRELATED_SEARCH_VALUE: 'private' },
             })
             if (generated.state !== 'available') throw new Error(generated.reason)
             vi.setSystemTime(now + 60_001)

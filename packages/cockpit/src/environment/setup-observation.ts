@@ -1265,7 +1265,7 @@ function captureGeneratedCheckoutInput(input: unknown): Readonly<{
         const env: Record<string, string | undefined> = {}
         for (const key of environmentKeys) {
             if (typeof key !== 'string') return undefined
-            if (!/^(?:PATH|PATHEXT)$/i.test(key)) continue
+            if (key !== 'PATH') continue
             const descriptor = environmentDescriptors[key]!
             if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')
                 || descriptor.value !== undefined && (typeof descriptor.value !== 'string'

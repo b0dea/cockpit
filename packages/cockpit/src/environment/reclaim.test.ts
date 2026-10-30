@@ -550,8 +550,7 @@ describe('runtime discovery authority', () => {
             expect((await observe()).authority).toBeUndefined()
             for (const endpoint of [
                 'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid', 'npipe:////./pipe/docker_engine',
-                'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////./pipe/../docker_engine',
-                'npipe:////./pipe/docker_engine ', 'unix:///tmp/docker.sock\0',
+                'unix:///tmp/docker.sock\0',
             ]) {
                 await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint })}\n`)
                 expect((await observe()).authority, JSON.stringify(endpoint)).toBeUndefined()

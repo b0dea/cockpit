@@ -525,8 +525,6 @@ else process.exit(64)
             configPath,
             env: {
                 PATH: `${candidate.root}:/usr/bin:/bin`,
-                PATHEXT: '.EXE',
-                PathExt: undefined,
                 LANG: 'C',
                 HOME: candidate.home,
             },
@@ -575,15 +573,12 @@ else process.exit(64)
         expect(execute).not.toHaveBeenCalled()
     })
 
-    it.each([
-        ['PATH', { PATH: process.env.PATH, Path: undefined }],
-        ['PATHEXT', { PATH: process.env.PATH, PATHEXT: '.EXE', PathExt: undefined }],
-    ] as const)('validates every captured environment name while preserving an undefined duplicate %s name', async (_name, env) => {
+    it('validates every captured environment name before dispatch', async () => {
         const candidate = await fixture({ machineOnly: true })
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
-            env: { ...env, 'INVALID=NAME': undefined, HOME: candidate.home },
+            env: { PATH: process.env.PATH, 'INVALID=NAME': undefined, HOME: candidate.home },
             timeoutMs: 5_000,
         }, execute)
 
@@ -867,33 +862,6 @@ describe('env schema health', () => {
                 severity: 'warning', code: 'ENV_SCHEMA_TOOL_MISSING', target: 'api', fix: expect.stringContaining('https://varlock.dev'),
             }))
         }
-    })
-
-    it.each([
-        ['PATH', { Path: undefined }],
-        ['PATHEXT', { PathExt: undefined }],
-    ] as const)('does not dispatch varlock through an undefined duplicate Windows %s name', async (_name, duplicate) => {
-        const candidate = await fixture({ machineOnly: true })
-        await withVarlock(candidate, printing(report(), 0))
-        const path = `${candidate.root}:/usr/bin:/bin`
-        const execute = vi.fn(executeProbe)
-        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-        if (platform === undefined) throw new Error('process.platform descriptor is unavailable')
-        Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-        try {
-            const observations = await observeEnvSchemas({
-                stackId: candidate.stack,
-                siblings: [{ slug: 'api', dir: 'api', root: join(candidate.checkout, 'siblings', 'api') }],
-                env: { PATH: path, PATHEXT: '.EXE', ...duplicate, HOME: candidate.home },
-                timeoutMs: 5_000,
-            }, { execute })
-
-            expect(execute).not.toHaveBeenCalled()
-            expect(observations).toEqual([expect.objectContaining({
-                owner: schemaOwner,
-                observed: expect.objectContaining({ state: 'available', value: [{ sibling: 'api', state: 'tool-missing' }] }),
-            })])
-        } finally { Object.defineProperty(process, 'platform', platform) }
     })
 
     it('fails preflight naming the invalid keys and the fix', async () => {

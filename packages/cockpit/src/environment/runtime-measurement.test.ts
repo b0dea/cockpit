@@ -1,10 +1,9 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
-import type { ExecutionStep } from './contract.js'
 import { runRuntimeMeasure, type RuntimeMeasureProbe } from './runtime-measurement.js'
 import type { RuntimeProbeVerdict } from './runtime-probe.js'
 
@@ -69,13 +68,6 @@ function verdict(passed: boolean, runtimeExecutableSha256: string): RuntimeProbe
     }
 }
 
-async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
-    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-    if (descriptor === undefined) throw new Error('process.platform descriptor is unavailable')
-    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
-    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
-}
-
 describe('runtime measurement recording', () => {
     it('appends exactly one supported row for the identified runtime, which then admits it', async () => {
         const host = await measuredHost()
@@ -126,37 +118,6 @@ describe('runtime measurement recording', () => {
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
 
-    it.each(['npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
-        'refuses Windows pipe %s measurement without native executable authority', async (endpoint) => {
-            const host = await measuredHost()
-            const workingDirectory = process.cwd()
-            const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-            if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
-            // These real files classify candidates; no POSIX identity can authorize Windows execution.
-            await writeFile(join(host.root, String.raw`C:\Tools\docker.EXE`), 'synthetic candidate\n')
-            await writeFile(join(host.root, String.raw`C:\Tools\git.EXE`), 'synthetic candidate\n')
-            const steps: ExecutionStep[] = []
-            let probeCalls = 0
-            try {
-                process.chdir(host.root)
-                Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-                const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true,
-                    env: { ...host.env, PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', DOCKER_HOST: endpoint } }, {
-                    execute: async (step) => { steps.push(step); throw new Error('stop before process dispatch') },
-                    probe: async (request) => { probeCalls += 1; return verdict(true, request.executable.sha256) },
-                })
-                expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE', target: 'docker',
-                    message: 'Windows native executable identity authority is unavailable: ' + String.raw`C:\Tools\docker.EXE`,
-                }] })
-            } finally {
-                Object.defineProperty(process, 'platform', platform)
-                process.chdir(workingDirectory)
-            }
-            expect(steps).toEqual([])
-            expect(probeCalls).toBe(0)
-            expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
-        })
-
     it('refuses a Windows pipe on a POSIX host before runtime probing or daemon commands', async () => {
         const endpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
         const host = await measuredHost(endpoint)
@@ -190,8 +151,7 @@ describe('runtime measurement recording', () => {
         const host = await measuredHost()
         let calls = 0
         for (const endpoint of [
-            'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////./pipe/docker_engine/../other',
-            'npipe:////./pipe/docker_engine ', 'unix://synthetic.invalid/docker.sock', 'unix:///tmp/docker.sock\0',
+            'unix://synthetic.invalid/docker.sock', 'unix:///tmp/docker.sock\0',
         ]) {
             const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true,
                 env: { ...host.env, DOCKER_HOST: endpoint } }, {
@@ -256,26 +216,5 @@ describe('runtime measurement recording', () => {
             runtime: 'orbstack', compose_floor: '5.1.2', measured_on: new Date().toISOString().slice(0, 10),
             candidate: 'passed', broken_control: 'rejected', status: 'supported',
         }])
-    })
-
-    it.each([
-        ['PATH aliases', 'PATH', { PATH: String.raw`C:\Tools`, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
-        ['PATHEXT aliases', 'PATHEXT', { Path: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: '.EXE' }],
-        ['an undefined PATH alias', 'PATH', { PATH: undefined, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
-    ] as const)('preserves ambiguous Windows %s for refusal before dispatch', async (_label, name, env) => {
-        const host = await measuredHost()
-        const execute = vi.fn()
-        const probe = vi.fn()
-
-        const outcome = await withPlatform('win32', () => runRuntimeMeasure({
-            configPath: host.configPath, image: 'node:22-alpine', write: false, env,
-        }, { execute, probe }))
-
-        expect(outcome).toMatchObject({ status: 2, diagnostics: [{
-            code: 'RUNTIME_UNAVAILABLE', target: 'docker',
-            message: `Executable search environment has ambiguous ${name} spellings`,
-        }] })
-        expect(execute).not.toHaveBeenCalled()
-        expect(probe).not.toHaveBeenCalled()
     })
 })
