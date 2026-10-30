@@ -2,7 +2,7 @@ import { access, link, lstat, mkdir, open, opendir, readdir, realpath, rename, r
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, type BigIntStats } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { z } from 'zod'
 import { loadCockpitConfig } from '../config/load.js'
@@ -629,16 +629,26 @@ export async function withStateRootPortLock<T>(value: StateNamespace,
     return withStateScopedLock(authenticated, scope, options, operation)
 }
 
+// Another cockpit's namespace that this version cannot read, by its directory path.
+export type SkippedStateNamespace = Readonly<{ path: string; reason: string }>
+
+class InventoryBoundaryError extends Error {}
+
 // The callback only reads coordination records. Revalidate the entire read set before returning:
 // a per-cockpit scan alone misses a replacement made after that cockpit has already been visited.
+// Only the caller's own namespace must be readable. Another cockpit's namespace that this version
+// cannot read is skipped and handed to the callback by path: refusing on it let one stale
+// directory left by an earlier build block every cockpit on the machine.
 export async function withStateNamespaceInventory<T>(value: StateNamespace,
-    operation: (namespaces: readonly StateNamespace[]) => T | Promise<T>): Promise<StateResult<T>> {
+    operation: (namespaces: readonly StateNamespace[], skipped: readonly SkippedStateNamespace[]) => T | Promise<T>,
+): Promise<StateResult<T>> {
     const authenticated = authenticateStateNamespace(value)
     if (!authenticated || typeof operation !== 'function') {
         return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory requires issued authority and a read operation', 'state namespace inventory')
     }
     const snapshots = new Map<string, BigIntStats | undefined>()
     const namespaces: StateNamespace[] = []
+    const skipped: SkippedStateNamespace[] = []
     let entries = 0
     let bytes = 0n
     let target = join(authenticated.root, 'cockpits')
@@ -665,7 +675,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
         const found: string[] = []
         const handle = await opendir(path)
         for await (const entry of handle) {
-            if (++entries > STRUCTURED_INPUT_ENTRY_LIMIT) throw new Error('state inventory exceeds its aggregate entry boundary')
+            if (++entries > STRUCTURED_INPUT_ENTRY_LIMIT) throw new InventoryBoundaryError('state inventory exceeds its aggregate entry boundary')
             found.push(entry.name)
         }
         return found.sort()
@@ -674,30 +684,39 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
         await inspect(authenticated.root, 'directory', true)
         const directory = join(authenticated.root, 'cockpits')
         if (await inspect(directory, 'directory', true)) {
+            const own = basename(authenticated.cockpitRoot)
             for (const name of await names(directory)) {
-                const id = name.replaceAll('_', ':')
-                target = join(directory, name)
-                if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new Error('state inventory contains an invalid cockpit namespace')
-                const candidate = namespace(authenticated.root, id as CockpitId)
-                await inspect(candidate.cockpitRoot, 'directory')
-                const records = join(candidate.cockpitRoot, 'records')
-                const coordination = join(records, 'coordination')
-                await inspect(records, 'directory', true)
-                if (await inspect(coordination, 'directory', true)) {
-                    for (const entry of await names(coordination)) {
-                        const path = join(coordination, entry)
-                        target = path
-                        const parsed = parseCoordinationStateEntry(entry)
-                        if (!parsed) throw new Error('coordination store contains an unexpected entry')
-                        await inspect(path, 'file')
-                        if (parsed.kind === 'executor' && snapshots.get(path)!.nlink !== 1n) {
-                            throw new Error('coordination executor marker has multiple links')
+                const path = join(directory, name)
+                const visited = new Set(snapshots.keys())
+                try {
+                    const id = name.replaceAll('_', ':')
+                    target = path
+                    if (!cockpitIdentity.test(id) || identitySegment(id) !== name) throw new Error('state inventory contains an invalid cockpit namespace')
+                    const candidate = namespace(authenticated.root, id as CockpitId)
+                    await inspect(candidate.cockpitRoot, 'directory')
+                    const records = join(candidate.cockpitRoot, 'records')
+                    const coordination = join(records, 'coordination')
+                    await inspect(records, 'directory', true)
+                    if (await inspect(coordination, 'directory', true)) {
+                        for (const entry of await names(coordination)) {
+                            const path = join(coordination, entry)
+                            target = path
+                            const parsed = parseCoordinationStateEntry(entry)
+                            if (!parsed) throw new Error('coordination store contains an unexpected entry')
+                            await inspect(path, 'file')
+                            if (parsed.kind === 'executor' && snapshots.get(path)!.nlink !== 1n) {
+                                throw new Error('coordination executor marker has multiple links')
+                            }
+                            bytes += snapshots.get(path)!.size
+                            if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new InventoryBoundaryError('coordination inventory exceeds its aggregate byte boundary')
                         }
-                        bytes += snapshots.get(path)!.size
-                        if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new Error('coordination inventory exceeds its aggregate byte boundary')
                     }
+                    namespaces.push(candidate)
+                } catch (error) {
+                    if (name === own || error instanceof InventoryBoundaryError) throw error
+                    for (const key of snapshots.keys()) if (!visited.has(key)) snapshots.delete(key)
+                    skipped.push(Object.freeze({ path, reason: (error as Error).message }))
                 }
-                namespaces.push(candidate)
             }
         }
     } catch (error) {
@@ -705,7 +724,7 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
             `state namespace inventory could not be read safely: ${(error as Error).message}`, target,
             'inspect the named state entry and retry after all coordination writers finish')
     }
-    const result = await operation(Object.freeze(namespaces))
+    const result = await operation(Object.freeze(namespaces), Object.freeze(skipped))
     try {
         for (const [path, before] of snapshots) {
             target = path

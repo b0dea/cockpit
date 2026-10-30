@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENTRYPOINT_KINDS } from '../entrypoint-kinds.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type EntrypointDerivative } from '../schema.js'
-import { acquireClaim, coordinationStateRecord, decodeCoordinationRecord, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
+import { acquireClaim, coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
 import {
     ENVIRONMENT_CODES,
     type CheckoutId,
@@ -437,8 +437,10 @@ describe('independent cockpits sharing a state root', () => {
         expect(await readFile(left.paths.coordination(stackA).path)).toEqual(before)
     })
 
+    // Refusing here let one unreadable namespace of another cockpit block every cockpit on the
+    // machine. Its reservation is ignored, so the inventory names it for the caller to report.
     it.each(['malformed JSON', 'wrong cockpit identity', 'linked record', 'linked namespace', 'unsafe record mode', 'publication residue'] as const)(
-        'refuses foreign %s instead of treating its reservation as absent', async (damage) => {
+        'leases past a foreign %s and names the skipped namespace', async (damage) => {
             const { home, left, right } = await independentNamespaces()
             expect(await leasePortFamily({ namespace: right, stackId: stackA, holderId: holderB, checkoutId, config, now,
                 listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete' })
@@ -463,10 +465,9 @@ describe('independent cockpits sharing a state root', () => {
                 await writeFile(join(dirname(path), `.stack_${'f'.repeat(64)}.11111111-1111-4111-8111-111111111111.tmp`), '{}', { mode: 0o600 })
             }
             expect(await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
-                listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({
-                kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
-            })
-            expect(await readState(left.paths.coordination(stackA))).toMatchObject({ kind: 'missing' })
+                listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete' })
+            expect(await readRootPortInventory(left)).toMatchObject({ kind: 'complete',
+                skipped: [{ path: right.cockpitRoot, reason: expect.any(String) }] })
         },
     )
 })

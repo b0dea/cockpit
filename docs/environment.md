@@ -108,7 +108,8 @@ uses `127.0.0.1`; omitting `scheme` uses `http`. Automatic numeric entrypoints k
 HTTP loopback URLs. These declarations do not set any environment variables in the application:
 configure the product's public origin and callback settings to match the returned address.
 
-Separate cockpits run by the same user with the same canonical state root reserve whole port
+Separate cockpits run by the same user with the same canonical
+[state root](troubleshooting.md#clear-cockpit-state) reserve whole port
 families together, so they never get the same ports, even before either stack starts listening.
 Each cockpit's declared stack count applies only to its own stacks, but another cockpit's active
 lease still occupies its port numbers. A retained lease keeps its original family and blocks any
@@ -671,8 +672,9 @@ the acquired checkout does not match the setup plan; inspect it before retrying.
 For `STATE_ROOT_UNAVAILABLE`, inspect the target path and restore a canonical, writable state path
 that is not a symbolic link and is owned by the current user. Existing path components must not be
 writable by group or other users; fix their ownership and permissions instead of loosening them.
-`STATE_FORMAT_UNSUPPORTED` and `STATE_RECORD_MALFORMED` need recovery with a compatible cockpit
-version or the recovery procedure for that state; do not edit state records by hand.
+`STATE_FORMAT_UNSUPPORTED` and `STATE_RECORD_MALFORMED` mean cockpit cannot read a state record;
+do not edit it by hand, [clear that cockpit's state](troubleshooting.md#clear-cockpit-state)
+instead. As a warning, `STATE_RECORD_MALFORMED` names another cockpit's state that was skipped.
 `STATE_LOCKED` means a state write is in progress or cockpit could not verify who holds the lock;
 inspect the named holder. `STATE_DURABILITY_INDETERMINATE` means cockpit could not confirm that a
 state write reached disk, so do not assume it was saved.

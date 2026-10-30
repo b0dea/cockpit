@@ -185,6 +185,38 @@ the release attestation, not from the suspect file. `UPGRADE_DISCOVERY_INVALID` 
 malformed. `UPGRADE_REPAIR_UNVERIFIED` means the source cannot establish that an earlier repair
 completed. None of these codes is a reason to install a package or edit a manifest by hand.
 
+## Clear cockpit state
+
+cockpit keeps machine-local runtime state outside the repository: which sessions hold each stack,
+its port lease, and how far `up` got. There is one state root per user:
+
+| Host | State root |
+| --- | --- |
+| macOS | `~/Library/Application Support/cockpit/state/v1` |
+| Linux, `XDG_STATE_HOME` set | `$XDG_STATE_HOME/cockpit/v1` |
+| Linux, otherwise | `~/.local/state/cockpit/v1` |
+
+Under it, `cockpits/cockpit_<name>_<hash>/` holds one cockpit's state, where `<name>` is
+`cockpit.name` and `<hash>` identifies the cockpit's main checkout; `checkouts/` holds `init`
+progress per checkout. A state diagnostic's target names the exact directory.
+
+These records are how cockpit knows which containers and ports a stack owns, so do not edit them
+by hand, and do not delete them while the stack still runs: its containers would be left running
+with nothing that knows about them. To clear one cockpit's state:
+
+1. Stop the stack and release its claims from the cockpit directory:
+   `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`.
+2. If `down` refuses because the state cannot be read, stop the stack with Docker instead: find
+   its project with `docker compose ls`, then run `docker compose -p <project> down`.
+3. Delete the directory the diagnostic names, for example
+   `rm -rf "$HOME/Library/Application Support/cockpit/state/v1/cockpits/cockpit_duo_<hash>"`.
+
+When this cockpit's own state cannot be read, runtime commands refuse with `STATE_RECORD_MALFORMED`
+or `STATE_FORMAT_UNSUPPORTED` until you clear it. Another cockpit's state that this version cannot
+read, such as a directory left by an earlier cockpit build, does not stop you: `up` and `sleep`
+warn with `STATE_RECORD_MALFORMED`, name that directory and the `rm -rf` command, and ignore its
+port leases. Remove it with the same steps once no cockpit uses it.
+
 <!-- cockpit:diagnostic-index:begin -->
 Each diagnostic message names what failed and how to fix it. Where a code always has the same fix, the table repeats it; otherwise it says "see the message". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
 

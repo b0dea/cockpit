@@ -599,6 +599,25 @@ describe('lifecycle application contracts', () => {
         expect(replay).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID', target: fresh.result.source.path }] })
     })
 
+    it('warns once about another cockpit namespace it cannot read and names the directory to remove', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const legacy = join(dirname(context.namespace.cockpitRoot), `cockpit:legacy:${'a'.repeat(64)}`)
+        mkdirSync(legacy, { recursive: true, mode: 0o700 })
+
+        const result = await runUp({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            ...unavailableRuntimeUpAdapters(context, async () => undefined),
+        } as never)
+
+        expect(result.diagnostics.filter(({ target }) => target === legacy)).toEqual([{
+            severity: 'warning', code: 'STATE_RECORD_MALFORMED', target: legacy,
+            message: expect.stringContaining('invalid cockpit namespace'),
+            fix: expect.stringContaining(`rm -rf '${legacy}'`),
+        }])
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: expect.arrayContaining([
+            expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID' })]) })
+    })
+
     it('refuses before execution when runtime readiness is absent', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const execute = vi.fn()

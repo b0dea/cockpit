@@ -1106,6 +1106,30 @@ describe('active stack inventory', () => {
         })
     })
 
+    it('skips and names another cockpit namespace it cannot read, and refuses only on its own', async () => {
+        const state = await namespace()
+        await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T12:00:00.000Z' }])
+        // An earlier development build named namespace directories with colons; one left on disk
+        // used to block every cockpit on the machine.
+        const legacy = join(dirname(state.cockpitRoot), `cockpit:legacy:${'a'.repeat(64)}`)
+        await mkdir(join(legacy, 'records', 'coordination'), { recursive: true, mode: 0o700 })
+        const other = await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)
+        await seedCoordination(other)
+        const unreadable = JSON.stringify({ format: 'cockpit-state/v0' })
+        await writeFile(other.paths.coordination(stackId).path, unreadable)
+
+        expect(await readRootPortInventory(state)).toEqual({ kind: 'complete', value: [expect.objectContaining({ cockpitId, stackId })],
+            skipped: [
+                { path: legacy, reason: expect.stringContaining('invalid cockpit namespace') },
+                { path: other.cockpitRoot, reason: expect.stringContaining('format is not supported') },
+            ] })
+
+        await writeFile(state.paths.coordination(stackId).path, unreadable)
+        expect(await readRootPortInventory(state)).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: ENVIRONMENT_CODES.STATE_FORMAT_UNSUPPORTED, target: state.paths.coordination(stackId).path,
+        }] })
+    })
+
     it.each(['rewritten record', 'new namespace'] as const)('rejects a %s after an earlier cockpit was captured by root port inventory', async (mutation) => {
         const state = await namespace()
         const other = await reissueNamespace(state, `cockpit:coordination-b2:${'b'.repeat(64)}` as CockpitId)

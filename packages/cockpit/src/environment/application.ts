@@ -168,6 +168,7 @@ import {
     prepareDrainOutcomePublication,
     recoverDrainReservation,
     recoverSleepDrainReservation,
+    readRootPortInventory,
     reserveDrain,
     reserveDrainAttempt,
     type DrainOutcomeAuthority,
@@ -3009,6 +3010,30 @@ async function executeUpRound(
         }, refused) ?? unavailable(), refused) ?? unavailable()
 }
 
+function shellQuote(value: string): string {
+    return `'${value.replaceAll("'", `'"'"'`)}'`
+}
+
+// Port leases are machine-wide, so up and sleep read every cockpit's state. Another cockpit's
+// namespace this version cannot read is skipped there rather than refused, and named here once so a
+// person can remove it; this cockpit's own unreadable state still refuses in the command itself.
+async function withSkippedStateWarnings<Result extends Readonly<{ diagnostics: readonly EnvironmentDiagnostic[] }>>(
+    namespace: StateNamespace,
+    run: () => Promise<Result>,
+): Promise<Result> {
+    const inventory = await readRootPortInventory(namespace)
+    const result = await run()
+    if (inventory.kind !== 'complete' || inventory.skipped.length === 0) return result
+    const warnings = inventory.skipped.map(({ path, reason }): EnvironmentDiagnostic => Object.freeze({
+        severity: 'warning',
+        code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+        message: `another cockpit's state cannot be read by this cockpit version (${reason}), so its claims and port leases were ignored`,
+        target: path,
+        fix: `if no cockpit still uses this state, stop any stack it started (docker compose ls lists them), then delete it: rm -rf ${shellQuote(path)}`,
+    }))
+    return { ...result, diagnostics: uniqueDiagnostics([...warnings, ...result.diagnostics]) }
+}
+
 export async function runUp(
     input: UpCommandInput,
     adapters: UpCommandAdapters,
@@ -3030,6 +3055,10 @@ export async function runUp(
         )
     }
     const context = loaded.result
+    return withSkippedStateWarnings(context.namespace, () => upWithContext(context, adapters))
+}
+
+async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters): Promise<UpCommandResult> {
     type AcquiredLeaseResult = Extract<LeasePortFamilyResult, { kind: 'complete' }> & { readonly change: 'acquired' }
     let acquired: AcquiredLeaseResult | undefined
     let initialAcquisition: PortLeaseProjection | undefined
@@ -3176,7 +3205,7 @@ export async function runSession(
     return Object.freeze({
         kind: 'complete' as const,
         status: childStatus,
-        diagnostics: Object.freeze([...up.diagnostics, ...sleep.diagnostics]),
+        diagnostics: uniqueDiagnostics([...up.diagnostics, ...sleep.diagnostics]),
         result: Object.freeze({
             child: Object.freeze({ exitCode: child.exitCode, signal: child.signal }),
             sleep: sleep.result,
@@ -3205,6 +3234,10 @@ export async function runSleep(
         )
     }
     const context = loaded.result
+    return withSkippedStateWarnings(context.namespace, () => sleepWithContext(context, adapters))
+}
+
+async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCommandAdapters): Promise<SleepCommandResult> {
     let recovery = await inspectSleepDrainRecovery({
         namespace: context.namespace,
         stackId: context.stackId,

@@ -43,6 +43,7 @@ import {
     snapshotStateNamespace,
     transactState,
     withStateNamespaceInventory,
+    type SkippedStateNamespace,
     type StateNamespace,
     type StateAddress,
     type StateRecord,
@@ -1026,23 +1027,35 @@ async function readCoordinationInventory(
     }
 }
 
+// Port leases are machine-wide, so this reads every cockpit's coordination records. `skipped` names
+// each other cockpit's namespace this version cannot read; its leases are not seen, and the caller
+// reports it so a person can remove it. The caller's own namespace, a contended lock and the
+// shared read bounds still refuse.
 export async function readRootPortInventory(
     namespace: StateNamespace,
     options: Pick<StateTransactionOptions, 'observeHolder'> = {},
 ): Promise<
-    | { readonly kind: 'complete'; readonly value: readonly { cockpitId: CockpitId; stackId: StackId; record: CoordinationRecord }[] }
+    | { readonly kind: 'complete'; readonly value: readonly { cockpitId: CockpitId; stackId: StackId; record: CoordinationRecord }[]
+        readonly skipped: readonly SkippedStateNamespace[] }
     | ClaimMutationRefusal
 > {
-    const result = await withStateNamespaceInventory(namespace, async (namespaces) => {
+    const result = await withStateNamespaceInventory(namespace, async (namespaces, unreadable) => {
         const records: { cockpitId: CockpitId; stackId: StackId; record: CoordinationRecord }[] = []
+        const skipped = [...unreadable]
         const budget = { entries: namespaces.length, bytes: 0 }
         for (const candidate of namespaces) {
             const inventory = await readCoordinationInventory(candidate, options, budget)
-            if (inventory.kind !== 'complete') return inventory
+            if (inventory.kind !== 'complete') {
+                const diagnostic = inventory.diagnostics[0]
+                if (candidate.cockpitRoot === namespace.cockpitRoot || diagnostic?.code === ENVIRONMENT_CODES.STATE_LOCKED
+                    || budget.entries > STRUCTURED_INPUT_ENTRY_LIMIT || budget.bytes > SERIALIZED_RECORD_BYTE_LIMIT) return inventory
+                skipped.push(Object.freeze({ path: candidate.cockpitRoot, reason: diagnostic?.message ?? 'coordination records are unreadable' }))
+                continue
+            }
             const cockpitId = candidate.paths.coordination(`stack:${'0'.repeat(64)}` as StackId).cockpitId
             records.push(...inventory.value.map((record) => ({ cockpitId, ...record })))
         }
-        return { kind: 'complete' as const, value: records }
+        return { kind: 'complete' as const, value: records, skipped: Object.freeze(skipped) }
     })
     if (result.kind === 'complete') return result.value
     if (result.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory disappeared during observation', result.path)
