@@ -41,17 +41,23 @@ patch removals as well as writes; removing a directory that contains an instance
 directory is also denied. Staging a containing directory can include an instance and is also
 denied. Executable use of a declared hosted database or vendor host is denied at hostname
 boundaries. Matching examines executable, argument, and environment-assignment-value roles;
-redirects, heredocs, comments, and definitions do not count as executable host use.
+redirects, heredocs, comments, and definitions do not count as executable host use. Host names are
+compared after Unicode compatibility normalization, so fullwidth letters and ideographic full stops,
+which resolvers fold to ASCII, do not hide a declared host.
 
-Deleting, renaming or truncating the configuration file or
+Deleting, renaming, truncating, relinking or making unreadable the configuration file or
 `.cockpit/generated-environment-ownership.json` is a hard denial, through `rm`, `unlink`, `mv`,
 `git rm`, `git mv`, `find -delete`, `truncate`, `git archive` output, truncating `dd` or `tee`
-writes, a patch delete or move, or a `>` redirect, and so is removing a directory that contains
-either. Every later guarded call reads both files, so losing one holds the agent until a human
-restores it. Editing the configuration in place stays permitted, including bounded `dd conv=notrunc`
-and `tee` append forms under the normal write checks; the edit takes effect only after a human runs
-`sync`. Writing anywhere under a `.git` directory is also a hard denial, because Git configuration
-chooses programs that read-only Git commands run.
+writes, `ln` onto either file, a `chmod` mode that drops the owner's read permission or is copied
+with `--reference`, a patch delete or move, a Write tool call with empty content, or a `>` redirect,
+and so is removing a directory that contains either. Every later guarded call reads both files, so
+losing one holds the agent until a human restores it. Editing the configuration in place stays
+permitted, including bounded `dd conv=notrunc` and `tee` append forms under the normal write
+checks; the edit takes effect only after a human runs `sync`. Writing anywhere under a `.git`
+directory is also a hard denial, because Git configuration chooses programs that read-only Git
+commands run, and for the same reason so is every `git config` form other than a proven read
+(`--get`, `--get-all`, `--get-regexp`, `--list`, `get`, `list`, or a lone `section.key`), whatever
+its scope: a global `core.pager` or `core.hooksPath` reaches every repository.
 
 The Claude Code registration includes `NotebookEdit`: notebook cell changes use the same protected
 path checks as text edits, so notebook tooling cannot write a control or environment instance.
@@ -68,12 +74,28 @@ harness registry. Otherwise an exact command allow could disable a hook or chang
 harness starts before the next guarded call. This boundary follows folded path spellings and
 authenticated filesystem identities, so alternate case and aliases do not bypass it.
 
-The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `git mv`,
+The installed code the guard runs is a control too. The guard authenticates its entry point by
+digest, but every other module it loads would otherwise be writable, and an edited module can turn
+every hard denial into an allow. Writing, linking, changing the mode of, or removing anything inside
+the running cockpit package or any package it loads is therefore a hard denial, under both the path
+it was installed at and its real path, as is removing a directory that contains one. So is writing
+into any `node_modules/.bin` directory of a configured root, where package scripts and `npx` find
+their commands, and creating, replacing or linking a file directly inside a directory on the
+harness's command search path (`PATH`) that lies within a configured root, where a planted `ls`,
+`git` or `rg` would run in place of a permitted read-only command. Only absolute search path entries
+are protected: a relative entry such as `.` names whatever directory a command runs in, so keep
+relative entries off the `PATH` an agent harness starts with.
+
+The evaluator resolves visible destinations for bounded `cp`, `install`, `mv`, `ln`, `git mv`,
 `git archive`, `tee`, `dd`, `touch`, `truncate` and `chmod` forms, and the destination of bounded
 `tar` extraction forms. Git paths use the directory selected by `git -C`. Extraction without an
 explicit destination writes to the invocation's working directory.
 Visible source files for bounded `cp`, `install`, `dd` and `tar` forms receive the same protected
-read check as built-in read-only commands. Every unsupported `tar` mode or option is unavailable,
+read check as built-in read-only commands. A hard or symbolic `ln` whose target is, contains or lies
+inside a secrets directory, a declared instance, a guard control or the installed cockpit is a hard
+denial, because the link would reach it under a name the guard does not protect; a symbolic link's
+target is checked from both the working directory and the link's own directory. Every unsupported
+`tar` or `ln` mode or option is unavailable,
 as is an unclassified non-read-only command whose visible operand names a control, a protected
 plugin subtree or a directory containing either. These checks run before declared allows. This
 screening does not inspect archive member paths or arbitrary approved script bodies, and
@@ -129,17 +151,29 @@ chain is permitted only when every segment is.
 `rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent. An ambient ripgrep configuration can
 inject options such as a preprocessor, so its presence falls back to the ordinary prompt rules.
 
-Every hard denial still applies first. Reading a declared instance or anything under `.secrets` is
-denied under every spelling the volume resolves to it, a hard link included. A path that is a
-symlink, lies outside the configured roots, or is an undeclared `.env*` file falls back to a
-prompt, as does a search whose tree contains an instance or the secrets directory, since the guard
-cannot see which files the search would read.
+Every hard denial still applies first. Reading a declared instance or anything under a `.secrets`
+directory is denied under every spelling the volume resolves to it, including a case-folded
+spelling of the checkout itself, and so is a recursive search rooted at or below one. Shell reads
+also compare filesystem identity: a hard link to a declared instance, or to any file in the
+cockpit's `env/.secrets` directory, is denied like the file itself. The guard enumerates that
+directory on every call, up to 512 entries; above that bound every content read falls back to a
+prompt rather than going unchecked. A hard link to a file in any other `.secrets` directory is
+recognised only by its spelling. Because a recursive search reads files the guard does not name,
+it falls back to a prompt whenever a declared instance or an `env/.secrets` file has a second hard
+link anywhere. A path that is a symlink, lies outside the configured roots, or is an undeclared
+`.env*` file falls back to a prompt, as does a search whose tree contains an instance or the
+secrets directory, since the guard cannot see which files the search would read.
 
 The guard hook sees shell commands and edits only. Claude Code's own Read, Grep and Glob tools never
 reach it, so `sync` also writes Claude `Read` deny rules into `.claude/settings.json`: one for every
-`.secrets` directory and one per declared instance, anchored on the path below the sibling's parent
-so the committed file is identical on every clone. A deny rule can match more than the instance (any
-file with the same sibling-relative suffix), never less.
+`.secrets` directory and one for every declared instance of every sibling, whether or not the
+sibling is mounted or granted to Claude. A sibling instance's rule is anchored on the path below the
+sibling's parent so the committed file is identical on every clone, and can match more than the
+instance (any file with the same sibling-relative suffix), never less; an instance in the cockpit
+root itself is anchored at the project root. These rules match path spellings only. Claude's native
+tools cannot see filesystem identity, so a hard link to an instance or to a secrets file under a
+name outside the rules stays readable to them, and so does a file reached through a symbolic link
+under such a name; the guard's identity checks cover shell commands only.
 
 ## Native adapter behavior
 
