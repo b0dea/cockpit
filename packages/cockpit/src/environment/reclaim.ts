@@ -1364,8 +1364,11 @@ async function removalExecutable(value: unknown): Promise<ResolvedExecutable | u
         && createHash('sha256').update(bytes).digest('hex') === executable.sha256 ? executable : undefined
 }
 
+// A discovery lists only one stack's resources, so a discovery of another stack would make this
+// one look empty: every planned target absent and every removal confirmed. It must name this stack.
 function sameRuntimeAuthority(
     discovery: ReclaimDiscoverySnapshot,
+    stackId: StackId,
     executable: ResolvedExecutable,
     cwd: string,
     env: Readonly<Record<string, string>>,
@@ -1377,7 +1380,7 @@ function sameRuntimeAuthority(
     const reconciled = continuation !== null && typeof continuation === 'object'
         && authority !== undefined && reconciledContinuationDiscoveries.get(continuation) === authority
     const safeEnv = safeEnvironment(env)
-    return authority !== undefined && safeEnv !== undefined
+    return authority !== undefined && safeEnv !== undefined && authority.stackId === stackId
         && JSON.stringify([authority.executable, authority.cwd, authority.env, authority.selection]) === JSON.stringify([executable, cwd, safeEnv, selection])
         && (currentSelection === undefined || JSON.stringify([currentSelection.executable, currentSelection.cwd, currentSelection.env, currentSelection.selection])
             === JSON.stringify([executable, cwd, safeEnv, selection])
@@ -1785,7 +1788,7 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
                 .every((identity) => targetIsAbsent(identity, discovery.resources)))
             && coldObservedIdentities !== undefined
             && sameTargetProjections(coldObservedIdentities, coldIdentities, coldRemainingTargetIds!)
-        const authority = sameRuntimeAuthority(discovery, runtimeExecutable, input.cwd, env, selection, currentSelection, continuation)
+        const authority = sameRuntimeAuthority(discovery, input.stackId, runtimeExecutable, input.cwd, env, selection, currentSelection, continuation)
         const followsPersistedFailure = coldTargetsMatch
             && Date.parse(authority?.startedAt ?? '') > Date.parse(coldRecovery!.freshAfter)
         const approval = operatorApproval !== null && typeof operatorApproval === 'object'
@@ -2060,7 +2063,7 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             currentCoordination = current!
         }
         const first = actionable[0]
-        const authority = sameRuntimeAuthority(discovery, executable, input.cwd, input.env, selection, currentSelection, inputContinuation)
+        const authority = sameRuntimeAuthority(discovery, input.stackId, executable, input.cwd, input.env, selection, currentSelection, inputContinuation)
         const coldReclaimTargetIds = coldRecovery === undefined ? undefined
             : [...coldRecovery.completed, coldRecovery.current, ...coldRecovery.pending].map(({ targetId }) => targetId)
         const coldCompletedTargetIds = coldRecovery?.completed.map(({ targetId }) => targetId)
@@ -2569,7 +2572,7 @@ export async function reconcileAbsentReclaimAction(input: {
         if (!issued) throw new Error('unissued absence action')
         absentReclaimExecutions.delete(authority)
         const { pending, reservation, attempt, execution } = issued
-        const observed = sameRuntimeAuthority(discovery, pending.runtime.executable,
+        const observed = sameRuntimeAuthority(discovery, pending.runtime.stackId, pending.runtime.executable,
             pending.runtime.cwd, pending.runtime.env, pending.runtime.selection)
         if (!observed || !admittedDiscoveries.has(discovery)) throw new Error('unissued absence discovery')
         const remainder = reservation.actions.slice(attempt.actionIndex + 1)
@@ -2769,7 +2772,8 @@ export function reconcileReclaimAction(input: {
     }
     const pending = pendingReclaimExecutions.get(authority)
     const discoveryAuthority = discovery !== null && typeof discovery === 'object' ? discoveryAuthorities.get(discovery) : undefined
-    if (!pending || !discoveryAuthority || !admittedDiscoveries.has(discovery)) {
+    if (!pending || !discoveryAuthority || !admittedDiscoveries.has(discovery)
+        || discoveryAuthority.stackId !== pending.reservation.stackId) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim reconciliation authority is missing or stale', 'reclaim-reconciliation')
     }
     pendingReclaimExecutions.delete(authority)
@@ -2829,7 +2833,7 @@ export function reconcileTeardown(
     const authority = discoveryAuthorities.get(discovery)
     if (reconciliation === undefined || consumedTeardownReconciliations.has(plan as object)
         || authority === undefined || !admittedDiscoveries.has(discovery)
-        || sameRuntimeAuthority(discovery, reconciliation.runtime.executable, reconciliation.runtime.cwd,
+        || sameRuntimeAuthority(discovery, reconciliation.runtime.stackId, reconciliation.runtime.executable, reconciliation.runtime.cwd,
             reconciliation.runtime.env, reconciliation.runtime.selection) === undefined) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown reconciliation authority is missing, stale, or already consumed', 'teardown-reconciliation')
     }

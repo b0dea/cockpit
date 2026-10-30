@@ -164,6 +164,7 @@ const authenticatedDiscovery = async (
         readonly networkInspection?: (resource: ReclaimResource) => unknown
         readonly containerNetworks?: Readonly<Record<string, readonly string[]>>
         readonly displayedBytes?: Readonly<Record<string, string>>
+        readonly discoveryStackId?: StackId
     } = {},
 ): Promise<ReclaimDiscoverySnapshot> => {
     const groups = new Map<Exclude<ReclaimResource['kind'], 'cache'>, ReclaimResource[]>([
@@ -208,12 +209,12 @@ const authenticatedDiscovery = async (
     const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path' as const }
     const selectionAuthority = await issuedSelection(root, docker, api)
     const plans = api.createReclaimDiscoverySteps({ executable: docker,
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000,
+        cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId: options.discoveryStackId ?? stackId, cockpitId, timeoutMs: 5_000,
         selectionAuthority,
     })
     if (plans === undefined) throw new Error('discovery plan unavailable')
     const containerPlan = plans.find(({ labels: item }) => item.resourceKind === 'container')
-    const owned = ['--filter', `label=dev.b0dea.cockpit.stack-id=${stackId}`]
+    const owned = ['--filter', `label=dev.b0dea.cockpit.stack-id=${options.discoveryStackId ?? stackId}`]
     expect(containerPlan?.argv.slice(0, 9)).toEqual([script, '--host', dockerEndpoint, 'container', 'ls', '--all', '--no-trunc', ...owned])
     expect(containerPlan?.argv.at(-1)).toContain('.Label "dev.b0dea.cockpit.owner-id"')
     expect(containerPlan?.argv.at(-1)).toContain('"bytes":null')
@@ -744,6 +745,28 @@ describe('reset planning', () => {
             expect(await planReset(resetInput(root, { generatedHostPaths: [], discovery: observed }))).toEqual(expect.objectContaining({
                 kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })],
             }))
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('refuses to plan a reset from a discovery of another stack', async () => {
+        const root = await canonicalTemp('cockpit-reset-other-stack-')
+        try {
+            await mkdir(join(root, 'generated', 'session'), { recursive: true })
+            const declared = { resettableVolumes: [] }
+            const preview = await planReset(resetInput(root, { ...declared, discovery: await authenticatedDiscovery(root, []) }))
+            expect(preview.kind).toBe('preview')
+            if (preview.kind !== 'preview') return
+            const coordinationAddress = await writeCoordination(root)
+            // A discovery lists only its own stack's resources, so another stack's would make this
+            // one look empty and every target absent.
+            const otherStack = await authenticatedDiscovery(root, [], discoveryApi, { discoveryStackId: foreignStackId })
+            expect(await planReset(resetInput(root, {
+                ...declared, confirmationDigest: preview.digest, consent: preview.consent, discovery: otherStack, coordinationAddress,
+            }))).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })] }))
+            expect(await planReset(resetInput(root, {
+                ...declared, confirmationDigest: preview.digest, consent: preview.consent,
+                discovery: await authenticatedDiscovery(root, []), coordinationAddress,
+            }))).toEqual(expect.objectContaining({ kind: 'complete' }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
