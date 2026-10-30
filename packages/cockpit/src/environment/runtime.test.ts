@@ -2644,7 +2644,14 @@ fi
             { type: 'bind', source: '/private/undeclared', target: '/escape' },
             { type: 'volume', source: 'cache', target: '/cache' },
         ] } }, volumes: { cache: { name: 'synthetic_cache' } } }, [], { expectedMountSources: ['/workspace/应用'] })
-        expect(extra.admitted).toEqual({ kind: 'unavailable', reason: 'runtime topology is unavailable' })
+        expect(extra.admitted).toEqual({ kind: 'unavailable', reason: 'the bind mounts Compose resolves differ from the declared mount sources',
+            mounts: { missing: [], unexpected: ['/private/undeclared'] } })
+
+        const unmounted = await topologyEvidence({ services: { api: { volumes: [
+            { type: 'bind', source: '/workspace/应用', target: '/app' },
+        ] } } }, [], { expectedMountSources: ['/workspace/worker', '/workspace/应用'] })
+        expect(unmounted.admitted).toEqual({ kind: 'unavailable', reason: 'the bind mounts Compose resolves differ from the declared mount sources',
+            mounts: { missing: ['/workspace/worker'], unexpected: [] } })
     })
 
     it('rejects service evidence after the clock moves before its observation window', async () => {

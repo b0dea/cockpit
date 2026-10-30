@@ -1640,11 +1640,14 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
     }
 }
 
+/** Declared mount sources no service binds, and bind sources nothing declares. */
+export type RuntimeMountMismatch = Readonly<{ missing: readonly string[]; unexpected: readonly string[] }>
+
 export function admitRuntimeTopology(input: {
     readonly plan: RuntimeTopologyPlan
     readonly outcome: ExecuteProbeOutcome
 }): { readonly kind: 'complete'; readonly topology: RuntimeTopologyEvidence; readonly observations: readonly EnvironmentObservation[] }
-    | { readonly kind: 'unavailable'; readonly reason: string } {
+    | { readonly kind: 'unavailable'; readonly reason: string; readonly mounts?: RuntimeMountMismatch } {
     const unavailable = () => Object.freeze({ kind: 'unavailable' as const, reason: 'runtime topology is unavailable' })
     try {
         const captured = captureOwnValues(input, ['plan', 'outcome'])
@@ -1668,7 +1671,17 @@ export function admitRuntimeTopology(input: {
         const projected = parseTopology(outcome.stdout, contract.stackId, contract.configSha256, contract.runtime.activeProfiles)
         if (!projected) return unavailable()
         const declaredBindSources = [...new Set(projected.services.flatMap(({ bindMountSources }) => bindMountSources))].sort()
-        if (JSON.stringify(declaredBindSources) !== JSON.stringify(contract.runtime.expectedMountSources)) return unavailable()
+        const expected = contract.runtime.expectedMountSources
+        // The caller can name the sibling or host path behind each difference; a bare refusal here
+        // left `up` reporting only that readiness authority was unavailable.
+        if (JSON.stringify(declaredBindSources) !== JSON.stringify(expected)) return Object.freeze({
+            kind: 'unavailable' as const,
+            reason: 'the bind mounts Compose resolves differ from the declared mount sources',
+            mounts: Object.freeze({
+                missing: Object.freeze(expected.filter((source) => !declaredBindSources.includes(source))),
+                unexpected: Object.freeze(declaredBindSources.filter((source) => !expected.includes(source))),
+            }),
+        })
         const topology = Object.freeze({
             stackId: contract.stackId,
             configSha256: contract.configSha256,

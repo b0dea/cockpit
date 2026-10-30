@@ -837,6 +837,42 @@ describe('destructive application contracts', () => {
         expect(plans[2]).toMatchObject({ continuation, coordinationRecord: failedRecord, expectedDiscoveryDigest: request.planDigest })
     })
 
+    it('retires a stack that never started without writing a lifecycle record up would refuse', async () => {
+        const { configPath, context, instance } = await destructiveFixture()
+        const failedRecord = persistFailedDestructiveRecord(context, 'down')
+        applicationOwners.reclaim.planTeardown = async () => ({
+            kind: 'complete', steps: [], actionAuthority: {}, remaining: 1, noop: false,
+            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: null,
+        }) as never
+        applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
+        const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
+        applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
+        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
+            topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
+        }) as never
+        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
+        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', authority: {} }) as never
+        applicationOwners.reclaim.redeemReclaimAction = async () => ({ step: { id: 'reclaim', executionFence: executionFence('never-started') }, authority: {} }) as never
+        applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, authority: {} }) as never
+        applicationOwners.reclaim.consumeReclaimCompleted = () => ({}) as never
+        applicationOwners.claims.prepareDrainOutcomePublication = async () => ({ kind: 'complete', value: {} }) as never
+        applicationOwners.claims.finalizeDrainOutcome = () => true
+        const discovery = Object.freeze({ down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord: null }) })
+
+        const result = await runDown({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            observe: async () => resetObservation(instance, failedRecord),
+            observeReclaim: async () => Object.freeze({ instance, ...discovery, reset: discovery.down }) as never,
+            execute: async () => ({ kind: 'complete' }) as never,
+        })
+
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        // A lifecycle record without lifecycle history reads as malformed, so the next up refused.
+        expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({ kind: 'missing' })
+        expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))
+            .toMatchObject({ kind: 'complete', authority: { stage: 'bootstrap' } })
+    })
+
     it('uses recovered failed-action authority without trying to recover the same epoch twice', async () => {
         const { configPath, context, instance } = await destructiveFixture()
         const failedRecord = persistFailedDestructiveRecord(context, 'reset')

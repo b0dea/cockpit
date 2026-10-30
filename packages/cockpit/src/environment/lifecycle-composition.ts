@@ -7,6 +7,7 @@ import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import type { CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
     checkGeneratedEnvironment,
@@ -34,6 +35,7 @@ import {
     withLifecycleConfiguration,
     type LifecycleRunContext,
     type ReadinessRefusal,
+    type RuntimeReadinessPurpose,
     type SleepCommandAdapters,
     type UpCommandAdapters,
 } from './application.js'
@@ -83,6 +85,7 @@ import {
     type RuntimeMeasurementProbeAuthority,
     type MachineFloorAuthority,
     type RuntimeLifecycleProjection,
+    type RuntimeMountMismatch,
     type RuntimeServiceEvidence,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
@@ -111,6 +114,35 @@ function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, 
 
 function runtimeUnavailable(reason: string, target: string): readonly EnvironmentDiagnostic[] {
     return ownerDiagnostics(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason, target)
+}
+
+/** Names each mount difference by the row that declared it, so the refusal says what to edit. */
+function mountMismatchDiagnostics(
+    mismatch: RuntimeMountMismatch,
+    config: CockpitConfig,
+    siblingsRoot: string,
+): readonly EnvironmentDiagnostic[] {
+    const bySource = new Map(config.sibling.map((sibling) => [resolve(siblingsRoot, sibling.dir), sibling]))
+    return Object.freeze([
+        ...mismatch.missing.map((source) => {
+            const sibling = bySource.get(source)
+            return Object.freeze({
+                severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
+                target: sibling ? `sibling:${sibling.slug}` : source,
+                message: sibling
+                    ? `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${source}, so cockpit will not vouch for this stack`
+                    : `${source} is declared for the stack to mount, but no Compose service bind-mounts it, so cockpit will not vouch for this stack`,
+                fix: sibling
+                    ? `bind-mount \${${sibling.var}} in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run npx --no cockpit sync and npx --no cockpit check`
+                    : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run npx --no cockpit sync',
+            })
+        }),
+        ...mismatch.unexpected.map((source) => Object.freeze({
+            severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: source,
+            message: `a Compose service bind-mounts ${source}, which no mount = "always" sibling or environment.generated_host_paths entry declares, so cockpit will not hand it to a container`,
+            fix: 'declare it as a mount = "always" sibling or an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync',
+        })),
+    ])
 }
 
 export interface LifecycleCommandCompositionInput {
@@ -166,6 +198,7 @@ export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepC
         use: (runtime: LifecycleRuntimeReadiness) => Promise<T>,
         ports?: PortLeaseProjection,
         refuse?: ReadinessRefusal<T>,
+        purpose?: RuntimeReadinessPurpose,
     ): Promise<T | undefined>
 }
 
@@ -804,7 +837,19 @@ export function createLifecycleCommandAdapters(
         return Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]), result })
     }
 
-    const withRuntimeReadiness: LifecycleCommandAdapterComposition['withRuntimeReadiness'] = async (context, use, ports, refuse) => {
+    const withRuntimeReadiness: LifecycleCommandAdapterComposition['withRuntimeReadiness'] = (context, use, ports, refuse, purpose) =>
+        runtimeReadiness(context, use, ports, refuse, purpose)
+
+    // `resolvedMounts` is set only on a teardown retry: stopping or removing a stack must not depend
+    // on its mounts matching cockpit.toml, or a stack whose declaration drifted could never be retired.
+    const runtimeReadiness = async <T>(
+        context: LifecycleRunContext,
+        use: (runtime: LifecycleRuntimeReadiness) => Promise<T>,
+        ports: PortLeaseProjection | undefined,
+        refuse: ReadinessRefusal<T> | undefined,
+        purpose: RuntimeReadinessPurpose | undefined,
+        resolvedMounts?: readonly string[],
+    ): Promise<T | undefined> => {
         let binding = bindings.get(context)
         if (!input || !binding) return undefined
         const generated = binding.config.environment.generated
@@ -906,6 +951,7 @@ export function createLifecycleCommandAdapters(
             ])].sort())
         }
         if (!artifacts || artifacts.length === 0) return undefined
+        if (resolvedMounts) expectedMountSources = resolvedMounts
         const siblingDirectories = Object.freeze(Object.fromEntries(currentBinding.config.sibling
             .map((sibling) => [sibling.var, resolve(currentBinding.siblingsRoot, sibling.dir)])))
         const batchId = randomBytes(32).toString('hex')
@@ -950,7 +996,15 @@ export function createLifecycleCommandAdapters(
         if (topologyPlan.kind !== 'planned') return undefined
         const topologyOutcome = await execute(topologyPlan.step)
         const topology = admitRuntimeTopology({ plan: topologyPlan, outcome: topologyOutcome })
-        if (topology.kind !== 'complete') return undefined
+        if (topology.kind !== 'complete') {
+            const mismatch = topology.mounts
+            if (!mismatch) return undefined
+            if (purpose === 'teardown' && !resolvedMounts) {
+                const resolved = [...expectedMountSources.filter((source) => !mismatch.missing.includes(source)), ...mismatch.unexpected].sort()
+                return runtimeReadiness(context, use, ports, refuse, purpose, Object.freeze(resolved))
+            }
+            return refuse?.(mountMismatchDiagnostics(mismatch, currentBinding.config, currentBinding.siblingsRoot))
+        }
         if (generatedApplication) {
             const step = runtime.plan.steps[0]
             const publicEnv = projectRuntimeExecutionEnvironment(topology.topology)

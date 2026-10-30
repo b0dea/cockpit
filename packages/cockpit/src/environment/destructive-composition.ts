@@ -466,7 +466,7 @@ export function createDestructiveCommandAdapters(
             if (!ports) return undefined
             let runtimeRefusal: DestructiveObservationRefusal | undefined
             const readiness = await lifecycle.withRuntimeReadiness(lifecycleContext, async (value) => value, ports,
-                (diagnostics) => { runtimeRefusal = observationRefusal(diagnostics); return undefined })
+                (diagnostics) => { runtimeRefusal = observationRefusal(diagnostics); return undefined }, 'teardown')
             if (runtimeRefusal) return runtimeRefusal
             if (!readiness) return undefined
             readinessRoots.set(context, readiness.topology.cwd)

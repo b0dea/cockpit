@@ -173,6 +173,7 @@ import {
     readRootPortInventory,
     reserveDrain,
     reserveDrainAttempt,
+    decodeCoordinationRecord,
     type DrainOutcomeAuthority,
     type DrainReservationRequest,
 } from './claims.js'
@@ -790,10 +791,14 @@ type GeneratedCommandOutcome<T> = EnvironmentCommandOutcome<T> & {
 // evidence refusal left the user with no hint of which port, lock or daemon to fix.
 export type ReadinessRefusal<T> = (diagnostics: readonly EnvironmentDiagnostic[]) => T
 
+// A teardown (sleep, down) only stops and removes what the stack labelled, so the runtime it reads
+// need not match the mounts cockpit.toml declares; bring-up and health still require that match.
+export type RuntimeReadinessPurpose = 'teardown'
+
 interface LifecycleCommandAdapters {
     load(input: UpCommandInput | SleepCommandInput): Promise<EnvironmentCommandOutcome<LifecycleRunContext>>
     execute(step: ExecutionStep): Promise<ExecuteProbeOutcome>
-    withRuntimeReadiness<T>(context: LifecycleRunContext, use: (runtime: RuntimeReadiness) => Promise<T>, ports?: PortLeaseProjection, refuse?: ReadinessRefusal<T>): Promise<T | undefined>
+    withRuntimeReadiness<T>(context: LifecycleRunContext, use: (runtime: RuntimeReadiness) => Promise<T>, ports?: PortLeaseProjection, refuse?: ReadinessRefusal<T>, purpose?: RuntimeReadinessPurpose): Promise<T | undefined>
 }
 
 export interface UpCommandAdapters extends LifecycleCommandAdapters {
@@ -893,7 +898,7 @@ export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
 
 export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{
     stackId: StackId
-    change: 'retained' | 'released' | 'stopped'
+    change: 'retained' | 'released' | 'stopped' | 'unchanged'
 }>>
 
 export type SessionCommandResult =
@@ -3323,6 +3328,8 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             : diagnostic),
     }
 
+    const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
+    if (unheld) return unheld
     const retained = await observeRetainedPortFamily({
         namespace: context.namespace,
         stackId: context.stackId,
@@ -3454,12 +3461,33 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
             result: Object.freeze({ stackId: context.stackId, change: 'stopped' as const }),
         }
-    }, ports, forwardedRefusal)
+    }, ports, forwardedRefusal, 'teardown')
     return result ?? lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'runtime readiness authority is unavailable',
         context.stackId,
     )
+}
+
+// `up` keeps a holder whenever containers may exist, so a stack no session holds has nothing running.
+// Sleep then has nothing to stop; refusing with a co-tenant error sent people looking for a session
+// that did not exist, after an `up` that never started anything or a second `sleep`.
+async function unheldStack(context: LifecycleRunContext): Promise<SleepCommandResult | undefined> {
+    const stored = await readState(context.namespace.paths.coordination(context.stackId))
+    if (stored.kind !== 'complete') return undefined
+    const coordination = decodeCoordinationRecord(stored.value, context.stackId)
+    if (!coordination || coordination.holders.length > 0) return undefined
+    const reserved = coordination.lease !== null && !coordination.lease.released
+    return {
+        kind: 'complete', status: 0,
+        diagnostics: [Object.freeze({
+            severity: 'warning' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: context.stackId,
+            message: reserved
+                ? `no session holds this stack, so nothing is running and sleep has nothing to stop; its port family stays reserved for the next up until \`${lifecycleSuggestion(context, 'down')}\` releases it`
+                : 'the stack is already asleep: no session holds it and its services are stopped, so sleep has nothing to do',
+        })],
+        result: Object.freeze({ stackId: context.stackId, change: 'unchanged' as const }),
+    }
 }
 
 function repairRequired(context: LifecycleRunContext): Extract<SleepCommandResult, { kind: 'refusal' }> {
@@ -3481,7 +3509,11 @@ async function invalidateCompletedLifecycle(
         kind: 'refusal', status: 2, result: null, diagnostics: current.diagnostics,
     }
     const stored = current as CurrentLifecycleRecord | null
-    if (purpose === 'down' && stored?.value.teardownComplete === true
+    // `up` writes the lifecycle record before it starts a service, so without one nothing ever ran
+    // and there is no identity to retire. Writing one here left a record without lifecycle history,
+    // which the next `up` refused as malformed state.
+    if (stored === null) return undefined
+    if (purpose === 'down' && stored.value.teardownComplete === true
         && stored.value.holderId === context.holderId && stored.value.workBasisSha256 === workBasisSha256
         && stored.value.operationGeneration === operationGeneration) return undefined
     // Sleep retains containers, so its replay still guards resume. Only a reconciled down
@@ -3492,9 +3524,9 @@ async function invalidateCompletedLifecycle(
         operationGeneration,
         completedServices: Object.freeze([]),
         ...(purpose === 'down' ? { teardownComplete: true as const }
-            : stored?.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
+            : stored.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
     })
-    const publication = await publishLifecycleRecord(context, stored?.record ?? null, value)
+    const publication = await publishLifecycleRecord(context, stored.record, value)
     if ('status' in publication) return {
         kind: 'refusal', status: 2, result: null, diagnostics: publication.diagnostics,
     }

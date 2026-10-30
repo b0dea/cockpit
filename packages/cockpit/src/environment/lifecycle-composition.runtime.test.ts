@@ -234,6 +234,56 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         }] })
     })
 
+    it('names an unmounted always sibling from up and still reads the runtime for teardown', async () => {
+        const candidate = await fixture()
+        const adapters = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const loaded = await adapters.load({ configPath: candidate.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await publishComposeOwnership(candidate.checkout, loaded.result)
+        const labels = {
+            'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
+            'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+        }
+        await writeFile(join(candidate.checkout, 'topology.json'), JSON.stringify({ services: { api: { labels, volumes: [] } } }))
+
+        const refused = await runUp({ configPath: candidate.configPath }, adapters)
+
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'MOUNT_POSTURE_UNAVAILABLE', target: 'sibling:api',
+            message: expect.stringContaining(`sibling api is declared mount = "always", but no Compose service bind-mounts ${join(candidate.checkout, 'siblings', 'api')}`),
+            fix: expect.stringContaining('set mount = "none" on sibling api'),
+        }] })
+        // The holder this up added is given back; nothing started, so nothing holds the stack.
+        const coordination = await readState(loaded.result.namespace.paths.coordination(loaded.result.stackId))
+        expect(coordination.kind === 'complete' && decodeCoordinationRecord(coordination.value, loaded.result.stackId)?.holders).toEqual([])
+        // With nothing holding the stack, sleep has nothing to stop; it says so instead of blaming a co-tenant.
+        const slept = await runSleep({ configPath: candidate.configPath }, createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe))
+        expect(slept).toMatchObject({ kind: 'complete', status: 0, result: { change: 'unchanged' }, diagnostics: [{
+            severity: 'warning', code: 'STACK_NOT_RUNNING', message: expect.stringContaining('port family stays reserved'),
+        }] })
+
+        const teardown = createLifecycleCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            sessionId: 'cockpit-cli',
+            timeoutMs: 5_000,
+        }, executeProbe)
+        const context = await teardown.load({ configPath: candidate.configPath })
+        if (context.kind !== 'complete') throw new Error(JSON.stringify(context))
+        const readiness = await teardown.withRuntimeReadiness(context.result, async (value) => value, undefined, undefined, 'teardown')
+        expect(readiness?.topology.services.map(({ id }) => id)).toEqual(['api'])
+    })
+
     it('binds the public path and session identity and fails closed on unauthenticated runtime output', async () => {
         const candidate = await fixture()
         const execute = vi.fn(executeProbe)
