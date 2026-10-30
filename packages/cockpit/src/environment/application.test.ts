@@ -499,11 +499,12 @@ describe('guard policy construction', () => {
     }, 120_000)
 
     it.each([
-        ['cockpit.toml', 'guard policy comes from it', 'and then run'],
-        ['.cockpit/generated-environment-ownership.json', 'it authenticates the guard and the hook that launches it', ', or run'],
-        ['.claude/settings.json', 'it authenticates the guard and the hook that launches it', ', or run'],
-        ['.cockpit/local/guard-identity', 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', undefined],
-    ] as const)('names a deleted %s, why every call is held, and the fix', async (file, why, sync) => {
+        // Restoring committed bytes clears the hold by itself: the guard authenticates their content.
+        ['cockpit.toml', 'guard policy comes from it', true],
+        ['.cockpit/generated-environment-ownership.json', 'it authenticates the guard and the hook that launches it', true],
+        ['.claude/settings.json', 'it authenticates the guard and the hook that launches it', true],
+        ['.cockpit/local/guard-identity', 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', false],
+    ] as const)('names a deleted %s, why every call is held, and the fix', async (file, why, restorable) => {
         const { root, configPath, request, adapters } = await installedGuardRequest()
         // A rename keeps the file's identity, so the shared fixture stays authenticated afterwards.
         renameSync(join(root, file), join(root, `${file}.away`))
@@ -511,8 +512,8 @@ describe('guard policy construction', () => {
             const { decision } = await runGuardEvaluationApplication(request, adapters)
             expect(decision.decision).toBe('unavailable')
             expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so every tool call is held`)
-            expect(decision.reason).toContain(sync
-                ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed)${sync.startsWith(',') ? '' : ' '}${sync} \`cockpit sync --config ${configPath}\``
+            expect(decision.reason).toContain(restorable
+                ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed), or run \`cockpit sync --config ${configPath}\``
                 : `Fix: a human must run \`cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
         } finally { renameSync(join(root, `${file}.away`), join(root, file)) }
     }, 120_000)

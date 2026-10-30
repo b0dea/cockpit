@@ -299,14 +299,11 @@ export interface GuardEvaluationApplicationResult {
 // failed, why that blocks everything, and the human action that clears it. Regeneration is a human
 // step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
 // could loosen its guard.
-type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string; readonly thenSync: boolean }
+type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string }
 function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
     const sync = `\`${formatShellCommand(['cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
-        : fix.thenSync
-            // A restored file is a new file, so its identity must be authenticated again.
-            ? `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed) and then run ${sync}`
-            : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
+        : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
     return `${what}; ${why}, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: ${action}.`
 }
 
@@ -345,20 +342,21 @@ export async function runGuardEvaluationApplication(
             'the guard trusts only the cockpit, Node and configuration it was generated for', { kind: 'sync' }))
         if (realpathSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
         const roots = new Map<string, Stats>()
-        for (const [path, device, inode, directory] of [
-            [identity.root, identity.rootDevice, identity.rootInode, true],
-            [identity.configPath, identity.configDevice, identity.configInode, false],
-        ] as const) {
+        for (const [path, directory] of [[identity.root, true], [identity.configPath, false]] as const) {
             let status: Stats
             try { status = lstatSync(path) }
             catch (error) {
                 if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !directory) return unavailable(guardHeld(identity,
-                    `${identity.configPath} is missing`, 'guard policy comes from it', { kind: 'restore', path: configFile, thenSync: true }))
+                    `${identity.configPath} is missing`, 'guard policy comes from it', { kind: 'restore', path: configFile }))
                 throw error
             }
+            // The configuration is authenticated by its content digest below. Holding on its inode
+            // as well refused the identical bytes that `git restore`, `sed -i` and editors that save
+            // by rename leave in a new file, until a human ran sync for no change.
             if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())
-                || String(status.dev) !== device || String(status.ino) !== inode || realpathSync(path) !== path) {
-                return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced`)
+                || directory && (String(status.dev) !== identity.rootDevice || String(status.ino) !== identity.rootInode)
+                || realpathSync(path) !== path) {
+                return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced by a link or a non-file`)
             }
             roots.set(path, status)
         }
@@ -404,7 +402,7 @@ export async function runGuardEvaluationApplication(
         catch (error) {
             if (!(error instanceof GuardFileMissing)) throw error
             return unavailable(GUARD_RESTORABLE.has(error.path)
-                ? guardHeld(identity, `${error.path} is missing`, 'it authenticates the guard and the hook that launches it', { kind: 'restore', path: error.path, thenSync: false })
+                ? guardHeld(identity, `${error.path} is missing`, 'it authenticates the guard and the hook that launches it', { kind: 'restore', path: error.path })
                 : guardHeld(identity, `${error.path} is missing`, 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry', { kind: 'sync' }))
         }
         const local = parseGuardLocalIdentity(publication.get(GUARD_LOCAL_PATHS.identity)!.bytes.toString('utf8'))

@@ -569,6 +569,12 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject({ status: 0, stdout: '', stderr: '' })
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)} --unknown`, root).stdout).toContain('permissionDecision":"ask')
     expect(invoke(`${JSON.stringify(launcher)} down --config ${JSON.stringify(configPath)}`, root).stdout).toContain('permissionDecision":"ask')
+    // `git restore` and `sed -i` leave identical bytes in a new file. The guard authenticates the
+    // configuration by its content, so that replacement must not hold every tool call.
+    const identical = await readFile(configPath)
+    await rm(configPath)
+    await writeFile(configPath, identical)
+    expect(invoke('npm run build')).toMatchObject({ status: 0, stdout: '', stderr: '' })
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('test = [ "npm", "test", "--", "unit.test.ts" ]\n', ''))
