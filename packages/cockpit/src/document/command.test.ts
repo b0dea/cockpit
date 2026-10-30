@@ -118,7 +118,7 @@ describe('estate observation classification', () => {
         expect(await classifyEstateObservation({ root: estateRoot }, { observe: observe(estateRoot, repositories) })).toEqual({
             kind: 'complete', status: 0, diagnostics: [], result: {
                 classification: 'one-sibling',
-                notice: 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with cockpit sibling add',
+                notice: 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with npx cockpit sibling add',
                 gaps: [],
                 runnable: [{ slug: 'web', path: 'web', disposition: 'confirmed' }],
                 sourceObservationSha256: observationDigest(estateRoot, repositories),
@@ -261,7 +261,7 @@ describe('public estate observation', () => {
                 code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID',
                 message: expect.stringContaining('symbolic link'),
                 target: join(canonical, 'app/compose.yml'),
-                fix: expect.stringContaining('rerun the same cockpit init command'),
+                fix: expect.stringContaining('rerun the same npx cockpit init command'),
             }] })
         expect(await classifyEstateObservation({ root: canonical }, { observe: async () => {
             throw new Error('api_token=raw-secret-shaped-value')
@@ -550,7 +550,7 @@ describe('document source classification', () => {
         expect(missing.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
         expect(missing.diagnostics[0]).toMatchObject({
             message: expect.stringContaining('document inventories an existing shell-registry cockpit'),
-            fix: expect.stringContaining('cockpit init <root> --target <harness>'),
+            fix: expect.stringContaining('npx cockpit init <root> --target <harness>'),
         })
         expect(unreadable.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_UNREADABLE'])
         expect(empty.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_EMPTY'])

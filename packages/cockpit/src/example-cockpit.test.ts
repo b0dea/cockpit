@@ -243,9 +243,9 @@ describe('the public synthetic cockpit', () => {
         // Facts come from cockpit.toml: the cockpit name and each sibling's directory, purpose and acquire mode.
         expect(guide).toContain('`tinya` cockpit')
         expect(guide).toContain('| `api` | Tiny api | none: already on disk |')
-        expect(guide).toContain('cockpit session -- <command>')
-        expect(guide).toContain('cockpit sync --dry-run')
-        expect(guide).toContain('cockpit test-run --select <kind>:<value>')
+        expect(guide).toContain('npx cockpit session -- <command>')
+        expect(guide).toContain('npx cockpit sync --dry-run')
+        expect(guide).toContain('npx cockpit test-run --select <kind>:<value>')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
         // Sync refuses a hand edit rather than replacing it, so the guide must not promise an overwrite.

@@ -316,7 +316,7 @@ describe('browser transport surfaces', () => {
         expect(skill).not.toMatch(/^allowed-tools:/m)
         expect(skill).not.toContain('{{')
         expect(skill).toContain('name: cockpit-browser')
-        for (const step of ['Orient before driving', 'Choose your own coverage', 'cockpit browser-drive', 'Every finding carries evidence', 'Never edit code']) expect(skill).toContain(step)
+        for (const step of ['Orient before driving', 'Choose your own coverage', 'npx cockpit browser-drive', 'Every finding carries evidence', 'Never edit code']) expect(skill).toContain(step)
         expect(skill).toContain('../cockpit-setup/references/test-data-and-personas.md')
         const real = renderBrowserSurfaces(await fixture('real'))
         const realSkill = real.files.find(file => file.target === 'opencode' && file.path.endsWith('/SKILL.md'))!.bytes

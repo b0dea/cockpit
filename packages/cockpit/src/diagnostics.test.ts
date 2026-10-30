@@ -81,10 +81,10 @@ describe('diagnostic envelope', () => {
 
     it('projects the same exact admitted command in human and JSON output only with explicit bound inputs', () => {
         const diagnostic = Object.freeze({ severity: 'error' as const, code: 'GENERATED_ARTIFACT_DRIFT',
-            message: 'Owned artifact differs', target: 'fixtures/personas.generated.ts', fix: 'run cockpit sync --config <file>' })
+            message: 'Owned artifact differs', target: 'fixtures/personas.generated.ts', fix: 'run npx cockpit sync --config <file>' })
         const context = { resolvedConfigPath: '/workspace/demo config.toml', generatedTargets: ['fixtures/personas.generated.ts'] }
         const outcome = { result: { resolvedConfigPath: context.resolvedConfigPath }, diagnostics: [diagnostic] }
-        const command = "cockpit sync --config '/workspace/demo config.toml'"
+        const command = "npx cockpit sync --config '/workspace/demo config.toml'"
         expect(JSON.parse(renderJsonResponse(outcome, context))).toEqual({ result: outcome.result,
             diagnostics: [{ ...diagnostic, fix: command }] })
         expect(renderHumanDiagnostics([diagnostic], undefined, context)).toBe(
@@ -96,6 +96,6 @@ describe('diagnostic envelope', () => {
         const unbound = JSON.parse(renderJsonResponse(outcome))
         expect(unbound.diagnostics[0]).not.toHaveProperty('fix')
         expect(unbound.guidance).toEqual([{ code: diagnostic.code, target: diagnostic.target, text: diagnostic.fix }])
-        expect(diagnostic.fix).toBe('run cockpit sync --config <file>')
+        expect(diagnostic.fix).toBe('run npx cockpit sync --config <file>')
     })
 })

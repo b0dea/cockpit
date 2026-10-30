@@ -171,7 +171,7 @@ describe('sibling add', () => {
         expect(row?.remote).toBeUndefined()
         const publish = {
             command: `gh repo create <owner>/billing-api --private --source ${JSON.stringify(join(siblings, 'billing-api'))} --remote origin`,
-            recordRemote: `cockpit sibling add billing-api --config ${configPath} --remote <url>`,
+            recordRemote: `npx cockpit sibling add billing-api --config ${configPath} --remote <url>`,
         }
         expect(outcome.result).toMatchObject({ action: 'created', publish })
         expect(outcome.artifact).toContain(publish.command)

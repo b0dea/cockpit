@@ -957,7 +957,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (held.owner.lockId !== id || held.status.dev !== heldClaimant.status.dev || held.status.ino !== heldClaimant.status.ino
             || !held.bytes.equals(heldClaimant.bytes)) return new Error('work-order transaction lock ownership evidence is inconsistent')
         const holder = await probeHolderState(held.owner.pid)
-        return new Error(`work-order transaction lock owner pid ${String(held.owner.pid)} is ${holder}; inspect with cockpit work-recover --config ${shellQuote(config.source.path)} --lock ${shellQuote(id)} and use --apply only after positive dead-holder evidence`)
+        return new Error(`work-order transaction lock owner pid ${String(held.owner.pid)} is ${holder}; inspect with npx cockpit work-recover --config ${shellQuote(config.source.path)} --lock ${shellQuote(id)} and use --apply only after positive dead-holder evidence`)
     }
     const withLock = async <T>(id: string, action: () => Promise<T>, expectedCommonDirectory?: string): Promise<T> => {
         const inherited = transactionScope.getStore()
@@ -1512,7 +1512,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             || descriptor.version !== 1 || !['task', 'issue', 'spec', 'decision', 'programme'].includes(descriptor.kind as string)
             || typeof descriptor.reference !== 'string' || typeof descriptor.certification !== 'boolean' || typeof descriptor.crossSession !== 'boolean'
             || descriptor.programme !== null && (typeof descriptor.programme !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(descriptor.programme))) {
-            throw new Error('intent descriptor has an invalid closed JSON shape; required fields prevent ambiguous routing; fix: follow https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor, then rerun cockpit work-intake with --intent <relative-json-path>')
+            throw new Error('intent descriptor has an invalid closed JSON shape; required fields prevent ambiguous routing; fix: follow https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor, then rerun npx cockpit work-intake with --intent <relative-json-path>')
         }
         const upstreamPath = descriptor.reference
         const upstream = readBounded(root, upstreamPath, MAX_DOCUMENT_BYTES); const upstreamAgain = readBounded(root, upstreamPath, MAX_DOCUMENT_BYTES)

@@ -411,12 +411,12 @@ export function createDestructiveCommandAdapters(
                 // coordination record itself says whether this stack ever ran.
                 const stored = await readState(context.namespace.paths.coordination(context.stackId))
                 if (stored.kind === 'missing') {
-                    return refusal(context.stackId, 'this checkout has never claimed the stack, so down and reset have nothing to act on; run `cockpit up` first')
+                    return refusal(context.stackId, 'this checkout has never claimed the stack, so down and reset have nothing to act on; run `npx cockpit up` first')
                 }
                 const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
                 if (!coordination) return refusal(context.stackId)
                 if (coordination.holders.length > 0) {
-                    return refusal(context.stackId, 'another session holds this stack, and down and reset never displace a live holder; end that `cockpit session` or run `cockpit sleep` from it, then retry', ENVIRONMENT_CODES.CLAIM_CO_TENANT)
+                    return refusal(context.stackId, 'another session holds this stack, and down and reset never displace a live holder; end that `npx cockpit session` or run `npx cockpit sleep` from it, then retry', ENVIRONMENT_CODES.CLAIM_CO_TENANT)
                 }
                 // `sleep` and an ended `session` release the final holder and stop the runtime,
                 // but its containers, networks and images remain. Claiming the stack here, as

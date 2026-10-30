@@ -345,7 +345,7 @@ describe('restriction expansion', () => {
         const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
         rmSync(join(directory, '.cockpit/local/guard-identity'))
         expect(runGuard(result, edit('env/service.env.example'))).toMatchObject({
-            status: 2, stdout: '', stderr: expect.stringContaining(`Fix: run \`cockpit sync --config ${directory}/cockpit.toml\` in a terminal`),
+            status: 2, stdout: '', stderr: expect.stringContaining(`Fix: run \`npx cockpit sync --config ${directory}/cockpit.toml\` in a terminal`),
         })
     })
 
@@ -358,9 +358,9 @@ describe('restriction expansion', () => {
         const refused = runGuard(result, edit('env/service.env.example'))
         const command = /Fix: run `([^`]+)`/.exec(refused.stderr)?.[1]
         expect(command).toBeDefined()
-        const captured = spawnSync('/bin/bash', ['-c', `cockpit() { printf '<%s>\n' "$@"; }; ${command}`], { encoding: 'utf8' })
+        const captured = spawnSync('/bin/bash', ['-c', `npx() { printf '<%s>\n' "$@"; }; ${command}`], { encoding: 'utf8' })
         expect(captured).toMatchObject({ status: 0, stderr: '', stdout:
-            `<sync>\n<--config>\n<${join(context.root, configFile)}>\n` })
+            `<cockpit>\n<sync>\n<--config>\n<${join(context.root, configFile)}>\n` })
     })
 
     it('turns every guard failure other than the blocking exit into a blocking exit', async () => {

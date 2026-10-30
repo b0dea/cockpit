@@ -31,13 +31,13 @@ else
     esac
     if ! root=$(cd -P -- "$guards/../.." && pwd -P); then
         config_arg=$(shell_arg "<checkout>/$config")
-        printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so every tool call is refused. Fix: run `cockpit sync --config %s` in a terminal, outside the agent.\n' "$guards" "$config_arg" >&2
+        printf 'cockpit guard: cannot resolve the cockpit checkout above %s, so every tool call is refused. Fix: run `npx cockpit sync --config %s` in a terminal, outside the agent.\n' "$guards" "$config_arg" >&2
         exit 2
     fi
 fi
 local_file="$root/.cockpit/local/guard-identity"
 config_arg=$(shell_arg "$root/$config")
-fix="Fix: run \`cockpit sync --config $config_arg\` in a terminal, outside the agent, then retry."
+fix="Fix: run \`npx cockpit sync --config $config_arg\` in a terminal, outside the agent, then retry."
 format='' node='' handler='' identity=''
 if ! { IFS= read -r format && IFS= read -r node && IFS= read -r handler && IFS= read -r identity; } 2>/dev/null < "$local_file" \
     || [ "$format" != 'cockpit-guard-local/v1' ] || [ -z "$node" ] || [ -z "$handler" ] || [ -z "$identity" ]; then

@@ -688,7 +688,7 @@ else process.exit(64)
                 verdict: 'unavailable',
                 reason: 'Runtime docker-desktop is not supported by a complete measurement row (docker info: OperatingSystem "Docker Desktop", '
                     + `Name "docker-desktop", OSType "linux"; host ${process.platform}; measured rows: docker-desktop (unmeasured)). `
-                    + 'Measure it with: cockpit runtime measure --config <cockpit.toml> --image <local-image> --write',
+                    + 'Measure it with: npx cockpit runtime measure --config <cockpit.toml> --image <local-image> --write',
             }),
         ]))
     })

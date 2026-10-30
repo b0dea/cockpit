@@ -24,7 +24,7 @@ export interface ConsumerInstructionsInput {
 }
 
 const ACQUIRE = {
-    auto: '`cockpit setup` clones it',
+    auto: '`npx cockpit setup` clones it',
     manual: 'a person clones it',
     none: 'already on disk',
 } as const
@@ -53,10 +53,10 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         '# How to work here', '',
     ]
     if (input.hasStack) lines.push(
-        `- Run \`cockpit session -- <command>\` to start the stack, run the command against it and release the stack, so nothing is left holding ports. \`cockpit up\` and \`cockpit down\` do it by hand; \`cockpit doctor\` explains a stack that will not start.`,
+        `- Run \`npx cockpit session -- <command>\` to start the stack, run the command against it and release the stack, so nothing is left holding ports. \`npx cockpit up\` and \`npx cockpit down\` do it by hand; \`npx cockpit doctor\` explains a stack that will not start.`,
     )
     lines.push(
-        `- Pass \`--config ${inline(input.configFile)}\` to every cockpit command. After editing that file, run \`cockpit sync --dry-run\` to preview the generated files, \`cockpit sync\` to write them and \`cockpit check\` to confirm nothing drifted. Generated files are committed and compared byte for byte, so an unsynced edit fails review.`,
+        `- Pass \`--config ${inline(input.configFile)}\` to every cockpit command. After editing that file, run \`npx cockpit sync --dry-run\` to preview the generated files, \`npx cockpit sync\` to write them and \`npx cockpit check\` to confirm nothing drifted. Generated files are committed and compared byte for byte, so an unsynced edit fails review.`,
         '',
         '# Rules and why', '',
     )
@@ -67,7 +67,7 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         `- Do not push to ${pushRefusedBranches.map(code).join(' or ')}. The guard refuses it, because those branches are shared and a bad push reaches everyone.`,
     )
     lines.push(
-        `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. \`cockpit check\` reports a hand edit as drift and sync refuses to overwrite it; to recover, undo the edit (or delete a file cockpit wrote whole), then sync.`,
+        `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. \`npx cockpit check\` reports a hand edit as drift and sync refuses to overwrite it; to recover, undo the edit (or delete a file cockpit wrote whole), then sync.`,
         '',
         '# Skills', '',
         ...input.skills.map(skill => `- ${code(skill.name)}: ${skill.description ? inline(skill.description) : 'not declared'}`),

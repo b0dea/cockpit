@@ -51,7 +51,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         })]))
         const displayed = envelope.result.repair
         expect(displayed.changes).toEqual(expect.arrayContaining([{ operation: 'write', path: personaPath }, { operation: 'write', path: ledgerPath }]))
-        expect(displayed.fixes[0].argv).toEqual(['cockpit', 'sync', '--config', configPath])
+        expect(displayed.fixes[0].argv).toEqual(['npx', 'cockpit', 'sync', '--config', configPath])
         const admit = vi.spyOn(transaction, 'admitPublicationPlan')
         const run = vi.spyOn(transaction, 'runPublicationPlan')
         try {
@@ -61,7 +61,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
             if (admission.kind !== 'complete' || !current.repairAuthority) throw new Error('Expected privately admitted repair')
             const proposal = proposeGeneratedEnvironmentRepair(current)
             expect(proposal.changes).toBe(current.changes)
-            expect(proposal.fixes[0]?.argv).toEqual(['cockpit', 'sync', '--config', configPath])
+            expect(proposal.fixes[0]?.argv).toEqual(['npx', 'cockpit', 'sync', '--config', configPath])
             const before = await readFile(join(root, personaPath), 'utf8')
             expect(before).toContain('first')
             expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'complete' })

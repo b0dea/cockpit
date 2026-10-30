@@ -21,7 +21,7 @@ with invented values in it is the failure it is built to prevent. Work under fiv
 
 1. Ask the human before writing into a product repository, creating a Git remote or hosted
    repository, running a destructive command (`down`, `reset`, approving removals), running
-   `cockpit sync --adopt`, or accepting an `init` digest.
+   `npx cockpit sync --adopt`, or accepting an `init` digest.
 2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
    `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or
@@ -93,8 +93,8 @@ the guide section with the detail.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
   refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run
   `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. Guide: *Existing agent settings*.
-- **A repository joins or leaves an existing cockpit.** Run `cockpit sibling add` or
-  `cockpit sibling remove`, then the `sync --dry-run`, `sync` and `check` sequence.
+- **A repository joins or leaves an existing cockpit.** Run `npx cockpit sibling add` or
+  `npx cockpit sibling remove`, then the `sync --dry-run`, `sync` and `check` sequence.
   Guide: *Add a repository*, *Remove a repository*.
 - **A sibling has a `.env.schema`.** Follow **Secret handling** below.
 
@@ -106,8 +106,8 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 - Before the first `up`, measure the runtime with
   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
   guide's *Measure the runtime* says which runtimes are recognised. A measurement takes a few
-  minutes with no progress output, and `--write` makes `cockpit check` fail and the guard hold
-  tool calls until a human runs `cockpit sync --config cockpit.toml`.
+  minutes with no progress output, and `--write` makes `npx cockpit check` fail and the guard hold
+  tool calls until a human runs `npx cockpit sync --config cockpit.toml`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
   `./node_modules/.bin/cockpit down` removes its runtime, so ask first.

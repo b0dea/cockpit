@@ -816,7 +816,7 @@ export function observeGeneratedEnvironmentHealth(input: {
             ? { state: 'required', posture: 'registry-authentication' }
             : { state: 'not-applicable', posture: 'registry-authentication', reason: 'the generated environment declares no registry authentication probe' },
         freshness: { state: 'current' },
-        remedy: 'make every declared registry authentication probe succeed, then rerun cockpit preflight',
+        remedy: 'make every declared registry authentication probe succeed, then rerun npx cockpit preflight',
     })
     if (!environment || !registryAuthentication) return undefined
     const issuedAt = Date.now()

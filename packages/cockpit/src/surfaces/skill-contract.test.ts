@@ -322,7 +322,7 @@ describe('shipped skill contract', () => {
         expect(setup?.bytes).toContain('adopt-cockpit')
         const upgradeReview = setup?.bytes.indexOf('[Review an upgrade]') ?? -1
         const exactInstall = setup?.bytes.indexOf('install that exact release') ?? -1
-        const humanSync = setup?.bytes.indexOf('ask a human to run `cockpit sync --interactive`') ?? -1
+        const humanSync = setup?.bytes.indexOf('ask a human to run `npx cockpit sync --interactive`') ?? -1
         expect(upgradeReview).toBeGreaterThan(-1)
         expect(exactInstall).toBeGreaterThan(upgradeReview)
         expect(humanSync).toBeGreaterThan(exactInstall)

@@ -317,7 +317,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
         if (!recordsRemoteLater) {
             return refused('SIBLING_SLUG_DUPLICATE',
                 `sibling "${slug.data}" is already declared (dir "${found.dir}", acquire "${found.acquire}")`
-                + `${found.acquire === 'none' ? '; to record its remote later use --remote <url>' : '; remove it first with cockpit sibling remove'}`, slug.data)
+                + `${found.acquire === 'none' ? '; to record its remote later use --remote <url>' : '; remove it first with npx cockpit sibling remove'}`, slug.data)
         }
         if (input.dir !== undefined && input.dir !== found.dir) {
             return usage(`sibling "${slug.data}" already uses dir "${found.dir}"; --dir cannot move it`, '--dir')
@@ -336,7 +336,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
         if (failure) return failure
         return success('remote-recorded', configPath, updated, { dir: 'existing row', var: 'existing row', purpose: 'existing row' },
             `recorded remote ${input.remote} for sibling "${slug.data}" in ${configPath}; the existing directory ${resolve(root, found.dir)} was left as it is and nothing was cloned. `
-            + 'Run `cockpit setup` to verify the remote against the checkout.')
+            + 'Run `npx cockpit setup` to verify the remote against the checkout.')
     }
 
     if (input.purpose === undefined) {
@@ -427,7 +427,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     // JSON result carries them too: an agent reading --json would otherwise never see them.
     const publish = Object.freeze({
         command: `gh repo create <owner>/${slug.data} --private --source ${JSON.stringify(target)} --remote origin`,
-        recordRemote: `cockpit sibling add ${slug.data} --config ${configPath} --remote <url>`,
+        recordRemote: `npx cockpit sibling add ${slug.data} --config ${configPath} --remote <url>`,
     })
     const note = mode === 'create'
         ? `initialised ${target} and recorded sibling "${slug.data}" (acquire "none") in ${configPath}.\n`
@@ -435,17 +435,17 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
           + `  ${publish.command}\n`
           + `then record the remote:\n  ${publish.recordRemote}`
         : mode === 'from'
-            ? `recorded sibling "${slug.data}" with remote ${remote} read from the origin of ${source} (acquire "auto") in ${configPath}. The original checkout was not touched; \`cockpit setup\` clones a fresh copy to ${target}.`
+            ? `recorded sibling "${slug.data}" with remote ${remote} read from the origin of ${source} (acquire "auto") in ${configPath}. The original checkout was not touched; \`npx cockpit setup\` clones a fresh copy to ${target}.`
             : mode === 'remote'
-                ? `recorded sibling "${slug.data}" with remote ${remote} (acquire "auto") in ${configPath}; \`cockpit setup\` clones it to ${target}.`
+                ? `recorded sibling "${slug.data}" with remote ${remote} (acquire "auto") in ${configPath}; \`npx cockpit setup\` clones it to ${target}.`
                 : `recorded the existing directory ${target} as sibling "${slug.data}" (acquire "none") in ${configPath}.`
     return success(mode === 'create' ? 'created' : 'added', configPath, added, sources, note, { path: target,
         ...(source === undefined ? {} : { from: source }), ...(mode === 'create' ? { publish } : {}) })
 }
 
 function success(action: string, configPath: string, row: unknown, sources: Record<string, string>, note: string, extra: Record<string, unknown> = {}): SiblingOutcome {
-    return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: `${note}\nNext: cockpit sync --config ${configPath} --dry-run\n`,
-        result: Object.freeze({ action, config: configPath, sibling: row, sources, ...extra, next: `cockpit sync --config ${configPath} --dry-run` }) })
+    return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: `${note}\nNext: npx cockpit sync --config ${configPath} --dry-run\n`,
+        result: Object.freeze({ action, config: configPath, sibling: row, sources, ...extra, next: `npx cockpit sync --config ${configPath} --dry-run` }) })
 }
 
 /** The text the edit is made on must be the text the configuration was parsed from. */
@@ -556,7 +556,7 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
     ]
     const message = `removed sibling "${row.slug}" from ${configPath}. The checkout at ${resolve(dirname(configPath), config.cockpit.siblings_root, row.dir)} and every generated file were left alone.\n`
         + (flagged.length > 0 ? `The next sync will flag these for review: ${flagged.join('; ')}.\n` : '')
-        + 'Comments above the removed table were kept. Run `cockpit sync --dry-run` to see exactly what changes before syncing.\n'
+        + 'Comments above the removed table were kept. Run `npx cockpit sync --dry-run` to see exactly what changes before syncing.\n'
     return Object.freeze({ status: 0, diagnostics: Object.freeze([]), destination: null, artifact: message,
-        result: Object.freeze({ action: 'removed', config: configPath, slug: row.slug, dir: row.dir, flaggedForReview: flagged, next: `cockpit sync --config ${configPath} --dry-run` }) })
+        result: Object.freeze({ action: 'removed', config: configPath, slug: row.slug, dir: row.dir, flaggedForReview: flagged, next: `npx cockpit sync --config ${configPath} --dry-run` }) })
 }

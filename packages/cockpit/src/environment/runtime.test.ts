@@ -1707,7 +1707,7 @@ fi
         expect(JSON.stringify(launcherSensitive)).not.toContain('synthetic-launcher-secret')
         expect(await launcherCheck({ BuildExitCode: 1, BuildStderr: 'Image app Building\nfailed to read Dockerfile: no such file\n' })).toMatchObject({
             kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
-                message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED) (failed to read Dockerfile: no such file); the service cannot start until its image builds; fix the reported build error, then rerun cockpit up') }],
+                message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED) (failed to read Dockerfile: no such file); the service cannot start until its image builds; fix the reported build error, then rerun npx cockpit up') }],
         })
         const buildSensitive = await launcherCheck({ BuildExitCode: 1, BuildStderr: 'registry rejected credentials: api_key=synthetic-build-secret\n' })
         expect(buildSensitive).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
@@ -1716,7 +1716,7 @@ fi
         for (const controls of [{ BuildExitCode: 1 }, { BuildExitCode: 1, BuildInvalidUtf8: true }]) {
             expect(await launcherCheck(controls)).toMatchObject({
                 kind: 'refusal', diagnostics: [{ code: 'EXECUTION_STEP_FAILED', target: 'api',
-                    message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED); the service cannot start until its image builds; inspect the build output, then rerun cockpit up') }],
+                    message: expect.stringContaining('did not build (EXECUTION_STEP_FAILED); the service cannot start until its image builds; inspect the build output, then rerun npx cockpit up') }],
             })
         }
         const pinnedEvidence = (await topologyEvidence(topology, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
