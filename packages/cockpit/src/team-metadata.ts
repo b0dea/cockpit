@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './environment/contract.js'
+import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
 
 export const mechanism = {
@@ -226,14 +227,24 @@ async function authenticateSourceInstall(candidate: SourceInstallCandidate): Pro
     }
 }
 
-function ignoreBlock(root: string, siblingsRoot: string): string | undefined {
+// A checkout cockpit clones is its own Git repository; left visible inside the cockpit root, a
+// `git add` embeds it as a gitlink. `acquire = "none"` rows are local data, never repositories,
+// and may be tracked by the cockpit itself, so they stay visible.
+function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling'>): string | undefined {
+    const siblingsRoot = config.cockpit.siblings_root
     if (/[\0\r\n]/.test(siblingsRoot)) return undefined
     const patterns = ['/node_modules/', '/.cockpit/local/', '/env/.secrets/*', '!/env/.secrets/.gitignore']
+    const inside = (path: string): string | undefined => {
+        const local = relative(root, path)
+        if (local === '' || local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)) return undefined
+        return `/${local.split(sep).map((part) => part.replace(/[\\*?\[\] !#]/g, '\\$&')).join('/')}/`
+    }
     const siblings = resolve(root, siblingsRoot)
-    const local = relative(root, siblings)
-    if (local !== '' && !local.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && local !== '..' && !isAbsolute(local)) {
-        const literal = local.split(sep).map((part) => part.replace(/[\\*?\[\] !#]/g, '\\$&')).join('/')
-        patterns.push(`/${literal}/`)
+    const siblingsPattern = inside(siblings)
+    if (siblingsPattern) patterns.push(siblingsPattern)
+    else for (const sibling of config.sibling) {
+        const pattern = sibling.acquire === 'none' ? undefined : inside(resolve(siblings, sibling.dir))
+        if (pattern && !patterns.includes(pattern)) patterns.push(pattern)
     }
     return [START, ...patterns, END].join('\n')
 }
@@ -274,7 +285,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
         if (loaded.kind !== 'complete') return configRefusal(loaded, configPath)
-        const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
+        const block = ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
                 'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
@@ -355,7 +366,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
         if (loaded.kind !== 'complete') return configRefusal(loaded, configPath)
-        const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
+        const block = ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
                 'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',

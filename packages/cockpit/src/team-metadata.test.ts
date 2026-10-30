@@ -66,6 +66,28 @@ describe('team metadata', () => {
         }
     })
 
+    it('ignores cloned sibling checkouts inside the cockpit root but not local data directories', async () => {
+        const root = await fixture('.')
+        await writeFile(join(root, 'cockpit.toml'), `${await readFile(join(root, 'cockpit.toml'), 'utf8')}
+[[sibling]]
+slug = "web"
+dir = "services/web"
+mount = "none"
+acquire = "auto"
+remote = "synthetic-web.git"
+var = "WEB_DIR"
+purpose = "Synthetic web repository"
+`)
+        expect(spawnSync('git', ['-C', root, 'init', '--quiet']).status).toBe(0)
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+        const ignored = (path: string) => spawnSync('git', ['-C', root, 'check-ignore', '--no-index', '--quiet', '--', path]).status
+        expect(ignored('services/web/probe.txt')).toBe(0)
+        expect(ignored('services/other/probe.txt')).toBe(1)
+        expect(ignored('app/probe.txt')).toBe(1)
+        expect(ignored('cockpit.toml')).toBe(1)
+    })
+
     it('reports the exact initialization writes during a read-only preview', async () => {
         const root = await fixture()
         await writeFile(join(root, 'package.json'), '{"private":true}\n')
