@@ -228,6 +228,12 @@ function sha256(value: string): string {
     return createHash('sha256').update(value).digest('hex')
 }
 
+// The document owner reports the open question as a blocking gap because a standalone draft with
+// it is invalid. Here the run stops at that question and exits 0, so an error read as a failure.
+function questionNotices(diagnostics: readonly Diagnostic[]): Diagnostic[] {
+    return diagnostics.map(row => row.code === 'DOCUMENT_GAP' && row.severity === 'error' ? { ...row, severity: 'info' } : row)
+}
+
 function diagnostic(code: string, message: string, target?: string): Diagnostic {
     return { severity: 'error', code, message, ...(target === undefined ? {} : { target }) }
 }
@@ -646,7 +652,7 @@ export async function runInitApplication(
                 return refused('INIT_DRAFT_INVALID', `configuration review cannot be shown exactly within the bounded human output; ${draftRemedy}`, destination)
             }
             if (!input.accepted) return { kind: 'pending', status: 0, artifact: null, destination: null,
-                diagnostics: documented.diagnostics, result: pendingResult }
+                diagnostics: questionNotices(documented.diagnostics), result: pendingResult }
             const questions = [...(state?.questions ?? []),
                 ...(state === undefined || proposed && !state.questions.some(row => row.id === question.id) ? [question] : [])]
             const nextState = { ...(mode === 'registry' ? { mode } : {}), stage: 'question-pending' as const, sourceObservationSha256,
@@ -666,7 +672,7 @@ export async function runInitApplication(
             }
             if (recorded.kind !== 'complete') return stateFailure(recorded)
             return { kind: 'pending', status: 0, artifact: null, destination: null,
-                diagnostics: documented.diagnostics, result: pendingResult }
+                diagnostics: questionNotices(documented.diagnostics), result: pendingResult }
         }
         if (documented.kind !== 'complete') return ownerRefusal(documented, current.value.stage, projection)
         if (documented.destination !== destination) {

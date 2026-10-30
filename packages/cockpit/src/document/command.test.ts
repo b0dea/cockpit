@@ -866,7 +866,8 @@ describe('operator-confirmed document completion', () => {
         const afterPorts = await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer] } })
         const policyAnswer = answer(afterPorts.question!, generatedConfig.environment.install_policies)
         const generated = await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer, policyAnswer] } })
-        expect(generated.question!.why).toContain('compose_files')
+        // compose_files is its own answers-file field, not a value of environment.generated.
+        expect(generated.question!.why).toContain('compose_files = ["compose.yml"] under [environment] in an answers file')
         const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
         // Runtime commands refuse a declared runtime without a machine floor, and the floor is a
         // product requirement: it is asked, never defaulted.

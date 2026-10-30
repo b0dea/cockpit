@@ -113,7 +113,9 @@ function interviewDocument(destination: string, fields: readonly string[] = ['si
         const index = input.configuration?.answers.length ?? 0
         if (index < fields.length) {
             const id = `question:${createHash('sha256').update(`${input.configuration?.sourceObservationSha256}:${index}`).digest('hex')}` as const
-            return { kind: 'gap-draft', status: 2, diagnostics: [], result: null, artifact: '# incomplete\n', destination,
+            // The document owner reports the open question as a blocking gap, as a standalone draft would be invalid.
+            return { kind: 'gap-draft', status: 2, diagnostics: [{ severity: 'error', code: 'DOCUMENT_GAP', target: fields[index]!,
+                message: 'runnable command is unknown' }], result: null, artifact: '# incomplete\n', destination,
                 question: { id, field: fields[index] as 'sibling', source: 'api/package.json',
                     why: 'runnable command is unknown' } }
         }
@@ -271,7 +273,10 @@ describe('init application', () => {
             cockpitRoot: { kind: 'dedicated' as const, firstSibling: f.root }, accepted: true,
             acceptedPreviewSha256: digest('3') }
         const question = await application(accepted)
-        expect(question).toMatchObject({ kind: 'pending', result: { question: { field: 'sibling' } } })
+        expect(question).toMatchObject({ kind: 'pending', status: 0, result: { question: { field: 'sibling' } } })
+        // A run that stops at a question exits 0, so the question must not read as an error.
+        expect(question.diagnostics).toEqual([expect.objectContaining({ severity: 'info', code: 'DOCUMENT_GAP', target: 'sibling' })])
+        expect((await application({ ...accepted, accepted: false })).diagnostics.filter(row => row.severity === 'error')).toEqual([])
         expect(await application({ ...accepted, greenfieldAnswer: {
             questionId: question.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed',
         } })).toMatchObject({ kind: 'pending', result: { question: { field: 'configuration.defaults' } } })
