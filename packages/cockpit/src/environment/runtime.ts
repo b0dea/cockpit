@@ -2827,12 +2827,18 @@ export async function observeRuntimePortFamily(input: {
             if (!expected || !exactRuntimePorts(expected, current.contract.inspection.publishedPorts)) {
                 return unavailable(`runtime port publication differs from the declared topology for ${serviceId}`)
             }
-            for (const row of current.contract.inspection.publishedPorts) {
+            const rows = current.contract.inspection.publishedPorts
+            for (const row of rows) {
                 if (!leased.has(row.published)) return unavailable(`runtime published port ${row.published} is outside the retained lease`)
                 published.add(row.published)
                 const key = `${row.hostIp}\0${row.published}`
                 if (listenerKeys.has(key)) return unavailable('runtime publication contains a duplicate host address')
                 listenerKeys.add(key)
+                // Compose reports a `::` companion beside every 0.0.0.0 publication, but some
+                // runtimes forward only IPv4 loopback, so requiring ::1 to listen failed healthy
+                // stacks. The IPv4 row still proves the listener; a companion is not required.
+                if (row.hostIp === '::' && rows.some((other) => other.hostIp === '0.0.0.0'
+                    && other.published === row.published && other.target === row.target)) continue
                 listeners.push({ hostIp: row.hostIp, port: row.published, expected: 'listening' })
             }
         }
@@ -2844,13 +2850,20 @@ export async function observeRuntimePortFamily(input: {
         if (listeners.length === 0) return unavailable('retained port lease contains no observable ports')
         const observed = await observePortListeners({ bindings: listeners, timeoutMs: timeoutMs as number })
         if (observed.kind !== 'complete') return unavailable(observed.reason)
-        if (observed.rows.some((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))) {
+        const mismatched = observed.rows.filter((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))
+        if (mismatched.length > 0) {
+            const named = mismatched.slice(0, 8).map(({ probeHost, port, listening }) => listening
+                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack`
+                : `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has no stack listener`)
             return issueObservation({
                 code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: mechanism.id, stackId: topology.stackId,
                 source: `${topology.runtime.projectName}:runtime-ports`,
                 observed: { state: 'available', value: false, observedAt: observed.observedAt },
                 expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
-                freshness: { state: 'current' }, remedy: 'free unpublished leased ports and restore every declared listener',
+                freshness: { state: 'current' },
+                remedy: `${named.join('; ')}${mismatched.length > named.length ? `; and ${mismatched.length - named.length} more` : ''}: `
+                    + 'stop the process holding a leased port (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`), '
+                    + 'or restart the stack with `cockpit up --config cockpit.toml` to restore a missing listener',
             })
         }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {

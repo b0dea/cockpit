@@ -2083,13 +2083,27 @@ fi
         expect(admitRuntimeServiceObservation({ plan: healthPlan, outcome }).kind).toBe('unavailable')
     })
 
-    it('issues port health only from the exact lease, publication, listeners, and fresh service reread', async () => {
+    // A runtime that publishes 0.0.0.0 and :: but forwards only IPv4 loopback leaves the IPv6
+    // companion unreachable; the stack is still serving every declared listener.
+    it.each([
+        ['IPv4 publication', ['0.0.0.0']],
+        ['dual-stack publication forwarded only on IPv4 loopback', ['0.0.0.0', '::']],
+    ] as const)('issues port health only from the exact lease, publication, listeners, and fresh service reread (%s)', async (_case, hostIps) => {
         const server = createServer()
         server.listen(0, '127.0.0.1')
         await once(server, 'listening')
         const address = server.address()
         if (!address || typeof address === 'string') throw new Error('listener fixture unavailable')
         const published = address.port
+        const spareServer = createServer()
+        spareServer.listen(0, '127.0.0.1')
+        await once(spareServer, 'listening')
+        const spareAddress = spareServer.address()
+        if (!spareAddress || typeof spareAddress === 'string') throw new Error('listener fixture unavailable')
+        const spare = spareAddress.port
+        spareServer.close()
+        await once(spareServer, 'close')
+        const foreign = createServer()
         const home = mkdtempSync(join(tmpdir(), 'cockpit-runtime-port-health-'))
         try {
             const namespace = await selectStateRoot({ platform: 'linux', home, cockpitId: runtimeCockpit })
@@ -2099,9 +2113,9 @@ fi
                 namespace: namespace.value, stackId: stack,
                 holderId,
                 checkoutId: checkoutId({ checkoutPath: '/tmp/work' }),
-                config: { step: 100, count: 1, bases: { APP_HOST_PORT: published } },
+                config: { step: 100, count: 1, bases: { APP_HOST_PORT: published, SPARE_HOST_PORT: spare } },
                 now: new Date().toISOString(), listenerTimeoutMs: 100,
-                listenerEvidence: [{ ports: [published], observation: {
+                listenerEvidence: [{ ports: [published, spare], observation: {
                     state: 'available', value: [], observedAt: new Date().toISOString(), producer: 'runtime-port-health-fixture',
                 } }],
             })
@@ -2114,13 +2128,13 @@ fi
                 ID: containerId, State: 'running', Health: '',
                 Labels: { 'com.docker.compose.project': 'synthetic', 'com.docker.compose.service': 'api',
                     'dev.b0dea.cockpit.config-sha256': configSha256, 'dev.b0dea.cockpit.stack-id': stack },
-                Mounts: [], Ports: { '3000/tcp': [{ HostIp: '0.0.0.0', HostPort: String(published) }] },
+                Mounts: [], Ports: { '3000/tcp': hostIps.map((HostIp) => ({ HostIp, HostPort: String(published) })) },
             })
             const result = await topologyEvidence({ services: { api: { ports: [{ target: 3000, published: String(published),
                 protocol: 'tcp' }] } } }, [{
                 ID: containerId, Project: 'synthetic', Service: 'api', State: 'running', Health: '', ExitCode: 0,
                 InspectOutput: inspected,
-            }], { ports: [published], authority: { ownComposeFiles: true, cockpitId: runtimeCockpit, stackId: stack,
+            }], { ports: [published, spare], authority: { ownComposeFiles: true, cockpitId: runtimeCockpit, stackId: stack,
                 portLeaseProjection: projection } })
             if (result.admitted.kind !== 'complete') throw new Error(result.admitted.reason)
             const topology = result.admitted.topology
@@ -2163,6 +2177,15 @@ fi
                 namespace: namespace.value, listenerTimeoutMs: 1_000, revalidate: async () => [service] })).resolves.toMatchObject({
                 observed: { state: 'unavailable' },
             })
+            foreign.listen(spare, '127.0.0.1')
+            await once(foreign, 'listening')
+            await expect(observeRuntimePortFamily({ topology, services: [service],
+                namespace: namespace.value, listenerTimeoutMs: 1_000,
+                revalidate: async () => [await observeService(true)] })).resolves.toMatchObject({
+                code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, observed: { state: 'available', value: false },
+                remedy: expect.stringContaining(`127.0.0.1:${spare} has a listener outside the stack`),
+            })
+            foreign.close()
             let callbackMutation: unknown
             const raced = await observeRuntimePortFamily({ topology, services: [service], namespace: namespace.value,
                 listenerTimeoutMs: 1_000, revalidate: async () => {
@@ -2181,6 +2204,7 @@ fi
             expect(raced).toMatchObject({ observed: { state: 'unavailable' } })
         } finally {
             server.close()
+            foreign.close()
             rmSync(home, { recursive: true, force: true })
         }
     })
