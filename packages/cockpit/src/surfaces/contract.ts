@@ -64,12 +64,13 @@ const SUBAGENT_PATH = /^subagents\/[^/]+\.md$/
 const SKILL_PATH = /^skills\/([a-z0-9][a-z0-9-]*)\/(.+)$/
 // A generated file under Git's directory could install a hook; one under node_modules would be
 // shadowed or wiped by the next install. Folded because the default macOS and Windows filesystems
-// resolve `.GIT` and `Node_Modules` to the same directories.
-const RESERVED_SEGMENTS = new Set(['.git', 'node_modules'])
+// resolve `.GIT` and `Node_Modules` to the same directories. Upper-casing also folds characters
+// such as `ſ`, which lower-casing leaves alone but case-insensitive filesystems treat as `s`.
+const RESERVED_SEGMENTS = new Set(['.GIT', 'NODE_MODULES'])
 
 /** Whether a path segment names a directory no surface may read or write through. */
 export function reservedPathSegment(segment: string): boolean {
-    return RESERVED_SEGMENTS.has(segment.toLowerCase())
+    return RESERVED_SEGMENTS.has(segment.normalize('NFC').toUpperCase())
 }
 
 /** A bounded relative POSIX path with no empty, dot, parent or reserved segment. */

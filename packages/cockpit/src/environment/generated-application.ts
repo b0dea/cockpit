@@ -1989,7 +1989,7 @@ const path = require('node:path');
 const request = JSON.parse(process.argv[1]);
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const own = value => value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
-const safe = value => typeof value === 'string' && value.length > 0 && !path.isAbsolute(value) && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part && part !== '.' && part !== '..' && !['.git','node_modules'].includes(part.toLowerCase()));
+const safe = value => typeof value === 'string' && value.length > 0 && !path.isAbsolute(value) && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part && part !== '.' && part !== '..' && !['.GIT','NODE_MODULES'].includes(part.normalize('NFC').toUpperCase()));
 (async () => {
   const source = fs.readFileSync(process.argv[2]);
   if (digest(source) !== request.sourceSha256) throw new Error('module changed');

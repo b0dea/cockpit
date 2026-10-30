@@ -193,6 +193,7 @@ it('refuses empty, malformed, colliding, escaped, or hash-incoherent rendered se
         [{ ...file, path: '.git/config' }],
         [{ ...file, path: '.GIT/hooks/pre-commit' }],
         [{ ...file, path: 'rules/Node_Modules/x.md' }],
+        [{ ...file, path: 'rules/node_moduleſ/x.md' }],
         [{ ...file, sha256: '0'.repeat(64) }],
         [file, file],
         Array.from({ length: 4_097 }, (_, index) => ({

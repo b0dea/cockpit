@@ -804,7 +804,7 @@ function validateSelftestHarness(value, name, errors) {
             || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value.module) || value.module.includes('\\')
             || /[\x00-\x1f\x7f]/.test(value.module)
             || moduleSegments.some(segment => segment === '' || segment === '.' || segment === '..'
-                || ['.git', 'node_modules'].includes(segment.toLowerCase()))) {
+                || ['.GIT', 'NODE_MODULES'].includes(segment.normalize('NFC').toUpperCase()))) {
             errors.push(`${name}.module must be a confined relative path`)
         }
         if (!isText(value.export) || !SELFTEST_EXPORT.test(value.export)) errors.push(`${name}.export is invalid`)
