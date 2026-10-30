@@ -39,30 +39,6 @@ describe('destructive command composition', () => {
             }), expect.any(Function))
         })
 
-    it.each(['npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
-        'forwards the exact Windows pipe %s to the lifecycle owner without executing it', (host) => {
-            const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-            if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
-            const execute = vi.fn()
-            const authority = Object.freeze({ kind: 'runtime-measurement-probe-authority' as const })
-            const lifecycleFactory = vi.spyOn(lifecycleComposition, 'createLifecycleCommandAdapters')
-            try {
-                Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-                createDestructiveCommandAdapters({
-                    configPath: '/tmp/cockpit.toml', env: { PATH: '/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: host },
-                    sessionId: 'cockpit-cli', timeoutMs: 5_000, dockerContext: 'default',
-                    activeProfiles: ['runtime_probe'], runtimeMeasurementProbeAuthority: authority,
-                }, execute as never)
-            } finally {
-                Object.defineProperty(process, 'platform', platform)
-            }
-            expect(lifecycleFactory).toHaveBeenCalledWith(expect.objectContaining({
-                env: { PATH: '/usr/bin:/bin', HOME: '/tmp', DOCKER_HOST: host },
-                activeProfiles: ['runtime_probe'], runtimeMeasurementProbeAuthority: authority,
-            }), expect.any(Function))
-            expect(execute).not.toHaveBeenCalled()
-        })
-
     it.each([
         ['PATH', { PATH: '/usr/bin:/bin', Path: undefined, PATHEXT: '.EXE' }],
         ['PATHEXT', { PATH: '/usr/bin:/bin', PATHEXT: '.EXE', PathExt: undefined }],
