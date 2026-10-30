@@ -102,7 +102,9 @@ without publishing anything. Do steps 1 and 2, then re-run that run with
 ## Dependency updates
 
 Dependabot opens patch and minor update pull requests. They merge automatically once the `ci-ok`
-check passes; major updates wait for review.
+check passes; major updates wait for review. A new npm release is offered only after a cooldown
+that grows with its semver level, so a hijacked publish is usually pulled before it reaches the
+lockfile; the days are in [.github/dependabot.yml](../../.github/dependabot.yml).
 
 Some versions are pinned by a check, so their update cannot pass CI as Dependabot opens it. They
 arrive together in the `pinned-by-hand` group, which auto-merge skips; the group's list is in
