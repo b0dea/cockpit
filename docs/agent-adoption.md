@@ -318,12 +318,22 @@ product change: ask first.
 
 When the Compose file lives inside a product repository, declare that repository as a sibling and
 point `environment.compose_files` at the Compose file inside the sibling checkout.
-cockpit reads and runs that file in place and writes only its label override.
+cockpit reads and runs that file in place and writes only its label override. Compose paths must
+stay inside the cockpit root, so this works when siblings are checked out under it
+(`siblings_root = "."`); with a dedicated cockpit beside the product (`siblings_root = ".."`),
+use the generated environment mode or ask the human before moving the Compose file.
 
 `init` then asks `environment.machine`: the floor the product needs from the container runtime
 (`runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`). These are product
 requirements and `init` proposes none of them, so ask the human rather than picking numbers, and
 answer under `[environment.machine]` in the answers file.
+
+It then asks `environment.posture`: how the product is addressed locally and how sign-in works.
+For a plain localhost stack with no sign-in, answer under `[environment.posture]` with
+`addressing = "port"`, `authentication = "none"` and
+`posture_requirements = [{ requirement = "leased-localhost-ports", addressing = "port" }]`.
+Ask the human when the product uses hostnames or a real or bypassed sign-in; the rules are in
+[Declare environment postures](environment.md#declare-environment-postures).
 
 ### No local setup
 

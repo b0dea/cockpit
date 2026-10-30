@@ -558,8 +558,20 @@ posture_requirements = [
 ]
 ```
 
+A product with no local sign-in declares `authentication = "none"`; no requirement needs a tag
+for it, and a requirement tagged with a sign-in value fails preflight. A plain localhost stack
+reached through leased ports declares:
+
+```toml
+[environment]
+addressing = "port"
+authentication = "none"
+posture_requirements = [{ requirement = "leased-localhost-ports", addressing = "port" }]
+```
+
 Use your actual requirement names. Each tag must match the selected value, and each selected
-`addressing` and `authentication` value must appear in at least one tag. Preflight refuses missing
+`addressing` value, and any `authentication` value other than `none`, must appear in at least one
+tag. Preflight refuses missing
 declarations, mismatched tags and selected values that no tag uses. Draft configurations may leave
 these fields out, but then cannot pass that gate. The check validates the declared tags; deciding
 which requirements need tags is still a maintainer's review.

@@ -354,7 +354,8 @@ no `origin` remote.
 ```
 
 `remove` drops the table only if nothing else refers to the sibling (generated services, vendor
-endpoints, mounts, its exported variable). Otherwise it lists every reference and changes nothing.
+endpoints, mounts, its exported variable, or a declared Compose file that uses that variable).
+Otherwise it lists every reference and changes nothing.
 It never deletes the checkout or any generated file. After either command, run
 `cockpit sync --config ./cockpit.toml --dry-run` to see which generated files change.
 
