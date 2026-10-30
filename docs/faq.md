@@ -3,7 +3,7 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 Short answers to the questions people ask before and while adopting cockpit. Each answer links
-to the page that owns the detail.
+to the page with the detail.
 
 ## What is cockpit, in one sentence?
 
@@ -23,8 +23,8 @@ The full list of non-goals, with reasons, is in [Architecture](architecture.md#n
 
 ## Is it on npm?
 
-Not yet. [Install cockpit](getting-started.md#install-cockpit) owns the intended project-local
-install and the verified source-package fallback available before publication.
+Not yet. [Install cockpit](getting-started.md#install-cockpit) covers the intended project-local
+install and the source-package fallback to use before publication.
 
 ## Do I have to use every agent tool?
 
@@ -35,16 +35,18 @@ receives the cockpit-setup skill first. Custom harnesses can be declared under `
 
 ## Are the guards actually enforced?
 
-cockpit wires its shared guard only into targets with a measured adapter. Generated Cursor and
-Grok Build configuration does not claim native loading or guard enforcement. The
-[capability matrix](capability-matrix.md) shows each cell and when it was last measured;
-`cockpit selftest` measures supported installed candidates.
+Not confirmed yet. cockpit's guard script denies the operation whenever the tool runs it, and
+fails closed on input it cannot read. cockpit installs the guard hook only for Claude Code, Codex
+CLI and OpenCode, and whether each tool actually fires the hook is still unconfirmed. For Cursor
+and Grok Build cockpit writes files but installs no guard, and nobody has confirmed those tools
+load them. The [capability matrix](capability-matrix.md) shows each cell and the date it was last
+measured; `cockpit selftest` checks supported tools installed on your machine.
 
 ## Does cockpit change my product code?
 
-Only in paths the configuration declares and the relevant preview admits. cockpit writes generated
+Only in paths the configuration declares and the relevant preview accepts. cockpit writes generated
 files into the cockpit checkout and can write declared outputs in a sibling repository, such as an
-environment template; it records every file it owns. `setup` can clone a missing sibling from its
+environment template; it records every file it wrote. `setup` can clone a missing sibling from its
 declared remote. It never rewrites Git remotes or edits undeclared files.
 
 ## Can two agents use the same machine at once?

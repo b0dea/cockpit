@@ -4,7 +4,7 @@
 
 This guide is for an AI coding agent that a human has asked to "set up cockpit for our project",
 and for the human watching it. It maps each starting situation to the exact non-interactive
-commands, says what counts as done at every step, and links the page that owns each detail.
+commands, says what counts as done at every step, and links the page with each detail.
 People can follow it too; the [getting started guide](getting-started.md) is the same journey
 written for a terminal.
 
@@ -54,9 +54,12 @@ to identify the pending decision.
 Done when `cockpit --help` lists the commands.
 
 Follow [Install cockpit](getting-started.md#install-cockpit) for the project-local dependency,
-source-package fallback and supported Node releases. Show the human which directory will receive
-the dependency and lockfile before installing. Installing a local dependency does not put its
-binary on a normal terminal's PATH.
+source-package fallback and supported Node releases. For an existing product, install cockpit in a
+dedicated cockpit directory beside the product repositories, not in a product repository: the
+product stays untouched unless the human agrees to a change in it. Show the human which directory
+will receive the dependency and lockfile before installing. Installing a local dependency does not
+put its binary on a normal terminal's PATH. Run every `./node_modules/.bin/cockpit` command below
+from the cockpit directory.
 
 For a directory without a product manifest, first follow
 [Bootstrap without a project manifest](getting-started.md#bootstrap-without-a-project-manifest).
@@ -69,8 +72,10 @@ A command runner that downloads a missing package would bypass the project's rev
 
 Every `init` command needs your harness's target identifier. The
 [capability matrix](capability-matrix.md) names built-in targets and separates generated surfaces
-from measured native enforcement. For example, Codex uses `codexcli`; substitute your tool's
-target in the examples. For an instructions-only tool, follow
+from native enforcement that has been confirmed. For example, Codex uses `codexcli`; substitute
+your tool's target in the examples. Claude Code, Codex CLI and OpenCode are fully supported;
+Cursor and Grok Build files are generated but not yet verified, and cockpit installs no guard for
+them. For an instructions-only tool, follow
 [Capability states](harness-surfaces.md#capability-states); generation alone does not establish
 guard or permission enforcement.
 
@@ -311,6 +316,10 @@ a `[ports.bases]` variable, and a service without a healthcheck warns. The rules
 [examples/compose-first](../examples/compose-first/README.md). Changing the Compose file is a
 product change: ask first.
 
+When the Compose file lives inside a product repository, declare that repository as a sibling and
+point `environment.compose_files` at the Compose file inside the sibling checkout.
+cockpit reads and runs that file in place and writes only its label override.
+
 `init` then asks `environment.machine`: the floor the product needs from the container runtime
 (`runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`). These are product
 requirements and `init` proposes none of them, so ask the human rather than picking numbers, and
@@ -396,9 +405,13 @@ Before the first `up`, measure the local container runtime and record it:
 ```
 
 Name an image already on the machine; the probe never pulls. The probe runs only from an installed
-`@b0dea/cockpit` package, not from a linked source checkout. The owned runtime identities,
-measurement evidence and admission rules are in
+`@b0dea/cockpit` package, not from a linked source checkout. The supported runtime identities
+and the checks a measurement must pass are in
 [Measure the container runtime](environment.md#measure-the-container-runtime).
+
+A measurement takes a few minutes and prints no progress, so wait for it to finish. `--write`
+rewrites configuration that cockpit generated, so afterwards `cockpit check` fails and the guard
+holds agent tool calls until a human runs `cockpit sync --config cockpit.toml` in a terminal.
 
 ## Daily loop
 

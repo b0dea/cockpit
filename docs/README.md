@@ -20,9 +20,9 @@ are trying to do. Contributor documentation lives separately under docs/contribu
 - [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
 - [Environment lifecycle](environment.md): setup, generation, bring-up, health, logs and reset.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool, and overlays.
-- [Extending cockpit](extending.md): supported seams, upgrade ownership and the build-beside pattern.
+- [Extending cockpit](extending.md): supported extension points, what an upgrade replaces and the build-beside pattern.
 - [Safety and autonomy](safety-and-autonomy.md): what guards allow, ask about and deny.
-- [Work and browser workflows](work-and-browser.md): work orders, grading, browser evidence and
+- [Work and browser workflows](work-and-browser.md): work orders, grading, browser checks and
   test tiers.
 
 ## Reference

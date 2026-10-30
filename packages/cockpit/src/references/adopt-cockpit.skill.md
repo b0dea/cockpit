@@ -8,7 +8,7 @@ description: "Set up or adopt cockpit for a project, bring a multi-repo product 
 # Adopt cockpit
 
 Use this when a human asks you to set cockpit up, adopt it, or bring their product up for
-agents. cockpit declares a product's repositories once in `cockpit.toml`, renders the same agent
+agents. cockpit declares a product's repositories once in `cockpit.toml`, generates the same agent
 instructions, skills, guards and permissions for every harness, and runs the stack against the
 live checkouts. The complete guide, with every situation and its completion criteria, is
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md>; read the section a
@@ -37,8 +37,9 @@ Done when the exact project-local executable lists the commands.
 
 Tell the human that cockpit is not yet published, then follow the canonical
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md#install-cockpit>
-installation. It owns both the intended registry install and the verified source-package
-fallback. Verify the installed dependency without permitting an implicit download:
+installation. It covers both the intended registry install and the source-package
+fallback. For an existing product, install in a dedicated cockpit directory beside the product
+repositories; leave the product repositories untouched unless the human agrees. Verify the installed dependency without permitting an implicit download:
 
 ```sh
 ./node_modules/.bin/cockpit --help
@@ -46,7 +47,7 @@ fallback. Verify the installed dependency without permitting an implicit downloa
 
 Choose your tool's target identifier from the
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>.
-It distinguishes generated surfaces from measured native enforcement. For example, Codex uses
+It separates generated files from native enforcement that has been confirmed. For example, Codex uses
 `codexcli`; substitute the appropriate target below. For an instructions-only tool, follow
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/harness-surfaces.md#capability-states>.
 
@@ -59,7 +60,7 @@ and `invocation.exitCode`; a pending `init` also exits 0, so read its `result.st
 ## Route by what is on disk
 
 Look at the directory before asking. Several cases can apply; bootstrap first. Each line names
-the guide section that owns the detail.
+the guide section with the detail.
 
 - **Inside an existing product repository** (a Git checkout with a package manifest at its
   root). The `--json` preview's `result.cockpitRoot` asks for the cockpit root before
@@ -83,7 +84,8 @@ the guide section that owns the detail.
   each with `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`
   and run `./node_modules/.bin/cockpit setup --config cockpit.toml --json`. Guide: *Scattered repositories*.
 - **An existing Compose file.** Answer `environment.compose_files = ["compose.yml"]` instead of a
-  generated stack, and ask the human for the `environment.machine` floors `init` asks next.
+  generated stack (for a Compose file inside a product repository, declare that repository as a
+  sibling and point `compose_files` at the file in the sibling checkout), and ask the human for the `environment.machine` floors `init` asks next.
   Guide: *Existing Compose file*.
 - **A service with no local setup.** Follow **Create a local setup** below.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
@@ -101,13 +103,15 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 
 - Before the first `up`, measure the runtime with
   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
-  guide's *Measure the runtime* says which runtimes are recognised and which have been measured.
+  guide's *Measure the runtime* says which runtimes are recognised. A measurement takes a few
+  minutes with no progress output, and `--write` makes `cockpit check` fail and the guard hold
+  tool calls until a human runs `cockpit sync --config cockpit.toml`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
   `./node_modules/.bin/cockpit down` removes its runtime, so ask first.
 - Upgrade: install the new version, then run `./node_modules/.bin/cockpit check`,
   `./node_modules/.bin/cockpit sync --dry-run` and `./node_modules/.bin/cockpit sync`. The guard
-  pins the CLI it was rendered for, so after an upgrade the human may need to run
+  trusts only the CLI it was generated for, so after an upgrade the human may need to run
   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal.
 
 ## Shipped procedure

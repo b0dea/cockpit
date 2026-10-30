@@ -6,8 +6,8 @@ This guide is for people and AI coding agents changing cockpit itself. To use co
 own product, start with the [README](README.md). Taking part means following the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
-**AI agents:** read [AGENTS.md](AGENTS.md) first. It maps the codebase, its owners and the
-rules agents most often break. Everything below applies to agents too.
+**AI agents:** read [AGENTS.md](AGENTS.md) first. It maps the codebase and the rules
+agents most often break. Everything below applies to agents too.
 
 ## Two audiences, two trees
 
@@ -83,24 +83,24 @@ npm run lint:supply-chain
 A targeted pass proves only its target. The full suite takes several minutes.
 
 `npm run test:changed -- <base-commit>` follows imports through shared test helpers to select
-their owners. A change to the Vitest configuration or shared Git-isolation setup selects every
+the tests that depend on them. A change to the Vitest configuration or shared Git-isolation setup selects every
 package test because it can change how all tests run. Unmapped paths still refuse before dispatch;
-review their ownership rather than treating an empty selection as a pass.
+check those paths yourself rather than treating an empty selection as a pass.
 
-`node scripts/run-changed-tests.mjs <base-commit> --list` prints the same validated owner
+`node scripts/run-changed-tests.mjs <base-commit> --list` prints the same validated
 selection as a JSON array without running tests; it also accepts `--extra-test <test-path>`.
-This inventory is not execution evidence. To avoid repeating tests when a suite needs several
-bounded invocations, partition complete test files and run each batch with `npm test -- <paths>`.
+This list does not show that the tests passed. To avoid repeating tests when a suite needs several
+separate invocations, partition complete test files and run each batch with `npm test -- <paths>`.
 Keep the commit, working tree, dependencies and test configuration unchanged throughout. Preserve
 each successful report before the next invocation replaces it, and verify that their file sets
-cover the entire required inventory with every assertion accounted for. Changed-owner coverage
-requires every selected owner; full-suite coverage requires every configured test file.
+cover every required test file with every assertion accounted for. A changed-test run must cover
+every selected test file; a full-suite run must cover every configured test file.
 
 The generated references (the CLI, configuration, command list, capability matrix and the
 troubleshooting index) are checked against committed `HEAD`, so `npm run lint:docs` refuses while
 an implementation change is uncommitted. Commit the change, rebuild (`npm run build`), run `npm run references`, commit the regenerated
 pages, then lint again. After a rebase, reference generation refreshes its ignored local ownership
-ledger when every reference page matches the current commit. Uncommitted page edits still refuse:
+record when every reference page matches the current commit. Uncommitted page edits still refuse:
 review and commit intentional edits, or restore them before regenerating.
 `npm run references` calls `publishRepositoryReferences` in
 `scripts/diagnostic-inventory.mjs` and refuses while implementation changes are uncommitted.
@@ -166,7 +166,7 @@ become a test. One defect per issue.
 - **A bug fix with no test that fails without it.**
 - **Speculative abstraction**: a configuration knob with no second caller, an interface with one
   implementation, handling for states that cannot occur.
-- **A capability claim that was read rather than measured.** Harness cells are established by
+- **A capability claim that was read rather than tested.** Harness cells are established by
   probing the tool beside a deliberately broken control file, and dated.
 - **A dependency added without a case for it.** Exact pin, lockfile committed, and an argument
   for why the code cannot be written instead.

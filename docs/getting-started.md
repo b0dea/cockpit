@@ -8,29 +8,31 @@ work first on a throwaway example, follow the [tutorial](tutorial.md).
 
 ## Install cockpit
 
-You need a Node.js release admitted by the
+You need a Node.js release listed in the
 [`engines` field in the package manifest](../packages/cockpit/package.json), Git, and macOS or
 Linux. The commands that run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker Compose and a
-local runtime that has passed cockpit's measurement probe. The
+local runtime that has passed `cockpit runtime measure`. The
 [runtime identity table and measurement procedure](environment.md#measure-the-container-runtime)
-are the canonical runtime support record. Configuration, generation and surfaces-only `setup` and
+are the one record of supported runtimes. Configuration, generation and surfaces-only `setup` and
 `check` work without a container runtime; validating declared Compose files requires Docker Compose.
 
-From an existing product repository, install cockpit there and let `init` ask where its
-configuration should live:
+For an existing product, make a dedicated cockpit directory beside the product repositories (for
+example `shop-cockpit` next to `shop`) and install cockpit there, not in a product repository. The
+product stays untouched unless you agree to a change in it. Create the directory and follow
+[Bootstrap without a project manifest](#bootstrap-without-a-project-manifest) for the first
+`init`; it explains why the first install is temporary. Once the cockpit directory has its own
+`package.json`, install cockpit in it:
 
 ```sh
 npm install --save-dev --save-exact @b0dea/cockpit
 ./node_modules/.bin/cockpit --help
 ```
 
-The install is project-local and recorded in the project's lockfile. From the project root, run
-the exact installed executable as `./node_modules/.bin/cockpit <command>`. This path fails when
-the dependency is missing; it cannot implicitly download a different package. After `init`
-publishes the cockpit-owned package scripts, use those scripts for setup, sync and check.
-For an empty cockpit or a directory containing several repositories, use
-[Bootstrap without a project manifest](#bootstrap-without-a-project-manifest) instead: installing
-into that directory first would give it a product manifest of its own.
+The install is project-local and recorded in that directory's lockfile. Run the exact installed
+executable as `./node_modules/.bin/cockpit <command>` from the cockpit directory; every command in
+this guide runs there. This path fails when the dependency is missing; it cannot implicitly
+download a different package. After `init` writes the `cockpit:*` package scripts, use those
+scripts for setup, sync and check.
 
 ### Install from source
 
@@ -45,7 +47,7 @@ npm ci --ignore-scripts
 npm run build
 COCKPIT_PACKAGE_DIR="$(mktemp -d)"
 npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
-cd /path/to/the-product-repository
+cd /path/to/the-cockpit-directory
 npm install -D "$COCKPIT_PACKAGE_DIR"/*.tgz
 ./node_modules/.bin/cockpit --help
 ```
@@ -54,7 +56,7 @@ Keep the tarball while the project lockfile resolves cockpit from that local fil
 breaks a later `npm ci`; an external local archive is not a portable dependency for teammates.
 After a published version replaces that resolution in both manifest and lockfile, remove the
 archive with `rm -r "$COCKPIT_PACKAGE_DIR"`. If `npm pack` or `npm install` fails, stop there: a source command
-is not evidence that the package users receive works. When bootstrapping a directory without a
+does not show that the package users receive works. When bootstrapping a directory without a
 product manifest, install this same archive in the temporary tool directory described below.
 
 Check the install:
@@ -124,7 +126,7 @@ package pin and marked `.gitignore` region that `init` would create. Preview the
 --dry-run`; an existing conflicting pin, a cockpit declaration in `dependencies`,
 `optionalDependencies` or `peerDependencies`, a conflicting script, or an edited marked region is
 refused rather than overwritten. Keep the exact cockpit pin only in `devDependencies` so the team
-has one version authority.
+has one place that sets the version.
 
 ## Bootstrap a new product
 
@@ -189,7 +191,7 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
    is the digest covering those values.
    Read the document before asking the human to accept that digest. The human output and the
    interactive question show the same document; it is not written to `cockpit.toml`.
-   If the draft or its exact review cannot fit the existing output bounds, init refuses it with
+   If the draft or its exact review is too large to show, init refuses it with
    `INIT_DRAFT_INVALID` before offering defaults confirmation. Shorten the answers so the whole
    configuration can be reviewed; for a recorded answer, use the reset commands below before
    supplying its replacement.
@@ -265,7 +267,7 @@ the same accepted `init` command to resume verification.
 ## Bring the product up
 
 This is the canonical sequence. Every other page links here rather than repeating it.
-The directory containing `cockpit.toml` must be in a Git working tree so `setup` can bound its
+The directory containing `cockpit.toml` must be in a Git working tree so `setup` can limit its
 repository writes. In a new directory, run `git init` there first; for an existing checkout,
 inspect `git rev-parse --show-toplevel` and repair its Git metadata if that fails.
 
@@ -321,7 +323,7 @@ where the repository is:
 `--var <NAME>` sets the exported variable (default: the slug as `API_DIR`). A slug whose default
 would begin with a Docker, Compose or host-process control prefix gets `SIBLING_` prepended;
 cockpit refuses an explicit control variable because handing it to Compose could change the
-authenticated runtime plan. `--purpose "<text>"` says what the repository is for; it is required
+runtime plan. `--purpose "<text>"` says what the repository is for; it is required
 for a new sibling and never defaulted.
 `--instruction-pointer` opts a separate sibling into a marked link from its **AGENTS.md** to the
 cockpit instructions. This changes what agents in that repository load, so setup first reports the
@@ -373,7 +375,7 @@ Use plain `up` only when the stack should outlive one command.
 
 ## Next steps
 
-- [Environment lifecycle](environment.md): ownership, resources, cold-start limits and recovery.
+- [Environment lifecycle](environment.md): who holds the stack, resources, cold-start limits and recovery.
 - [Harness surfaces](harness-surfaces.md): what `sync` writes for each agent tool.
 - [Safety and autonomy](safety-and-autonomy.md): what the guards allow, ask about and deny.
 - [Troubleshooting](troubleshooting.md): every diagnostic code and its remedy.

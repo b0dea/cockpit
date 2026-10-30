@@ -46,7 +46,7 @@ substitute a similarly named registry found somewhere else.
 
 ## Bootstrap one harness
 
-Pick one harness so the preview has a single publication boundary, preview, then accept:
+Pick one harness so the preview covers one tool, preview, then accept:
 
 ```sh
 cockpit init . --target codexcli --registry ./env/lib/instance.sh --json
@@ -54,7 +54,7 @@ cockpit init . --target codexcli --registry ./env/lib/instance.sh --interactive
 ```
 
 The first command writes nothing. The second needs a terminal and the exact preview digest.
-Accepted answers keep their source and provenance, and re-running the command resumes from the
+Accepted answers keep their source, and re-running the command resumes from the
 stage it reached. When `init` observes repositories directly beneath the cockpit root instead
 of reading a registry, it records `siblings_root = "."` as an inference for you to confirm.
 
@@ -79,14 +79,13 @@ Two ordering rules matter during the generated-environment layer:
   own repository before `setup` creates the ignored instance from it. The
   [tutorial](tutorial.md#apply-the-sync-and-set-up) shows this order.
 - **cockpit never takes over an unmanaged file.** If a file already exists where cockpit wants to
-  generate one, `sync` refuses. Keep the existing file, review the destination and the ownership
-  change, and move it deliberately. A team's existing agent settings file is the one exception
+  generate one, `sync` refuses. Keep the existing file, review the destination and the change to what cockpit manages, and move it deliberately. A team's existing agent settings file is the one exception
   with a supported path: [adopt it](#adopt-existing-agent-settings) so cockpit merges it.
 
 Before adopting environment credentials, let `sync` create the ignore boundary and follow
 [Secret sources and environment schemas](environment.md#secret-sources-and-environment-schemas).
 [Cockpit generated ownership](concepts.md#cockpit-generated-ownership) protects cockpit's own
-output; it never authorises removing a file cockpit did not write.
+output; it never permits removing a file cockpit did not write.
 
 ## Adopt existing agent settings
 
@@ -105,7 +104,7 @@ cockpit check --config cockpit.toml
 `cockpit/adopted/<path>`, records one
 <!-- cockpit:ref schema=surfaces.adopted --> `surfaces.adopted` row in cockpit.toml (path, source,
 SHA-256 of the moved bytes, date, provenance), and syncs. The file at `<path>` becomes cockpit's
-merge of the adopted copy and its own rendering:
+merge of the adopted copy and its own generated version:
 
 - **Hooks:** the team's hooks are kept beside cockpit's guard hook, by the same rule cockpit uses
   for two of its own producers: `PreToolUse` entries are combined, and any other hook event both
@@ -122,12 +121,12 @@ reported as drift by `check` until `sync` merges it again. The recorded SHA-256 
 moved; it is a record, not a lock, so it does not stop the copy from changing.
 
 Adoption is refused with `SURFACE_ADOPTION_REFUSED`, naming the key, when the adopted file would
-switch off or route around the guard or carry an authority cockpit declares elsewhere:
+switch off or route around the guard or carry a setting that cockpit declares elsewhere:
 `disableAllHooks`, `permissions.defaultMode = "bypassPermissions"`, any hook that names a
 `.cockpit/guards/` transport, `permissions.additionalDirectories` and `enabledMcpjsonServers`
 (declare a sibling or approve the MCP server instead), and in `.codex/config.toml`, `mcp_servers`
 and `features.codex_hooks = false`. It also refuses redirected ancestors, non-regular inputs and
-files that change while they are read, because adoption reads and moves only bounded regular files
+files that change while they are read, because adoption reads and moves only regular files
 inside the cockpit root. Replace links or special files with plain files and directories, then
 re-run the command. An ordinary refusal is rolled back: the file stays where it was and
 cockpit.toml is unchanged. If a concurrent replacement prevents safe rollback, the refusal names
@@ -136,7 +135,7 @@ SHA-256; preserve those paths until the named source is restored. Adoption chang
 so it is never a dry run, never `--interactive`, and an agent's guard never treats it as an
 ordinary command.
 
-`opencode.jsonc` is not adopted: cockpit already shares that file and owns only its `$schema`,
+`opencode.jsonc` is not adopted: cockpit already shares that file and writes only its `$schema`,
 `instructions`, `mcp` and `permission` keys, so the team's other keys are kept as they are.
 
 ## Complete the cutover

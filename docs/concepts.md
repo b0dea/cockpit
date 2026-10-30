@@ -13,9 +13,12 @@ Everyday terms, in plain language.
 ### Agent harness
 
 The AI coding tool an agent runs in. The [capability matrix](capability-matrix.md) names the
-built-in target identifiers and records each feature's evidence. An instructions-only tool can
-read the shared guide without gaining guard or permission enforcement; see
-[Capability states](harness-surfaces.md#capability-states).
+built-in target identifiers and records what is confirmed for each feature. An
+instructions-only tool can read the shared guide without gaining guard or permission enforcement;
+see [Capability states](harness-surfaces.md#capability-states). cockpit fully supports Claude
+Code, Codex CLI and OpenCode. It also writes Cursor and Grok Build files, which are generated but
+not yet verified: nobody has confirmed those tools load them, and cockpit installs no guard for
+them. The matrix currently shows them as `unavailable` until a check confirms otherwise.
 
 ### Sibling repository
 
@@ -32,8 +35,8 @@ volumes and ports, started against the sibling checkouts on your disk.
 ### Surface
 
 A file cockpit generates for an agent harness: the shared root instructions in AGENTS.md,
-the Claude import in CLAUDE.md, skills, subagents, hooks, MCP server entries and permissions. Surface templates ship
-in the package; `cockpit sync` renders them for each configured harness.
+the Claude import in CLAUDE.md, skills, subagents, hooks, MCP server entries and permissions.
+Surface templates ship in the package; `cockpit sync` generates them for each configured harness.
 
 ### Overlay
 
@@ -45,13 +48,13 @@ item is reported instead of silently overridden.
 
 A check that runs before an agent's tool call and can deny it: pushing to a protected branch,
 editing a declared environment or secret file, or running a command against a declared hosted
-database or vendor host. One guard policy is translated into each harness's hook format.
+database or vendor host. One guard policy is installed as a hook in each harness that supports one.
 
 ### Drift
 
 A difference between a generated file on disk and what the current configuration would
-generate. `cockpit check` reports drift and changes nothing; `cockpit sync` replaces the owned
-bytes after you review them.
+generate. `cockpit check` reports drift and changes nothing; `cockpit sync` replaces the files it
+wrote after you review them.
 
 ### Holder
 
@@ -60,21 +63,21 @@ stack stops only when no holder remains, so one agent cannot stop another agent'
 
 ### Work order
 
-A bounded Markdown contract for one piece of agent work: its source, the paths it may change,
-schema-bounded acceptance criteria, the commands that verify them, and the ordered steps. The
-[work-order parser](../packages/cockpit/src/work-orders/contract.ts) owns the current bounds.
+A Markdown contract for one piece of agent work: its source, the paths it may change,
+acceptance criteria, the commands that verify them, and the ordered steps. The
+[work-order parser](../packages/cockpit/src/work-orders/contract.ts) sets the size limits.
 cockpit validates it before work starts and grades the result against it.
 
 ### Evaluator
 
 The grader that reviews a finished work order. It reruns the declared verification commands and
-grades each acceptance criterion from that evidence. It never edits code and is never the
+grades each acceptance criterion from their output. It never edits code and is never the
 session that did the work.
 
 ### Persona
 
-A stable synthetic identity used in seed data and authenticated tests, such as a test user with
-a known role. Personas come from one declared source file and are rendered into typed outputs
+A stable synthetic identity used in seed data and signed-in tests, such as a test user with
+a known role. Personas come from one declared source file and are generated into typed outputs
 the product's tests can import.
 
 ### Enforced, instructed and unavailable
@@ -94,7 +97,7 @@ Runtime cockpit identity comes from the main Git checkout, and checkout identity
 current Git checkout, so linked worktrees share cockpit identity while keeping their own checkout
 identity. Generated files and relative configuration paths still belong to the configuration
 directory. Use `cockpit sync --config <path>` to publish there. A standalone directory can publish
-before Git exists; setup and lifecycle operations still require an authenticated Git checkout.
+before Git exists; setup and lifecycle operations still require a Git checkout.
 
 ## Where the cockpit lives
 
@@ -125,23 +128,23 @@ before installing a package manifest in the intended root.
   asks first where the cockpit lives, under the answers key `cockpit.root`, and never picks for
   you: `--accept-preview` and `--accept-defaults` refuse with `INIT_COCKPIT_ROOT_REQUIRED` until
   it is answered. `"dedicated"`, the recommendation, creates `../<repo>-cockpit`, initialises it
-  as a local Git repository, and declares the product repository as its first sibling. Git
-  identity lets setup and lifecycle checks authenticate the new cockpit before they run. This is
+  as a local Git repository, and declares the product repository as its first sibling. The
+  Git repository lets setup and lifecycle checks identify the new cockpit before they run. This is
   the one directory `init` writes outside the folder it ran in. An existing destination must be
   empty or a local Git repository with a plain `.git` directory, so adoption cannot follow
   redirected Git metadata or take over unrelated files. `"in-repo"` makes the product
   repository the cockpit root: it then carries the cockpit files, and the cockpit cannot
   neutrally own several repositories.
 
-Moving an existing in-repo cockpit changes generated ownership. There is no authenticated public
-migration command yet; do not delete an ownership manifest or its listed paths by hand. Create a
+Moving an existing in-repo cockpit changes which files cockpit has written. There is no public
+migration command yet; do not delete the ownership manifest or the paths it lists by hand. Create a
 new dedicated cockpit as a separate adoption and remove the old one only when a future command can
 preview and postcheck that cleanup.
 
 ## Cockpit sibling declaration
 
 The `[[sibling]]` entry for one product repository: its stable slug, directory, acquisition
-mode, mount mode, toolchain and projected guidance. A declaration names a repository; `setup`
+mode, mount mode, toolchain and the guidance generated for it. A declaration names a repository; `setup`
 and `preflight` check that the checkout actually exists and matches it.
 
 ## Cockpit product registry
@@ -153,24 +156,24 @@ It feeds discovery; the <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml
 ## Cockpit lifecycle record
 
 The state cockpit persists for one checkout and its shared runtime: which setup and bring-up
-stages completed. Later commands use it to resume safely and to tell a current observation from
+stages completed. Later commands use it to resume safely and to tell the current state from
 an earlier attempt.
 
 ## Cockpit generated ownership
 
-The inventory of every whole file, symlink and delimited region in a shared file that cockpit
-published, with the expected bytes. It is what lets `check` detect drift and lets `sync`
-replace its own output without touching bytes it does not own.
+The record of every whole file, symlink and delimited region of a shared file that cockpit
+wrote, with the bytes it expects. It is what lets `check` detect drift and lets `sync`
+replace its own output without touching anything else.
 
 ## Cockpit harness capability state
 
-The measured status of one feature for one agent harness:
+The confirmed status of one feature for one agent harness:
 
-- `enforced`: a mechanism refuses the prohibited operation, and dated evidence shows it doing so.
-- `instructed`: cockpit emits the guidance or setting, but enforcement has not been measured.
+- `enforced`: a mechanism refuses the prohibited operation, and a dated check shows it doing so.
+- `instructed`: cockpit emits the guidance or setting, but enforcement has not been confirmed.
 - `unavailable`: the harness offers no mechanism, so cockpit emits nothing and records why.
 
-Generating a file never promotes a feature to `enforced`; only a measured probe does.
+Generating a file never promotes a feature to `enforced`; only a probe of the real tool does.
 
 ## Cockpit surface overlay
 
@@ -180,6 +183,6 @@ core permissions or MCP approval.
 
 ## Cockpit evidence boundary
 
-The line between what cockpit has checked itself and what still needs an observation from
+The line between what cockpit has checked itself and what still needs confirmation from
 somewhere else: a running harness, a person, a vendor or a live runtime. A repository test proves
 cockpit's own behaviour; it does not prove that a harness loaded a generated file.

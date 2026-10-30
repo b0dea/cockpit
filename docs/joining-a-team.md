@@ -29,11 +29,11 @@ npm run cockpit:sync
 npm run cockpit:check
 ```
 
-`setup` acquires or verifies declared sibling repositories. `sync` authenticates this checkout,
+`setup` acquires or verifies declared sibling repositories. `sync` checks this checkout,
 writes its machine identity under `.cockpit/local/`, and refreshes generated files from
 `cockpit.toml`. Harness directory grants are stored relative to the cockpit root, so a clone in a
-different directory does not rewrite them. Docker ownership values remain path-bound but enter
-Compose only at execution; they are not committed.
+different directory does not rewrite them. The Docker label values that depend on the checkout path enter
+Compose only when a command runs; they are not committed.
 
 For Codex, cockpit writes those relative grants to
 `sandbox_workspace_write.writable_roots` with `sandbox_mode = "workspace-write"`. It does not
@@ -44,7 +44,7 @@ The root `.gitignore` has a `cockpit:ignore` region for installed dependencies, 
 state, secret resolver material, and a sibling checkout directory that lives below the cockpit
 root. `init` creates that region while preserving every line outside it. The first `sync` does the
 same for a valid hand-written configuration whose compatible team metadata is missing. Later
-`sync` and `check` authenticate the exact region and refuse an edited or stale one instead of
+`sync` and `check` verify the exact region and refuse an edited or stale one instead of
 overwriting it; `sync --dry-run` reports missing metadata without writing it.
 The sibling directory is escaped as a literal Git ignore path, so wildcard-shaped names do not
 match nearby directories. A `siblings_root` containing a line break or NUL is refused before

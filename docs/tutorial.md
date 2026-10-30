@@ -101,12 +101,12 @@ Exit code 0: nothing has drifted.
 
 | Generated | What it is |
 |---|---|
-| AGENTS.md, CLAUDE.md | Shared root instructions in AGENTS.md; CLAUDE.md imports them with `@AGENTS.md`. Existing team text remains outside cockpit-owned regions. |
+| AGENTS.md, CLAUDE.md | Shared root instructions in AGENTS.md; CLAUDE.md imports them with `@AGENTS.md`. Existing team text stays outside the regions cockpit writes. |
 | .claude/, .codex/, .opencode/, .cursor/, .grok/, opencode.jsonc, .agents/skills/ | Each harness's generated skills, subagents, hooks and supported permissions, in its own spelling |
-| .cockpit/guards/bash-guard.sh | The shared guard used by harness targets with an admitted guard adapter; unavailable targets emit no hook |
+| .cockpit/guards/bash-guard.sh | The shared guard script. cockpit installs its hook for Claude Code, Codex CLI and OpenCode only, not for Cursor or Grok Build |
 | compose.generated.yml | The Docker Compose project for the declared services, volumes and ports |
 | docs/cockpit/environment-decisions.md | A dated record of every environment decision, generated from the declarations |
-| fixtures/personas.generated.ts | Typed personas rendered from the declared persona source |
+| fixtures/personas.generated.ts | Typed personas generated from the declared persona source |
 | env/.secrets/.gitignore | An ignore boundary created before any secret material exists |
 | .cockpit/generated-environment-ownership.json | The ownership manifest: what cockpit wrote and the bytes it expects |
 | .cockpit/local/guard-identity | This machine's Node and cockpit handler identity for the guard. It ignores itself in Git, so the committed files stay identical on every clone; each clone's `sync` writes its own |

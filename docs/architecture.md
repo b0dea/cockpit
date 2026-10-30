@@ -36,7 +36,7 @@ healthy while the stack mounts the wrong checkout, or none.
 
 ### Configuration that parses does something
 
-Every schema field has an owner that consumes it. A field that is accepted and then ignored reads
+Every schema field is consumed by code. A field that is accepted and then ignored reads
 as a control the next person relies on, so it is treated as a defect. Where a harness offers no
 mechanism for a restriction, cockpit emits nothing and records the feature as `unavailable`
 rather than writing a setting that binds nothing.
@@ -65,15 +65,15 @@ These rules came from failures on shared machines:
   a process that dies leaves the directory behind for inspection instead of a half-written file.
 - **Unknown is not dead.** A lock or holder whose liveness cannot be established is reported, not
   stolen. Age alone never justifies removing it.
-- **Classification overrides intent.** Destructive commands act only on resources whose ownership
-  labels and accounting match, so "just delete it" cannot be expressed. The question cockpit asks
+- **Classification overrides intent.** Destructive commands act only on resources whose cockpit
+  labels and records match, so "just delete it" cannot be expressed. The question cockpit asks
   is "can I account for everything I am about to destroy?", not "does this look dangerous?".
 
 ### Why the evaluator is independent
 
 Self-assessment is overconfident: an agent that wrote the code also wrote the account of it. The
 evaluator is a separate subagent that reruns the declared verification commands, grades each
-acceptance criterion from that output, and may abstain when evidence is insufficient. Abstention
+acceptance criterion from that output, and may abstain when the output is not enough to decide. Abstention
 is a valid result; it is what turns a likely false pass into a visible gap.
 
 ### Prior art
@@ -84,7 +84,7 @@ write, and CLI and configuration references generated from the source so they ca
 
 ## Current platform limits
 
-Native Windows execution is not implemented. Process ownership, filesystem publication and
+Native Windows execution is not implemented. Process management, file publication and
 shell guards currently require macOS or Linux; use a host meeting the
 [platform requirements](getting-started.md#install-cockpit).
 
@@ -101,9 +101,9 @@ shell guards currently require macOS or Linux; use a host meeting the
 
 ## Processing path
 
-Configuration is declared and loaded, bounded evidence is observed, policy owners decide, the
-environment application sequences the work, and the shared executor dispatches child processes.
-Postchecks verify results before command handlers render them. The
+Configuration is declared and loaded, the environment is observed, policy code decides, the
+environment application orders the work, and the shared executor runs child processes.
+Postchecks verify results before command handlers print them. The
 [Cockpit evidence boundary](concepts.md#cockpit-evidence-boundary) applies at every step: a
 parsed declaration is not an observation, a dispatched command is not a successful postcheck,
 and a generated file does not show that its harness loaded it.
@@ -113,17 +113,17 @@ and a generated file does not show that its harness loaded it.
 Use a [Cockpit surface overlay](concepts.md#cockpit-surface-overlay) for product-specific rules,
 subagents, skills and hooks. A name collision must declare `replaces` with the original name and
 SHA-256. A later change to that original is reported as `OVERRIDDEN_CORE_CHANGED` before new
-output is accepted. Permissions and MCP authority stay in core declarations.
+output is accepted. Permissions and MCP servers stay in core declarations.
 
 Overlay merging belongs to `packages/cockpit/src/surfaces/merge.ts`; rendering continues through
-the existing surface owners. Publication stays within
+the existing surface code. Publication stays within
 [Cockpit generated ownership](concepts.md#cockpit-generated-ownership). See
 [Harness surfaces](harness-surfaces.md#ownership-and-extension) for the review procedure.
 
 ## Guards
 
 Extend policy in `packages/cockpit/src/guards/evaluator.ts`, then adapt its decision through the
-measured harness adapters. Do not interpret guard policy in shell or rebuild it in a CLI
+per-harness adapters. Do not interpret guard policy in shell or rebuild it in a CLI
 handler. A harness mechanism that has not been probed beside a deliberately broken control stays
 `instructed` or `unavailable`, as its
 [Cockpit harness capability state](concepts.md#cockpit-harness-capability-state) records.
@@ -131,10 +131,10 @@ handler. A harness mechanism that has not been probed beside a deliberately brok
 ## Runtime behavior
 
 Add a public command to `packages/cockpit/src/command-table.ts`, bind it in
-`packages/cockpit/src/cli.ts`, and sequence environment work through the applicable application
-owner. Every child process crosses `packages/cockpit/src/environment-exec/execute.ts`; health and
-lifecycle verdicts stay with their existing owners. Extend a schema field only together with the
-owner that consumes it.
+`packages/cockpit/src/cli.ts`, and order environment work through the environment application
+(`packages/cockpit/src/environment/application.ts`). Every child process crosses
+`packages/cockpit/src/environment-exec/execute.ts`; health and lifecycle verdicts stay in their
+existing modules. Add a schema field only together with the code that consumes it.
 
 The runtime sequence and recovery rules are in [Environment](environment.md). A new diagnostic
 needs one actionable remedy in [Troubleshooting](troubleshooting.md).
@@ -142,10 +142,10 @@ needs one actionable remedy in [Troubleshooting](troubleshooting.md).
 ## Harnesses
 
 A custom harness declares exactly one row for every feature. Each emitted row names its spelling,
-control, mechanism and measured date; an `enforced` row also binds exact evidence bytes. Custom
-modules are authenticated and filesystem-constrained, which limits ordinary writes but is not a
+control, mechanism and date measured; an `enforced` row also records the exact bytes it was
+confirmed against. Custom modules are checked and restricted in which files they may write, which limits ordinary writes but is not a
 sandbox for malicious code.
 
 Probe the exact harness version beside a deliberately broken control before changing a
 capability claim. Repository tests verify cockpit's side of the contract; native loading and
-enforcement need their own measurement through `cockpit selftest`.
+enforcement need their own check through `cockpit selftest`.

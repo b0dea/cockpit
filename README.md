@@ -11,8 +11,8 @@ tools, and grading by something other than the agent that did the work.**
 cockpit runs the environment your AI coding agents work in. You declare your product's
 repositories once in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`; cockpit starts the whole stack against your live local
 checkouts, renders each agent tool's instructions and skills, and hands finished work to an
-independent evaluator. Guard and permission support depends on the tool and its measured
-[capabilities](docs/capability-matrix.md). It holds none of your product code.
+independent evaluator. Guard and permission support depends on the tool; see the
+[capability matrix](docs/capability-matrix.md). It holds none of your product code.
 
 > **Status: pre-alpha and not yet published.** Commands, configuration and the
 > generated file layout may change without a compatibility layer before the first public release.
@@ -32,11 +32,11 @@ prompting does not fix:
    ports and seed data it needs to run the product live in someone's head or a stale script.
    cockpit declares them once and boots the product from the checkouts you are editing.
 2. **Agent configuration drifts.** Claude Code, Codex CLI and OpenCode each want their
-   instructions, skills, hooks and permissions in a different file and spelling. cockpit renders
+   instructions, skills, hooks and permissions in a different file and spelling. cockpit generates
    all of them from one declaration and fails `cockpit check` when any generated file changes.
 3. **Agents grade their own work.** "Done" is usually the author's own report. cockpit's work
    orders end with a separate evaluator that reruns the declared checks and grades each
-   acceptance criterion from that evidence, not from the author's summary.
+   acceptance criterion from those results, not from the author's summary.
 
 ## How it works
 
@@ -52,7 +52,7 @@ flowchart LR
     check -. "fails on drift" .-> surfaces
 ```
 
-`sync` writes every generated file and records what it owns. `check` compares those files with
+`sync` writes every generated file and records which files it wrote. `check` compares those files with
 what the configuration would produce now and fails on any difference. `up` starts the stack,
 `preflight` is the gate that says it is healthy, and `session` keeps the stack up for exactly as
 long as one agent command runs.
@@ -76,7 +76,7 @@ npm install --save-dev --save-exact @b0dea/cockpit
 Until the package is published, use the verified
 [source-package installation](docs/getting-started.md#install-from-source) instead of an npm link.
 
-**2. Run the first command block** of
+**2. Run the repository bootstrap block** of
 [examples/synthetic/README.md](examples/synthetic/README.md) in that directory.
 
 **3. Preview what cockpit generates.** The dry run lists every file it would write for the
@@ -113,18 +113,20 @@ section.
   data and stubbed vendors live in one validated file.
 - **Live checkouts, not copies.** The stack mounts the working trees your agent is editing.
 - **Same agent environment in every harness.** Rules, skills, subagents, hooks, MCP servers and
-  permissions are rendered for Claude Code, Codex CLI and OpenCode from one source.
-- **Drift is a failing check.** Generated files are committed, owned and compared byte for byte;
+  permissions are generated for Claude Code, Codex CLI and OpenCode from one source, plus
+  [unverified files](#generated-agent-tool-targets) for Cursor and Grok Build.
+- **Drift is a failing check.** Generated files are committed and compared byte for byte;
   `cockpit check` runs locally and in CI.
 - **Preview before every write.** `sync --dry-run` and `reset` show the exact changes; deleting
   anything stale or resetting data needs an interactive confirmation of that exact preview.
-- **One guard policy, rendered through measured adapters.** The policy denies pushes to protected
-  branches, edits to environment and secret files, and commands that reach declared hosted
-  databases or vendor hosts. The capability matrix records whether each harness enforces its
-  generated adapter.
+- **One guard policy.** When the agent tool runs cockpit's guard hook, it denies pushes to
+  protected branches, edits to the environment files declared in `cockpit.toml` and to `.secrets`,
+  and commands that reach declared hosted databases or vendor hosts, and it fails closed on input
+  it cannot read. The hook is installed for Claude Code, Codex CLI and OpenCode; that each tool
+  fires it on its own is not yet confirmed. See [Safety and autonomy](docs/safety-and-autonomy.md).
 - **Work orders with evaluator guidance.** Acceptance criteria and declared verification commands
-  are rendered with an evaluator surface that instructs a separate grading role. Native role
-  separation is unverified; see [Subagents in the built-in capability matrix](docs/harness-surfaces.md#built-in-capability-matrix).
+  are generated with an evaluator surface that instructs a separate grading role. That the tool
+  keeps the role separate is unverified; see [Subagents in the built-in capability matrix](docs/harness-surfaces.md#built-in-capability-matrix).
 - **Shared machines stay safe.** Port leases, holder tracking and `sleep` mean one agent cannot
   stop another agent's stack.
 - **Adopt what you already have.** `cockpit document` turns an existing shell-registry cockpit
@@ -141,6 +143,11 @@ section.
 
 ## Generated agent-tool targets
 
+Claude Code, Codex CLI and OpenCode are the fully supported targets. cockpit also writes Cursor
+and Grok Build files, but they are generated, not yet verified: nobody has confirmed those tools
+load them, and cockpit installs no guard for them. The capability matrix currently lists them as
+`unavailable` until a check confirms otherwise.
+
 | Harness | Target name | Where cockpit writes its surfaces |
 |---|---|---|
 | Claude Code | `claudecode` | CLAUDE.md and .claude/ (skills, evaluator subagent, guard hook, permissions) |
@@ -149,8 +156,9 @@ section.
 | Cursor | `cursor` | .cursor/ (rules, skills, MCP and permissions) |
 | Grok Build | `grokcli` | AGENTS.md and .grok/ (skills, MCP and permissions) |
 
-Generation is separate from native enforcement. The [capability matrix](docs/capability-matrix.md)
-records each feature as *enforced*, *instructed* or *unavailable*; see
+Generating a file is not the same as the tool enforcing it. The
+[capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed* or
+*unavailable*; see
 [Status and limits](#status-and-limits) before relying on a generated control.
 
 ## Status and limits
@@ -166,17 +174,18 @@ repository carries only synthetic fixtures. What is true today:
   migration notes.
 - **macOS and Linux.** CI runs both; supported Node versions are in
   [Getting started](docs/getting-started.md#install-cockpit). Windows is not supported.
-- **Runtime commands need a measured local Docker-compatible runtime.** `up`, `session`,
-  `preflight`, `down` and `reset` require Docker Compose and a successful local measurement.
+- **Runtime commands need a local Docker-compatible runtime that cockpit has measured.** `up`,
+  `session`, `preflight`, `down` and `reset` require Docker Compose and a successful
+  `cockpit runtime measure`.
   Generation and surfaces-only `setup` and `check` work without a container runtime; validating
   declared Compose files requires Docker Compose. See the
-  [prerequisites](docs/getting-started.md#install-cockpit) and the owned
+  [prerequisites](docs/getting-started.md#install-cockpit) and the
   [runtime identity and measurement table](docs/environment.md#measure-the-container-runtime).
-- **Generation and native enforcement have separate evidence.** The
+- **Generating a file does not prove the tool uses it.** The
   [capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*
-  or *unavailable* for its target. Generated files and passing adapter tests alone do not prove
-  that a native tool loads or enforces them. [Harness surfaces](docs/harness-surfaces.md#capability-states)
-  explains the states and how `cockpit selftest` measures them.
+  or *unavailable* for its target. Generated files and passing tests alone do not prove
+  that a tool loads or enforces them. [Harness surfaces](docs/harness-surfaces.md#capability-states)
+  explains the states and how `cockpit selftest` checks them.
 - **Not a sandbox.** Guards, Git ignore rules and file permissions stop mistakes, not malicious
   code running as your user. [Safety and autonomy](docs/safety-and-autonomy.md) lists what each
   guard does.
