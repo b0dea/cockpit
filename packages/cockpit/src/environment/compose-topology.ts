@@ -242,7 +242,7 @@ export function assessComposeTopology(
         diagnostics.push(Object.freeze({
             severity: 'error' as const, code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: `sibling:${sibling.slug}`,
             message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path}; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
-            fix: `bind-mount it in a service of the Compose file (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run npx --no cockpit sync`,
+            fix: `bind-mount it in a service of the Compose file (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>`,
         }))
     }
     for (const service of services) {

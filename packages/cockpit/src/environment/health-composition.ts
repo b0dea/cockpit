@@ -160,7 +160,7 @@ async function sleepingStack(
     if (stored.kind !== 'complete') return undefined
     const coordination = decodeCoordinationRecord(stored.value, stack)
     if (!coordination || coordination.holders.length > 0) return undefined
-    const fix = formatShellCommand(['npx', '--no', 'cockpit', 'up', '--config', configPath])
+    const fix = cockpitCommand('up', { config: configPath })
     return Object.freeze({
         severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
         message: 'the stack is asleep: no session holds it and its services are stopped, so there is nothing running to check; run up to start it, then rerun this command',
