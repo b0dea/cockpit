@@ -291,7 +291,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
                         code: 'GENERATED_ENVIRONMENT_UNAVAILABLE', target: contextLink ? resolve(target, '..') : target,
                         message: expect.stringContaining(`ordinary ${directory || contextLink ? 'directory' : 'file'}`),
                     })]))
-                    expect(result.diagnostics.some(({ message }) => message.includes('rerun npx --no cockpit up --config cockpit.toml'))).toBe(true)
+                    expect(result.diagnostics.some(({ message }) => message.includes('rerun npx --no cockpit up --config <your cockpit.toml>'))).toBe(true)
                 }
                 const foreignAfter = await lstat(foreignFile)
                 expect({ dev: foreignAfter.dev, ino: foreignAfter.ino }).toEqual({ dev: foreignBefore.dev, ino: foreignBefore.ino })

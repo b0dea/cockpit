@@ -1,6 +1,6 @@
 import { snapshotJson, type Diagnostic, type SetupRefusalEvidence } from './environment/contract.js'
 import type { InvocationRecord } from './invocation.js'
-import { admitDiagnosticFix, type FixContext } from './fix-catalogue.js'
+import { admitDiagnosticFix, bindConfigPath, cockpitCommand, type FixContext } from './fix-catalogue.js'
 
 export type { Diagnostic } from './environment/contract.js'
 
@@ -13,35 +13,35 @@ export const mechanism = {
 const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; fix: string }>>> = Object.freeze({
     INIT_CANONICAL_OWNERSHIP_MISSING: Object.freeze({
         why: 'init cannot safely resume when its recorded bootstrap state and generated ownership disagree',
-        fix: 'restore the committed ownership metadata, then rerun npx --no cockpit init',
+        fix: 'restore the committed ownership metadata, then rerun the same npx --no cockpit init command',
     }),
     SURFACE_SOURCE_UNAVAILABLE: Object.freeze({
         why: 'generated instructions cannot be trusted without the declared sibling source',
-        fix: 'restore the named sibling checkout at its declared path, then rerun npx --no cockpit sync',
+        fix: `restore the named sibling checkout at its declared path, then rerun ${cockpitCommand('sync')}`,
     }),
     SURFACE_OWNERSHIP_INVALID: Object.freeze({
         why: 'cockpit cannot prove which generated settings it is allowed to replace',
-        fix: 'restore the last committed generated ownership metadata, then rerun npx --no cockpit sync',
+        fix: `restore the last committed generated ownership metadata, then rerun ${cockpitCommand('sync')}`,
     }),
     SURFACE_STATE_CONFLICT: Object.freeze({
         why: 'sync would overwrite content that cockpit did not write',
-        fix: 'for a generated file you edited, move the change into cockpit.toml or a surface overlay, then undo the edit or delete the file and rerun npx --no cockpit sync; for the team\'s own .claude/settings.json, .codex/config.toml or .codex/hooks.json, have a human approve npx --no cockpit sync --adopt <path>',
+        fix: `for a generated file you edited, move the change into cockpit.toml or a surface overlay, then undo the edit or delete the file and rerun ${cockpitCommand('sync')}; for the team's own .claude/settings.json, .codex/config.toml or .codex/hooks.json, have a human approve ${cockpitCommand('sync', { args: '--adopt <path>' })}`,
     }),
     GENERATED_ARTIFACT_DRIFT: Object.freeze({
         why: 'generated files no longer match the canonical cockpit configuration',
-        fix: 'run npx --no cockpit sync with the same configuration file, then retry',
+        fix: `run ${cockpitCommand('sync')}, then retry`,
     }),
     GENERATED_OWNERSHIP_INVALID: Object.freeze({
         why: 'publication cannot safely update files without authenticated ownership metadata',
-        fix: 'restore the committed ownership metadata and rerun npx --no cockpit sync',
+        fix: `restore the committed ownership metadata and rerun ${cockpitCommand('sync')}`,
     }),
     GUARD_AUTHORITY_UNAVAILABLE: Object.freeze({
         why: 'the guard cannot make a safe allow or deny decision without current generated authority',
-        fix: 'restore cockpit.toml and the generated guard files, then have a human run npx --no cockpit sync',
+        fix: `restore cockpit.toml and the generated guard files, then have a human run ${cockpitCommand('sync')}`,
     }),
     GUARD_REFUSED: Object.freeze({
         why: 'the requested command is outside the current cockpit guard policy',
-        fix: 'follow the refusal reason or ask a human to change cockpit.toml and run npx --no cockpit sync',
+        fix: `follow the refusal reason or ask a human to change cockpit.toml and run ${cockpitCommand('sync')}`,
     }),
     RUNTIME_UNAVAILABLE: Object.freeze({
         why: 'cockpit cannot start or inspect the declared environment without a reachable container runtime',
@@ -49,11 +49,11 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     RUNTIME_UNMEASURED: Object.freeze({
         why: 'the current runtime has no measured support row, so its timing and capability bounds are unknown',
-        fix: 'run npx --no cockpit runtime measure --image <ref> --write, review the change, then retry',
+        fix: `run ${cockpitCommand('runtime measure', { args: '--image <ref> --write' })}, review the change, then retry`,
     }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',
-        fix: 'for a failed up attempt, run npx --no cockpit up to resume or npx --no cockpit down to release; otherwise have every owning session run npx --no cockpit sleep, then retry',
+        fix: `for a failed up attempt, run ${cockpitCommand('up')} to resume or ${cockpitCommand('down')} to release; otherwise have every owning session run ${cockpitCommand('sleep')}, then retry`,
     }),
     PORT_FAMILY_COLLISION: Object.freeze({
         why: 'one or more ports selected for this stack are already in use',
@@ -65,11 +65,11 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     SETUP_MANUAL_MISSING: Object.freeze({
         why: 'a manually managed sibling must already exist before cockpit can wire it',
-        fix: 'create the named checkout at its declared path, then run npx --no cockpit setup again',
+        fix: `create the named checkout at its declared path, then run ${cockpitCommand('setup')} again`,
     }),
     SETUP_REMOTE_MISMATCH: Object.freeze({
         why: 'rewiring an existing checkout to a different repository could replace the wrong source',
-        fix: 'correct the checkout remote or the sibling declaration, then run npx --no cockpit setup again',
+        fix: `correct the checkout remote or the sibling declaration, then run ${cockpitCommand('setup')} again`,
     }),
 })
 
@@ -148,16 +148,17 @@ function projectDiagnostics(input: readonly Diagnostic[], context?: FixContext):
     const diagnostics = new Map<string, Diagnostic>()
     const guidance = new Map<string, Guidance>()
     for (const source of input) {
-        const { severity, code, message, target, fix } = source
+        const { severity, code, target, fix } = source
         const admitted = admitDiagnosticFix(source, context)
         const identity = { code, ...(target === undefined ? {} : { target }) }
+        const message = bindConfigPath(source.message, context)
         const diagnostic = { severity, ...identity, message, ...(admitted ? { fix: admitted.command } : {}) }
         diagnostics.set(JSON.stringify(diagnostic), diagnostic)
         if (fix !== undefined && !admitted) {
-            const row = { ...identity, text: fix }
+            const row = { ...identity, text: bindConfigPath(fix, context) }
             guidance.set(JSON.stringify(row), row)
         } else if (fix === undefined && Object.prototype.hasOwnProperty.call(COMMON_REFUSAL_GUIDANCE, code)) {
-            const row = { ...identity, text: COMMON_REFUSAL_GUIDANCE[code]!.fix }
+            const row = { ...identity, text: bindConfigPath(COMMON_REFUSAL_GUIDANCE[code]!.fix, context) }
             guidance.set(JSON.stringify(row), row)
         }
     }
@@ -202,7 +203,7 @@ export function renderHumanDiagnostics(
                 ? COMMON_REFUSAL_GUIDANCE[diagnostic.code]
                 : undefined
             if (common) {
-                const fix = diagnostic.fix ?? guidance[0]?.text ?? common.fix
+                const fix = diagnostic.fix ?? guidance[0]?.text ?? bindConfigPath(common.fix, fixContext)
                 return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}\n`
                     + `What failed: ${escapeForTerminal(diagnostic.message)}\n`
                     + `Why it matters: ${escapeForTerminal(common.why)}\n`

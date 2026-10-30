@@ -64,9 +64,9 @@ describe('reviewable upgrade plan', () => {
                 candidate: discovered.candidate,
                 affectedOverrideOriginals: discovered.affectedOverrideOriginals,
                 commands: [
-                    "npx --no cockpit sync --config 'cockpit.toml' --dry-run",
-                    "npx --no cockpit sync --config 'cockpit.toml'",
-                    "npx --no cockpit preflight --config 'cockpit.toml'",
+                    "npx --no cockpit sync --config cockpit.toml --dry-run",
+                    "npx --no cockpit sync --config cockpit.toml",
+                    "npx --no cockpit preflight --config cockpit.toml",
                 ],
             },
             diagnostics: [],

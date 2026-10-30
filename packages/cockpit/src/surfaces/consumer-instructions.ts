@@ -6,6 +6,9 @@
 // the text in the shared instruction region beside the testing-tier guide.
 //
 // Why it is short: this text loads into every agent session, and adherence falls as it grows.
+// Every command is spelled through cockpitCommand so an agent can run it exactly as written.
+
+import { cockpitCommand, type ConfiguredCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'consumer-instructions',
@@ -23,11 +26,6 @@ export interface ConsumerInstructionsInput {
     readonly skills: readonly Readonly<{ name: string; description: string | undefined }>[]
 }
 
-const ACQUIRE = {
-    auto: '`npx --no cockpit setup` clones it',
-    manual: 'a person clones it',
-    none: 'already on disk',
-} as const
 const HOSTS_SHOWN = 5
 
 const inline = (value: string) => value.replace(/\s+/g, ' ').replaceAll('`', "'").trim()
@@ -41,6 +39,8 @@ function hosts(label: string, declared: readonly string[]): string {
 }
 
 export function renderConsumerInstructions(input: ConsumerInstructionsInput): string {
+    const run = (command: ConfiguredCommand, args?: string) => code(cockpitCommand(command, { config: input.configFile, ...(args === undefined ? {} : { args }) }))
+    const acquire = { auto: `${run('setup')} clones it`, manual: 'a person clones it', none: 'already on disk' } as const
     const { declaredDatabaseHosts, declaredVendorHosts, pushRefusedBranches } = input.guards
     const noHosts = declaredDatabaseHosts.length + declaredVendorHosts.length === 0
     const lines: string[] = [
@@ -48,15 +48,15 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         `This is the ${code(input.name)} cockpit. It gives every agent the same instructions, skills and guards for the repositories below${input.hasStack ? ', and starts them against your working copies' : ''}.`,
         '',
         '| Directory | Purpose | How it reaches disk |', '| --- | --- | --- |',
-        ...input.siblings.map(row => `| ${code(row.dir)} | ${cell(row.purpose)} | ${row.acquire}: ${ACQUIRE[row.acquire]} |`),
+        ...input.siblings.map(row => `| ${code(row.dir)} | ${cell(row.purpose)} | ${row.acquire}: ${acquire[row.acquire]} |`),
         '',
         '# How to work here', '',
     ]
     if (input.hasStack) lines.push(
-        `- Run \`npx --no cockpit session -- <command>\` to start the stack, run the command against it and release the stack, so nothing is left holding ports. \`npx --no cockpit up\` and \`npx --no cockpit down\` do it by hand; \`npx --no cockpit doctor\` explains a stack that will not start.`,
+        `- Run ${run('session', '-- <command>')} to start the stack, run the command against it and release the stack, so nothing is left holding ports. ${run('up')} and ${run('down')} do it by hand (down deletes containers, so it names the Docker daemon); ${run('doctor')} explains a stack that will not start.`,
     )
     lines.push(
-        `- Pass \`--config ${inline(input.configFile)}\` to every cockpit command. After editing that file, run \`npx --no cockpit sync --dry-run\` to preview the generated files, \`npx --no cockpit sync\` to write them and \`npx --no cockpit check\` to confirm nothing drifted. Generated files are committed and compared byte for byte, so an unsynced edit fails review.`,
+        `- Every cockpit command takes \`--config ${inline(input.configFile)}\`. After editing that file, run ${run('sync', '--dry-run')} to preview the generated files, ${run('sync')} to write them and ${run('check')} to confirm nothing drifted. Generated files are committed and compared byte for byte, so an unsynced edit fails review.`,
         '',
         '# Rules and why', '',
     )
@@ -67,7 +67,7 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         `- Do not push to ${pushRefusedBranches.map(code).join(' or ')}. The guard refuses it, because those branches are shared and a bad push reaches everyone.`,
     )
     lines.push(
-        `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. \`npx --no cockpit check\` reports a hand edit as drift and sync refuses to overwrite it; to recover, undo the edit (or delete a file cockpit wrote whole), then sync.`,
+        `- Do not hand-edit generated files; edit ${code(input.configFile)} and sync. ${run('check')} reports a hand edit as drift and sync refuses to overwrite it; to recover, undo the edit (or delete a file cockpit wrote whole), then sync.`,
         '',
         '# Skills', '',
         ...input.skills.map(skill => `- ${code(skill.name)}: ${skill.description ? inline(skill.description) : 'not declared'}`),

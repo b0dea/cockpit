@@ -330,7 +330,7 @@ else process.exit(64)
 
         const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
         const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
-        const fix = `./node_modules/.bin/cockpit up --config ${candidate.configPath}`
+        const fix = `npx --no cockpit up --config ${candidate.configPath}`
 
         expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable', checks: [] } })
         expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'unavailable', checks: [] } })
@@ -722,7 +722,7 @@ else process.exit(64)
                 verdict: 'unavailable',
                 reason: 'Runtime docker-desktop is not supported by a complete measurement row (docker info: OperatingSystem "Docker Desktop", '
                     + `Name "docker-desktop", OSType "linux"; host ${process.platform}; measured rows: docker-desktop (unmeasured)). `
-                    + 'Measure it with: npx --no cockpit runtime measure --config <cockpit.toml> --image <local-image> --write',
+                    + 'Measure it with: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image> --write',
             }),
         ]))
     })

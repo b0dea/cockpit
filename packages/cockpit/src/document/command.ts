@@ -585,7 +585,7 @@ export async function classifyEstateObservation(
         classification,
         sourceObservationSha256: sourceObservationSha256(root, rows),
         notice: classification === 'one-sibling'
-            ? 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with npx --no cockpit sibling add'
+            ? 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with the sibling add command'
             : classification === 'no-runnable-product'
                 ? 'build enough product to run before scaffolding a cockpit environment'
                 : classification === 'incomplete-multi-repository'
@@ -1241,10 +1241,10 @@ function completeConfigurationDocument(
     const diagnostics = diagnosticsFor(attributions, [])
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${NO_GUARD_HOSTS_DECISION}, so the guard denies no command by host`,
-        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync once a non-local environment exists' })
+        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists' })
     if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
-        fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync' })
+        fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml>' })
     if (!destination) diagnostics.unshift({ severity: 'info', code: 'DOCUMENT_STDOUT_TARGET',
         message: 'stdout bytes are intended for the canonical cockpit.toml location; arbitrary redirection has no schema-location guarantee',
         target: '<cockpit-root>/cockpit.toml' })

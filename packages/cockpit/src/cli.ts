@@ -1074,7 +1074,7 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; image?: string; write?: boolean }
         const [operation, ...extra] = parsed.positionals
         if (operation !== 'measure' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx --no cockpit runtime measure --config <file> --image <local-image>')
+            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>')
         }
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
@@ -1084,7 +1084,7 @@ async function decodeRequest(
     if (handler === 'sibling') {
         const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; mount?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
-        const shape = 'npx --no cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--mount <always|none|profile:NAME>] [--instruction-pointer], or npx --no cockpit sibling remove <slug> --config <file>'
+        const shape = 'npx --no cockpit sibling add <slug> --config <your cockpit.toml> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--mount <always|none|profile:NAME>] [--instruction-pointer], or npx --no cockpit sibling remove <slug> --config <your cockpit.toml>'
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
         }
@@ -1144,12 +1144,33 @@ async function decodeRequest(
     }
 }
 
+type InvocationOptions = { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined;
+    readonly env: Readonly<Record<string, string | undefined>> }
+
+// Printed remedies name a configuration placeholder; every outcome of a configured command binds it
+// to the path this invocation was given, not only the outcomes whose handler built a fix context.
 async function invokeHandler(
     request: HandlerRequest,
     handlers: Partial<CommandHandlers>,
     operators: OperatorHandlers,
-    options: { readonly interactive: boolean; readonly json: boolean; readonly ci: string | undefined;
-        readonly env: Readonly<Record<string, string | undefined>> },
+    options: InvocationOptions,
+    io: CliIo,
+): Promise<CommandOutcome> {
+    const outcome = await dispatchHandler(request, handlers, operators, options, io)
+    const input: unknown = request.input
+    const configPath = input !== null && typeof input === 'object' && 'configPath' in input && typeof input.configPath === 'string'
+        ? resolve(input.configPath) : null
+    if (configPath === null) return outcome
+    return { ...outcome, fixContext: outcome.fixContext
+        ? { ...outcome.fixContext, resolvedConfigPath: outcome.fixContext.resolvedConfigPath ?? configPath }
+        : { resolvedConfigPath: configPath, generatedTargets: [] } }
+}
+
+async function dispatchHandler(
+    request: HandlerRequest,
+    handlers: Partial<CommandHandlers>,
+    operators: OperatorHandlers,
+    options: InvocationOptions,
     io: CliIo,
 ): Promise<CommandOutcome> {
     const unavailable = (): CommandOutcome => usageOutcome(
@@ -1412,8 +1433,8 @@ export async function runCli(
         return finish(EXIT_CODES.success)
     }
     // Resolved before dispatch: the publication tail below may only forward outcomes, not decide anything.
-    const usageHint = definition ? `Run 'cockpit ${definition.name} --help' for usage.\n`
-        : commandName ? `Run 'cockpit --help' for the command list.\n` : renderHelp()
+    const usageHint = definition ? `Run 'npx --no cockpit ${definition.name} --help' for usage.\n`
+        : commandName ? `Run 'npx --no cockpit --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
     const duplicateSetupOption = definition?.handler === 'setup'

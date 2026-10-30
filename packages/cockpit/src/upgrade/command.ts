@@ -2,6 +2,7 @@ import type { GeneratedEnvironmentCommandOutcome } from '../environment/generate
 import { runConfiguredUpgradeApplication } from '../environment/upgrade-application.js'
 import { snapshotJson, type Diagnostic, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
 import type { SurfaceFeature } from '../surfaces/contract.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'upgrade-command',
@@ -213,16 +214,11 @@ function captureAffectedOriginals(value: JsonSnapshot | undefined): readonly Aff
     return Object.freeze(originals)
 }
 
-function shellQuote(value: string): string {
-    return `'${value.replaceAll("'", `'"'"'`)}'`
-}
-
-function reviewCommands(configPath: string): readonly [string, string, string] {
-    const config = shellQuote(configPath)
+function reviewCommands(config: string): readonly [string, string, string] {
     return Object.freeze([
-        `npx --no cockpit sync --config ${config} --dry-run`,
-        `npx --no cockpit sync --config ${config}`,
-        `npx --no cockpit preflight --config ${config}`,
+        cockpitCommand('sync', { config, args: '--dry-run' }),
+        cockpitCommand('sync', { config }),
+        cockpitCommand('preflight', { config }),
     ])
 }
 

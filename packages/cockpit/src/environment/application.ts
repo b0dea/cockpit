@@ -47,7 +47,7 @@ import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity }
 import { guardInstalledDirectories, guardSearchDirectories, guardSecretFiles } from '../guards/protected-locations.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
-import { formatShellCommand, type FixContext } from '../fix-catalogue.js'
+import { cockpitCommand, formatShellCommand, type FixContext } from '../fix-catalogue.js'
 import { completeGuardTransport, planGuardTransport, type NativeGuardOutput } from '../guards/harness-adapter.js'
 import {
     abortStateTransaction,
@@ -307,10 +307,10 @@ export interface GuardEvaluationApplicationResult {
 // could loosen its guard.
 type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string }
 function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
-    const sync = `\`${formatShellCommand(['npx', '--no', 'cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
+    const sync = `\`${cockpitCommand('sync', { config: identity.configPath })}\` in a terminal, outside the agent`
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
-    return `${what}; ${why}, so every tool call is held, including \`npx --no cockpit sync\` run through this agent. Fix: ${action}.`
+    return `${what}; ${why}, so every tool call is held, including a sync run through this agent. Fix: ${action}.`
 }
 
 const GUARD_RESTORABLE = new Set(['.cockpit/generated-environment-ownership.json', '.cockpit/guards/bash-guard.sh',
@@ -1814,7 +1814,7 @@ export async function runSetup(
                 code: ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_OFFERED,
                 message: 'the declared sibling has no cockpit instruction pointer',
                 target: pointer.path,
-                fix: 'review the proposed AGENTS.md block, then run npx --no cockpit setup --config <file> --write-instruction-pointers',
+                fix: 'review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers',
             })
             mutationMayHaveOccurred ||= pointer.kind === 'written'
         }
@@ -2102,7 +2102,7 @@ function lifecycleRefusal(
 }
 
 function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
-    return formatShellCommand(['cockpit', command, '--config', context.source.path])
+    return cockpitCommand(command, { config: context.source.path })
 }
 
 function forwardedRefusal(
@@ -2735,7 +2735,7 @@ async function executeUpRound(
             // Stack resources carry the SHA-256 of the file that started them and `down` removes only
             // matching ones, so the old file has to come back for one `down`; `up` is not needed for it.
             const file = basename(context.source.path)
-            const sync = formatShellCommand(['cockpit', 'sync', '--config', context.source.path])
+            const sync = cockpitCommand('sync', { config: context.source.path })
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
                 `the recorded stack was started from a different ${file}, and cockpit removes a stack only under the exact configuration that started it — fix: restore the previous ${file}, run \`${sync}\` then \`${lifecycleSuggestion(context, 'down')}\`, restore the intended ${file}, then run \`${sync}\` and \`${lifecycleSuggestion(context, 'up')}\``,
@@ -4297,7 +4297,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
         code: 'GUARD_HOSTS_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.GUARD_HOSTS_UNDECLARED,
         message: 'guards.hosted_db_hosts and guards.vendor_endpoint_hosts are both empty, so the guard denies no agent command by host even though this cockpit declares a runtime',
         target: 'guards',
-        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
+        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
     })])
 }
 

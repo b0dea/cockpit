@@ -40,17 +40,17 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function refusal(file: string, key: string, reason: string): Extract<AdoptedSettingsInspection, { kind: 'refusal' }> {
     return { kind: 'refusal', diagnostic: { code: 'SURFACE_ADOPTION_REFUSED', target: `${file}#${key}`,
-        message: `adopted settings in ${file} set \`${key}\`, which ${reason}; remove \`${key}\` from ${file} and re-run npx --no cockpit sync` } }
+        message: `adopted settings in ${file} set \`${key}\`, which ${reason}; remove \`${key}\` from ${file} and re-run npx --no cockpit sync --config <your cockpit.toml>` } }
 }
 
 function parse(path: AdoptableSurfacePath, bytes: string, file: string): AdoptedSettingsInspection {
     let value: unknown
     try { value = path === '.codex/config.toml' ? parseToml(bytes) : JSON.parse(bytes) } catch (error) {
         return { kind: 'refusal', diagnostic: { code: 'SURFACE_ADOPTION_REFUSED', target: file,
-            message: `${file} is not valid ${path === '.codex/config.toml' ? 'TOML' : 'JSON'} (${error instanceof Error ? error.message.split('\n', 1)[0] : 'unparseable'}); fix it and re-run npx --no cockpit sync` } }
+            message: `${file} is not valid ${path === '.codex/config.toml' ? 'TOML' : 'JSON'} (${error instanceof Error ? error.message.split('\n', 1)[0] : 'unparseable'}); fix it and re-run npx --no cockpit sync --config <your cockpit.toml>` } }
     }
     if (!record(value)) return { kind: 'refusal', diagnostic: { code: 'SURFACE_ADOPTION_REFUSED', target: file,
-        message: `${file} must hold one settings object at its root; fix it and re-run npx --no cockpit sync` } }
+        message: `${file} must hold one settings object at its root; fix it and re-run npx --no cockpit sync --config <your cockpit.toml>` } }
     return { kind: 'complete', value }
 }
 

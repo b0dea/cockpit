@@ -5,7 +5,7 @@ import { createConnection } from 'node:net'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
-import { formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
@@ -790,7 +790,7 @@ export function createLifecycleCommandAdapters(
             topology: runtime.topology, runtime: binding.generatedRuntime,
         })
         if (!runtimeAuthority) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
-            'generated-data', `generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', context.source.path])}`)
+            'generated-data', `generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${cockpitCommand('up', { config: context.source.path })}`)
         const planned = await withLifecycleConfiguration(context, async (configuration) => planDataMode({
             environment: generated,
             mode: data.default_mode,
@@ -922,7 +922,7 @@ export function createLifecycleCommandAdapters(
             const sources = await projectGeneratedApplicationMountSources(generatedApplication)
             if (!sources) return undefined
             if ('kind' in sources) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `generated host input must be an ordinary ${sources.expectedType} without symbolic-link components; missing, unreadable or wrong-type inputs cannot be handed to Docker; restore or create the declared input, then rerun npx --no cockpit up --config cockpit.toml`,
+                `generated host input must be an ordinary ${sources.expectedType} without symbolic-link components; missing, unreadable or wrong-type inputs cannot be handed to Docker; restore or create the declared input, then rerun ${cockpitCommand('up')}`,
                 sources.path))
             expectedMountSources = sources
         } else {
@@ -939,7 +939,7 @@ export function createLifecycleCommandAdapters(
             const override = await composeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
                 createHash('sha256').update(ownership.bytes).digest('hex'))
             if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run npx --no cockpit sync`,
+                `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
                 COMPOSE_OWNERSHIP_FILE))
             artifacts = Object.freeze([...declared, override])
             expectedMountSources = Object.freeze([...new Set([

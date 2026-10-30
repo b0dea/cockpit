@@ -172,7 +172,7 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
                     code: ENVIRONMENT_CODES.SETUP_MANUAL_MISSING,
                     message: 'manual checkout is absent',
                     target,
-                    fix: 'create the checkout, then run npx --no cockpit setup again',
+                    fix: 'create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again',
                 }],
                 result: result('report', false),
             }

@@ -81,7 +81,7 @@ describe('diagnostic envelope', () => {
 
     it('projects the same exact admitted command in human and JSON output only with explicit bound inputs', () => {
         const diagnostic = Object.freeze({ severity: 'error' as const, code: 'GENERATED_ARTIFACT_DRIFT',
-            message: 'Owned artifact differs', target: 'fixtures/personas.generated.ts', fix: 'run npx --no cockpit sync --config <file>' })
+            message: 'Owned artifact differs', target: 'fixtures/personas.generated.ts', fix: 'run npx --no cockpit sync --config <your cockpit.toml>' })
         const context = { resolvedConfigPath: '/workspace/demo config.toml', generatedTargets: ['fixtures/personas.generated.ts'] }
         const outcome = { result: { resolvedConfigPath: context.resolvedConfigPath }, diagnostics: [diagnostic] }
         const command = "npx --no cockpit sync --config '/workspace/demo config.toml'"
@@ -96,6 +96,6 @@ describe('diagnostic envelope', () => {
         const unbound = JSON.parse(renderJsonResponse(outcome))
         expect(unbound.diagnostics[0]).not.toHaveProperty('fix')
         expect(unbound.guidance).toEqual([{ code: diagnostic.code, target: diagnostic.target, text: diagnostic.fix }])
-        expect(diagnostic.fix).toBe('run npx --no cockpit sync --config <file>')
+        expect(diagnostic.fix).toBe('run npx --no cockpit sync --config <your cockpit.toml>')
     })
 })

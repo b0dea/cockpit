@@ -618,7 +618,7 @@ export function admitRuntimeMeasurement(
             : `${reason} (${dockerInfo}; measured rows: ${rows.length}). ${action}`
     }
     const remeasure = (reason: string) => refuse(detail(reason,
-        'Measure it with: npx --no cockpit runtime measure --config <cockpit.toml> --image <local-image> --write'))
+        'Measure it with: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image> --write'))
     if (!identity) {
         return refuse(detail('Docker runtime is not a recognised product, so no measurement row can apply',
             'Report these docker info values to the cockpit maintainers so the runtime can be identified'))
@@ -2119,7 +2119,7 @@ export function admitBuiltImageLauncher(input: {
         const detail = executionFailureDetail(build.stderr)
         return refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
             `the image for built service ${contract.service} did not build (${build.code})${detail ? ` (${detail})` : ''}`
-            + `; the service cannot start until its image builds; ${detail ? 'fix the reported build error' : 'inspect the build output'}, then rerun npx --no cockpit up`)
+            + `; the service cannot start until its image builds; ${detail ? 'fix the reported build error' : 'inspect the build output'}, then rerun npx --no cockpit up --config <your cockpit.toml>`)
     }
     const launcher = input.launcherOutcome === undefined ? undefined : authenticatedExecutionOutcome(input.launcherOutcome, plan.launcher)
     if (!launcher) return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'built image launcher evidence is unauthenticated')
@@ -2892,7 +2892,7 @@ export async function observeRuntimePortFamily(input: {
                 freshness: { state: 'current' },
                 remedy: `${named.join('; ')}${mismatched.length > named.length ? `; and ${mismatched.length - named.length} more` : ''}: `
                     + 'stop the process holding a leased port (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`), '
-                    + 'or restart the stack with `npx --no cockpit up --config cockpit.toml` to restore a missing listener',
+                    + 'or restart the stack with `npx --no cockpit up --config <your cockpit.toml>` to restore a missing listener',
             })
         }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {

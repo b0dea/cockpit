@@ -1,6 +1,6 @@
 import { dirname, resolve } from 'node:path'
 import { loadCockpitConfig } from '../config/load.js'
-import { formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     decodeLifecycleRecord,
@@ -290,7 +290,7 @@ function producers(input: {
         surfaces: async () => {
             const application = await checkedApplication
             const observations = application && observeGeneratedApplicationSurfaces(application)
-            if (!observations) throw new TypeError('surface health needs a current checked generated publication; run npx --no cockpit sync --config cockpit.toml')
+            if (!observations) throw new TypeError('surface health needs a current checked generated publication; run npx --no cockpit sync --config <your cockpit.toml>')
             return observations
         },
         generated: async () => {
@@ -323,7 +323,7 @@ function producers(input: {
                     const runtimeAuthority = projectGeneratedApplicationRuntimeAuthority(application, {
                         topology: session.readiness.topology, runtime,
                     })
-                    if (!runtimeAuthority) throw new TypeError(`generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', session.context.source.path])}`)
+                    if (!runtimeAuthority) throw new TypeError(`generated data runtime authority is unavailable; current runtime identities and ports cannot be authenticated — fix: ${cockpitCommand('up', { config: session.context.source.path })}`)
                     const planned = await withLifecycleConfiguration(session.context, async (configuration) => planDataMode({
                         environment: generated,
                         mode: data.default_mode,
@@ -663,7 +663,7 @@ export function createHealthCommandAdapters(
                 })
                 if (stage.kind !== 'complete') return refuse?.(stage.diagnostics)
                 if (stage.authority.stage !== 'steady') {
-                    const fix = formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', loaded.result.source.path])
+                    const fix = cockpitCommand('up', { config: loaded.result.source.path })
                     return refuse?.([{
                         severity: 'error', code: ENVIRONMENT_CODES.STATE_UNSEEDED, target: loaded.result.source.path,
                         message: `lifecycle is still in bootstrap — ordinary health checks require a steady lifecycle after the first bring-up; fix: ${fix}; then retry the command that stopped`,

@@ -93,8 +93,10 @@ the guide section with the detail.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
   refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run
   `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. Guide: *Existing agent settings*.
-- **A repository joins or leaves an existing cockpit.** Run `cockpit sibling add` or
-  `cockpit sibling remove`, then the `sync --dry-run`, `sync` and `check` sequence.
+- **A repository joins or leaves an existing cockpit.** Run
+  `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml` or
+  `./node_modules/.bin/cockpit sibling remove <slug> --config cockpit.toml`, then the `sync --dry-run`, `sync` and
+  `check` sequence.
   Guide: *Add a repository*, *Remove a repository*.
 - **A sibling has a `.env.schema`.** Follow **Secret handling** below.
 
@@ -107,15 +109,15 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
   `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`;
   the probe refuses a `DOCKER_CONTEXT` override. The guide's *Measure the runtime* says which
   runtimes are recognised. A measurement takes a few
-  minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check` fail and the guard hold
+  minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check --config cockpit.toml` fail and the guard hold
   tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
-  `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
+  `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold;
   `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`
   removes its runtime, so ask first; `down` refuses unless `DOCKER_CONTEXT` names the daemon it
   deletes from.
-- Upgrade: install the new version, then run `./node_modules/.bin/cockpit check`,
-  `./node_modules/.bin/cockpit sync --dry-run` and `./node_modules/.bin/cockpit sync`. The guard
+- Upgrade: install the new version, then run `./node_modules/.bin/cockpit check --config cockpit.toml`,
+  `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and `./node_modules/.bin/cockpit sync --config cockpit.toml`. The guard
   trusts only the CLI it was generated for, so after an upgrade the human may need to run
   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal.
 

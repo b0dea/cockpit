@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { isProxy } from 'node:util/types'
 import { GeneratedEnvironment, type DataMode, type GeneratedEnvironment as GeneratedEnvironmentDeclaration, type Provenance } from '../schema.js'
 import { consumeLoadedConfigProjection, type LoadedConfigProjection } from '../config/load.js'
-import { formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
@@ -320,7 +320,7 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         || runtime.runtime.publicEnv.COCKPIT_OWNER_ID !== namespace.paths.coordination(input.stackId).cockpitId
         || !isDeepStrictEqual(snapshotJson(runtime.declaration), snapshotJson(parsed)))) {
         return refusal('generated data runtime authority does not match this checkout, coordination namespace, stack, configuration and generation; data work could target another runtime',
-            'generated data runtime', formatShellCommand(['./node_modules/.bin/cockpit', 'up', '--config', configuration.source.path]))
+            'generated data runtime', cockpitCommand('up', { config: configuration.source.path }))
     }
     const data = parsed.data
     if (!data) return refusal('the generated environment declares no data modes', 'environment.generated.data')

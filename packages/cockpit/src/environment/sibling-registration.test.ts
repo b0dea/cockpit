@@ -385,7 +385,7 @@ describe('sibling remove', () => {
         expect(after).not.toContain('slug = "docs"')
         expect(after).toContain('# Machine floor, measured once.')
         expect(after).toContain('# Port leases.\n[ports.bases]')
-        expect(removed.artifact).toContain('sync --dry-run')
+        expect(removed.artifact).toContain(`npx --no cockpit sync --config ${configPath} --dry-run`)
         // docs is never mounted, so no guide projection of it exists and none is flagged.
         expect(removed.result).toMatchObject({ flaggedForReview: [] })
         expect(removed.artifact).not.toContain('.sibling-docs-')

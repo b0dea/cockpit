@@ -167,8 +167,8 @@ applied silently. For a read-only release plan before installing, follow
 1. Run `npm install --save-dev --save-exact @b0dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
 2. Preview the generated changes without writing:
-   `./node_modules/.bin/cockpit sync --dry-run --config cockpit.toml`.
-3. A human runs `./node_modules/.bin/cockpit sync --interactive --config cockpit.toml` in a terminal and approves the exact
+   `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run`.
+3. A human runs `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal and approves the exact
    stale-removal digest when the upgrade renamed or retired an owned surface. The guard blocks an agent from
    regenerating its own guard, so do not try to route around it; ask the human to run it.
 4. Review the diff. A hand edit to an owned file stops sync with a conflict (`SURFACE_STATE_CONFLICT`):

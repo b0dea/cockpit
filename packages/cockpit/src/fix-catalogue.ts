@@ -4,8 +4,19 @@ import type { Diagnostic } from './environment/contract.js'
 export const mechanism = {
     id: 'executable-remedy-catalogue',
     module: 'packages/cockpit/src/fix-catalogue.ts',
-    exports: ['admitDiagnosticFix', 'formatShellCommand'],
+    exports: ['admitDiagnosticFix', 'formatShellCommand', 'cockpitCommand', 'bindConfigPath'],
 } as const
+
+// A printed command has to run as printed. Every configured command refuses without --config, so a
+// remedy written where the path is unknown names this placeholder, and bindConfigPath replaces it
+// with the resolved path wherever the command line supplied one.
+const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
+// down and reset delete Docker resources, so the CLI refuses them until the daemon is named; the
+// active context is the daemon an unprefixed docker command reaches.
+const DAEMON_SELECTION = 'DOCKER_CONTEXT="$(docker context show)"'
+
+export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
+    | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove'
 
 export interface FixContext {
     // Supplied by the command boundary from resolved configuration and its generated inventory,
@@ -29,17 +40,43 @@ export function formatShellCommand(argv: readonly string[]): string {
         : `'${argument.replaceAll("'", "'\"'\"'")}'`).join(' ')
 }
 
+/**
+ * The runnable spelling of a cockpit command. `operand` (a sibling slug) precedes --config as in
+ * the command's usage line; `args` follows it as written, so it may hold `<placeholders>`.
+ */
+export function cockpitCommand(command: ConfiguredCommand,
+    options: Readonly<{ config?: string; operand?: string; args?: string }> = {}): string {
+    const config = options.config === undefined ? CONFIG_PLACEHOLDER : formatShellCommand([options.config])
+    const daemon = command === 'down' || command === 'reset' ? `${DAEMON_SELECTION} ` : ''
+    const operand = options.operand === undefined ? '' : ` ${formatShellCommand([options.operand])}`
+    return `${daemon}npx --no cockpit ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
+}
+
+function bindablePath(path: string | null | undefined): path is string {
+    return typeof path === 'string' && isAbsolute(path) && normalize(path) === path && dirname(path) !== path
+        && !unsafeControl.test(path)
+}
+
+/** Replaces the configuration placeholder in printed text with the resolved path, shell-quoted. */
+export function bindConfigPath(text: string, context?: FixContext): string {
+    const path = context?.resolvedConfigPath
+    return bindablePath(path) ? text.replaceAll(`--config ${CONFIG_PLACEHOLDER}`, `--config ${formatShellCommand([path])}`) : text
+}
+
 function safeTarget(target: string): boolean {
     return !unsafeControl.test(target) && !target.includes('\\') && !target.includes(':')
         && target.split('/').every(part => part !== '' && part !== '.' && part !== '..')
 }
 
+// The one remedy the catalogue executes. Producers keep it as a string literal so the diagnostic
+// inventory captures it beside its code; the catalogue admits only this exact spelling.
+const GENERATED_DRIFT_FIX = `run ${cockpitCommand('sync')}`
+
 export function admitDiagnosticFix(diagnostic: Diagnostic, context?: FixContext): ExecutableFix | undefined {
     if (diagnostic.severity !== 'error' || diagnostic.code !== 'GENERATED_ARTIFACT_DRIFT'
-        || diagnostic.fix !== 'run npx --no cockpit sync --config <file>' || !diagnostic.target || !context) return undefined
+        || diagnostic.fix !== GENERATED_DRIFT_FIX || !diagnostic.target || !context) return undefined
     const path = context.resolvedConfigPath
-    if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || dirname(path) === path
-        || unsafeControl.test(path) || !safeTarget(diagnostic.target)
+    if (!bindablePath(path) || !safeTarget(diagnostic.target)
         || !context.generatedTargets.includes(diagnostic.target)) return undefined
     const argv = Object.freeze(['npx', '--no', 'cockpit', 'sync', '--config', path] as const)
     const command = formatShellCommand(argv)

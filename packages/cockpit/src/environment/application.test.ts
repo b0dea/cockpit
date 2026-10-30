@@ -515,7 +515,7 @@ describe('guard policy construction', () => {
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
             change === 'changed' ? 'publication changed during evaluation'
-                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including \`npx --no cockpit sync\` run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including a sync run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
                     : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
@@ -674,7 +674,7 @@ describe('guard policy construction', () => {
         // An edited configuration holds every call until a human regenerates, and the reason says which file and how.
         const canonicalConfig = realpathSync(configPath)
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated; guard policy comes from it and an edit takes effect only once a human approves it, so every tool call is held, including \`npx --no cockpit sync\` run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+            `${canonicalConfig} changed since the guards were generated; guard policy comes from it and an edit takes effect only once a human approves it, so every tool call is held, including a sync run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {

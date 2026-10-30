@@ -445,7 +445,7 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
             return refusal('SURFACE_STATE_CONFLICT', 'cockpit markers are present but the ownership record has no region for them', entry.path)
         }
         if (current && priorOwned?.kind === 'shared-region' && digest(current.bytes) !== priorOwned.region.sha256) {
-            return refusal('SURFACE_STATE_CONFLICT', `the text between cockpit's markers was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, undo the edit between the markers, then rerun npx --no cockpit sync`, entry.path)
+            return refusal('SURFACE_STATE_CONFLICT', `the text between cockpit's markers was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, undo the edit between the markers, then rerun npx --no cockpit sync --config <your cockpit.toml>`, entry.path)
         }
         if (!current && priorOwned) return refusal('SURFACE_STATE_CONFLICT', 'prior Markdown region is missing', entry.path)
         return markdownPostimage(existingBytes, entry)
@@ -861,7 +861,7 @@ export function classifyGeneratedPaths(facts: readonly GeneratedPathFact[], obse
             : Object.freeze([Object.freeze({ code: 'SURFACE_STATE_CONFLICT' as const, target: fact.path,
                 message: state === 'unknown' ? 'cockpit could not confirm this generated path is still the plain file or link inside the cockpit root that it last wrote'
                     : state === 'missing' ? 'this generated path is missing and nothing in this sync recreates it'
-                        : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, undo the edit or delete the file, then rerun npx --no cockpit sync' })])
+                        : 'this generated file was edited by hand since cockpit last wrote it, and sync does not overwrite hand edits; move the change into the cockpit configuration or a surface overlay, undo the edit or delete the file, then rerun npx --no cockpit sync --config <your cockpit.toml>' })])
         return Object.freeze({ fact, state, ...(rawSha256 ? { rawSha256 } : {}), diagnostics })
     })
     return Object.freeze({ kind: 'complete', paths: Object.freeze(paths) })

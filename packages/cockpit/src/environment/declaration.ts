@@ -32,7 +32,7 @@ export function runtimeNotDeclared(target: string): EnvironmentDiagnostic {
         code: 'ENVIRONMENT_NOT_DECLARED' satisfies typeof ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED,
         message: 'this cockpit declares no runtime environment, so there is nothing to start, stop, observe or measure; sync and check publish and verify the harness surfaces only',
         target,
-        fix: 'declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync',
+        fix: 'declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml>',
     })
 }
 

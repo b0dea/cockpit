@@ -118,7 +118,7 @@ describe('estate observation classification', () => {
         expect(await classifyEstateObservation({ root: estateRoot }, { observe: observe(estateRoot, repositories) })).toEqual({
             kind: 'complete', status: 0, diagnostics: [], result: {
                 classification: 'one-sibling',
-                notice: 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with npx --no cockpit sibling add',
+                notice: 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with the sibling add command',
                 gaps: [],
                 runnable: [{ slug: 'web', path: 'web', disposition: 'confirmed' }],
                 sourceObservationSha256: observationDigest(estateRoot, repositories),
