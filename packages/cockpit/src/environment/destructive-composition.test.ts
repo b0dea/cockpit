@@ -165,11 +165,6 @@ describe('destructive command composition', () => {
         ].join('\n'), { mode: 0o700 })
         await chmod(dockerPath, 0o700)
         await writeFile(join(root, 'selection.json'), '{"context":"default","endpoint":"unix:///tmp/synthetic.sock"}\n')
-        await writeFile(join(root, 'volume-discovery.jsonl'), Array.from({ length: 12 }, (_, index) => JSON.stringify({
-            id: `synthetic-volume-${index.toString().padStart(2, '0')}`,
-            name: `synthetic-volume-${index.toString().padStart(2, '0')}`,
-            labels: {}, referenced: false, bytes: '1B',
-        })).join('\n') + '\n')
         await writeFile(join(root, 'runtime-up'), '')
         const input = Object.freeze({
             configPath,
@@ -185,6 +180,12 @@ describe('destructive command composition', () => {
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
         await publishComposeOwnership(root, loaded.result)
+        // Only volumes carrying this stack's label are inspected, so the listed volumes carry it.
+        await writeFile(join(root, 'volume-discovery.jsonl'), Array.from({ length: 12 }, (_, index) => JSON.stringify({
+            id: `synthetic-volume-${index.toString().padStart(2, '0')}`,
+            name: `synthetic-volume-${index.toString().padStart(2, '0')}`,
+            labels: { 'dev.b0dea.cockpit.stack-id': loaded.result.stackId }, referenced: false, bytes: '1B',
+        })).join('\n') + '\n')
         await writeFile(join(root, 'topology.json'), JSON.stringify({ services: { api: {
             labels: {
                 'dev.b0dea.cockpit.stack-id': loaded.result.stackId,

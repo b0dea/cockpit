@@ -393,8 +393,14 @@ ${services.map((service, index) => `                    ${service}) printf '%s\\
         case "$2" in
             ls)
                 if [ -f ${shellQuote(removedPath)} ]; then exit 0; fi
-                if has --filter "$@"; then printf '%s\\n' ${shellQuote(containerId)};
-                else printf '%s\\n' ${shellQuote(resource)}; fi
+                # Reclaim discovery lists the stack's labelled containers; its network-holder
+                # listing finds none here, since the stack's network is not part of this fixture.
+                case "$joined" in
+                    *"label=dev.b0dea.cockpit.stack-id="*) printf '%s\\n' ${shellQuote(resource)} ;;
+                    *"network="*) ;;
+                    *) if has --filter "$@"; then printf '%s\\n' ${shellQuote(containerId)};
+                       else printf '%s\\n' ${shellQuote(resource)}; fi ;;
+                esac
                 exit 0 ;;
             rm) : > ${shellQuote(removedPath)}; exit 0 ;;
             inspect)

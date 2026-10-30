@@ -92,8 +92,33 @@ const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: Re
           id: kind === 'volume' ? name : id, name,
           labels: kind === 'image' ? {} : Object.fromEntries(Object.keys(labels).map((key) => [key, itemLabels[key] ?? ''])),
           referenced: kind === 'image' ? name !== '<none>' : false,
-          bytes: kind === 'network' ? null : kind === 'container' && bytes !== null ? `${bytes}B (virtual 200MB)` : bytes,
+          bytes: kind === 'network' || kind === 'container' ? null : bytes,
       }
+// The daemon applies the stack-label filter itself, so the fixture keeps both answers: every row,
+// and the rows carrying this stack's label that the filtered listing returns.
+const writeDockerRows = async (root: string, kind: string, rows: readonly ReclaimResource[], encode = (row: ReclaimResource) => JSON.stringify(dockerRow(row))) => {
+    await writeFile(join(root, `docker.${kind}`), `${rows.map(encode).join('\n')}\n`)
+    const owned = rows.filter((row) => row.labels['dev.b0dea.cockpit.stack-id'] === stackId)
+    await writeFile(join(root, `docker.${kind}.owned`), `${owned.map(encode).join('\n')}\n`)
+}
+// Answers `docker container ls --filter network=<name>` with every container attached to a network,
+// whatever its labels: the listing a network's holders are found by.
+const writeNetworkHolders = async (root: string, holders: Readonly<Record<string, readonly string[]>>) => {
+    await writeFile(join(root, 'docker.container.holders'), `${Object.entries(holders)
+        .map(([id, networks]) => JSON.stringify({ id, networks: networks.join(',') })).join('\n')}\n`)
+}
+// Serves the fixture rows by argv: an inspection prints one object per id, the stack-label filter
+// selects the owned rows, and a network filter selects the attached holders.
+const fakeDocker = `#!/bin/sh
+if [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi
+case "$1" in --host) shift 2;; *) exit 91;; esac
+kind="$1"
+if [ "$2" = inspect ]; then echo "$kind" >> "$PWD/inspect.calls"; shift 4; status=0; for id do if [ "$kind" = image ] || [ "$kind" = volume ]; then /bin/cat -- "$PWD/inspect.$id" || status=1; else /bin/cat -- "$PWD/inspect.$kind.$id" || status=1; fi; done; exit $status; fi
+if [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi
+suffix=
+for arg do case "$arg" in "label=dev.b0dea.cockpit.stack-id=${stackId}") suffix=.owned;; network=*) suffix=.holders;; esac; done
+/bin/cat -- "$PWD/docker.$kind$suffix"
+`
 const runtimeByDiscovery = new WeakMap<object, ReturnType<typeof executable>>()
 const selectionByDiscovery = new WeakMap<object, object>()
 
@@ -149,11 +174,11 @@ const authenticatedDiscovery = async (
         groups.set(item.kind, [...(groups.get(item.kind) ?? []), item])
     }
     for (const [kind, rows] of groups) {
-        await writeFile(join(root, `docker.${kind}`), `${rows.map((row) => {
+        await writeDockerRows(root, kind, rows, (row) => {
             const shown = options.displayedBytes?.[row.id]
             const encoded = dockerRow(row) as Record<string, unknown>
             return JSON.stringify(shown === undefined ? encoded : kind === 'build-cache' ? { ...encoded, Size: shown } : { ...encoded, bytes: shown })
-        }).join('\n')}\n`)
+        })
         if (kind === 'image') for (const row of rows) {
             await writeFile(join(root, `inspect.${row.id}`), `${JSON.stringify({
                 id: row.id, labels: Object.fromEntries(Object.keys(labels).map((key) => [key, row.labels[key] ?? ''])),
@@ -168,18 +193,16 @@ const authenticatedDiscovery = async (
                 options.networkInspection?.(row) ?? { id: row.id, members: row.referenced ? `endpoint-${row.id} ` : '' },
             )}\n`)
         }
-        if (kind === 'container') for (const row of rows) {
-            // `name:<network>` stands for a created, never-started container, which Docker reports
-            // by network name with an empty id.
-            const networks = Object.fromEntries((options.containerNetworks?.[row.id] ?? []).map((networkId) => networkId.startsWith('name:')
-                ? [networkId.slice(5), { NetworkID: '' }]
-                : [`network-${networkId.slice(0, 8)}`, { NetworkID: networkId }]))
-            await writeFile(join(root, `inspect.container.${row.id}`), `${JSON.stringify({ id: row.id, networks })}\n`)
-        }
     }
+    // A holder names each network it is attached to: `name:<network>` directly, as a created,
+    // never-started container does, or a network id resolved to that network's name.
+    const networkName = (reference: string) => reference.startsWith('name:') ? reference.slice(5)
+        : resources.find(({ kind, id }) => kind === 'network' && id === reference)?.name ?? `network-${reference.slice(0, 8)}`
+    await writeNetworkHolders(root, Object.fromEntries(Object.entries(options.containerNetworks ?? {})
+        .map(([id, networks]) => [id, networks.map(networkName)])))
     await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
     const script = join(root, 'docker')
-    const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif [ "$2" = inspect ]; then echo "$kind" >> "$PWD/inspect.calls"; shift 4; status=0; for id do if [ "$kind" = image ] || [ "$kind" = volume ]; then /bin/cat -- "$PWD/inspect.$id" || status=1; else /bin/cat -- "$PWD/inspect.$kind.$id" || status=1; fi; done; exit $status; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
+    const bytes = Buffer.from(fakeDocker)
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
     const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path' as const }
@@ -190,14 +213,19 @@ const authenticatedDiscovery = async (
     })
     if (plans === undefined) throw new Error('discovery plan unavailable')
     const containerPlan = plans.find(({ labels: item }) => item.resourceKind === 'container')
-    expect(containerPlan?.argv.slice(0, 8)).toEqual([script, '--host', dockerEndpoint, 'container', 'ls', '--all', '--size', '--no-trunc'])
+    const owned = ['--filter', `label=dev.b0dea.cockpit.stack-id=${stackId}`]
+    expect(containerPlan?.argv.slice(0, 9)).toEqual([script, '--host', dockerEndpoint, 'container', 'ls', '--all', '--no-trunc', ...owned])
     expect(containerPlan?.argv.at(-1)).toContain('.Label "dev.b0dea.cockpit.owner-id"')
-    expect(plans.find(({ labels: item }) => item.resourceKind === 'image')?.argv.at(-1)).not.toContain('.Label')
+    expect(containerPlan?.argv.at(-1)).toContain('"bytes":null')
+    const imagePlan = plans.find(({ labels: item }) => item.resourceKind === 'image')
+    expect(imagePlan?.argv.slice(3, 9)).toEqual(['image', 'ls', '--all', '--no-trunc', ...owned])
+    expect(imagePlan?.argv.at(-1)).not.toContain('.Label')
+    expect(plans.find(({ labels: item }) => item.resourceKind === 'network')?.argv.slice(3, 8)).toEqual(['network', 'ls', '--no-trunc', ...owned])
     expect(plans.find(({ labels: item }) => item.resourceKind === 'network')?.argv.at(-1)).toContain('"bytes":null')
+    expect(plans.find(({ labels: item }) => item.resourceKind === 'volume')?.argv).not.toContain('--filter')
     expect(plans.find(({ labels: item }) => item.resourceKind === 'build-cache')?.argv).toEqual([
         script, '--host', dockerEndpoint, 'builder', 'du', '--format', 'json',
     ])
-    expect(plans.every(({ argv }) => !argv.includes('--filter'))).toBe(true)
     const observations = await Promise.all([...groups.keys()].map(async (kind) => {
         const step = plans.find((candidate) => candidate.labels.resourceKind === kind)
         if (step === undefined) throw new Error('discovery step unavailable')
@@ -423,7 +451,7 @@ describe('reclaim classification', () => {
 })
 
 describe('runtime discovery authority', () => {
-    it('keeps a network referenced by another holder and releases one held only by its own stack', async () => {
+    it('keeps a network held by a container outside the stack listing and releases one held only by its own stack', async () => {
         const root = await canonicalTemp('cockpit-network-references-')
         const foreignLabels = { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId }
         try {
@@ -456,9 +484,12 @@ describe('runtime discovery authority', () => {
                     'container-created': ['name:owned-created'],
                 },
             })
+            // The listing is scoped to this stack's label, so the foreign and unlabelled resources are
+            // absent from discovery; the unlabelled and foreign containers still hold their networks.
+            expect(observed.resources.filter(({ kind }) => kind !== 'network').map(({ id }) => id))
+                .toEqual(['container-created-own', 'container-own'])
             expect(observed.resources.filter(({ kind }) => kind === 'network').map(({ id, referenced }) => ({ id, referenced }))).toEqual([
                 { id: 'network-created', referenced: true },
-                { id: 'network-foreign', referenced: false },
                 { id: 'network-orphan', referenced: false },
                 { id: 'network-own', referenced: false },
                 { id: 'network-running', referenced: true },
@@ -472,7 +503,6 @@ describe('runtime discovery authority', () => {
             expect(classified.resources.filter(({ kind }) => kind === 'network')
                 .map(({ id, ownership, action }) => ({ id, ownership, action }))).toEqual([
                 { id: 'network-created', ownership: 'current', action: 'report-only' },
-                { id: 'network-foreign', ownership: 'foreign', action: 'report-only' },
                 { id: 'network-orphan', ownership: 'current', action: 'teardown' },
                 { id: 'network-own', ownership: 'current', action: 'teardown' },
                 { id: 'network-running', ownership: 'current', action: 'report-only' },
@@ -528,7 +558,7 @@ describe('runtime discovery authority', () => {
                 return { authority: admitDockerSelection(selectionSteps, evidence), selectionSteps, evidence }
             }
             await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
-            await writeFile(join(root, 'docker.container'), `${JSON.stringify(dockerRow(resource()))}\n`)
+            await writeDockerRows(root, 'container', [resource()])
             const valid = await observe()
             expect(valid.authority).toBeDefined()
             expect(admitDockerSelection(valid.selectionSteps, valid.evidence)).toBeUndefined()
@@ -617,14 +647,11 @@ describe('runtime discovery authority', () => {
         try {
             // 1.029 * 1e9 is 1028999999.9999999 in floating point; real daemons print sizes like this.
             const observed = await authenticatedDiscovery(root, [
-                resource({ id: 'sized-container', bytes: 8_190 }),
-                resource({ id: 'sha256:sized-image', name: 'synthetic-image', kind: 'image', labels: {}, bytes: 1_029_000_000 }),
+                resource({ id: 'sha256:sized-image', name: 'synthetic-image', kind: 'image', bytes: 1_029_000_000 }),
                 resource({ id: 'sized-cache', name: 'sized-cache', kind: 'build-cache', labels: {}, bytes: 1_213_000 }),
-            ], discoveryApi, { displayedBytes: {
-                'sized-container': '8.19kB (virtual 499MB)', 'sha256:sized-image': '1.029GB', 'sized-cache': '1.213MB',
-            } })
+            ], discoveryApi, { displayedBytes: { 'sha256:sized-image': '1.029GB', 'sized-cache': '1.213MB' } })
             expect(Object.fromEntries(observed.resources.map(({ id, bytes }) => [id, bytes]))).toEqual({
-                'sized-container': 8_190, 'sha256:sized-image': 1_029_000_000, 'sized-cache': 1_213_000,
+                'sha256:sized-image': 1_029_000_000, 'sized-cache': 1_213_000,
             })
         } finally { await rm(root, { recursive: true, force: true }) }
     })
@@ -633,14 +660,19 @@ describe('runtime discovery authority', () => {
         const root = await canonicalTemp('cockpit-discovery-chunks-')
         try {
             const volumes = Array.from({ length: 130 }, (_, index) => resource({
-                id: `volume-${String(index).padStart(3, '0')}`, name: `volume-${String(index).padStart(3, '0')}`, kind: 'volume', labels: {}, bytes: null,
+                id: `volume-${String(index).padStart(3, '0')}`, name: `volume-${String(index).padStart(3, '0')}`, kind: 'volume', bytes: null,
+            }))
+            // Volumes are listed whole so a reset sees a foreign volume under a declared name, but
+            // only this stack's volumes are inspected.
+            const foreignVolumes = Array.from({ length: 70 }, (_, index) => resource({
+                id: `foreign-${index}`, name: `foreign-${index}`, kind: 'volume', labels: {}, bytes: null,
             }))
             const images = Array.from({ length: 65 }, (_, index) => resource({
-                id: `sha256:${String(index).padStart(64, '0')}`, name: `image-${index}`, kind: 'image', labels: {}, bytes: 1,
+                id: `sha256:${String(index).padStart(64, '0')}`, name: `image-${index}`, kind: 'image', bytes: 1,
             }))
-            const observed = await authenticatedDiscovery(root, [...volumes, ...images])
+            const observed = await authenticatedDiscovery(root, [...volumes, ...foreignVolumes, ...images])
 
-            expect(observed.resources.filter(({ kind }) => kind === 'volume')).toHaveLength(130)
+            expect(observed.resources.filter(({ kind }) => kind === 'volume')).toHaveLength(200)
             const calls = (await readFile(join(root, 'inspect.calls'), 'utf8')).trim().split('\n')
             expect({ volume: calls.filter((kind) => kind === 'volume').length, image: calls.filter((kind) => kind === 'image').length })
                 .toEqual({ volume: 3, image: 2 })
@@ -659,7 +691,7 @@ describe('runtime discovery authority', () => {
     it('fails the whole discovery closed when one id in a chunk vanished before inspection, as the per-id path did', async () => {
         const root = await canonicalTemp('cockpit-discovery-vanished-')
         try {
-            const volumes = ['kept-a', 'vanished', 'kept-b'].map((name) => resource({ id: name, name, kind: 'volume', labels: {}, bytes: null }))
+            const volumes = ['kept-a', 'vanished', 'kept-b'].map((name) => resource({ id: name, name, kind: 'volume', bytes: null }))
             const vanish: DiscoveryApi = { ...discoveryApi, executeProbe: async (step, options) => {
                 // Docker prints the surviving objects, reports the missing one on stderr and exits nonzero.
                 if (step.labels.resourceKind === 'volume-inspection') await rm(join(root, 'inspect.vanished'), { force: true })
@@ -674,7 +706,7 @@ describe('runtime discovery authority', () => {
         const root = await canonicalTemp('cockpit-discovery-labels-')
         try {
             const observed = await authenticatedDiscovery(root, [
-                resource({ id: 'unlabelled', labels: {} }),
+                resource({ id: 'unlabelled', name: 'unlabelled', kind: 'volume', labels: {}, bytes: null }),
                 resource({ id: 'broken', labels: { ...labels, 'dev.b0dea.cockpit.owner-id': 'broken' } }),
             ])
             expect(observed.observedAt).not.toBe('2026-09-08T00:00:01.000Z')
@@ -697,6 +729,18 @@ describe('reset planning', () => {
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true }),
             ])
             expect(observed.resources[0]?.generation).toBeUndefined()
+            expect(await planReset(resetInput(root, { generatedHostPaths: [], discovery: observed }))).toEqual(expect.objectContaining({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })],
+            }))
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('refuses a declared volume name that an unlabelled volume holds', async () => {
+        const root = await canonicalTemp('cockpit-reset-unowned-name-')
+        try {
+            const observed = await authenticatedDiscovery(root, [
+                resource({ id: 'session-data', name: 'session-data', kind: 'volume', labels: {}, bytes: null }),
+            ])
             expect(await planReset(resetInput(root, { generatedHostPaths: [], discovery: observed }))).toEqual(expect.objectContaining({
                 kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })],
             }))

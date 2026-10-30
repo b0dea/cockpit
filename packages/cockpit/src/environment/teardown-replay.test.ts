@@ -69,7 +69,7 @@ const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: Re
           id: kind === 'volume' ? name : id, name,
           labels: kind === 'image' ? {} : Object.fromEntries(Object.keys(labels).map((key) => [key, itemLabels[key] ?? ''])),
           referenced: kind === 'image' ? name !== '<none>' : false,
-          bytes: kind === 'network' ? null : kind === 'container' && bytes !== null ? `${bytes}B (virtual 200MB)` : bytes,
+          bytes: kind === 'network' || kind === 'container' ? null : bytes,
       }
 const executable = {
     canonicalPath: '/usr/local/bin/docker', invocationPath: '/usr/local/bin/docker', sha256: sha('docker'), executionMode: 'verified-path' as const,
@@ -93,8 +93,11 @@ const authenticatedInput = async (
         groups.set(item.kind, [...(groups.get(item.kind) ?? []), item])
     }
     for (const [kind, rows] of groups) {
-        const output = [...rows].sort((a, b) => a.id.localeCompare(b.id)).map((row) => JSON.stringify(dockerRow(row))).join('\n')
-        await writeFile(join(root, `docker.${kind}`), `${output}\n`)
+        const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id))
+        const output = (selected: readonly ReclaimResource[]) => `${selected.map((row) => JSON.stringify(dockerRow(row))).join('\n')}\n`
+        // The daemon applies the stack-label filter, so the fake keeps the filtered answer beside the whole one.
+        await writeFile(join(root, `docker.${kind}`), output(sorted))
+        await writeFile(join(root, `docker.${kind}.owned`), output(sorted.filter((row) => row.labels['dev.b0dea.cockpit.stack-id'] === stackId)))
         if (kind === 'image') for (const row of rows) await writeFile(join(root, `inspect.${row.id}`), `${JSON.stringify({
             id: row.id, labels: Object.fromEntries(Object.keys(labels).map((key) => [key, row.labels[key] ?? ''])),
         })}\n`)
@@ -106,15 +109,15 @@ const authenticatedInput = async (
         if (kind === 'network') for (const row of rows) await writeFile(join(root, `inspect.network.${row.id}`), `${JSON.stringify({
             id: row.id, members: row.referenced ? `endpoint-${row.id} ` : '',
         })}\n`)
-        if (kind === 'container') for (const row of rows) await writeFile(join(root, `inspect.container.${row.id}`), `${JSON.stringify({
-            id: row.id,
-            networks: Object.fromEntries((containerNetworks[row.id] ?? []).map((networkId) => [networkId, { NetworkID: networkId }])),
-        })}\n`)
     }
+    // Every container attached to a network, whatever its labels, answers the network filter.
+    const networkName = (networkId: string) => resources.find(({ kind, id }) => kind === 'network' && id === networkId)?.name ?? networkId
+    await writeFile(join(root, 'docker.container.holders'), `${Object.entries(containerNetworks)
+        .map(([id, networks]) => JSON.stringify({ id, networks: networks.map(networkName).join(',') })).join('\n')}\n`)
     await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
     const script = join(root, 'docker')
     // Inspection is chunked, so the fake answers every id of one call, as Docker does.
-    const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$id"; done; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$kind.$id"; done; exit; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
+    const bytes = Buffer.from(`#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$id"; done; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$kind.$id"; done; exit; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\nsuffix=\nfor arg do case "$arg" in "label=dev.b0dea.cockpit.stack-id=${stackId}") suffix=.owned;; network=*) suffix=.holders;; esac; done\n/bin/cat -- "$PWD/docker.$kind$suffix"\n`)
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
     const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path' as const }
@@ -354,9 +357,10 @@ describe('teardown replay', () => {
             const result = await planTeardown({ ...authenticated.value, declaredCacheIds: [buildCacheId] })
             expect(result.kind).toBe('complete')
             if (result.kind !== 'complete') return
+            // Containers are listed without `--size`, so their bytes stay unknown rather than zero.
             expect(result.byteAccounting).toEqual({
-                observed: { orphans: 12, images: null, buildCache: 40, staleNetworks: null },
-                reclaimable: { orphans: 12, images: 0, buildCache: 40, staleNetworks: 0 },
+                observed: { orphans: null, images: null, buildCache: 40, staleNetworks: null },
+                reclaimable: { orphans: null, images: 0, buildCache: 40, staleNetworks: 0 },
                 action: null,
                 actuallyReclaimed: null,
             })
@@ -410,8 +414,8 @@ describe('teardown replay', () => {
 
     it('refuses byte totals that overflow exact integer accounting', async () => {
         const authenticated = await authenticatedInput([
-            resource({ id: 'large', bytes: Number.MAX_SAFE_INTEGER }),
-            resource({ id: 'one-more', bytes: 1 }),
+            resource({ id: 'large', name: 'large', kind: 'image', bytes: Number.MAX_SAFE_INTEGER }),
+            resource({ id: 'one-more', name: 'one-more', kind: 'image', bytes: 1 }),
         ])
         try {
             expect(await planTeardown(authenticated.value)).toEqual(expect.objectContaining({ kind: 'refusal' }))

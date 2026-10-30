@@ -68,10 +68,9 @@ const REQUIRED_LABELS = Object.freeze({
 })
 const MAX_RESOURCES = 4_096
 const OUTPUT_LIMIT = 1_048_576
-// Discovery stays unfiltered, so a busy daemon yields hundreds of resources to inspect. One Docker
-// client per resource exhausted the destructive budget, so each type is inspected in chunks. The
-// chunk is sized from the per-call output cap: every printed object is held to a fixed budget, and
-// a chunk's cap is its object count times that budget.
+// Inspections are chunked so a stack with many resources still needs few Docker clients. The chunk
+// is sized from the per-call output cap: every printed object is held to a fixed budget, and a
+// chunk's cap is its object count times that budget.
 const INSPECTION_OBJECT_BUDGET = 16_384
 const INSPECTION_CHUNK = Math.min(64, Math.floor(OUTPUT_LIMIT / INSPECTION_OBJECT_BUDGET))
 // [executable, --host, endpoint, <type>, inspect, --format, <format>, ...ids]
@@ -120,6 +119,7 @@ const DAEMON_ENV = /^(?:DOCKER|BUILDX|CONTAINER|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY
 const SAFE_ENV = new Set(['PATH', 'TMPDIR', 'LANG', 'LC_ALL'])
 
 interface DiscoveryAuthority {
+    readonly stackId: StackId
     readonly executable: ResolvedExecutable
     readonly cwd: string
     readonly env: Readonly<Record<string, string>>
@@ -630,11 +630,18 @@ export function admitDockerSelection(
     }
 }
 
-function runtimeCommand(kind: Exclude<ReclaimResourceKind, 'cache'>, selection: DockerSelection): readonly string[] {
+// Ownership is label-based: a resource without this stack's label is never removed, so listing the
+// rest of a shared daemon only cost time. Listing and inspecting every container, image and volume
+// on a daemon with a hundred unrelated containers made each `down` observation take seconds, and
+// `container ls --size` alone ran past the step timeout. Volumes stay unfiltered because a reset
+// refuses when a declared volume name belongs to something this stack does not own, and an
+// unlabelled volume of that name would otherwise be invisible; their inspection is still scoped.
+function runtimeCommand(kind: Exclude<ReclaimResourceKind, 'cache'>, selection: DockerSelection, stackId: string): readonly string[] {
     if (kind === 'build-cache') return ['--host', selection.endpoint, 'builder', 'du', '--format', 'json']
     const prefix = ['--host', selection.endpoint]
-    const command = kind === 'container' ? ['container', 'ls', '--all', '--size', '--no-trunc']
-        : kind === 'volume' ? ['volume', 'ls'] : kind === 'image' ? ['image', 'ls', '--all', '--no-trunc'] : [kind, 'ls', '--no-trunc']
+    const owned = ['--filter', `label=${REQUIRED_LABELS.stack}=${stackId}`]
+    const command = kind === 'container' ? ['container', 'ls', '--all', '--no-trunc', ...owned]
+        : kind === 'volume' ? ['volume', 'ls'] : kind === 'image' ? ['image', 'ls', '--all', '--no-trunc', ...owned] : [kind, 'ls', '--no-trunc', ...owned]
     return [...prefix, ...command, '--format', discoveryFormat(kind)]
 }
 
@@ -642,7 +649,8 @@ function discoveryFormat(kind: Exclude<ReclaimResourceKind, 'build-cache'>): str
     const id = kind === 'volume' ? '{{json .Name}}' : '{{json .ID}}'
     const name = kind === 'container' ? '{{json .Names}}' : kind === 'image' ? '{{json .Repository}}' : '{{json .Name}}'
     const label = (key: string) => `{{json (.Label "${key}")}}`
-    const bytes = kind === 'network' ? 'null' : '{{json .Size}}'
+    // Without `--size` a container prints a misleading "0B (virtual ...)", so its size is unmeasured.
+    const bytes = kind === 'network' || kind === 'container' ? 'null' : '{{json .Size}}'
     const labels = kind === 'image' ? '{}'
         : `{"${REQUIRED_LABELS.stack}":${label(REQUIRED_LABELS.stack)},"${REQUIRED_LABELS.config}":${label(REQUIRED_LABELS.config)},"${REQUIRED_LABELS.owner}":${label(REQUIRED_LABELS.owner)}}`
     const referenced = kind === 'image' ? '{{json (not (and (eq .Repository "<none>") (eq .Tag "<none>")))}}' : 'false'
@@ -823,9 +831,11 @@ export function admitImageInspections(
 export function createVolumeInspectionSteps(discovery: ReclaimDiscoverySnapshot): readonly ExecutionStep[] | undefined {
     const authority = discoveryAuthorities.get(discovery)
     if (!admittedDiscoveries.has(discovery) || authority === undefined || authority.kinds.length !== 1 || authority.kinds[0] !== 'volume') return undefined
+    // Only a volume this stack labels can become a target, so only its generation is read.
+    const owned = discovery.resources.filter(({ labels }) => labels[REQUIRED_LABELS.stack] === authority.stackId)
     const steps = inspectionSteps(authority, 'volume',
         `{"name":{{json .Name}},"generation":{{with .Labels}}{{json (or (index . "dev.b0dea.cockpit.generation-id") "")}}{{else}}""{{end}}}`,
-        discovery.resources.map(({ id }) => id), { resourceKind: 'volume-inspection' })
+        owned.map(({ id }) => id), { resourceKind: 'volume-inspection' })
     return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
 }
 
@@ -864,7 +874,7 @@ export function admitVolumeInspections(
             observedAt: finishedAt, producer: 'runtime-resource-discovery' as const,
             resources: Object.freeze(discovery.resources.map((resource) => {
                 const generation = generations.get(resource.id)
-                return snapshotResource({ ...resource, ...(generation === '' ? {} : { generation }) })!
+                return snapshotResource({ ...resource, ...(generation === undefined || generation === '' ? {} : { generation }) })!
             })),
         })
         admittedDiscoveries.add(snapshot)
@@ -892,14 +902,52 @@ function sameStackHolder(network: ReclaimResource, container: ReclaimResource | 
         typeof network.labels[name] === 'string' && network.labels[name] === container.labels[name])
 }
 
-function containerNetworkInspectionFormat(): string {
-    return '{"id":{{json .Id}},"networks":{{json .NetworkSettings.Networks}}}'
+// Discovery lists only this stack's containers, so a foreign container that holds one of its
+// networks is found by asking Docker for every container attached to that network by name. The
+// name, not the id, is the filter because a created but never started container records its
+// networks without an id, and the filter by id misses it.
+function networkHolderFormat(): string {
+    return '{"id":{{json .ID}},"networks":{{json .Networks}}}'
+}
+
+const NETWORK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/
+
+function networkHolderSteps(authority: DiscoveryAuthority, names: readonly string[], labels: Readonly<Record<string, string>>): readonly (ExecutionStep | undefined)[] {
+    const steps: (ExecutionStep | undefined)[] = []
+    for (let start = 0; start < names.length; start += INSPECTION_CHUNK) {
+        const chunk = names.slice(start, start + INSPECTION_CHUNK)
+        steps.push(exactStep(
+            `runtime:network-holders:${digestValue(chunk).slice(0, 16)}`,
+            [authority.executable.canonicalPath, '--host', authority.selection.endpoint, 'container', 'ls', '--all', '--no-trunc',
+                ...chunk.flatMap((name) => ['--filter', `network=${name}`]), '--format', networkHolderFormat()],
+            authority.executable, authority.cwd, authority.env, 30_000, [], { ...labels, networkCount: String(chunk.length) }, [], OUTPUT_LIMIT,
+        ))
+    }
+    return steps
 }
 
 function matchingDiscoveryAuthorities(left: DiscoveryAuthority, right: DiscoveryAuthority): boolean {
     return left.selectionAuthority === right.selectionAuthority
-        && JSON.stringify([left.executable, left.cwd, left.env, left.selection])
-            === JSON.stringify([right.executable, right.cwd, right.env, right.selection])
+        && JSON.stringify([left.stackId, left.executable, left.cwd, left.env, left.selection])
+            === JSON.stringify([right.stackId, right.executable, right.cwd, right.env, right.selection])
+}
+
+function holderRows(stdout: Buffer): readonly { readonly id: string; readonly networks: readonly string[] }[] | undefined {
+    const text = stdout.toString('utf8')
+    if (!Buffer.from(text, 'utf8').equals(stdout)) return undefined
+    const rows: { id: string; networks: string[] }[] = []
+    for (const line of text.split('\n')) {
+        if (line.length === 0) continue
+        let row: unknown
+        try { row = JSON.parse(line) } catch { return undefined }
+        if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['id', 'networks'])) return undefined
+        const { id, networks } = row as Record<string, unknown>
+        if (typeof id !== 'string' || !RESOURCE_ID.test(id) || typeof networks !== 'string') return undefined
+        const names = networks.split(',').filter(Boolean)
+        if (names.length > MAX_RESOURCES || names.some((name) => !NETWORK_NAME.test(name))) return undefined
+        rows.push({ id, networks: names })
+    }
+    return rows.length > MAX_RESOURCES || new Set(rows.map(({ id }) => id)).size !== rows.length ? undefined : rows
 }
 
 export function createNetworkInspectionSteps(
@@ -916,8 +964,9 @@ export function createNetworkInspectionSteps(
     const selection = { dockerContext: authority.selection.context, dockerEndpoint: authority.selection.endpoint }
     const networkSteps = inspectionSteps(authority, 'network', networkInspectionFormat(),
         discovery.resources.map(({ id }) => id), { resourceKind: 'network-inspection', ...selection })
-    const containerSteps = discovery.resources.length === 0 ? [] : inspectionSteps(authority, 'container', containerNetworkInspectionFormat(),
-        containers.resources.map(({ id }) => id), { resourceKind: 'container-network-inspection', ...selection })
+    const names = [...new Set(discovery.resources.map(({ name }) => name))].sort(lexical)
+    if (names.some((name) => !NETWORK_NAME.test(name))) return undefined
+    const containerSteps = networkHolderSteps(authority, names, { resourceKind: 'network-holder-listing', ...selection })
     const steps = [...networkSteps, ...containerSteps]
     return steps.every((step) => step !== undefined) ? Object.freeze(steps as ExecutionStep[]) : undefined
 }
@@ -948,36 +997,30 @@ export function admitNetworkInspections(
             if (digestValue(item.step) !== digestValue(expected)) return undefined
             const admitted = authenticatedExecutionOutcome(item.outcome, expected)
             if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0) return undefined
-            const ids = inspectedIds(expected)
-            const rows = inspectionRows(admitted.stdout, ids)
-            if (rows === undefined) return undefined
-            for (const [position, record] of rows.entries()) {
-                const resourceId = ids[position]!
-                if (expected.labels.resourceKind === 'network-inspection') {
+            if (expected.labels.resourceKind === 'network-inspection') {
+                const ids = inspectedIds(expected)
+                const rows = inspectionRows(admitted.stdout, ids)
+                if (rows === undefined) return undefined
+                for (const [position, record] of rows.entries()) {
+                    const resourceId = ids[position]!
                     if (!exactKeys(record, ['id', 'members']) || record.id !== resourceId
                         || typeof record.members !== 'string' || inspectedNetworks.has(resourceId)) return undefined
                     const members = record.members.split(' ').filter(Boolean)
                     if (members.length > MAX_RESOURCES || members.some((member) => !RESOURCE_ID.test(member))) return undefined
                     inspectedNetworks.add(resourceId)
                     for (const member of members) hold(resourceId, member)
-                } else {
-                    if (expected.labels.resourceKind !== 'container-network-inspection'
-                        || !exactKeys(record, ['id', 'networks']) || record.id !== resourceId
-                        || record.networks === null || typeof record.networks !== 'object' || Array.isArray(record.networks)
-                        || Object.keys(record.networks).length > MAX_RESOURCES) return undefined
-                    for (const [name, endpoint] of Object.entries(record.networks)) {
-                        if (endpoint === null || typeof endpoint !== 'object' || Array.isArray(endpoint)) return undefined
-                        const networkId = (endpoint as Record<string, unknown>).NetworkID
-                        // A container that was created but never started (as an interrupted Compose
-                        // recreate leaves its replacement) names its networks without an id. It still
-                        // holds every discovered network of that name; refusing the whole discovery
-                        // left `down` unable to remove the stack that `up` had started.
-                        if (networkId === '') {
-                            for (const network of discovery.resources) if (network.name === name) hold(network.id, resourceId)
-                            continue
-                        }
-                        if (typeof networkId !== 'string' || !RESOURCE_ID.test(networkId)) return undefined
-                        hold(networkId, resourceId)
+                }
+            } else {
+                if (expected.labels.resourceKind !== 'network-holder-listing') return undefined
+                const rows = holderRows(admitted.stdout)
+                if (rows === undefined) return undefined
+                for (const row of rows) {
+                    // A created but never started container (as an interrupted Compose recreate leaves
+                    // its replacement) still names its networks, so it holds every discovered network
+                    // of that name; refusing the whole discovery left `down` unable to remove the
+                    // stack that `up` had started.
+                    for (const name of row.networks) {
+                        for (const network of discovery.resources) if (network.name === name) hold(network.id, row.id)
                     }
                 }
             }
@@ -1019,7 +1062,7 @@ export function createReclaimDiscoverySteps(rawInput: ReclaimDiscoveryPlanInput)
         || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd
         || !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > 30_000) return undefined
     const steps = (['container', 'network', 'volume', 'image', 'build-cache'] as const).map((kind) => {
-        const argv = [executable.canonicalPath, ...runtimeCommand(kind, selection)] as [string, ...string[]]
+        const argv = [executable.canonicalPath, ...runtimeCommand(kind, selection, input.stackId)] as [string, ...string[]]
         return snapshotExecutionStep({
             id: `runtime:discover:${kind}`,
             argv,
@@ -1070,7 +1113,7 @@ export function admitReclaimDiscovery(
             || executable === undefined || env === undefined || selection === undefined
             || JSON.stringify([currentSelection.executable, currentSelection.cwd, currentSelection.env, currentSelection.selection])
                 !== JSON.stringify([planned.authority.executable, planned.authority.cwd, planned.authority.env, planned.authority.selection])
-            || JSON.stringify(step.argv.slice(1)) !== JSON.stringify(runtimeCommand(kind, selection))) return undefined
+            || JSON.stringify(step.argv.slice(1)) !== JSON.stringify(runtimeCommand(kind, selection, step.labels.stackId))) return undefined
         const admitted = authenticatedExecutionOutcome(outcome, step)
         if (admitted === undefined || admitted.kind !== 'complete' || admitted.stderr.byteLength !== 0
             || Date.parse(currentSelection.startedAt) < Date.parse(admitted.receipt.finishedAt)
@@ -1098,7 +1141,7 @@ export function admitReclaimDiscovery(
         const snapshot = Object.freeze({ observedAt: admitted.receipt.finishedAt, producer: 'runtime-resource-discovery' as const, resources: Object.freeze(resources.sort((a, b) => lexical(a.id, b.id))) })
         admittedDiscoveries.add(snapshot)
         discoveryAuthorities.set(snapshot, Object.freeze({
-            executable, cwd: step.cwd, env, selection,
+            stackId: step.labels.stackId as StackId, executable, cwd: step.cwd, env, selection,
             selectionAuthority: currentSelectionAuthority,
             kinds: Object.freeze([kind]), startedAt: admitted.receipt.startedAt, finishedAt: admitted.receipt.finishedAt,
             imagesInspected: kind !== 'image',
@@ -1132,15 +1175,15 @@ export function combineReclaimDiscoveries(snapshots: readonly ReclaimDiscoverySn
             || authorities.some(({ kinds: authorityKinds, volumesInspected }) => authorityKinds[0] === 'volume' && !volumesInspected)
             || authorities.some(({ kinds: authorityKinds, networksInspected }) => authorityKinds[0] === 'network' && !networksInspected)
             || authorities.some(({ selectionAuthority }) => selectionAuthority !== first.selectionAuthority)
-            || authorities.some((item) => JSON.stringify([item.executable, item.cwd, item.env, item.selection])
-                !== JSON.stringify([first.executable, first.cwd, first.env, first.selection]))) return undefined
+            || authorities.some((item) => JSON.stringify([item.stackId, item.executable, item.cwd, item.env, item.selection])
+                !== JSON.stringify([first.stackId, first.executable, first.cwd, first.env, first.selection]))) return undefined
         const startedAt = authorities.map(({ startedAt }) => startedAt).sort(lexical)[0]!
         const finishedAt = authorities.map(({ finishedAt }) => finishedAt).sort(lexical).at(-1)!
         if (Date.parse(finishedAt) - Date.parse(startedAt) > 30_000) return undefined
         const combined = Object.freeze({ observedAt: finishedAt, producer: 'runtime-resource-discovery' as const, resources: Object.freeze(resources) })
         admittedDiscoveries.add(combined)
         discoveryAuthorities.set(combined, Object.freeze({
-            executable: first.executable, cwd: first.cwd, env: first.env, selection: first.selection,
+            stackId: first.stackId, executable: first.executable, cwd: first.cwd, env: first.env, selection: first.selection,
             selectionAuthority: first.selectionAuthority,
             kinds: Object.freeze(kinds), startedAt, finishedAt,
             imagesInspected: true,

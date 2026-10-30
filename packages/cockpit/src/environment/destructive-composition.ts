@@ -231,10 +231,10 @@ async function inspectDiscovery(
 
 type ReclaimObservation = Awaited<ReturnType<typeof discoverReclaimRound>>
 
-// Discovery lists the whole daemon and then inspects what it listed. On a busy shared daemon
-// another stack's container or volume can vanish in between, and the round then fails closed
-// on an id that was never ours; inside a reserved drain that left the attempt for repair. One
-// more complete round, authenticated from scratch, covers that race without admitting partial
+// Discovery lists resources and then inspects what it listed. A listed resource can vanish in
+// between, as Compose replacing one of this stack's containers does, and the round then fails
+// closed on an id that no longer exists; inside a reserved drain that left the attempt for repair.
+// One more complete round, authenticated from scratch, covers that race without admitting partial
 // evidence.
 async function observeReclaim(
     input: CapturedCompositionInput,
