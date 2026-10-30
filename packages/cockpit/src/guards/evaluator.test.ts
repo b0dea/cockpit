@@ -27,6 +27,10 @@ function policy() {
         declaredAllows: [] as Array<{ argv: string[]; reason: string; cwd?: string }>,
         declaredDenies: [] as Array<{ match: 'prefix' | 'contains'; argv: string[]; reason: string; fix?: string }>,
         ripgrepConfigActive: false,
+        executionDirectories: [] as string[],
+        searchDirectories: [] as string[],
+        secretFileIdentities: [] as string[] | null,
+        protectedFilesLinked: false,
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
         projectCommands: [
             { checkoutRoot: root, kind: 'test', executable: 'npm', argv: ['test'] },
@@ -131,6 +135,10 @@ describe('resolved guard evaluation', () => {
         }
         for (const host of ['notdb.example.test', 'db.example.test.evil', 'other.example.test']) {
             expect(decide(`printf ${host}`).decision).toBe('ask')
+        }
+        // Resolvers apply compatibility normalisation, so fullwidth letters and ideographic dots name the same host.
+        for (const command of ['curl http://db。example。test/', 'curl http://ｄｂ.example.test/', 'curl https://db．example．test', 'curl https://API.VENDOR｡EXAMPLE.TEST']) {
+            expect(decide(command).decision, command).toBe('deny')
         }
     })
 
@@ -537,7 +545,12 @@ describe('built-in read-only profile', () => {
         for (const command of ['cat config/active.instance', 'cat CONFIG/ACTIVE.INSTANCE', 'cat ./config/../config/active.instance',
             'head env/.secrets/token', 'wc -c < config/active.instance', 'grep needle config/active.instance',
             'rg -f config/active.instance needle src', 'grep --color needle config/active.instance', 'ls && cat config/active.instance',
-            "grep --context '' env/.secrets/token", 'git log -p -- config/active.instance', 'git diff HEAD env/.secrets/token', 'cockpit check --config env/.secrets/token']) {
+            "grep --context '' env/.secrets/token", 'git log -p -- config/active.instance', 'git diff HEAD env/.secrets/token', 'cockpit check --config env/.secrets/token',
+            // A recursive search rooted at or below a secrets directory reads it as surely as cat does.
+            'rg . env/.secrets/token', 'grep -r . env/.secrets/token', 'rg . env/.secrets/project', 'rg -l . env/.secrets/project/',
+            'grep -rn . env/.secrets/', 'rg . env/.SECRETS/token', 'rg . ../other/.secrets', 'rg needle config/active.instance',
+            // A case-insensitive volume resolves a folded spelling of the checkout itself to the instance.
+            'cat ../PROJECT/config/active.instance', 'rg . ../Project/env/.secrets']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
         }
         // A hard link carries the instance's identity under a spelling no normalisation equates.
@@ -562,11 +575,24 @@ describe('built-in read-only profile', () => {
         }
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '.git/config', content: '[core]' } }), policy(), inspect).decision).toBe('deny')
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: '.gitignore', content: 'x' } }), policy(), inspect).decision).toBe('allow')
+        // `git config` writes the same configuration, and a global value reaches every repository.
+        const granted = policy()
+        granted.declaredAllows.push({ argv: ['git', 'config'], reason: 'Repository configuration is declared safe.' })
+        for (const command of ['git config core.hooksPath /tmp', 'git config --global core.pager cat', 'git config --add core.fsmonitor x',
+            'git config --unset core.pager', 'git config --replace-all core.pager cat', 'git config -e', 'git config set core.pager cat',
+            'git config --file .git/config core.pager cat', 'git -C ../other config core.fsmonitor x', 'git config --unknown core.pager']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), granted, inspect).reason, command)
+                .toBe('Refusing direct mutation of Git metadata: its configuration chooses programs that read-only Git commands run.')
+        }
+        for (const command of ['git config --get core.pager', 'git config core.pager', 'git config --list', 'git config -l --show-origin',
+            'git config get core.pager', 'git config list', 'git config --global --get user.name', 'git config --get-regexp ^core']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), granted, inspect).decision, command).toBe('allow')
+        }
     })
 })
 
 describe('cockpit structure protection', () => {
-    const removal = 'Refusing to delete, rename or truncate cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
+    const removal = 'Refusing to delete, rename, truncate, relink or make unreadable cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
     const controlRemoval = 'Refusing mutation of the guard, its hook registration or its ownership manifest.'
     const protectedRead = 'Refusing to read a declared environment instance or secrets directory into the agent context.'
     const instanceMutation = 'Refusing mutation or staging of a declared environment instance.'
@@ -582,6 +608,9 @@ describe('cockpit structure protection', () => {
         }
         expect(patch('*** Delete File: cockpit.toml')).toEqual({ decision: 'deny', reason: removal })
         expect(patch('*** Update File: cockpit.toml\n*** Move to: old.toml\n@@\n-a\n+b')).toEqual({ decision: 'deny', reason: removal })
+        const empty = (path: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: path, content: '' } }), policy(), inspect)
+        for (const path of ['cockpit.toml', `${root}/COCKPIT.TOML`]) expect(empty(path), path).toEqual({ decision: 'deny', reason: removal })
+        expect(empty('.cockpit/generated-environment-ownership.json').decision).toBe('deny')
         for (const command of [
             'truncate -s 0 cockpit.toml', 'truncate --size 0 ./COCKPIT.TOML', 'truncate --size=0 subdir/../cockpit.toml',
             `truncate -s0 ${root}/cockpit.toml`, 'truncate -s=0 cockpit.toml', 'truncate -c -s 0 -- cockpit.toml', 'truncate -cs0 cockpit.toml',
@@ -595,6 +624,10 @@ describe('cockpit structure protection', () => {
             'tee cockpit.toml', 'tee -i ./COCKPIT.TOML', 'tee -- cockpit.toml -a',
             'tee --output-error=warn cockpit.toml', 'tee cockpit.toml -a', '/usr/bin/tee subdir/../cockpit.toml',
             'tee .cockpit/generated-environment-ownership.json',
+            // A link or an unreadable mode loses the configuration as surely as deleting it.
+            'ln -sf notes.txt cockpit.toml', 'ln -f notes.txt ./COCKPIT.TOML', 'ln -s -f -- notes.txt cockpit.toml', 'ln -sft . notes/cockpit.toml',
+            'chmod 000 cockpit.toml', 'chmod 0200 cockpit.toml', 'chmod u-r cockpit.toml', 'chmod a= cockpit.toml', 'chmod go+r,u-rw cockpit.toml',
+            'chmod --reference=notes.txt cockpit.toml', 'chmod 000 .cockpit/generated-environment-ownership.json',
         ]) {
             const configured = policy()
             const [executable, ...argv] = command.split(' ')
@@ -906,6 +939,7 @@ describe('cockpit structure protection', () => {
     it('keeps editing the configuration and removing ordinary files outside the boundary', () => {
         expect(patch('*** Update File: cockpit.toml\n@@\n-a\n+b').decision).toBe('allow')
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: 'cockpit.toml', content: '[cockpit]' } }), policy(), inspect).decision).toBe('allow')
+        expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: 'notes/empty.txt', content: '' } }), policy(), inspect).decision).toBe('allow')
         for (const command of ['rm src/a.ts', 'mv old.toml cockpit.toml', 'rm -rf /tmp/scratch', 'printf x >> cockpit.toml']) {
             expect(decide(command).decision, command).toBe('ask')
         }
@@ -915,7 +949,8 @@ describe('cockpit structure protection', () => {
             'dd conv=notrunc conv=sync of=cockpit.toml', 'dd conv=sync conv=notrunc of=cockpit.toml',
             'tee -a cockpit.toml', 'tee --append cockpit.toml', 'tee -ai cockpit.toml', 'tee -ia -- cockpit.toml',
             'cp source.txt cockpit.toml', 'install source.txt cockpit.toml', 'mv old.toml cockpit.toml',
-            'touch cockpit.toml', 'chmod 600 cockpit.toml',
+            'touch cockpit.toml', 'chmod 600 cockpit.toml', 'chmod 644 cockpit.toml', 'chmod u+x,go-w cockpit.toml', 'chmod u=rw cockpit.toml',
+            'ln -s ../cockpit.toml notes/alias.toml', 'ln -f notes/old.txt notes/new.txt',
         ]) {
             const configured = policy()
             const [executable, ...argv] = command.split(' ')
@@ -928,6 +963,91 @@ describe('cockpit structure protection', () => {
             const configured = policy()
             configured.declaredAllows.push({ argv: command.split(' '), reason: 'Repository writes are declared safe.' })
             expect.soft(decide(command, configured).decision, command).toBe('unavailable')
+        }
+    })
+})
+
+describe('installed code, search path and secret links', () => {
+    const installed = `${root}/node_modules/@b0dea/cockpit`
+    const execution = 'Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.'
+    const link = 'Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.'
+    const payload = (tool_name: string, tool_input: object) => ({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input })
+    const configured = () => {
+        const value = policy()
+        value.executionDirectories.push(installed, `${root}/node_modules/zod`)
+        value.searchDirectories.push(`${root}/tools/bin`)
+        for (const executable of ['cp', 'mv', 'rm', 'ln', 'chmod', 'tee', 'touch', 'install']) {
+            value.declaredAllows.push({ argv: [executable], reason: 'Repository file writing is declared safe.' })
+        }
+        return value
+    }
+
+    it('denies every write channel into the installed cockpit, its dependencies, node_modules/.bin and search path directories', () => {
+        // The guard authenticates its entry point only, so any other module it loads is a control.
+        for (const path of [`${installed}/dist/guards/harness-adapter.js`, `${installed}/package.json`, `${root}/node_modules/zod/index.js`,
+            `${root}/NODE_MODULES/@B0DEA/COCKPIT/dist/cli.js`, `${root}/node_modules/.bin/docker`, `${other}/node_modules/.bin/cockpit`, `${root}/tools/bin/ls`]) {
+            for (const input of [payload('Write', { file_path: path, content: 'x' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
+                payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch` }), shellPayload(`printf x >> ${path}`)]) {
+                expect(evaluateGuard(parseGuardInput(input), configured(), inspect), `${input.tool_name} ${path}`).toEqual({ decision: 'deny', reason: execution })
+            }
+        }
+        for (const command of ['rm -rf node_modules', 'rm node_modules/@b0dea/cockpit/dist/cli.js', 'mv node_modules/@b0dea/cockpit old',
+            'cp evil.js node_modules/@b0dea/cockpit/dist/cli.js', 'cp evil node_modules/.bin', 'ln -s /bin/rm node_modules/.bin/ls',
+            'chmod +x node_modules/.bin/docker', 'touch tools/bin/git', 'tee tools/bin/rg', 'mv evil tools/bin', 'cp -t tools evil-bin', 'install evil tools/bin/ls']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect), command).toEqual({ decision: 'deny', reason: execution })
+        }
+        // Another package, a deeper file below a search path directory, and an argument naming installed code stay ordinary.
+        for (const input of [payload('Write', { file_path: `${root}/node_modules/left-pad/index.js`, content: 'x' }),
+            payload('Write', { file_path: `${root}/tools/bin/fixtures/notes.txt`, content: 'x' }), shellPayload('cp notes.txt tools/notes.txt')]) {
+            expect(evaluateGuard(parseGuardInput(input), configured(), inspect).decision, JSON.stringify(input.tool_input)).toBe('allow')
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('node node_modules/.bin/tsc')), configured(), inspect).decision).toBe('ask')
+    })
+
+    it('denies links to secrets, instances, guard controls and installed code', () => {
+        for (const command of ['ln env/.secrets/token notes/token', 'ln -s ../env/.secrets/token notes/token', 'ln -s env/.SECRETS notes/secrets',
+            'ln config/active.instance notes/copy', 'ln -s ../config/active.instance notes/copy', 'ln -s config notes/config', 'ln -s ../other/.secrets/key notes/key',
+            'ln .claude/settings.json notes/settings.json', `ln ${installed}/dist/cli.js notes/cli.js`, 'ln -st notes ../node_modules/@b0dea/cockpit']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect), command).toEqual({ decision: 'deny', reason: link })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('ln -s ../README.md notes/readme.md')), configured(), inspect).decision).toBe('allow')
+        expect(evaluateGuard(parseGuardInput(shellPayload('ln --unknown notes/a notes/b')), configured(), inspect)).toEqual({ decision: 'unavailable', reason: 'Unsupported visible writer option.' })
+    })
+
+    it('denies reading, writing or linking an existing hard link to a secrets file', () => {
+        const value = configured()
+        value.secretFileIdentities = ['7:30']
+        const facts = ({ path, cwd }: { path: string; cwd: string }) => {
+            const resolved = posix.resolve(cwd, path)
+            return { status: 'resolved', path: resolved, symlink: false, identity: resolved === `${root}/notes/copy` ? '7:30' : null, ancestors: [] }
+        }
+        for (const command of ['cat notes/copy', 'head -n 1 notes/copy', 'rg . notes/copy', 'grep -r . notes/copy', 'cp notes/copy notes/second']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), value, facts), command)
+                .toEqual({ decision: 'deny', reason: 'Refusing to read a declared environment instance or secrets directory into the agent context.' })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('printf x > notes/copy')), value, facts)).toEqual({ decision: 'deny', reason: 'Refusing mutation or staging below a secrets directory.' })
+        expect(evaluateGuard(parseGuardInput(shellPayload('ln notes/copy notes/third')), value, facts)).toEqual({ decision: 'deny', reason: link })
+        expect(evaluateGuard(parseGuardInput(shellPayload('cat notes/other')), value, facts).decision).toBe('allow')
+    })
+
+    it('asks before a recursive search when a protected file has another hard link, and before any read when secrets were not enumerated', () => {
+        const linked = configured()
+        linked.protectedFilesLinked = true
+        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle src')), linked, inspect).decision).toBe('ask')
+        expect(evaluateGuard(parseGuardInput(shellPayload('cat src/a.ts')), linked, inspect).decision).toBe('allow')
+        expect(evaluateGuard(parseGuardInput(shellPayload('rg needle src')), configured(), inspect).decision).toBe('allow')
+        const unenumerated = configured()
+        unenumerated.secretFileIdentities = null
+        for (const command of ['cat src/a.ts', 'rg needle src']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), unenumerated, inspect).decision, command).toBe('ask')
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('ls src')), unenumerated, inspect).decision).toBe('allow')
+    })
+
+    it('refuses execution, search path and secret identity fields that escape or malform', () => {
+        for (const change of [{ executionDirectories: ['/outside/node_modules/x'] }, { executionDirectories: ['relative/dir'] }, { searchDirectories: [`${root}/bin/`] },
+            { secretFileIdentities: ['inode'] }, { secretFileIdentities: undefined }, { protectedFilesLinked: 'yes' }]) {
+            expect(evaluateGuard(parseGuardInput(shellPayload('ls')), { ...configured(), ...change }, inspect).decision, JSON.stringify(change)).toBe('unavailable')
         }
     })
 })

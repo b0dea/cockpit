@@ -410,6 +410,30 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    it('protects harness search path directories and hard links to secrets files through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const secret = join(root, 'env/.secrets/token')
+        mkdirSync(dirname(secret), { recursive: true })
+        writeFileSync(secret, 'synthetic\n')
+        linkSync(secret, join(root, 'notes.txt'))
+        try {
+            const read = { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: root, tool_input: { command: 'cat notes.txt' } }
+            expect(await runGuardEvaluationApplication({ ...request, payload: read }, adapters))
+                .toMatchObject({ decision: { decision: 'deny', reason: expect.stringContaining('Refusing to read') } })
+            const plant = { hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: join(root, 'tools/bin/ls'), content: '#!/bin/sh\n' } }
+            expect(await runGuardEvaluationApplication({ ...request, payload: plant }, adapters)).toMatchObject({ decision: { decision: 'allow' } })
+            const searchPath = `/usr/bin:${join(root, 'tools/bin')}/:relative/bin`
+            expect(await runGuardEvaluationApplication({ ...request, payload: plant, searchPath }, adapters))
+                .toMatchObject({ decision: { decision: 'deny', reason: expect.stringContaining('command search path directory') } })
+            // The handler runs with a scrubbed environment, so transport carries the harness's search path to it.
+            const transport = await runGuardEvaluationApplication({ ...request, payload: JSON.stringify(plant), searchPath, transport: true }, { ...adapters, execute: executeProbe })
+            expect(transport, JSON.stringify(transport)).toMatchObject({ native: { decision: 'deny' } })
+        } finally {
+            rmSync(join(root, 'env'), { recursive: true, force: true })
+            rmSync(join(root, 'notes.txt'), { force: true })
+        }
+    }, 120_000)
+
     it.each([
         ['app/.env.example', 'allow'],
         ['app/config/runtime.env', 'deny'],
@@ -667,6 +691,8 @@ describe('guard policy construction', () => {
             declaredAllows: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: root }],
             declaredDenies: [{ match: 'contains', argv: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
             ripgrepConfigActive: false,
+            // The running package lives outside this checkout, so no installed directory is in reach.
+            executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'test', argv: ['test', '--', 'unit.test.ts'] },

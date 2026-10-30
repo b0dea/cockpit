@@ -1368,7 +1368,9 @@ export async function runCli(
             const guardEnvironment = runtime.env ?? process.env
             response = await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(), transport: !reply,
                 askIsDeny: guardEnvironment.COCKPIT_ASK_IS_DENY === '1',
-                ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1' }, {
+                ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1',
+                // The handler runs with a scrubbed environment, so the dispatching process forwards the harness's search path.
+                searchPath: (reply ? guardEnvironment.COCKPIT_GUARD_SEARCH_PATH ?? guardEnvironment.PATH : guardEnvironment.PATH) ?? '' }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
                 resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
                 resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),

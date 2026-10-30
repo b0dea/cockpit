@@ -27,7 +27,7 @@ export type GuardParseResult = {
     readonly cwd: string
     readonly invocations: readonly ParsedInvocation[]
     readonly paths: readonly string[]
-    /** Patch targets deleted, or moved away from, as opposed to edited in place. */
+    /** Targets deleted, moved away from or emptied, as opposed to edited in place. */
     readonly removed: readonly string[]
 } | { readonly status: 'unavailable'; readonly reason: string }
 
@@ -377,6 +377,8 @@ export function parseGuardInput(input: unknown): GuardParseResult {
                 || !text(fields.file_path)) refuse('Malformed file payload.')
             if (Object.entries(fields).some(([key, value]) => key === 'replace_all' ? typeof value !== 'boolean' : !text(value))) refuse('Malformed file field.')
             paths = [path(fields.file_path)]
+            // Writing nothing empties the file, which is the shell's `: > file`.
+            if (tool === 'Write' && fields.content === '') removed = [...paths]
         } else refuse('Unsupported guard tool.')
         if (paths.length + invocations.reduce((sum, item) => sum + item.redirects.length, 0) > GUARD_INPUT_LIMITS.paths) refuse('Guard path limit exceeded.')
         for (const item of invocations) {

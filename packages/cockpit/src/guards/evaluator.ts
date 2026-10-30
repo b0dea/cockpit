@@ -9,7 +9,8 @@ import { classifyReadOnlyInvocation, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 
 export const mechanism = {
-    id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts', exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'guardIdentity'],
+    id: 'guard-evaluator', module: 'packages/cockpit/src/guards/evaluator.ts',
+    exports: ['evaluateGuard', 'GUARD_ROOT_PROTECTIONS', 'GUARD_PROTECTED_LOCATION_LIMIT', 'GUARD_SECRET_FILE_LIMIT', 'foldGuardSpelling', 'guardIdentity'],
 } as const
 
 export interface GuardInvocationProfile {
@@ -53,6 +54,17 @@ export interface GuardEvaluationPolicy {
     readonly declaredAllows: readonly GuardDeclaredAllow[]
     readonly declaredDenies: readonly GuardDeclaredDeny[]
     readonly ripgrepConfigActive: boolean
+    /**
+     * Directories whose code runs as the guard: the installed cockpit package and every package it
+     * loads. Every allowed root's `node_modules/.bin` is protected beside them without being listed.
+     */
+    readonly executionDirectories: readonly string[]
+    /** Absolute command search path directories inside the allowed roots, where a planted file shadows a permitted command. */
+    readonly searchDirectories: readonly string[]
+    /** Identities of every file in the root secrets directory, or null when it held more than the enumeration bound. */
+    readonly secretFileIdentities: readonly string[] | null
+    /** Some instance or secrets file has another hard link, which a recursive search can read under an unprotected name. */
+    readonly protectedFilesLinked: boolean
     readonly cockpitInvocations: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
 }
@@ -85,6 +97,9 @@ const GUARD_CONTROL_FILES = [
 // machine-local guard identity names the handler the guard launches, so it is a control as well.
 const GUARD_CONTROL_DIRECTORIES = ['.opencode/plugin', '.opencode/plugins', '.cockpit/bundles/claudecode-plugin', GUARD_LOCAL_PATHS.directory] as const
 const SECRETS_ROOT = 'env/.secrets'
+/** Bounds on the policy's installed-code and search path directories and on the secrets files it enumerates. */
+export const GUARD_PROTECTED_LOCATION_LIMIT = 256
+export const GUARD_SECRET_FILE_LIMIT = 512
 /** Root-relative paths whose identity every policy carries beside each instance's. */
 export const GUARD_ROOT_PROTECTIONS: readonly { readonly path: string; readonly type: 'file' | 'directory' }[] = Object.freeze([
     ...GUARD_CONTROL_FILES.map((path) => Object.freeze({ path, type: 'file' as const })),
@@ -98,9 +113,10 @@ const IDENTITY = /^\d+:\d+$/
 // The one normalisation applied to both sides of every spelling comparison: NFC plus full case
 // folding. A case-insensitive volume resolves `.ENV` or `.ſecrets` to the protected entry, and
 // neither byte equality nor toLowerCase() equates those spellings.
-function fold(path: string): string {
+export function foldGuardSpelling(path: string): string {
     return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
 }
+const fold = foldGuardSpelling
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
@@ -137,14 +153,18 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'cockpitInvocations', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
         || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
-        || typeof p.ripgrepConfigActive !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)) return undefined
+        || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)
+        || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
+        || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
+        || p.secretFileIdentities !== null && (!Array.isArray(p.secretFileIdentities) || p.secretFileIdentities.length > GUARD_SECRET_FILE_LIMIT || !p.secretFileIdentities.every(identity))) return undefined
     const roots = p.allowedRoots
     const confined = (value: JsonSnapshot | undefined): value is string => canonical(value) && roots.some((root) => within(value, root))
-    if ([p.hostedDatabaseHosts, p.vendorHosts].some((hosts) => hosts.length > GUARD_HOST_LIMITS.rows
+    if (![...p.executionDirectories, ...p.searchDirectories].every(confined)
+        || [p.hostedDatabaseHosts, p.vendorHosts].some((hosts) => hosts.length > GUARD_HOST_LIMITS.rows
         || !hosts.every(isGuardHost) || new Set(hosts.map(normalizeGuardHost)).size !== hosts.length)
         || p.protectedBranches.some((branch) => /[\s:*?\[\\]/.test(branch))
         || p.instances.some((item) => !record(item) || !keys(item, ['name', 'path']) || !scalar(item.name) || !confined(item.path))
@@ -170,7 +190,9 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
 
 function hostUsed(value: string, configured: string): boolean {
     const host = normalizeGuardHost(configured)
-    const lower = value.toLowerCase()
+    // Resolvers apply compatibility normalisation before lookup, so fullwidth letters and the
+    // ideographic full stops name the same host as their ASCII spelling.
+    const lower = value.normalize('NFKC').replace(/[\u3002\uff0e\uff61]/g, '.').toLowerCase()
     let offset = lower.indexOf(host)
     while (offset >= 0) {
         const before = lower[offset - 1]
@@ -221,19 +243,20 @@ const REMOVERS = new Set(['rm', 'unlink', 'rmdir', 'shred', 'trash'])
 
 interface TransferOperands { readonly sources: readonly string[]; readonly writes: readonly string[]; readonly uncertain: boolean }
 
-/** Visible source and destination paths for copy/install/move without inferring filesystem state. */
-function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly string[]): TransferOperands {
+/** Visible source and destination paths for copy/install/move/link without inferring filesystem state. */
+function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonly string[]): TransferOperands {
     const operands: string[] = []
     let targetDirectory: string | undefined
     let noTargetDirectory = false
     let installDirectories = false
     let uncertain = false
     let options = true
-    const plainShort = command === 'cp' ? 'afHiLlnPpRrsvXx' : command === 'mv' ? 'fhinuv' : 'bCcpSsUv'
-    const valueShort = command === 'install' ? new Set(['f', 'g', 'm', 'o', 'M', 'h', 'B', 'l', 'N']) : new Set<string>()
+    const plainShort = command === 'cp' ? 'afHiLlnPpRrsvXx' : command === 'mv' ? 'fhinuv' : command === 'ln' ? 'bdFfhiLnPrsvw' : 'bCcpSsUv'
+    const valueShort = command === 'install' ? new Set(['f', 'g', 'm', 'o', 'M', 'h', 'B', 'l', 'N']) : command === 'ln' ? new Set(['S', 't']) : new Set<string>()
     const plainLong = new Set(command === 'cp' ? ['archive', 'force', 'interactive', 'link', 'no-clobber', 'no-dereference', 'preserve', 'recursive', 'reflink', 'remove-destination', 'sparse', 'symbolic-link', 'update', 'verbose']
         : command === 'mv' ? ['force', 'interactive', 'no-clobber', 'no-target-directory', 'update', 'verbose']
-            : ['backup', 'compare', 'directory', 'preserve-timestamps', 'strip', 'verbose'])
+            : command === 'ln' ? ['backup', 'directory', 'force', 'interactive', 'logical', 'no-dereference', 'physical', 'relative', 'symbolic', 'verbose']
+                : ['backup', 'compare', 'directory', 'preserve-timestamps', 'strip', 'verbose'])
     const valueLong = new Set(command === 'install' ? ['group', 'mode', 'owner', 'suffix'] : ['suffix'])
     for (let index = 0; index < args.length; index++) {
         const arg = args[index]!
@@ -262,8 +285,10 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
             const letters = arg.slice(1)
             const valueAt = [...letters].findIndex(letter => valueShort.has(letter))
             if (valueAt >= 0) {
-                if (valueAt !== letters.length - 1) uncertain = true
-                else if (args[++index] === undefined) uncertain = true
+                const value = valueAt === letters.length - 1 ? args[++index] : undefined
+                if (value === undefined) uncertain = true
+                // `ln -sft dir source` names the target directory inside a cluster.
+                else if (letters[valueAt] === 't') targetDirectory = value
             } else if ([...letters].some(letter => !plainShort.includes(letter))) uncertain = true
             if (command === 'cp' && /[Rr]/.test(letters)) uncertain = true
             continue
@@ -276,6 +301,8 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
         writes: [targetDirectory, ...operands.map(source => posix.join(targetDirectory!, posix.basename(source)))],
         uncertain: uncertain || noTargetDirectory,
     }
+    // `ln source` links into the working directory under the source's own name.
+    if (command === 'ln' && operands.length === 1) return { sources: operands, writes: [posix.basename(operands[0]!)], uncertain: uncertain || noTargetDirectory }
     if (operands.length < 2) return { sources: [], writes: [], uncertain: true }
     const sources = operands.slice(0, -1)
     const destination = operands.at(-1)!
@@ -286,7 +313,15 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
     }
 }
 
-interface VisibleWrites { readonly paths: readonly string[]; readonly reads?: readonly string[]; readonly truncates: boolean; readonly uncertain: boolean }
+interface VisibleWrites {
+    readonly paths: readonly string[]
+    readonly reads?: readonly string[]
+    /** Link targets, which must not reach anything protected under a new name. */
+    readonly links?: readonly string[]
+    /** Each destination is emptied, replaced by a link or made unreadable, so it is checked as a removal too. */
+    readonly removes: boolean
+    readonly uncertain: boolean
+}
 
 /** Git abbreviates long options and bundles short ones, so output recognition must consume every known option value. */
 function gitArchiveWrites(args: readonly string[]): VisibleWrites | undefined {
@@ -347,7 +382,7 @@ function gitArchiveWrites(args: readonly string[]): VisibleWrites | undefined {
             }
         }
     }
-    return output || uncertain ? { paths, truncates: true, uncertain } : undefined
+    return output || uncertain ? { paths, removes: true, uncertain } : undefined
 }
 
 function tarExtractionWrites(args: readonly string[]): VisibleWrites {
@@ -392,7 +427,43 @@ function tarExtractionWrites(args: readonly string[]): VisibleWrites {
         if (/^-[^-]*x/.test(arg) || arg.startsWith('--extract=') || arg.startsWith('--get=')) extraction = true
         uncertain = true
     }
-    return { paths: extraction ? [destination] : [], reads: archive === undefined ? [] : [archive], truncates: false, uncertain: uncertain || !extraction }
+    return { paths: extraction ? [destination] : [], reads: archive === undefined ? [] : [archive], removes: false, uncertain: uncertain || !extraction }
+}
+
+const CHMOD_CLAUSE = '[ugoa]*(?:[-+=][rwxXstugo]*)+'
+const CHMOD_MODE = new RegExp(`^(?:[0-7]{1,4}|${CHMOD_CLAUSE}(?:,${CHMOD_CLAUSE})*)$`)
+
+function keepsOwnerRead(mode: string): boolean {
+    if (/^[0-7]+$/.test(mode)) return (Number(mode.padStart(4, '0')[1]) & 4) !== 0
+    return mode.split(',').every((clause) => {
+        const match = /^([ugoa]*)((?:[-+=][rwxXst]*)+)$/.exec(clause)
+        if (!match) return false
+        if (match[1] !== '' && !/[ua]/.test(match[1])) return true
+        return [...match[2]!.matchAll(/([-+=])([rwxXst]*)/g)].every(([, operator, permissions]) =>
+            operator === '+' || operator === '-' && !permissions!.includes('r') || operator === '=' && permissions!.includes('r'))
+    })
+}
+
+const GIT_CONFIG_READ_ACTIONS = new Set(['--get', '--get-all', '--get-regexp', '--get-urlmatch', '--get-color', '--get-colorbool', '--list', '-l'])
+const GIT_CONFIG_READ_OPTIONS = new Set(['--global', '--system', '--local', '--worktree', '--includes', '--no-includes', '--show-origin',
+    '--show-scope', '--name-only', '-z', '--null', '--bool', '--int', '--bool-or-int', '--path', '--expiry-date', '--fixed-value', '--all'])
+const GIT_CONFIG_VALUE_OPTIONS = new Set(['-f', '--file', '--blob', '--type', '--default'])
+
+/** Whether a `git config` invocation is a proven read; every other form may write configuration. */
+function gitConfigReads(args: readonly string[]): boolean {
+    const subcommand = args[0] === 'get' || args[0] === 'list'
+    let action = subcommand
+    const positionals: string[] = []
+    for (let index = subcommand ? 1 : 0; index < args.length; index++) {
+        const arg = args[index]!
+        if (!arg.startsWith('-')) { positionals.push(arg); continue }
+        const name = arg.split('=')[0]!
+        if (GIT_CONFIG_READ_ACTIONS.has(name)) action = true
+        else if (GIT_CONFIG_VALUE_OPTIONS.has(name)) { if (!arg.includes('=')) index++ }
+        else if (!GIT_CONFIG_READ_OPTIONS.has(name)) return false
+    }
+    // A lone `section.key` reads it; a lone word such as `edit` is a subcommand that writes.
+    return action || positionals.length === 1 && positionals[0]!.includes('.')
 }
 
 /** Destinations exposed directly by bounded filesystem writer grammars. */
@@ -401,7 +472,11 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
     const name = posix.basename(invocation.executable)
     if (name === 'cp' || name === 'install' || name === 'mv') {
         const transfer = transferOperands(name, invocation.argv)
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, truncates: false, uncertain: transfer.uncertain }
+        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: false, uncertain: transfer.uncertain }
+    }
+    if (name === 'ln') {
+        const transfer = transferOperands('ln', invocation.argv)
+        return { paths: transfer.writes, links: transfer.sources, removes: true, uncertain: transfer.uncertain }
     }
     if (name === 'dd') {
         const paths = invocation.argv.filter(arg => arg.startsWith('of=')).map(arg => arg.slice(3)).filter(Boolean)
@@ -411,7 +486,7 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
             'osync', 'sparse', 'fsync', 'fdatasync', 'excl', 'nocreat', 'oldascii', 'oldebcdic', 'oldibm', 'pareven', 'parnone', 'parodd', 'parset'])
         const flags = new Set(['append', 'binary', 'cio', 'direct', 'directory', 'dsync', 'noatime', 'nocache', 'noctty', 'nofollow',
             'nolinks', 'nonblock', 'sync', 'text', 'fullblock', 'count_bytes', 'skip_bytes', 'seek_bytes', 'fsync'])
-        let truncates = true
+        let removes = true
         let uncertain = false
         for (const arg of invocation.argv) {
             const [operand, value] = arg.split(/=(.*)/s)
@@ -420,12 +495,12 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
                 const values = value.split(',')
                 if (values.some(value => !conversions.has(value))) uncertain = true
                 // GNU and BSD accumulate conversions across operands; later conv= cannot undo notrunc.
-                if (values.includes('notrunc')) truncates = false
+                if (values.includes('notrunc')) removes = false
             } else if (operand === 'iflag' || operand === 'oflag') {
                 if (value.split(',').some(value => !flags.has(value))) uncertain = true
             }
         }
-        return { paths, reads, truncates, uncertain }
+        return { paths, reads, removes, uncertain }
     }
     if (name === 'tar') return tarExtractionWrites(invocation.argv)
     const scan = (plain: Set<string>, valued: Set<string>) => {
@@ -454,21 +529,24 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
         const result = scan(new Set(['-a', '-i', '-p', '--append', '--ignore-interrupts', '--output-error']), new Set())
         // BSD stops option parsing at the first filename; GNU may permute later options.
         const append = !result.optionsAfterOperand && result.optionArguments.some(arg => arg === '--append' || /^-[aip]*a[aip]*$/.test(arg))
-        return { paths: result.operands, truncates: !append, uncertain: result.uncertain || result.optionsAfterOperand
+        return { paths: result.operands, removes: !append, uncertain: result.uncertain || result.optionsAfterOperand
             || result.optionArguments.some(arg => arg.includes('=') && !/^--output-error=(?:warn|warn-nopipe|exit|exit-nopipe)$/.test(arg)) }
     }
     if (name === 'touch') {
         const result = scan(new Set(['-a', '-c', '-h', '-m', '--no-create']), new Set(['-A', '-d', '-r', '-t', '--date', '--reference', '--time']))
-        return { paths: result.operands, truncates: false, uncertain: result.uncertain }
+        return { paths: result.operands, removes: false, uncertain: result.uncertain }
     }
     if (name === 'truncate') {
         const result = scan(new Set(['-c', '--no-create']), new Set(['-r', '-s', '--reference', '--size']))
-        return { paths: result.operands, truncates: true, uncertain: result.uncertain }
+        return { paths: result.operands, removes: true, uncertain: result.uncertain }
     }
     if (name === 'chmod') {
         const result = scan(new Set(['-f', '-h', '-v', '-R', '-H', '-L', '-P', '-E', '-C', '-N', '-i', '-I']), new Set(['--reference']))
-        const hasMode = result.operands.length > 1 && /^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxXstugo,]+)$/.test(result.operands[0]!)
-        return { paths: result.operands.slice(hasMode ? 1 : 0), truncates: false, uncertain: result.uncertain || result.operands.length === 0 }
+        const reference = result.optionArguments.some(arg => arg.startsWith('--reference'))
+        const mode = !reference && result.operands.length > 1 && CHMOD_MODE.test(result.operands[0]!) ? result.operands[0] : undefined
+        // A mode taken from another file, or one that drops the owner's read, can leave a file unloadable.
+        return { paths: result.operands.slice(mode === undefined ? 0 : 1), removes: mode === undefined || !keepsOwnerRead(mode),
+            uncertain: result.uncertain || result.operands.length === 0 }
     }
     return undefined
 }
@@ -549,7 +627,21 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const readDenial = deny('Refusing to read a declared environment instance or secrets directory into the agent context.')
     const manifestPath = absolute(GUARD_CONTROL_FILES[1])
     const structural = [resolved.configPath, manifestPath]
-    const structuralDenial = deny(`Refusing to delete, rename or truncate ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
+    const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
+    const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.')
+    const linkDenial = deny('Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.')
+    // The guard authenticates only its entry point, so every module it loads is as much a control as
+    // its hook registration; an edited adapter once turned every hard denial into an allow.
+    const installedDirectories = resolved.executionDirectories.map(fold)
+    const installedCode = (folded: string, covering: boolean) => installedDirectories.some((directory) => within(folded, directory) || covering && within(directory, folded))
+    const binDirectories = resolved.allowedRoots.map((root) => fold(`${root}/node_modules/.bin`))
+    const searchDirectories = resolved.searchDirectories.map(fold)
+    // A file runs from a search path directory only as its direct child, which shadows a permitted command.
+    const executes = (folded: string, covering: boolean) => installedCode(folded, covering) || binDirectories.some((directory) => within(folded, directory))
+        || searchDirectories.some((directory) => folded === directory || posix.dirname(folded) === directory || covering && within(directory, folded))
+    const secretFiles = resolved.secretFileIdentities === null ? undefined : new Set(resolved.secretFileIdentities)
+    // A hard link to a secrets file shares its identity under a spelling no normalisation equates.
+    const secretFile = (evidence: JsonSnapshotObject) => evidence.identity !== null && secretFiles?.has(evidence.identity as string) === true
     let authorityUnavailable: GuardDecision | undefined
     let hardDeny: GuardDecision | undefined
     const hold = (decision: GuardDecision) => {
@@ -587,21 +679,23 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             return
         }
         const lexical = posix.resolve(request.cwd, request.path)
-        if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
-            hold(unavailable('Guard path escapes configured roots.'))
-            return
-        }
         const mutating = request.operation !== 'cwd'
         const staging = request.operation === 'stage'
         const removing = request.operation === 'remove'
         // Spelling checks run before inspection so a hard denial survives missing evidence; they
-        // cover leaves that do not exist yet, which have no identity to compare.
+        // cover leaves that do not exist yet, which have no identity to compare, and folded
+        // spellings of a root that a case-insensitive volume resolves to it.
         const folded = fold(lexical)
         if (mutating && (folded.split('/').includes('.secrets') || (staging || removing) && within(fold(secretRoot), folded))) hold(secretDenial)
         if (mutating && resolved.instances.some((item) => folded === fold(item.path) || (staging || removing) && within(fold(item.path), folded))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
             || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
+        if (request.operation === 'write' && executes(folded, controlCoverage)) hold(executionDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
+        if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
+            hold(unavailable('Guard path escapes configured roots.'))
+            return
+        }
         let evidence: JsonSnapshot | undefined
         try { evidence = snapshotJson(inspect(Object.freeze(request))) }
         catch { hold(unavailable('Guard path inspection failed.')); return }
@@ -615,7 +709,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         // Identity catches every spelling the volume resolves to a protected entry, including ones
         // the shared normalisation does not equate, such as a hard link.
         const { is, below, covers } = evidenceFacts(evidence)
-        if (below(secretRoot) || (staging || removing) && covers(secretRoot)) hold(secretDenial)
+        if (below(secretRoot) || secretFile(evidence) || (staging || removing) && covers(secretRoot)) hold(secretDenial)
         if (resolved.instances.some((item) => is(item.path) || (staging || removing) && covers(item.path))) hold(instanceDenial)
         if (request.operation === 'write' && (controlFiles.some(is) || controlDirectories.some(below)
             || controlCoverage && (controlFiles.some(covers) || controlDirectories.some(covers)))) hold(controlDenial)
@@ -632,6 +726,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             hold(controlDenial)
             return false
         }
+        if (installedCode(fold(lexical), true)) { hold(executionDenial); return false }
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) return true
         inspectPath({ path, cwd, operation: 'remove' })
         const evidence = resolvedEvidence({ path, cwd, operation: 'remove' })
@@ -659,24 +754,49 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             hold(unavailable('Invocation names a guard control but its filesystem effect is not classified.'))
         }
     }
+    // A symbolic link's text resolves from the link's own directory and a hard link's from the
+    // working directory, so a source is checked from both.
+    const inspectLinkSource = (source: string, cwd: string, destinations: readonly string[]) => {
+        if (!scalar(source) || Buffer.byteLength(source) > GUARD_INPUT_LIMITS.pathBytes) { hold(unavailable('Guard path or working directory is malformed.')); return }
+        const protectedTargets = [secretRoot, ...resolved.instances.map((item) => item.path), ...controlFiles, ...controlDirectories].map(fold)
+        const bases = new Set([cwd, ...destinations.flatMap((path) => { const target = posix.resolve(cwd, path); return [target, posix.dirname(target)] })])
+        for (const base of bases) {
+            const folded = fold(posix.resolve(base, source))
+            if (folded.split('/').includes('.secrets') || executes(folded, true)
+                || protectedTargets.some((target) => within(folded, target) || within(target, folded))) { hold(linkDenial); return }
+        }
+        if (!resolved.allowedRoots.some((root) => within(posix.resolve(cwd, source), root))) return
+        pathCount++
+        const evidence = resolvedEvidence({ path: source, cwd, operation: 'read' })
+        if (!evidence) return
+        const { is, below, covers } = evidenceFacts(evidence)
+        if (secretFile(evidence) || [secretRoot, ...controlDirectories].some((path) => is(path) || below(path) || covers(path))
+            || [...resolved.instances.map((item) => item.path), ...controlFiles].some((path) => is(path) || covers(path))) hold(linkDenial)
+    }
     // A read-only command is allowed only when every path it touches is evidenced inside the
     // configured roots; reading a protected instance is a hard denial, anything doubtful is not safe.
     const inspectReadOnly = (access: ReadOnlyAccess): boolean => {
         let safe = true
         const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
+            if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes) { safe = false; return }
             const lexical = posix.resolve(access.cwd, path)
-            if (!scalar(path) || Buffer.byteLength(path) > GUARD_INPUT_LIMITS.pathBytes || !resolved.allowedRoots.some((root) => within(lexical, root))) { safe = false; return }
-            pathCount++
             const folded = fold(lexical)
-            const protectedRead = folded.split('/').includes('.secrets') || resolved.instances.some((item) => folded === fold(item.path))
-            if (kind === 'read' && protectedRead) hold(readDenial)
+            // A search rooted at or below a protected path reads it as surely as `cat` does; only a
+            // listing, which reports names, may name one.
+            const protectedRead = folded.split('/').includes('.secrets') || resolved.instances.some((item) => within(folded, fold(item.path)))
+            if (kind !== 'listing' && protectedRead) hold(readDenial)
+            if (!resolved.allowedRoots.some((root) => within(lexical, root))) { safe = false; return }
+            pathCount++
             // An undeclared `.env*` file is not a known instance, but it is not known to be data either.
             if (kind === 'read' && /^\.env/.test(posix.basename(folded))) safe = false
+            // Unenumerated secrets leave every content read unproven, and a second hard link to a
+            // protected file leaves every recursive search unproven: either may reach it unnamed.
+            if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             if (kind === 'tree' && [secretRoot, ...resolved.instances.map((item) => item.path)].some((path) => within(fold(path), folded))) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
             if (!evidence) { safe = false; return }
             const { is, below, covers } = evidenceFacts(evidence)
-            if (kind === 'read' && (below(secretRoot) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
+            if (kind !== 'listing' && (is(secretRoot) || below(secretRoot) || secretFile(evidence) || resolved.instances.some((item) => is(item.path)))) hold(readDenial)
             if (kind === 'tree' && (covers(secretRoot) || resolved.instances.some((item) => covers(item.path)))) safe = false
         }
         for (const path of access.requires ?? []) {
@@ -717,17 +837,18 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
         }
         const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
-        const writes = git?.verb === 'mv' ? (() => {
+        const writes: VisibleWrites | undefined = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
-            return { paths: transfer.writes, reads: [], truncates: false, uncertain: transfer.uncertain }
+            return { paths: transfer.writes, reads: [], removes: false, uncertain: transfer.uncertain }
         })() : git?.verb === 'archive' ? gitArchiveWrites(git.args) : visibleWrites(invocation)
         if (writes) {
             const writeCwd = git && ['archive', 'mv'].includes(git.verb) ? git.cwd : invocation.cwd
             for (const path of writes.paths) {
                 pathCount++
                 inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
-                if (writes.truncates) inspectRemoval(path, writeCwd)
+                if (writes.removes) inspectRemoval(path, writeCwd)
             }
+            for (const source of writes.links ?? []) inspectLinkSource(source, writeCwd, writes.paths)
             if (writes.reads?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: writes.reads, trees: [], listings: [] })) {
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))
             }
@@ -749,6 +870,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             if (decision?.decision === 'deny') hold(decision)
             else if (decision) holdAsk(invocation, decision)
         }
+        if (git.verb === 'config' && !gitConfigReads(git.args)) hold(gitMetadataDenial)
         if (git.verb === 'reset' && git.args.includes('--hard') || git.verb === 'clean' && git.args.some((arg) => /^-[^-]*[fdxX]/.test(arg) || arg === '--force')) holdAsk(invocation, ask('Destructive Git operation requires human approval.'))
         if (git.verb === 'add') {
             let options = true

@@ -38,6 +38,7 @@ describe('closed native guard representation', () => {
         const decision = evaluateGuard(parseGuardInput(payload), {
             canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
+            executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', 'HEAD:main'] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
         expect(decision.decision).toBe('deny')
@@ -57,6 +58,7 @@ describe('closed native guard representation', () => {
         const decision = evaluateGuard(parseGuardInput(input), {
             canonicalRoot: cwd, configPath: `${cwd}/cockpit.toml`, allowedRoots: [cwd], instances: [], protectedIdentities, protectedBranches: ['main'], hostedDatabaseHosts: [], vendorHosts: [],
             declaredAllows: [], declaredDenies: [], ripgrepConfigActive: false,
+            executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
             cockpitInvocations: [{ executable: 'git', cwd, argv: ['push', 'origin', source] }], projectCommands: [],
         }, ({ path }) => ({ status: 'resolved', path, symlink: false, identity: null, ancestors: [] }))
         for (const target of ['claudecode', 'codexcli', 'opencode'] as const) {

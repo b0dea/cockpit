@@ -44,6 +44,7 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generat
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
+import { guardInstalledDirectories, guardSearchDirectories, guardSecretFiles } from '../guards/protected-locations.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { formatShellCommand, type FixContext } from '../fix-catalogue.js'
@@ -257,6 +258,8 @@ export interface GuardEvaluationApplicationInput {
     readonly transport?: boolean
     readonly askIsDeny?: boolean
     readonly ripgrepConfigActive?: boolean
+    /** The harness's command search path, whose directories inside the allowed roots the guard protects. */
+    readonly searchPath?: string
 }
 
 export interface GuardEvaluationApplicationAdapters {
@@ -322,8 +325,9 @@ export async function runGuardEvaluationApplication(
         diagnostics: [{ severity: 'error', code: 'GUARD_AUTHORITY_UNAVAILABLE', message: reason, target: 'guard' }],
     })
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['transport', 'askIsDeny', 'ripgrepConfigActive'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['transport', 'askIsDeny', 'ripgrepConfigActive', 'searchPath'])
         if (!data
+            || data.searchPath !== undefined && (typeof data.searchPath !== 'string' || /[\x00-\x1f\x7f]/.test(data.searchPath) || Buffer.byteLength(data.searchPath) > GUARD_INPUT_LIMITS.inputBytes)
             || data.transport !== undefined && typeof data.transport !== 'boolean'
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
@@ -438,7 +442,8 @@ export async function runGuardEvaluationApplication(
             const step: ExecutionStep = {
                 id: 'guard-handler', argv: [shell, guard, '--handler-stdio', ...plan.argv.slice(1)], argv0: '/bin/bash',
                 cwd: plan.cwd, env: { COCKPIT_GUARD_STDIN: plan.stdin, COCKPIT_GUARD_ROOT: identity.root, COCKPIT_ASK_IS_DENY: data.askIsDeny ? '1' : '0',
-                    ...(data.ripgrepConfigActive ? { COCKPIT_RIPGREP_CONFIG_ACTIVE: '1' } : {}) },
+                    ...(data.ripgrepConfigActive ? { COCKPIT_RIPGREP_CONFIG_ACTIVE: '1' } : {}),
+                    ...(data.searchPath ? { COCKPIT_GUARD_SEARCH_PATH: data.searchPath } : {}) },
                 timeoutMs: plan.timeoutMs, stdoutLimitBytes: plan.stdoutBytes, stderrLimitBytes: plan.stderrBytes,
                 paths: [], ports: [], labels: { action: 'guard-handler' }, expected: [],
                 consumedFiles: [
@@ -518,6 +523,7 @@ export async function runGuardEvaluationApplication(
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
+            searchDirectories: guardSearchDirectories(data.searchPath ?? '', prepared.result.policy.allowedRoots),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
         if (current.kind !== 'complete' || current.result.source.sha256 !== identity.configSha256) return unavailable('Guard configuration changed during evaluation.')
@@ -641,6 +647,11 @@ export async function prepareGuardEvaluationPolicy(
             // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
             const configPath = loaded.source.path
             protect(canonicalRoot, configPath, 'file', 'configuration')
+            // This module runs from dist/environment, so two levels up is the running cockpit package.
+            const executionDirectories = guardInstalledDirectories(resolve(fileURLToPath(new URL('../..', import.meta.url))), canonicalRoot)
+                .filter(path => [...allowedRoots].some(root => confinedPath(root, path)))
+            const secretFiles = guardSecretFiles(canonicalRoot)
+            const protectedFilesLinked = secretFiles.linked || instances.some(item => (identities.get(item.path)?.nlink ?? 1) > 1)
             for (const [path, before] of identities) {
                 const after = lstatSync(path)
                 if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
@@ -662,6 +673,8 @@ export async function prepareGuardEvaluationPolicy(
                     ...(rule.fix === undefined ? {} : { fix: rule.fix }),
                 }))),
                 ripgrepConfigActive: false,
+                executionDirectories: Object.freeze(executionDirectories), searchDirectories: Object.freeze([]),
+                secretFileIdentities: secretFiles.identities && Object.freeze([...secretFiles.identities]), protectedFilesLinked,
                 cockpitInvocations: Object.freeze([]), projectCommands: Object.freeze([]),
             })
             return { kind: 'complete' as const, status: 0 as const, diagnostics: [],
