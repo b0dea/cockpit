@@ -25,8 +25,8 @@ Shared MCP approval enables a server; browser tool preapproval is a separate dec
 isolated empty or seeded data without production reach can be eligible. Restored data,
 shared data and production-reaching servers never qualify. The measured Codex transport needs
 per-server `default_tools_approval_mode = "approve"`; when eligibility is absent its declaration
-is omitted. Other unmeasured approval controls are omitted. No browser setting changes the
-ordinary, escalated or unknown-mode launch guard decision or authorizes its own launch.
+is omitted. Other unmeasured approval controls are omitted. No browser setting changes a
+guard decision or authorizes its own launch.
 
 An independent grader retains browser tools. File read-only restrictions concern repository
 files. Browser driving can change product state, so product-state restraint is instructed.

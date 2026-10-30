@@ -287,7 +287,7 @@ describe('maintainer reference boundary', () => {
             const mixed = await checkRepositoryReferences(root, 'HEAD~1')
             expect(mixed).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'REFERENCE_CANDIDATE_MISMATCH' }] })
 
-            const builtPath = join(root, 'packages/cockpit/dist/autonomy/launcher.js')
+            const builtPath = join(root, 'packages/cockpit/dist/guards/evaluator.js')
             const builtBytes = readFileSync(builtPath)
             writeFileSync(builtPath, Buffer.concat([builtBytes, Buffer.from('\n')]))
             const unauthenticated = await checkRepositoryReferences(root)

@@ -2809,16 +2809,14 @@ function guardArchitectureViolations(
             }
             if (ts.isObjectLiteralExpression(node)) {
                 const names = node.properties.map(property => property.name && propertyName(property.name))
-                if (canonical !== APPLICATION_MODULE && canonical !== evaluator && names.some(name => name && runtimeFields.has(name)
-                    && !(canonical === `${base}autonomy/launcher.ts` && ['cockpitInvocations', 'projectCommands'].includes(name)))) {
+                if (canonical !== APPLICATION_MODULE && canonical !== evaluator && names.some(name => name && runtimeFields.has(name))) {
                     violations.add('ARCH054_GUARD_POLICY_RECONSTRUCTION')
                 }
                 if (canonical !== parser && stringProperty(node, 'status') === 'parsed' && objectProperty(node, 'invocations')) violations.add('ARCH051_GUARD_OWNER')
                 if (canonical !== table && ['name', 'handler', 'visibility', 'ordinary'].every(name => names.includes(name))) violations.add('ARCH051_GUARD_OWNER')
             }
             if (ts.isPropertyAccessExpression(node) && runtimeFields.has(node.name.text)
-                && ![APPLICATION_MODULE, evaluator].includes(canonical)
-                && !(canonical === `${base}autonomy/launcher.ts` && ['cockpitInvocations', 'projectCommands'].includes(node.name.text))) violations.add('ARCH054_GUARD_POLICY_RECONSTRUCTION')
+                && ![APPLICATION_MODULE, evaluator].includes(canonical)) violations.add('ARCH054_GUARD_POLICY_RECONSTRUCTION')
             if (ts.isPropertyAssignment(node)) {
                 const consumer = [...fieldConsumers].find(([, consumer]) => consumer.path === canonical && consumer.target === propertyName(node.name))
                 if (consumer) {

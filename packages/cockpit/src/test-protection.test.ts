@@ -156,7 +156,7 @@ describe('test protection diff classifier', () => {
 
     it.each([
         'packages/cockpit/src/harness-support.test.ts',
-        'packages/cockpit/src/autonomy/launcher.test.ts',
+        'packages/cockpit/src/guards/evaluator.test.ts',
         ...['js', 'jsx', 'ts', 'tsx', 'cjs', 'mjs', 'cts', 'mts'].map(extension => `packages/cockpit/src/future/control.spec.${extension}`),
     ])('protects every cockpit test or spec path: %s', path => {
         expect(classifyTestProtection(patch(path, 'expect(result).toBe(false)')).allowed).toBe(false)
@@ -236,7 +236,7 @@ describe('test protection authenticated Git CLI', () => {
 
     it('refuses an actual retained-assertion wrapper and allows the identical acknowledged Git diff visibly', () => {
         const repo = repository()
-        const path = 'packages/cockpit/src/autonomy/launcher.test.ts'
+        const path = 'packages/cockpit/src/guards/evaluator.test.ts'
         const body = `it('retains denial', () => {\n  expect(result).toBe(false)\n})\n`
         const changed = body.replace('  expect(', '  if (false) {\n  expect(').replace('\n})', '\n  }\n})')
         const base = repo.commit({ [path]: body })

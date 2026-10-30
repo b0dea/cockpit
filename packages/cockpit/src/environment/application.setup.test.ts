@@ -8,7 +8,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import * as generatedCurrentnessOwner from './generated-application.js'
 import { synchronizeInstructionPointer } from './instruction-pointer.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { planAutonomyLaunch } from '../autonomy/launcher.js'
 import { evaluateGuard } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'

@@ -8,7 +8,7 @@ import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { planAutonomyLaunch } from '../autonomy/launcher.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable } from './executable.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { encodeGuardLocalIdentity, parseGuardLocalIdentity } from '../guards/local-identity.js'
@@ -282,7 +282,7 @@ function restoreInstalledGuardFixture(fixture: InstalledGuardFixture) {
     rmSync(join(fixture.root, 'registration.json'), { recursive: true, force: true })
 }
 
-describe('pending guard policy construction', () => {
+describe('guard policy construction', () => {
     it('refuses missing installed guard identity through the application boundary', async () => {
         expect(await runGuardEvaluationApplication({ identity: null, guardRoot: '/workspace/product', payload: {}, harness: 'claudecode', cwd: '/workspace/product' }, {
             loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout, resolveGit: async () => ({ state: 'unavailable', reason: 'synthetic missing Git' }),
@@ -350,7 +350,6 @@ describe('pending guard policy construction', () => {
         source.sibling[0].environment_files.push({ template: 'config/template.example', instance: 'config/runtime.env' })
         mkdirSync(join(root, 'app/config'), { recursive: true })
         writeFileSync(join(root, 'app/package-lock.json'), '{}')
-        commandAuthority(root, configPath)
         writeFileSync(configPath, stringify({ ...source, guards: { hosted_db_hosts: ['db.example.test'],
             allow: [{ argv: ['make', 'verify'], reason: 'Repository verification is safe.', cwd: '.' }],
             deny: [{ contains: ['--environment', 'shared'], reason: 'Shared environments are human-operated.', fix: 'Use a local environment.' }],
@@ -659,7 +658,6 @@ describe('pending guard policy construction', () => {
         expect(result.kind, JSON.stringify(result)).toBe('complete')
         if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
         const policy = result.result.policy
-        expect(result.result.status).toBe('pending_integration')
         expect(policy).toEqual({
             canonicalRoot: root, configPath: join(root, 'cockpit.toml'), allowedRoots: [root, join(root, 'app')],
             instances: ['.env', 'config/runtime.env'].map(path => ({ name: `app-${createHash('sha256').update(path).digest('hex').slice(0, 12)}`, path: join(root, 'app', path) })),
@@ -719,41 +717,17 @@ describe('pending guard policy construction', () => {
             tool_input: { notebook_path: join(cockpitRoot, '.cockpit/local/analysis.ipynb'), new_source: 'print(1)' } }), policy, inspect).decision).toBe('deny')
     })
 
-    function commandAuthority(root: string, configPath: string) {
-        const executable = join(root, 'bin/cockpit')
-        mkdirSync(dirname(executable), { recursive: true })
-        writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
-        const sha256 = createHash('sha256').update(readFileSync(executable)).digest('hex')
-        return {
-            executable: { canonicalPath: executable, invocationPath: executable, sha256, executionMode: 'staged' as const },
-            invocations: [{ executable, cwd: root, argv: ['check', '--config', realpathSync(configPath)] }],
-            autonomy: { target: 'claudecode' as const, nativeReads: ['Read', 'Glob', 'Grep'], guardRegistration: {
-                registered: true as const, wiring: {
-                    target: 'claudecode' as const, version: '2.1.220', executable: '/workspace/bin/claude',
-                    executableSha256: 'a'.repeat(64), generatedManifestSha256: 'b'.repeat(64),
-                    hook: { path: '.cockpit/guards/bash-guard.sh', sha256: 'c'.repeat(64) },
-                    handler: { path: 'bin/cockpit', sha256 },
-                    registration: { path: '.claude/settings.json', sha256: 'd'.repeat(64) },
-                    handlerArgv: ['guard-evaluate', '--harness', 'claudecode'] as const,
-                },
-            } },
-        }
-    }
-
-    it('issues literal project tuples through authenticated policy and independent autonomy projections', async () => {
+    it('issues literal project tuples through authenticated policy', async () => {
         for (const executable of ['npm', 'build tool', 'tool*?[];literal']) {
             const tuple = [executable, '*', '**', '?', '[', ']', 'file[1]?.txt']
             expect(GuardCommandArgv.safeParse(tuple).success).toBe(true)
-            const { input, root, configPath } = await observedPolicy(true, tuple)
-            const result = await prepareGuardEvaluationPolicy({ ...input, commands: commandAuthority(root, configPath) })
+            const { input, root } = await observedPolicy(true, tuple)
+            const result = await prepareGuardEvaluationPolicy(input)
             expect(result.kind, JSON.stringify(result)).toBe('complete')
             if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-            const { policy, autonomy } = result.result
+            const { policy } = result.result
             expect(policy.projectCommands.map(command => [command.executable, ...command.argv])).toEqual([tuple, tuple])
-            expect(autonomy?.projectCommands).toEqual(policy.projectCommands)
-            expect(autonomy?.projectCommands).not.toBe(policy.projectCommands)
-            expect(Object.isFrozen(autonomy?.projectCommands[0]?.argv)).toBe(true)
-            expect(planAutonomyLaunch(autonomy)).toMatchObject({ kind: 'complete', guardRequired: true })
+            expect(Object.isFrozen(policy.projectCommands[0]?.argv)).toBe(true)
             const rendered = renderGuardProjectCommand(tuple)
             if (rendered.kind !== 'complete') throw new Error(JSON.stringify(rendered))
             const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
@@ -762,7 +736,7 @@ describe('pending guard policy construction', () => {
             expect(decide(`${rendered.command} extra`).decision).toBe('ask')
             expect(decide(`'${executable}x' '*' '**' '?' '[' ']' 'file[1]?.txt'`).decision).toBe('ask')
             expect(decide(rendered.command, root).decision).toBe('ask')
-            expect(decide(`${rendered.command}; curl https://api.vendor.example.test`).decision).toBe('deny')
+            expect(decide(`${rendered.command}; curl https://api.vendor.example.test`)).toMatchObject({ decision: 'deny', reason: 'Refusing executable use of a declared vendor host.' })
             tuple[1] = 'changed'
             expect(policy.projectCommands[0]?.argv[0]).toBe('*')
         }
@@ -778,54 +752,17 @@ describe('pending guard policy construction', () => {
         writeFileSync(join(root, 'compose.yml'), 'services:\n  api:\n    image: busybox\n  worker:\n    image: busybox\n')
         writeFileSync(configPath, stringify({ ...source, cockpit: { ...source.cockpit, name: 'synthetic-cockpit', siblings_root: root },
             environment: { ...environment, compose_files: ['compose.yml'] } }))
-        const commands = commandAuthority(root, configPath)
-        const policyFor = async (service: string) => {
-            const loaded = await loadCockpitConfig(configPath)
-            if (loaded.kind !== 'complete') throw new Error('compose-first guard fixture did not load')
-            const checkout = await observeSetupCheckout({ source: loaded.result.source, cockpitName: loaded.result.config.cockpit.name,
-                observedAt: new Date().toISOString(), env: {}, gitExecutable })
-            return prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout, commands: { ...commands, invocations: [{
-                executable: commands.executable.canonicalPath, cwd: root,
-                argv: ['logs', '--config', realpathSync(configPath), '--service', service],
-            }] } })
-        }
-        const admitted = await policyFor('worker')
-        expect(admitted.kind, JSON.stringify(admitted.diagnostics)).toBe('complete')
-        if (admitted.kind !== 'complete') throw new Error(JSON.stringify(admitted))
-        expect(admitted.result.policy.cockpitInvocations.map(invocation => invocation.argv)).toEqual([
-            ['logs', '--config', realpathSync(configPath), '--service', 'worker'],
-        ])
-        expect(await policyFor('app')).toMatchObject({ kind: 'refusal',
-            diagnostics: [{ message: 'guard command candidate is not an ordinary exact invocation' }] })
-    })
-
-    it('issues independent immutable evaluation and representation projections from authenticated exact candidates', async () => {
-        const { input, root, configPath } = await observedPolicy()
-        const commands = commandAuthority(root, configPath)
-        const result = await prepareGuardEvaluationPolicy({ ...input, commands })
-        expect(result.kind, JSON.stringify(result)).toBe('complete')
-        if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
-        const { policy, autonomy } = result.result
-        expect(policy.cockpitInvocations).toEqual(commands.invocations)
-        expect(policy.projectCommands).toEqual([
-            { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
-            { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'test', argv: ['test', '--', 'unit.test.ts'] },
-        ])
-        expect(autonomy).toBeDefined()
-        expect(autonomy?.cockpitInvocations).toEqual(policy.cockpitInvocations)
-        expect(autonomy?.projectCommands).toEqual(policy.projectCommands)
-        expect(autonomy?.cockpitInvocations).not.toBe(policy.cockpitInvocations)
-        expect(autonomy?.projectCommands).not.toBe(policy.projectCommands)
-        commands.invocations[0]!.argv[0] = 'down'
-        expect(policy.cockpitInvocations[0]?.argv[0]).toBe('check')
-        expect(planAutonomyLaunch(autonomy)).toMatchObject({ kind: 'complete', mode: 'ordinary', guardRequired: true, capability: 'instructed' })
-        expect(planAutonomyLaunch({ ...autonomy })).toMatchObject({ kind: 'refusal', code: 'AUTONOMY_GRANTS_INVALID' })
-        const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
-        expect(evaluateGuard(parseGuardInput(shellPayload('npm run build', join(root, 'app'))), policy, inspect).decision).toBe('allow')
-        expect(evaluateGuard(parseGuardInput(shellPayload('npm run build --extra', join(root, 'app'))), policy, inspect).decision).toBe('ask')
-        expect(evaluateGuard(parseGuardInput(shellPayload('npm run build; curl https://api.vendor.example.test', join(root, 'app'))), policy, inspect)).toMatchObject({ decision: 'deny', reason: 'Refusing executable use of a declared vendor host.' })
-        expect(Object.isFrozen(policy.projectCommands[0]?.argv)).toBe(true)
-    })
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }),
+            resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) }
+        const decide = async (service: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
+            payload: shellPayload(`${launcher} logs --config ${realpathSync(configPath)} --service ${service}`, root) }, adapters)).decision.decision
+        expect(await decide('worker')).toBe('allow')
+        expect(await decide('app')).toBe('ask')
+    }, 120_000)
 
     it('does not infer absent project declarations and refuses missing, ambiguous or symlinked lockfiles', async () => {
         for (const change of ['absent', 'missing', 'ambiguous', 'symlink'] as const) {
@@ -845,24 +782,6 @@ describe('pending guard policy construction', () => {
             const result = await prepareGuardEvaluationPolicy({ configuration: loaded.result, checkout })
             if (change === 'absent') expect(result).toMatchObject({ kind: 'complete', result: { policy: { projectCommands: [] } } })
             else expect(result, change).toMatchObject({ kind: 'refusal', status: 2, result: null })
-        }
-    })
-
-    it('refuses unclosed commands, substituted executable identity, registration and escaping path authority', async () => {
-        for (const change of ['internal', 'destructive', 'executable', 'hash', 'registration', 'native-read', 'path-symlink'] as const) {
-            const { input, root, configPath } = await observedPolicy()
-            const commands = commandAuthority(root, configPath)
-            if (change === 'internal') commands.invocations[0]!.argv = ['guard-evaluate', '--harness', 'claudecode']
-            if (change === 'destructive') commands.invocations[0]!.argv = ['down']
-            if (change === 'executable') commands.invocations[0]!.executable = 'cockpit'
-            if (change === 'hash') commands.executable.sha256 = '0'.repeat(64)
-            if (change === 'registration') commands.autonomy.guardRegistration.wiring.handler.sha256 = '0'.repeat(64)
-            if (change === 'native-read') commands.autonomy.nativeReads = ['Bash(*)']
-            if (change === 'path-symlink') {
-                symlinkSync('/tmp', join(root, 'escape'))
-                commands.invocations[0]!.argv = ['document', '--registry', 'escape/registry.sh']
-            }
-            expect(await prepareGuardEvaluationPolicy({ ...input, commands }), change).toMatchObject({ kind: 'refusal', status: 2, result: null })
         }
     })
 

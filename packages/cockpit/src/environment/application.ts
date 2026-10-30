@@ -34,11 +34,10 @@ import {
 } from './contract.js'
 import { gitEnvironment, type SetupObservation, type SetupResult } from './setup.js'
 import type { InstructionPointerResult } from './instruction-pointer.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolvedExecutable, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
 import { resolveOrdinaryInvocation } from '../command-table.js'
-import { issueResolvedAutonomyGrants, type ResolvedAutonomyGrants } from '../autonomy/launcher.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
@@ -543,25 +542,16 @@ class GuardFileMissing extends Error {
     constructor(readonly path: string) { super(`${path} is missing`) }
 }
 
-export interface PendingGuardEvaluationPolicy {
-    readonly status: 'pending_integration'
+export interface PreparedGuardEvaluationPolicy {
     readonly policy: GuardEvaluationPolicy
-    readonly autonomy?: ResolvedAutonomyGrants
-}
-
-export interface GuardPolicyCommandAuthority {
-    readonly executable: ResolvedExecutable
-    readonly invocations: readonly GuardInvocationProfile[]
-    readonly autonomy?: Pick<ResolvedAutonomyGrants, 'target' | 'nativeReads' | 'guardRegistration'>
 }
 
 export interface GuardEvaluationPolicyInput {
     readonly configuration: LoadedConfigProjection
     readonly checkout: SetupCheckoutObservation
-    readonly commands?: GuardPolicyCommandAuthority
 }
 
-function guardPolicyRefusal(message: string): EnvironmentCommandOutcome<PendingGuardEvaluationPolicy> {
+function guardPolicyRefusal(message: string): EnvironmentCommandOutcome<PreparedGuardEvaluationPolicy> {
     return { kind: 'refusal', status: 2, result: null, diagnostics: [ownerDiagnostic(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, message, 'guard-policy',
     )] }
@@ -570,8 +560,8 @@ function guardPolicyRefusal(message: string): EnvironmentCommandOutcome<PendingG
 /** Source projections share authenticated authority; installed consumption is admitted separately. */
 export async function prepareGuardEvaluationPolicy(
     input: GuardEvaluationPolicyInput,
-): Promise<EnvironmentCommandOutcome<PendingGuardEvaluationPolicy>> {
-    const inputData = ownDataValues(input, ['configuration', 'checkout'], ['commands'])
+): Promise<EnvironmentCommandOutcome<PreparedGuardEvaluationPolicy>> {
+    const inputData = ownDataValues(input, ['configuration', 'checkout'])
     const data = inputData && Object.hasOwn(inputData, 'configuration') && Object.hasOwn(inputData, 'checkout') ? inputData : undefined
     if (!data) return guardPolicyRefusal('guard policy requires own-data configuration and checkout observations')
     const configuration = data.configuration as LoadedConfigProjection
@@ -674,7 +664,7 @@ export async function prepareGuardEvaluationPolicy(
                 cockpitInvocations: Object.freeze([]), projectCommands: Object.freeze([]),
             })
             return { kind: 'complete' as const, status: 0 as const, diagnostics: [],
-                result: Object.freeze({ status: 'pending_integration' as const, policy }) }
+                result: Object.freeze({ policy }) }
         })
         if (!result || result.kind !== 'complete' || !siblingsRoot) {
             return result ?? guardPolicyRefusal('guard policy checkout authority is copied, changed, expired or already consumed')
@@ -702,59 +692,7 @@ export async function prepareGuardEvaluationPolicy(
                 projectCommands.push(Object.freeze({ executable: argv[0]!, checkoutRoot, kind, argv: Object.freeze(argv.slice(1)) }))
             }
         }
-        let commandAuthority: GuardPolicyCommandAuthority | undefined
-        const cockpitInvocations: GuardInvocationProfile[] = []
-        if (Object.hasOwn(data, 'commands')) {
-            const captured = ownDataValues(snapshotJson(data.commands), ['executable', 'invocations'], ['autonomy'])
-            if (!captured) {
-                return guardPolicyRefusal('guard command authority must be closed own data')
-            }
-            const executable = resolvedExecutable(captured.executable)
-            if (!executable || !Array.isArray(captured.invocations) || captured.invocations.length > GUARD_INPUT_LIMITS.invocations) {
-                return guardPolicyRefusal('guard command authority requires a resolved executable and bounded exact invocations')
-            }
-            const status = lstatSync(executable.canonicalPath)
-            if (!status.isFile() || status.isSymbolicLink() || !(status.mode & 0o111)
-                || realpathSync(executable.invocationPath) !== executable.canonicalPath
-                || createHash('sha256').update(readFileSync(executable.canonicalPath)).digest('hex') !== executable.sha256) {
-                return guardPolicyRefusal('guard command executable identity changed or is unavailable')
-            }
-            identities.set(executable.canonicalPath, status)
-            const node = await nodeAuthority()
-            if (!node) return guardPolicyRefusal('guard command authority requires an authenticated Node executable')
-            const services = await guardServiceIds(guardConfig, boundaries.canonicalRoot, { node, execute: executeProbe,
-                resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) })
-            if (typeof services === 'string') return guardPolicyRefusal(`guard command authority could not read the Compose service list: ${services}`)
-            const authority = { executable: executable.invocationPath, canonicalRoot: boundaries.canonicalRoot,
-                allowedRoots: boundaries.allowedRoots, configPath: loaded.source.path, services }
-            commandAuthority = captured as unknown as GuardPolicyCommandAuthority
-            const inspectPath = (path: string) => {
-                const root = boundaries.allowedRoots.filter(root => confinedPath(root, path)).sort((a, b) => b.length - a.length)[0]
-                if (!root) throw new Error('guard command path escapes its authenticated roots')
-                let cursor = root
-                const segments = relative(root, path).split(sep).filter(Boolean)
-                for (const [index, segment] of segments.entries()) {
-                    cursor = join(cursor, segment)
-                    let status: Stats
-                    try { status = lstatSync(cursor) }
-                    catch (error) {
-                        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
-                        throw error
-                    }
-                    if (status.isSymbolicLink() || (index < segments.length - 1 ? !status.isDirectory() : !status.isDirectory() && !status.isFile())) {
-                        throw new Error('guard command path has a symlink or unexpected file type')
-                    }
-                    identities.set(cursor, status)
-                }
-                return true
-            }
-            for (const invocation of captured.invocations) {
-                const resolved = resolveOrdinaryInvocation(invocation as unknown as GuardInvocationProfile, authority, inspectPath)
-                if (!resolved) return guardPolicyRefusal('guard command candidate is not an ordinary exact invocation')
-                cockpitInvocations.push(resolved)
-            }
-        }
-        if (cockpitInvocations.length + projectCommands.length > GUARD_INPUT_LIMITS.invocations) return guardPolicyRefusal('guard candidates exceed the invocation bound')
+        if (projectCommands.length > GUARD_INPUT_LIMITS.invocations) return guardPolicyRefusal('guard candidates exceed the invocation bound')
         const current = await loadCockpitConfig(loaded.source.path)
         const revalidated = current.kind === 'complete' ? consumeLoadedConfigProjection(current.result) : undefined
         if (!revalidated || !sameSource(revalidated.source, loaded.source)) return guardPolicyRefusal('guard configuration source changed during command construction')
@@ -762,23 +700,11 @@ export async function prepareGuardEvaluationPolicy(
             const after = lstatSync(path)
             if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
                 || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || before.size !== after.size) {
-                return guardPolicyRefusal('guard root, instance or executable identity changed during command construction')
+                return guardPolicyRefusal('guard root or instance identity changed during command construction')
             }
         }
-        const policy: GuardEvaluationPolicy = Object.freeze({ ...boundaries,
-            cockpitInvocations: Object.freeze(cockpitInvocations), projectCommands: Object.freeze(projectCommands) })
-        let autonomy: ResolvedAutonomyGrants | undefined
-        if (commandAuthority && Object.hasOwn(commandAuthority, 'autonomy')) {
-            const authority = commandAuthority.autonomy
-            if (!authority || !isDeepStrictEqual(Object.keys(authority).sort(), ['guardRegistration', 'nativeReads', 'target'])
-                || resolve(boundaries.canonicalRoot, authority.guardRegistration?.wiring?.handler?.path ?? '') !== commandAuthority.executable.invocationPath
-                || authority.guardRegistration?.wiring?.handler?.sha256 !== commandAuthority.executable.sha256) {
-                return guardPolicyRefusal('autonomy registration does not match the authenticated guard handler')
-            }
-            autonomy = issueResolvedAutonomyGrants({ ...authority, cockpitInvocations, projectCommands })
-            if (!autonomy) return guardPolicyRefusal('autonomy representation has unavailable registration or native read spellings')
-        }
-        return { kind: 'complete', status: 0, diagnostics: [], result: Object.freeze({ status: 'pending_integration', policy, ...(autonomy ? { autonomy } : {}) }) }
+        const policy: GuardEvaluationPolicy = Object.freeze({ ...boundaries, projectCommands: Object.freeze(projectCommands) })
+        return { kind: 'complete', status: 0, diagnostics: [], result: Object.freeze({ policy }) }
     } catch (error) {
         return guardPolicyRefusal(error instanceof Error ? `guard policy construction failed: ${error.message}` : 'guard policy construction failed')
     }

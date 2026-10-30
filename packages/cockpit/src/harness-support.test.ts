@@ -5,15 +5,11 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { issueResolvedAutonomyGrants, planAutonomyLaunch } from './autonomy/launcher.js'
 import {
     IMPLEMENTED_MECHANISMS,
     validateEvidenceManifest,
     validateEvidenceManifests,
     validateSelftestEvidenceBundle,
-    validateHookEvidence,
-    hookEvidenceMatches,
-    captureHookWiring,
 } from '../libexec/validate-harness-evidence.mjs'
 import type {
     BuiltinExecutionAuthority,
@@ -1099,71 +1095,42 @@ function selftestFixture() {
     return { root, expectation, bundle, options }
 }
 
-function hookFixture() {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'hook-evidence-')))
-    mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
-    mkdirSync(join(root, '.codex'), { recursive: true })
+function operatorExecutableFixture() {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'operator-identity-')))
     mkdirSync(join(root, 'bin'), { recursive: true })
     const executable = join(root, 'bin', 'synthetic-harness')
     copyFileSync(DIRECT_EXECUTABLE, executable)
-    const bytes = { hook: 'synthetic transport', handler: 'synthetic handler', registration: 'synthetic registration' }
-    const wiring = {
-        target: 'codexcli' as const, version: '0.0.0-synthetic', executable,
-        executableSha256: digest(readFileSync(executable)), generatedManifestSha256: SELFTEST_MANIFEST,
-        hook: { path: '.cockpit/guards/bash-guard.sh', sha256: digest(bytes.hook) },
-        handler: { path: 'bin/cockpit', sha256: digest(bytes.handler) },
-        registration: { path: '.codex/hooks.json', sha256: digest(bytes.registration) },
-        handlerArgv: ['guard-evaluate', '--harness', 'codexcli'],
+    const record = writeSelftestEvidence(root, 'guard-firing', 'enforced', 0)
+    record.invocation = [executable, '--config', '{control}']
+    record.authority.executable = executable
+    record.versionCommand[0] = executable
+    record.helpCommand[0] = executable
+    for (const event of Object.values(record.events)) event.command[0] = executable
+    for (const [name, path] of [['brokenControl', record.brokenPath], ['candidateControl', record.candidatePath]] as const) {
+        record.events[name].command = record.invocation.map((word) => word === '{control}' ? path : word)
     }
-    for (const name of ['hook', 'handler', 'registration'] as const) writeFileSync(join(root, wiring[name].path), bytes[name])
-    const modes = ['ordinary', 'escalated', 'missing', 'unknown'] as const
-    const records = modes.map((mode, i) => {
-        const record = writeSelftestEvidence(root, 'guard-firing', 'enforced', i)
-        record.invocation = [executable, `--synthetic-mode=${mode}`, '--config', '{control}']
-        record.authority.executable = executable
-        record.versionCommand[0] = executable
-        record.helpCommand[0] = executable
-        for (const event of Object.values(record.events)) event.command[0] = executable
-        for (const [name, path] of [['brokenControl', record.brokenPath], ['candidateControl', record.candidatePath]] as const) {
-            record.events[name].command = record.invocation.map((word) => word === '{control}' ? path : word)
-        }
-        writeFileSync(join(root, record.candidatePath), bytes.registration)
-        record.candidateSha256 = wiring.registration.sha256
-        const { transcriptSha256: _unused, ...transcript } = record
-        writeFileSync(join(root, record.transcriptPath), JSON.stringify(transcript))
-        record.transcriptSha256 = digest(readFileSync(join(root, record.transcriptPath)))
-        return { mode, explicitEscalation: mode === 'escalated', record }
-    })
-    return { root, wiring,
-        bundle: { schema: 'cockpit-hook-evidence/v1', wiring, records },
-        expectation: { schema: 'cockpit-hook-expectation/v1', wiring,
-            invocations: Object.fromEntries(records.map(({ mode, record }) => [mode, record.invocation])) },
-        options: { testOnlyNow: SELFTEST_NOW, testOnlyExecutableIdentities: { ...SYNTHETIC_EXECUTABLE_IDENTITIES, Codex: [executable] } },
-    }
+    const { transcriptSha256: _unused, ...transcript } = record
+    writeFileSync(join(root, record.transcriptPath), JSON.stringify(transcript))
+    record.transcriptSha256 = digest(readFileSync(join(root, record.transcriptPath)))
+    return { root, executable, record }
 }
 
-describe('exact hook launch evidence', () => {
-    it.each(['validation', 'launch', 'operator identity'])('refuses an oversized sparse executable before allocating or reading its bytes at %s', (seam) => {
-        const fixture = hookFixture()
+describe('operator executable identity', () => {
+    it('refuses an oversized sparse executable before allocating or reading its bytes', () => {
+        const fixture = operatorExecutableFixture()
         const selftest = selftestFixture()
         vi.useFakeTimers()
         vi.setSystemTime(new Date(SELFTEST_NOW))
         try {
             const options = { testOnlyNow: SELFTEST_NOW, operatorExecutableIdentities: new Map([
-                ['Codex' as const, { canonicalPath: fixture.wiring.executable, sha256: fixture.wiring.executableSha256 }],
+                ['Codex' as const, { canonicalPath: fixture.executable, sha256: digest(readFileSync(fixture.executable)) }],
             ]) }
-            const checked = validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, options)
-            expect(checked.errors).toEqual([])
-            const grants = issueResolvedAutonomyGrants({ target: 'codexcli', nativeReads: [], cockpitInvocations: [], projectCommands: [],
-                guardRegistration: { registered: true, wiring: fixture.wiring } })
-            const launch = () => planAutonomyLaunch(grants, { mode: 'escalated', explicitEscalation: true, evidence: checked.evidence })
-            expect(launch()).toMatchObject({ kind: 'complete', mode: 'escalated' })
-            const record = fixture.bundle.records[0]!.record
+            const record = fixture.record
             const checkOperator = () => validateSelftestEvidenceBundle({ ...selftest.bundle, records: [record] }, {
                 ...selftest.expectation, cells: [{ harness: record.harness, capability: record.capability }],
             }, fixture.root, options)
             expect(checkOperator().errors).toEqual([])
-            truncateSync(fixture.wiring.executable, 536_870_913)
+            truncateSync(fixture.executable, 536_870_913)
 
             // Memory-boundary guards keep the regression safe even against the vulnerable reader.
             const allocations: number[] = []
@@ -1179,18 +1146,9 @@ describe('exact hook launch evidence', () => {
                 vi.spyOn(Buffer, 'allocUnsafeSlow').mockImplementation((size) => { guard(size); return allocateSlow(size) }),
             ]
             try {
-                if (seam === 'launch') {
-                    expect(launch()).toMatchObject({ kind: 'refusal', code: 'AUTONOMY_EVIDENCE_REQUIRED' })
-                    expect(planAutonomyLaunch(grants)).toMatchObject({ kind: 'complete', mode: 'ordinary' })
-                } else if (seam === 'validation') {
-                    const result = validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, options)
-                    expect(result.evidence).toBeNull()
-                    expect(result.errors).toContain('harness executable exceeds the 536870912-byte limit')
-                } else {
-                    const result = checkOperator()
-                    expect(result.evidence).toEqual([])
-                    expect(result.errors).toContain('record 1: harness executable exceeds the 536870912-byte limit')
-                }
+                const result = checkOperator()
+                expect(result.evidence).toEqual([])
+                expect(result.errors).toContain('record 1: harness executable exceeds the 536870912-byte limit')
                 expect(allocations).toEqual([])
             } finally { for (const spy of spies) spy.mockRestore() }
         } finally {
@@ -1199,122 +1157,13 @@ describe('exact hook launch evidence', () => {
             rmSync(selftest.root, { recursive: true, force: true })
         }
     })
-
-    it('captures only the single guard-evaluate command row and refuses the obsolete prefix', () => {
-        const fixture = hookFixture()
-        try {
-            const wiring = { ...fixture.wiring, handlerArgv: ['guard-evaluate', '--harness', 'codexcli'] }
-            expect(captureHookWiring(wiring)).toEqual(wiring)
-            expect(captureHookWiring({ ...wiring, handlerArgv: ['internal', 'guard', '--harness', 'codexcli'] })).toBeUndefined()
-        } finally { rmSync(fixture.root, { recursive: true, force: true }) }
-    })
-
-    it.each(['hook', 'handler', 'registration', 'executable'] as const)('refuses escalation when %s changes after genuine validation, independently of expiry', (name) => {
-        const fixture = hookFixture()
-        vi.useFakeTimers()
-        vi.setSystemTime(new Date(SELFTEST_NOW))
-        try {
-            const path = name === 'executable' ? fixture.wiring.executable : join(fixture.root, fixture.wiring[name].path)
-            const original = readFileSync(path)
-            const grants = issueResolvedAutonomyGrants({ target: 'codexcli', nativeReads: [], cockpitInvocations: [], projectCommands: [],
-                guardRegistration: { registered: true, wiring: fixture.wiring } })
-            for (const mutation of ['bytes', 'disappearance', 'symlink']) {
-                const checked = validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, fixture.options)
-                expect(checked.errors).toEqual([])
-                const launch = () => planAutonomyLaunch(grants, { mode: 'escalated', explicitEscalation: true, evidence: checked.evidence })
-                expect(launch()).toMatchObject({ kind: 'complete', mode: 'escalated' })
-                if (mutation === 'bytes') writeFileSync(path, 'changed after validation')
-                else {
-                    rmSync(path)
-                    if (mutation === 'symlink') {
-                        writeFileSync(path + '.other', original)
-                        symlinkSync(path + '.other', path)
-                    }
-                }
-                try {
-                    expect(launch()).toMatchObject({ kind: 'refusal', code: 'AUTONOMY_EVIDENCE_REQUIRED' })
-                    expect(planAutonomyLaunch(grants)).toMatchObject({ kind: 'complete', mode: 'ordinary' })
-                } finally { rmSync(path, { force: true }); writeFileSync(path, original) }
-                expect(launch()).toMatchObject({ kind: 'complete', mode: 'escalated' })
-            }
-        } finally { vi.useRealTimers(); rmSync(fixture.root, { recursive: true, force: true }) }
-    })
-
-    it('gates escalated launch on the whole native mode table without widening any permission or promoting capability', () => {
-        const fixture = hookFixture()
-        vi.useFakeTimers()
-        vi.setSystemTime(new Date(SELFTEST_NOW))
-        try {
-            const checked = validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, fixture.options)
-            expect(checked.errors).toEqual([])
-            expect(hookEvidenceMatches(checked.evidence, fixture.wiring)).toBe(true)
-            const grants = issueResolvedAutonomyGrants({ target: 'codexcli', nativeReads: [],
-                cockpitInvocations: [{ executable: 'cockpit', cwd: fixture.root, argv: ['check'] }], projectCommands: [],
-                guardRegistration: { registered: true, wiring: fixture.wiring } })
-            const ordinary = planAutonomyLaunch(grants)
-            const escalated = planAutonomyLaunch(grants, { mode: 'escalated', explicitEscalation: true, evidence: checked.evidence })
-            expect(escalated).toMatchObject({ kind: 'complete', mode: 'escalated', guardRequired: true, capability: 'instructed' })
-            if (ordinary.kind !== 'complete' || escalated.kind !== 'complete') throw new Error('Expected both launch representations')
-            expect(escalated.permissionGrants).toEqual(ordinary.permissionGrants)
-            expect(escalated.activeProtections).toEqual(ordinary.activeProtections)
-            expect(hookEvidenceMatches({ ...checked.evidence }, fixture.wiring)).toBe(false)
-            expect(hookEvidenceMatches(checked.evidence, { ...fixture.wiring, handler: { ...fixture.wiring.handler, sha256: 'f'.repeat(64) } })).toBe(false)
-            vi.setSystemTime(new Date('2026-09-27T00:05:00.000Z'))
-            expect(planAutonomyLaunch(grants, { mode: 'escalated', explicitEscalation: true, evidence: checked.evidence })).toMatchObject({ kind: 'refusal', code: 'AUTONOMY_EVIDENCE_REQUIRED' })
-        } finally { vi.useRealTimers(); rmSync(fixture.root, { recursive: true, force: true }) }
-    })
-
-    it('rejects missing, expired, future, stale, mismatched and incomplete evidence before issuing launch authority', () => {
-        const fixture = hookFixture()
-        try {
-            for (const bad of [
-                null,
-                { ...fixture.bundle, records: fixture.bundle.records.slice(1) },
-                { ...fixture.bundle, records: fixture.bundle.records.map((row) => ({ ...row, explicitEscalation: false })) },
-                { ...fixture.bundle, wiring: { ...fixture.wiring, version: 'other' } },
-                { ...fixture.bundle, records: fixture.bundle.records.map((row) => ({ ...row, record: { ...row.record, candidateSha256: 'f'.repeat(64) } })) },
-            ]) {
-                const result = validateHookEvidence(bad, fixture.expectation, fixture.root, fixture.options)
-                expect(result.errors.length).toBeGreaterThan(0)
-                expect(result.evidence).toBeNull()
-            }
-            for (const now of ['2026-09-26T23:59:59.000Z', '2026-09-27T00:05:00.000Z']) {
-                expect(validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, { ...fixture.options, testOnlyNow: now }).errors.length).toBeGreaterThan(0)
-            }
-            const before = fixture.expectation.invocations
-            expect(validateHookEvidence(fixture.bundle, { ...fixture.expectation, invocations: { ...before, escalated: before.ordinary } }, fixture.root, fixture.options).errors).toContain('escalated invocation does not match the current launch table')
-            for (const name of ['hook', 'handler', 'registration'] as const) {
-                const path = join(fixture.root, fixture.wiring[name].path)
-                const original = readFileSync(path)
-                writeFileSync(path, 'changed current bytes')
-                expect(validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, fixture.options).errors).toContain(`${name} bytes do not match current wiring`)
-                writeFileSync(path, original)
-            }
-        } finally { rmSync(fixture.root, { recursive: true, force: true }) }
-    })
-
-    it('refuses symlinked current wiring and accessor evidence without reading foreign data', () => {
-        const fixture = hookFixture()
-        try {
-            let reads = 0
-            const input = Object.defineProperty({ ...fixture.bundle }, 'records', { enumerable: true, get() { reads++; return fixture.bundle.records } })
-            expect(validateHookEvidence(input, fixture.expectation, fixture.root, fixture.options)).toMatchObject({ evidence: null })
-            expect(reads).toBe(0)
-            const hook = join(fixture.root, fixture.wiring.hook.path)
-            const original = readFileSync(hook)
-            writeFileSync(hook + '.other', original)
-            rmSync(hook)
-            symlinkSync(hook + '.other', hook)
-            expect(validateHookEvidence(fixture.bundle, fixture.expectation, fixture.root, fixture.options).errors).toContain('hook current wiring file is missing or symlinked')
-        } finally { rmSync(fixture.root, { recursive: true, force: true }) }
-    })
 })
 
 describe('versioned harness selftest evidence', () => {
     it('keeps the legacy mechanism closed and exposes one versioned validator', () => {
         expect(IMPLEMENTED_MECHANISMS).toEqual([{
             id: 'harness-evidence-validation',
-            exports: ['validateEvidenceManifest', 'validateEvidenceManifests', 'validateSelftestEvidenceBundle', 'validateHookEvidence', 'hookEvidenceMatches', 'captureHookWiring'],
+            exports: ['validateEvidenceManifest', 'validateEvidenceManifests', 'validateSelftestEvidenceBundle'],
         }])
         expect(validateEvidenceManifests([], ROOT)).toEqual({ errors: ['no evidence manifests supplied'], rows: [] })
     })

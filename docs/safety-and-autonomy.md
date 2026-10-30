@@ -2,13 +2,11 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide explains what cockpit's guards and launcher allow, ask about, deny or cannot
-evaluate, and why. It is for people reviewing generated controls and for agents working within
-them. Authority is always tied to a captured invocation and declared resources, never to a
-command family.
+This guide explains what cockpit's guards allow, ask about, deny or cannot evaluate, and why.
+It is for people reviewing generated controls and for agents working within them. Authority is
+always tied to a captured invocation and declared resources, never to a command family.
 
-The [command table](../packages/cockpit/src/command-table.ts),
-[autonomy launcher](../packages/cockpit/src/autonomy/launcher.ts), and
+The [command table](../packages/cockpit/src/command-table.ts) and
 [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) own these decisions. The generated
 [CLI reference](cli-reference.md), [command list](command-list.md), and
 [configuration reference](configuration-reference.md) describe their public inputs.
@@ -26,24 +24,14 @@ The evaluator scans the complete authenticated capture for hard denials before r
 unavailable or ask result. A softer result encountered earlier cannot hide a later forbidden
 operation. Malformed input or an incomplete policy is unavailable before that scan can begin.
 
-## Ordinary and escalated modes
+## Cockpit and project commands
 
-When a launch omits its mode, the launcher uses `ordinary`. An explicitly supplied unknown, empty,
-null, or undefined mode is refused. A successful launch remains `instructed`, with the guard
-required; source admission alone does not establish native enforcement.
-
-For cockpit commands, ordinary admission requires an exact available public command profile.
+A cockpit command is allowed only when it matches an exact available public command profile.
 The application authenticates the executable and working root; the command resolver checks the
 bounded complete argument vector, resolved configuration path, declared services, permitted option
 roles, and inspected paths. Internal guard transport and public commands marked unavailable are
-excluded. Launch grants can also include the target's admitted native reads and exact declared
-project build or test commands. No command-family wildcard becomes ordinary authority.
-
-Escalated mode requires an explicit escalation flag and authenticated, current evidence matching
-the registered hook, handler, executable, and launch wiring. An escalation flag set to true in
-ordinary mode is refused. Both modes retain hard-deny evaluation, the always-run guard, native
-ask or ask-to-deny behavior, exact invocation grants, and read-only instructions. Escalation does
-not remove these protections or promote pending evidence.
+excluded. Declared project build and test commands are allowed only as their exact argument
+vectors in their own checkout. No command-family wildcard becomes authority.
 
 ## Hard controls and prompts
 
@@ -232,10 +220,8 @@ Static configuration, source inspection, synthetic fixtures, model self-report a
 not prove native enforcement. The
 [native evidence validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) binds exact
 current executable and wiring identities, generated-manifest and candidate digests, version,
-bounded transcripts and validation results. Escalation evidence requires distinct ordinary,
-escalated, missing and unknown mode rows, each with candidate and deliberately broken-control
-evidence. It expires and is rechecked against current installed wiring at use; a copied evidence
-object carries no authority.
+bounded transcripts and validation results. Each record carries candidate and deliberately
+broken-control evidence.
 
 Missing evidence keeps cells `instructed` or `unavailable`, with `human_needed` judgments still
 pending. It never relaxes a hard denial or grants authority. Cutover, fallback deletion, default
