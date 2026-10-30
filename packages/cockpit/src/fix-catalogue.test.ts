@@ -136,6 +136,9 @@ describe('printed cockpit commands', () => {
     // `cockpit init <root>` is not on PATH for a dev-dependency install.
     const runnableInit = /(?:npx --no |\.\/node_modules\/\.bin\/)cockpit init(?![\w-])/g
     const bareInit = /(?<!npx --no |\.bin\/)\bcockpit init (?=[./<$])/g
+    // npx reads a flag that directly follows the package name as its own, so `npx --no cockpit
+    // --help` prints npm's help and `--version` npm's version.
+    const npxOwnFlag = /npx --no cockpit --(?:help|version)\b/g
 
     it('name the configuration everywhere a diagnostic, instruction or skill spells one, the daemon for down and reset, and the root and target for init', () => {
         const paths = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard',
@@ -162,6 +165,7 @@ describe('printed cockpit commands', () => {
                     }
                 }
                 for (const match of line.matchAll(bareInit)) unrunnable.push(`${at}: bare ${match[0]}`)
+                for (const match of line.matchAll(npxOwnFlag)) unrunnable.push(`${at}: ${match[0]} reaches npx, not cockpit`)
             })
         }
         expect(unrunnable).toEqual([])

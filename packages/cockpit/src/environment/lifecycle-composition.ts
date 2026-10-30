@@ -135,13 +135,13 @@ function mountMismatchDiagnostics(
                     : `${source} is declared for the stack to mount, but no Compose service bind-mounts it, so cockpit will not vouch for this stack`,
                 fix: sibling
                     ? `bind-mount \${${sibling.var}}, or a directory inside it, in a Compose service, or set mount = "none" on sibling ${sibling.slug} in cockpit.toml; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>`
-                    : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run npx --no cockpit sync --config <your cockpit.toml>',
+                    : 'bind-mount it in a Compose service or remove it from environment.generated_host_paths; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>',
             })
         }),
         ...mismatch.unexpected.map((source) => Object.freeze({
             severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: source,
             message: `a Compose service bind-mounts ${source}, which lies inside no mount = "always" sibling and is no environment.generated_host_paths entry, so cockpit will not hand it to a container`,
-            fix: 'move the bind inside a mount = "always" sibling, declare it as one or as an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync --config <your cockpit.toml>',
+            fix: 'move the bind inside a mount = "always" sibling, declare it as one or as an environment.generated_host_paths entry, or remove the bind mount; then run npx --no cockpit sync --config <your cockpit.toml> and npx --no cockpit check --config <your cockpit.toml>',
         })),
     ])
 }

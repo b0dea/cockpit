@@ -1434,7 +1434,7 @@ export async function runCli(
     }
     // Resolved before dispatch: the publication tail below may only forward outcomes, not decide anything.
     const usageHint = definition ? `Run 'npx --no cockpit ${definition.name} --help' for usage.\n`
-        : commandName ? `Run 'npx --no cockpit --help' for the command list.\n` : renderHelp()
+        : commandName ? `Run 'npx --no -- cockpit --help' for the command list.\n` : renderHelp()
     let jsonRequested = optionArgs.includes('--json')
     let outcome: CommandOutcome
     const duplicateSetupOption = definition?.handler === 'setup'
