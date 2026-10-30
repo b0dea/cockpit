@@ -175,7 +175,8 @@ applied silently. For a read-only release plan before installing, follow
    changes something you overrode reports `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your
    override before updating its recorded hash.
 5. Commit the lockfile and the regenerated files together.
-6. Read `CHANGELOG.md` between the old and new version for lines starting `Upgrade:`. Each names a step
+6. Read the release notes at https://github.com/b0dea/cockpit/releases between the old and new version
+   for lines starting `Upgrade:`; the installed package does not ship its changelog. Each names a step
    that sync alone does not do. The convention is in `.changeset/README.md` in the cockpit repository.
 
 Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0 and every `Upgrade:` line has been done or
