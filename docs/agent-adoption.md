@@ -204,6 +204,9 @@ commands that follow take `--config <result.root>/cockpit.toml`. With `"in-repo"
 observes the repository's own runnable sources as its first sibling (`dir = "."`) and proposes that
 row, then asks the same runtime questions as
 [One or several repositories](#one-or-several-repositories), from step 2.
+Either way `init` declares only the repository it runs in, and an answers file that adds another
+is refused with `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH`; add the other repositories once `init` is done,
+with [`sibling add`](#add-a-repository).
 
 ### Docs or decisions only
 

@@ -152,7 +152,9 @@ where it came from, and a changed repository invalidates earlier answers instead
 them. Re-running the same command resumes where it stopped. A single repository gets the same
 cockpit as several: instructions, guards, settings and the environment. Run inside an existing
 product repository, `init` first asks for the cockpit root (`cockpit.root`); see
-[Where the cockpit lives](concepts.md#where-the-cockpit-lives). A directory
+[Where the cockpit lives](concepts.md#where-the-cockpit-lives). It then declares only that
+repository: add the others afterwards with [`sibling add`](#add-or-remove-a-repository), since
+naming them in the answers file is refused with `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH`. A directory
 with nothing runnable gets a surfaces-only configuration with no `[environment]`, and `init` says
 that no runtime is declared; see [Environment modes](environment.md#environment-modes). That
 includes an empty directory and a repository of documents with no language manifest, Dockerfile or
