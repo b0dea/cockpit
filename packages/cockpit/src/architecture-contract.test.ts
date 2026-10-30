@@ -72,7 +72,21 @@ function assertSupportedProductionPaths(paths: readonly string[]): void {
     if (unsupported) throw new Error(`ARCH018_UNPARSED_EXECUTABLE ${unsupported}`)
 }
 
+// The checked-out tree does not change while this file runs; callers get their own copy to plant into.
+let productionSourceCorpus: ReadonlyMap<string, string> | undefined
+let cockpitSourceCorpus: ReadonlyMap<string, string> | undefined
+
 function productionSources(): Map<string, string> {
+    productionSourceCorpus ??= readProductionSources()
+    return new Map(productionSourceCorpus)
+}
+
+function cockpitSources(): Map<string, string> {
+    cockpitSourceCorpus ??= readCockpitSources()
+    return new Map(cockpitSourceCorpus)
+}
+
+function readProductionSources(): Map<string, string> {
     const repositoryPaths = execFileSync('git', [
         'ls-files',
         '-z',
@@ -92,7 +106,7 @@ function productionSources(): Map<string, string> {
     return new Map(paths.map((path) => [path, readFileSync(resolve(ROOT, path), 'utf8')]))
 }
 
-function cockpitSources(): Map<string, string> {
+function readCockpitSources(): Map<string, string> {
     const paths = execFileSync('git', [
         'ls-files', '-z', '--cached', '--others', '--exclude-standard', 'packages/cockpit/src',
     ], { cwd: ROOT, encoding: 'utf8' })
@@ -101,12 +115,25 @@ function cockpitSources(): Map<string, string> {
     return new Map(paths.map((path) => [path, readFileSync(resolve(ROOT, path), 'utf8')]))
 }
 
+// Every checker walks the same production modules, and planted variants reuse most of them.
+// Parsing each distinct source text once keeps the contract cost proportional to the corpus.
+const sourceFileCache = new Map<string, ts.SourceFile>()
+
+function parseModule(source: string): ts.SourceFile {
+    let sourceFile = sourceFileCache.get(source)
+    if (!sourceFile) {
+        sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        sourceFileCache.set(source, sourceFile)
+    }
+    return sourceFile
+}
+
 const importSpecifierCache = new Map<string, readonly string[]>()
 
 function importSpecifiers(source: string): string[] {
     const cached = importSpecifierCache.get(source)
     if (cached) return [...cached]
-    const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     const specifiers: string[] = []
     const requireNames = new Set(['require'])
     const createRequireNames = new Set(['createRequire'])
@@ -333,7 +360,7 @@ function environmentCodeViolations(sources: Sources): string[] {
     ])
     for (const [path, source] of sources) {
         if (canonicalModulePath(path) === ENVIRONMENT_CONTRACT) continue
-        const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const initializerFor = (identifier: ts.Identifier): ts.Expression | undefined => {
             let scope: ts.Node | undefined = identifier.parent
             while (scope) {
@@ -432,7 +459,7 @@ function executionBoundaryViolations(
         const canonical = canonicalModulePath(path)
         if (!canonical.startsWith('packages/cockpit/src/')) continue
         if (commandModule(canonical)) {
-            const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+            const file = parseModule(source)
             const executorSpecifier = (value: ts.Expression | undefined): boolean => value !== undefined && ts.isStringLiteralLike(value)
                 && resolveImport(path, value.text, sources) === ENVIRONMENT_EXECUTOR
             const executorReferences = importSpecifiers(source)
@@ -451,7 +478,7 @@ function executionBoundaryViolations(
             const runtimeReferenceCount = executorReferences.length - typeOnlyReferences
             if (runtimeReferenceCount > 0) violations.add('ARCH026_EXECUTE_PLAN_CALLER')
         }
-        const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const releaseMetadataCalls = new Set<ts.CallExpression>()
         const compactRelease = (text: string): string => text.replace(/\s+/g, '')
         const releaseQueries = sourceFile.statements.filter((node): node is ts.FunctionDeclaration =>
@@ -988,7 +1015,7 @@ function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
 }
 
 function hasMechanicalWrite(source: string): boolean {
-    const sourceFile = ts.createSourceFile('cli.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     const execution = namedFunction(sourceFile, 'executeOutcome')
     if (!execution?.body) return false
     let writes = 0
@@ -1019,7 +1046,7 @@ function hasMechanicalWrite(source: string): boolean {
 }
 
 function hasDecisionSyntax(source: string): boolean {
-    const sourceFile = ts.createSourceFile('cli.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     const execution = namedFunction(sourceFile, 'executeOutcome')
     const dispatch = namedFunction(sourceFile, 'runCli')
     const environmentExecution = namedFunction(sourceFile, 'executeEnvironmentOutcome')
@@ -1216,7 +1243,7 @@ function boundaryViolations(sources: Sources): string[] {
     const command = sources.get('packages/cockpit/src/document/command.ts') ?? ''
     const cli = sources.get('packages/cockpit/src/cli.ts') ?? ''
     const outcome = /interface\s+OutcomeBase\s*\{(?<body>[\s\S]*?)\n\}/.exec(command)?.groups?.body ?? ''
-    const cliSource = ts.createSourceFile('cli.ts', cli, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const cliSource = parseModule(cli)
     const execution = namedFunction(cliSource, 'executeOutcome')
 
     if (/\b(?:writeFile|appendFile|createWriteStream|writeFileSync|openSync)\b/.test(command)) {
@@ -1277,7 +1304,7 @@ function stringArrayProperty(object: ts.ObjectLiteralExpression, name: string): 
 function mechanismDeclarations(sources: Sources): MechanismDeclaration[] {
     const declarations: MechanismDeclaration[] = []
     for (const [path, source] of sources) {
-        const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         for (const statement of sourceFile.statements) {
             if (!ts.isVariableStatement(statement) || !statement.modifiers?.some((item) => item.kind === ts.SyntaxKind.ExportKeyword)) {
                 continue
@@ -1332,7 +1359,7 @@ function bindingNames(name: ts.BindingName): string[] {
 }
 
 function exportedImplementations(source: string): Set<string> {
-    const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     const implementations = new Set<string>()
     for (const statement of sourceFile.statements) {
         if (
@@ -1432,7 +1459,7 @@ function supportedCommonJsExportAssignment(node: ts.Identifier, sourceFile: ts.S
 }
 
 function unsupportedCommonJsSyntax(source: string): boolean {
-    const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     let unsupported = false
     const bindings = new Map<ts.Node, Set<string>>()
     const scopeOf = (node: ts.Node): ts.Node => {
@@ -1619,7 +1646,7 @@ function commonJsPolicyViolations(sources: Sources): string[] {
 }
 
 function hasNonstandardMechanismDeclaration(source: string): boolean {
-    const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     return sourceFile.statements.some(
         (statement) =>
             ts.isVariableStatement(statement) &&
@@ -1862,7 +1889,7 @@ function registryParserViolations(sources: Sources): string[] {
     const resolver = 'packages/cockpit/src/registry-resolve/command.ts'
 
     const locallyExportsParserImplementation = (source: string): boolean => {
-        const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const implementations = new Set<string>()
         for (const statement of sourceFile.statements) {
             if (ts.isFunctionDeclaration(statement) && statement.name && statement.body) {
@@ -1914,7 +1941,7 @@ function registryParserViolations(sources: Sources): string[] {
 
     const resolverSource = sources.get(resolver)
     if (resolverSource !== undefined) {
-        const sourceFile = ts.createSourceFile(resolver, resolverSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(resolverSource)
         const actualImports = new Map<string, string[]>()
         const parserImports = sourceFile.statements.flatMap((statement) => {
             if (
@@ -2206,7 +2233,7 @@ function lifecyclePlanningViolations(sources: Sources): string[] {
     if (source === undefined) {
         violations.add('ARCH040_LIFECYCLE_PLANNING_BOUNDARY')
     } else {
-        const sourceFile = ts.createSourceFile(LIFECYCLE_MODULE, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const actualImports = new Map<string, string[]>()
         let unsupportedImport = false
         for (const statement of sourceFile.statements) {
@@ -2466,7 +2493,7 @@ const CLAIMS_MODULE = 'packages/cockpit/src/environment/claims.ts'
 const UP_COMMAND_MODULE = 'packages/cockpit/src/up/command.ts'
 
 function exportedTypeDeclarations(source: string): Map<string, ts.InterfaceDeclaration | ts.TypeAliasDeclaration> {
-    const sourceFile = ts.createSourceFile('module.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const sourceFile = parseModule(source)
     return new Map(sourceFile.statements.flatMap((statement): [string, ts.InterfaceDeclaration | ts.TypeAliasDeclaration][] =>
         (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement))
             && hasModifier(statement, ts.SyntaxKind.ExportKeyword)
@@ -2575,7 +2602,7 @@ function applicationBoundaryViolations(
             violations.add('ARCH043_COMMAND_APPLICATION_BOUNDARY')
             continue
         }
-        const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const imports = importSpecifiers(source)
             .map((specifier) => canonicalModulePath(resolveImport(path, specifier, sources) ?? specifier))
         const importedApplicationFacets = sourceFile.statements.flatMap((statement) =>
@@ -2612,7 +2639,7 @@ function applicationBoundaryViolations(
         analysis,
     )) violations.add(violation)
     const reducer = namedFunction(
-        ts.createSourceFile(CLAIMS_MODULE, sources.get(CLAIMS_MODULE) ?? '', ts.ScriptTarget.Latest, true, ts.ScriptKind.TS),
+        parseModule(sources.get(CLAIMS_MODULE) ?? ''),
         'removeExactCoordinationHolder',
     )
     if (reducer) {
@@ -2900,7 +2927,7 @@ function guardArchitectureViolations(
 function referenceArchitectureViolations(sources: Sources): string[] {
     const violations = new Set<string>()
     for (const [path, body] of sources) {
-        const file = ts.createSourceFile(path, body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const file = parseModule(body)
         const runtime = file.statements.filter(node => !ts.isImportDeclaration(node) || !node.importClause?.isTypeOnly)
             .map(node => node.getText(file)).join('\n')
         for (const dependency of importSpecifiers(runtime)) {
@@ -2931,7 +2958,7 @@ function boundedMaintainerImports(path: string, source: string): string {
         ["loadReferenceOwners:pathToFileURL(join(root,'packages/cockpit/dist/environment-exec/execute.js')).href", '../packages/cockpit/dist/environment-exec/execute.js'],
         ["loadReferenceOwners:pathToFileURL(join(root,'packages/cockpit/dist/environment/executable.js')).href", '../packages/cockpit/dist/environment/executable.js'],
     ])
-    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    const file = parseModule(source)
     const replacements: { start: number; end: number; bytes: string }[] = []
     const visit = (node: ts.Node): void => {
         if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length === 1) {
@@ -2985,7 +3012,7 @@ function entrypointKindVocabularyViolations(sources: Sources): string[] {
     ]
     const violations = new Set<string>()
     const sourceFiles = new Map([...sources].map(([path, source]) => [
-        canonicalModulePath(path), ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS),
+        canonicalModulePath(path), parseModule(source),
     ]))
     const unwrap = (expression: ts.Expression): ts.Expression => {
         while (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression)
@@ -3536,7 +3563,7 @@ function coordinationPolicyViolations(sources: Sources): string[] {
     ])
     for (const [path, source] of sources) {
         const modulePath = canonicalModulePath(path)
-        const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const accessedPolicyFields = new Set<string>()
         const importedClaimsBindings = new Map<string, string>()
         const functionCalls = new Map<string, Set<string>>()
@@ -3669,7 +3696,7 @@ function observationDeclarationViolations(sources: Sources): string[] {
     const violations = new Set<string>()
     const declarationModules = new Set<string>()
     for (const [path, source] of sources) {
-        const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const sourceFile = parseModule(source)
         const localBindings = new Set<string>()
         for (const statement of sourceFile.statements) {
             if (ts.isFunctionDeclaration(statement) && statement.name) localBindings.add(statement.name.text)
@@ -3745,7 +3772,7 @@ function observationDeclarationViolations(sources: Sources): string[] {
     }
     const aggregate = sources.get('packages/cockpit/src/environment/observations.ts')
     if (aggregate) {
-        const aggregateFile = ts.createSourceFile('observations.ts', aggregate, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const aggregateFile = parseModule(aggregate)
         const imports = new Map<string, string>()
         const spreads = new Set<string>()
         for (const statement of aggregateFile.statements) {
@@ -3789,245 +3816,6 @@ function jsonSnapshotOwnershipViolations(sources: Sources): string[] {
         }
     }
     return []
-}
-
-function publicationBatchAuthorityViolations(source: string): string[] {
-    const sourceFile = ts.createSourceFile('transaction.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-    const declarations = new Map<string, ts.Node[]>()
-    const calls: ts.CallExpression[] = []
-    const visit = (node: ts.Node): void => {
-        const name = (ts.isFunctionDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name?.text
-        if (name) declarations.set(name, [...declarations.get(name) ?? [], node])
-        if (ts.isCallExpression(node) && node.expression.getText(sourceFile) === 'runPublicationBatches') calls.push(node)
-        ts.forEachChild(node, visit)
-    }
-    visit(sourceFile)
-    const functionBody = (name: string): string | undefined => {
-        const matches = declarations.get(name) ?? []
-        return matches.length === 1 && ts.isFunctionDeclaration(matches[0]!) ? matches[0]!.body?.getText(sourceFile) : undefined
-    }
-    const exactDeclaration = (name: string, pattern: RegExp): boolean => {
-        const matches = declarations.get(name) ?? []
-        return matches.length === 1 && pattern.test(matches[0]!.getText(sourceFile))
-    }
-    const compact = (value: string | undefined): string => value?.replace(/\s+/g, '') ?? ''
-    const request = compact(functionBody('publicationBatchRequest'))
-    const receipt = compact(functionBody('parsePublicationBatchReceipt'))
-    const dispatch = compact(functionBody('runPublicationBatches'))
-    const helper = source.match(/const FILESYSTEM_HELPER = String\.raw`([\s\S]*?)`/)?.[1] ?? ''
-    const compactHelper = compact(helper)
-    const batchBranchStart = compactHelper.indexOf('request.action==="validate-batch"||request.action==="publish-batch"||request.action==="verify-batch"||request.action==="commit-batch"')
-    const commitBatchStart = compactHelper.indexOf('if(request.action==="commit-batch"){for(constgroupofrequest.groups)')
-    const batchValidationBody = batchBranchStart >= 0 && commitBatchStart > batchBranchStart
-        ? compactHelper.slice(batchBranchStart, commitBatchStart)
-        : ''
-    const commitBatchBody = commitBatchStart >= 0 ? compactHelper.slice(commitBatchStart) : ''
-    const required = [
-        exactDeclaration('PublicationBatchRow', /readonly nonce: string[\s\S]*readonly parent: string[\s\S]*readonly identity: DirectoryIdentity[\s\S]*readonly chain: readonly Readonly<DirectoryIdentity & \{ readonly name: string \}>\[\][\s\S]*readonly entries: readonly HelperFileEntry\[\]/),
-        exactDeclaration('PublicationBatchRequest', /readonly version: 1[\s\S]*readonly nonce: string[\s\S]*readonly action: 'validate-batch' \| 'publish-batch' \| 'verify-batch' \| 'commit-batch'[\s\S]*readonly identity: DirectoryIdentity[\s\S]*readonly groups: readonly PublicationBatchRow\[\]/),
-        /const MAX_PUBLICATION_BATCH_GROUPS = 8\b/.test(source),
-        request.includes('constrootStatus=awaitlstat(root)')
-            && request.includes('rootStatus.dev!==rootIdentity.dev||rootStatus.ino!==rootIdentity.ino'),
-        request.includes('for(constgroupofgroups.slice(0,MAX_PUBLICATION_BATCH_GROUPS))')
-            && request.includes("consttarget=group.parent==='.'?root:confined(root,group.parent)")
-            && request.includes('if(!target||target!==group.path)returnundefined'),
-        request.includes("for(constnameofgroup.parent==='.'?[]:group.parent.split('/'))")
-            && request.includes('chain.push(Object.freeze({name,dev:status.dev,ino:status.ino}))')
-            && request.includes('constfinal=chain.at(-1)??rootIdentity')
-            && request.includes('final.dev!==group.identity.dev||final.ino!==group.identity.ino'),
-        request.includes('nonce:randomBytes(16).toString') && request.includes('parent:group.parent')
-            && request.includes('identity:group.identity') && request.includes('chain:Object.freeze(chain)')
-            && request.includes('entries:group.entries'),
-        request.includes('constcandidate=Object.freeze({version:1asconst,nonce,action,identity:rootIdentity,groups:Object.freeze([...rows,row])})')
-            && request.includes('if(Buffer.byteLength(JSON.stringify(candidate))>MAX_HELPER_FRAME_BYTES)break'),
-        receipt.includes("helperRecord(value,['version','nonce','action','kind','groups'])")
-            && receipt.includes('receipt.groups.length!==request.groups.length')
-            && receipt.includes('constexpected=request.groups[index]')
-            && receipt.includes("helperRecord(value,['nonce','parent','kind'])")
-            && receipt.includes('row.nonce===expected.nonce&&row.parent===expected.parent&&row.kind===\'complete\''),
-        receipt.includes('constnonces=newSet<string>()') && receipt.includes('nonces.has(row.nonce)')
-            && receipt.includes('nonces.add(row.nonce)'),
-        dispatch.includes('constrequest=awaitpublicationBatchRequest(root,rootIdentity,groups.slice(offset),action)')
-            && (dispatch.includes('constdeadline=nextForwardDeadline(request.groups.length)')
-                || dispatch.includes('constlogicalWeight=request.groups.reduce((count,_row,index)=>count+groups[offset+index]!.logicalWeight,0)')
-                    && dispatch.includes('constdeadline=nextForwardDeadline(logicalWeight)'))
-            && dispatch.includes("helperStep(node,root,'generated-environment',request,[],deadline)")
-            && dispatch.includes('parsePublicationBatchReceipt(receipt,request)')
-            && dispatch.includes('offset+=request.groups.length'),
-        source.includes('const transactionRootIdentity = prepared.rootIdentity')
-            && source.includes('transactionRoot.dev !== transactionRootIdentity.dev || transactionRoot.ino !== transactionRootIdentity.ino')
-            && (source.match(/!await transactionRootCurrent\(\)/g) ?? []).length >= 3,
-        calls.length === 4
-            && calls.map(call => compact(call.arguments[0]?.getText(sourceFile))).join('|') === "'validate-batch'|'publish-batch'|'verify-batch'|'commit-batch'"
-            && calls.every(call => compact(call.arguments[1]?.getText(sourceFile)) === 'prepared.root'
-                && compact(call.arguments[2]?.getText(sourceFile)) === 'transactionRootIdentity'
-                && compact(call.arguments[3]?.getText(sourceFile)) === 'applied'),
-        batchBranchStart >= 0
-            && batchValidationBody.includes('request.groups.length<1||request.groups.length>8')
-            && batchValidationBody.includes('constchain=walkExpected(group.chain)')
-            && batchValidationBody.includes('if(!same(final,group.identity))thrownewError("group-identity")')
-            && batchValidationBody.includes('if(request.action==="publish-batch")publishEntries(group.entries);elseif(request.action==="validate-batch")validateEntries(group.entries);elseverifyEntries(group.entries);verifySourceChain(chain);groups.push({nonce:group.nonce,parent:group.parent,kind:"complete"})'),
-        commitBatchStart >= 0
-            && compactHelper.includes('groups.push({nonce:group.nonce,parent:group.parent,kind:"complete"});}if(request.action==="commit-batch")')
-            && (compactHelper.match(/constfinal=fs\.lstatSync\("\."\);if\(!same\(final,group\.identity\)\)thrownewError\("group-identity"\)/g) ?? []).length >= 2
-            && commitBatchBody.includes('for(constentryofgroup.entries)')
-            && commitBatchBody.includes('verifyEntries([entry],group.identity)')
-            && commitBatchBody.indexOf('verifyEntries([entry],group.identity)') < commitBatchBody.indexOf('constnested=walkExpected(entry.chain)')
-            && commitBatchBody.indexOf('constnested=walkExpected(entry.chain)') < commitBatchBody.indexOf('fs.unlinkSync(name(entry.backup))')
-            && commitBatchBody.includes('syncDirectory();verifySourceChain(nested,group.identity)')
-            && (compactHelper.match(/verifySourceChain\(chain\)/g) ?? []).length >= 2,
-        !compactHelper.includes('if(request.action==="commit")')
-            && !/\bMAX_COMMIT_JOBS\b/.test(source)
-            && exactDeclaration('parseSimpleReceipt', /action: 'publish' \| 'verify' \| 'rollback'\)/),
-    ]
-    return required.flatMap((valid, index) => valid ? [] : [`ARCH049_PUBLICATION_BATCH_AUTHORITY_${index + 1}`])
-}
-
-function nestedPublicationAuthorityViolations(application: string, transaction: string): string[] {
-    const applicationFile = ts.createSourceFile('generated-application.ts', application, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-    const transactionFile = ts.createSourceFile('transaction.ts', transaction, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-    const applicationNames = new Set(['PreparedEnvironment', 'prepareSurfaces', 'surfaceMutations', 'preparePublication'])
-    const declarationNode = (name: string): ts.FunctionDeclaration | ts.InterfaceDeclaration | undefined => {
-        const owner = applicationNames.has(name) ? applicationFile : transactionFile
-        const matches = [applicationFile, transactionFile].flatMap(file => file.statements.filter(
-            (node): node is ts.FunctionDeclaration | ts.InterfaceDeclaration =>
-                (ts.isFunctionDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name?.text === name))
-        return matches.length === 1 && matches[0]?.parent === owner ? matches[0] : undefined
-    }
-    const declaration = (name: string): string => declarationNode(name)?.getText() ?? ''
-    const body = (name: string): string => {
-        const node = declarationNode(name)
-        return node && ts.isFunctionDeclaration(node) ? node.body?.getText() ?? '' : ''
-    }
-    const compact = (value: string): string => value.replace(/\s+/g, '')
-    const prepared = compact(declaration('PreparedEnvironment'))
-    const mutation = compact(declaration('PublicationMutation'))
-    const helperEntry = compact(declaration('HelperFileEntry'))
-    const appliedGroup = compact(declaration('AppliedGroup'))
-    const publicationGroup = compact(declaration('PublicationGroup'))
-    const prepareSurfaces = compact(body('prepareSurfaces'))
-    const surfaceDeclaration = compact(declaration('surfaceMutations'))
-    const surface = compact(body('surfaceMutations'))
-    const grouping = compact(body('groupMutations'))
-    const parser = compact(body('parsePrepareReceipt'))
-    const chainValidator = compact(body('preparedEntryChainsValid'))
-    const frameBound = compact(body('groupFrameBounded'))
-    const preparation = compact(body('admitPlan'))
-    const synchronize = compact(body('applyPrepared'))
-    const nestedAuthority = compact(body('nestedPublicationAuthority'))
-    const batches = compact(body('runPublicationBatches'))
-    const compensate = compact(body('compensate'))
-    const recovery = compact(body('recordRecovery'))
-    const helper = transaction.match(/const FILESYSTEM_HELPER = String\.raw`([\s\S]*?)`/)?.[1] ?? ''
-    const compactHelper = compact(helper)
-    const verifyCall = "runPublicationBatches('verify-batch',prepared.root,transactionRootIdentity,applied,"
-    const commitCall = "runPublicationBatches('commit-batch',prepared.root,transactionRootIdentity,applied,"
-    const commitStart = synchronize.indexOf(`constfinalized=await${commitCall}`)
-    const commitFailure = synchronize.indexOf('if(!finalized||forwardCallsRemaining!==0)', commitStart)
-    const commitSuccess = synchronize.indexOf("returnObject.freeze({kind:'complete'", commitFailure)
-    const commitFailureBody = commitFailure >= 0 && commitSuccess > commitFailure
-        ? synchronize.slice(commitFailure, commitSuccess)
-        : ''
-
-    const properties = [
-        prepared.includes('readonlycompactSurfacePaths:ReadonlySet<string>')
-            && prepareSurfaces.includes('constcustomSurfacePaths=newSet(customReceipts.flatMap(receipt=>receipt.files.map(file=>file.path)))')
-            && prepareSurfaces.includes('constcompactSurfacePaths=newSet(generated.files.map(file=>file.path).filter(path=>!customSurfacePaths.has(path)))')
-            && prepareSurfaces.includes('compactSurfacePaths,'),
-        mutation.includes('readonlycompactAnchor?:string')
-            && surfaceDeclaration.includes('compactSurfacePaths:ReadonlySet<string>')
-            && surface.includes("action.kind==='write'")
-            && surface.includes("action.desired.kind==='symlink'")
-            && surface.includes('compactSurfacePaths.has(action.path)')
-            && surface.includes('SURFACE_PUBLICATION_ANCHORS.find(anchor=>path.startsWith(`${anchor}/`))')
-            && surface.includes('constcompactAnchor=compactSurfacePaths.has(action.path)?compactAnchorFor(action.path):undefined'),
-        grouping.includes('row.compactAnchor')
-            && grouping.includes('mutation.phase')
-            && grouping.includes('dirname(mutation.path)')
-            && grouping.includes('newSet(')
-            && grouping.includes('parents.size>1')
-            && grouping.includes('groupFrameBounded(anchor!,entries)')
-            && grouping.includes('mutations:Object.freeze(entries),logicalWeight:1')
-            && grouping.includes('phaseOrder'),
-        helperEntry.includes('readonlychain:readonlyHelperChainEntry[]')
-            && parser.includes("helperRecord(item,['chain','name','operation','sha256','target','stage','backup','priorKind','priorSha256','priorTarget','priorMode','priorIdentity'])")
-            && parser.includes('preparedEntryChainsValid(entries,requests)')
-            && parser.includes('constrequest=requests[index]')
-            && parser.includes('constexpectedStage=`.cockpit-stage-${nonce}-${index}`')
-            && parser.includes('constexpectedBackup=`.cockpit-backup-${nonce}-${index}`')
-            && parser.includes("row.stage!==(request.operation==='write-file'||request.operation==='write-symlink'?expectedStage:null)")
-            && parser.includes("row.backup!==(row.priorKind==='file'?expectedBackup:null)")
-            && synchronize.includes('constreceipt=parsePrepareReceipt(raw,nonce,entries)'),
-        nestedAuthority.includes('if(!groupExists)returnObject.freeze({chain:Object.freeze([]),segments})')
-            && nestedAuthority.includes('conststatus=awaitlstat(current)')
-            && nestedAuthority.includes('status.isSymbolicLink()')
-            && nestedAuthority.includes('chain.push(Object.freeze({name,dev:status.dev,ino:status.ino}))')
-            && nestedAuthority.includes('segments:Object.freeze(segments.slice(index))')
-            && synchronize.includes('constnested=awaitnestedPublicationAuthority(')
-            && synchronize.includes('entries.push(Object.freeze({chain:nested.chain,segments:nested.segments,')
-            && compactHelper.includes('walkNested(entry.chain,safeSegments(entry.segments),createdNested,nested)')
-            && compactHelper.includes('walkExpected(entry.chain)')
-            && (compactHelper.match(/verifySourceChain\(chain,start\)/g) ?? []).length >= 2
-            && (compactHelper.match(/verifySourceChain\(nested,request\.identity\)/g) ?? []).length >= 2
-            && compactHelper.includes('verifySourceChain(nested,final)'),
-        chainValidator.includes('constcreatedPrefixes=newMap<string,DirectoryIdentity>()')
-            && chainValidator.includes('entry.chain.length!==request.chain.length+request.segments.length')
-            && chainValidator.includes('directory.name!==expected.name||directory.dev!==expected.dev||directory.ino!==expected.ino||directory.created')
-            && chainValidator.includes('directory.name!==request.segments[chainIndex-request.chain.length]')
-            && chainValidator.includes('if(directory.created||directory.dev!==created.dev||directory.ino!==created.ino)returnfalse')
-            && chainValidator.includes('if(!directory.created)returnfalse'),
-        compactHelper.includes('[...request.entries].reverse()')
-            && compactHelper.includes('constremoveCreatedDirectories=(entries,start)=>')
-            && compactHelper.includes('constchains=[...created.values()].sort((left,right)=>right.length-left.length)')
-            && compactHelper.includes('constcurrent=fs.lstatSync(name(child.name));if(!same(current,child))thrownewError("created-identity")')
-            && compactHelper.includes('verifySourceChain(parents,start)')
-            && compactHelper.includes('removeCreatedDirectories(request.entries,request.identity)')
-            && compactHelper.includes('constchildStatus=fs.lstatSync(name(child.name));if(!same(childStatus,child))thrownewError("child-identity")'),
-        frameBound.includes("action:'prepare'")
-            && frameBound.includes("action:'validate-batch'")
-            && frameBound.includes("action:'publish-batch'")
-            && frameBound.includes("action:'verify-batch'")
-            && frameBound.includes("action:'rollback'")
-            && frameBound.includes("action:'commit-batch'")
-            && frameBound.includes('groups:[group]')
-            && frameBound.includes('MAX_HELPER_FRAME_BYTES')
-            && frameBound.includes('JSON.stringify(frame)')
-            && frameBound.includes('+1'),
-        synchronize.includes('applied.push(current)')
-            && synchronize.includes('awaitrecordRecovery(staged.directory,applied)')
-            && synchronize.indexOf('applied.push(current)') < synchronize.indexOf('awaitrecordRecovery(staged.directory,applied)'),
-        publicationGroup.includes('readonlylogicalWeight:number')
-            && appliedGroup.includes('readonlylogicalWeight:number')
-            && grouping.includes('mutations:Object.freeze(entries),logicalWeight:1')
-            && compact(body('admitPublicationPlan')).includes('returnawaitadmitPlan(input,adapters)')
-            && preparation.includes('constcount=groups?.reduce((total,group)=>total+group.logicalWeight,0)??0')
-            && preparation.includes('count*PUBLICATION_HELPER_CALLS_PER_GROUP*PUBLICATION_HELPER_SLOT_MS>TRANSACTION_TIMEOUT_MS')
-            && transaction.includes('const TRANSACTION_TIMEOUT_MS = 180_000')
-            && transaction.includes('const PUBLICATION_HELPER_SLOT_MS = 500')
-            && transaction.includes('const PUBLICATION_HELPER_CALLS_PER_GROUP = 6')
-            && compact(body('preparePublication')).includes('rootIdentity:prepared.personaSourceIdentity.root')
-            && synchronize.includes('constlogicalGroupCount=groups.reduce((count,group)=>count+group.logicalWeight,0)')
-            && synchronize.includes('logicalGroupCount*PUBLICATION_HELPER_SLOT_MS')
-            && synchronize.includes('logicalGroupCount*(PUBLICATION_HELPER_CALLS_PER_GROUP-1)')
-            && (synchronize.match(/nextForwardDeadline\(group\.logicalWeight\)/g) ?? []).length === 1
-            && batches.includes('constlogicalWeight=request.groups.reduce((count,_row,index)=>count+groups[offset+index]!.logicalWeight,0)')
-            && batches.includes('nextForwardDeadline(logicalWeight)')
-            && compensate.includes('remainingWeight=rollback.reduce((count,group)=>count+group.logicalWeight,0)')
-            && compensate.includes('remainingWeight-=group.logicalWeight')
-            && recovery.includes('groups.map(({logicalWeight:_logicalWeight,...group})=>group)')
-            && recovery.includes('groups:durableGroups'),
-        synchronize.indexOf(verifyCall) >= 0
-            && synchronize.indexOf(verifyCall) < commitStart
-            && commitStart >= 0
-            && synchronize.includes(`${commitCall}node,adapters,nextForwardDeadline).catch(()=>false)`, commitStart)
-            && commitFailure >= 0
-            && commitFailureBody.includes('retainInputs=true')
-            && commitFailureBody.includes("returnrefuse('GENERATED_COMPENSATION_FAILED'")
-            && commitFailureBody.includes("'generatedbyteswerepublishedbutretainedbackupscouldnotbesafelyfinalized;recoverretainedlocalbackupsbeforeretrying'")
-            && commitFailureBody.includes('inputs=${staged.directory}')
-            && !commitFailureBody.includes('compensate('),
-    ]
-    return properties.flatMap((valid, index) => valid ? [] : [`ARCH050_NESTED_PUBLICATION_AUTHORITY_${index + 1}`])
 }
 
 describe('product architecture contract', () => {
@@ -4137,658 +3925,6 @@ describe('product architecture contract', () => {
         const duplicate = new Map(allowed)
         duplicate.set('packages/cockpit/src/environment/rogue.ts', 'export interface GeneratedComposeArtifactAuthority {}')
         expect(generatedComposeAuthorityViolations(duplicate)).toContain('ARCH048_GENERATED_COMPOSE_AUTHORITY')
-    })
-
-    it('binds compact nested publication to authenticated built-in provenance and per-entry ancestry', () => {
-        const sources = productionSources()
-        const application = sources.get('packages/cockpit/src/environment/generated-application.ts')
-        const transaction = sources.get('packages/cockpit/src/generated-environment/transaction.ts')
-        if (!application || !transaction) throw new Error('generated publication owners are missing')
-        expect(nestedPublicationAuthorityViolations(application, transaction)).toEqual([])
-        for (const [from, to, violation] of [
-            ['filter(path => !customSurfacePaths.has(path))', 'filter(() => true)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_1'],
-            ['compactSurfacePaths.has(action.path) ? compactAnchorFor(action.path) : undefined', 'compactAnchorFor(action.path)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_2'],
-            ['parents.size > 1 && groupFrameBounded(anchor!, entries)', 'parents.size >= 1 && groupFrameBounded(anchor!, entries)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_3'],
-            ['mutations: Object.freeze(entries), logicalWeight: 1', 'mutations: Object.freeze(entries), logicalWeight: cluster.length', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_3'],
-            ['preparedEntryChainsValid(entries, requests)', 'true', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_4'],
-            ['const status = await lstat(current)', 'const status = await lstat(groupPath)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_5'],
-            ['if (!directory.created) return false', 'if (directory.created) return false', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_6'],
-            ['syncDirectory(); verifySourceChain(nested, request.identity);', 'syncDirectory();', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_5'],
-            ['const childStatus = fs.lstatSync(name(child.name)); if (!same(childStatus, child)) throw new Error("child-identity");', 'void child;', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_7'],
-            ['Buffer.byteLength(JSON.stringify(frame)) + 1 <= MAX_HELPER_FRAME_BYTES', 'false', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_8'],
-            ['applied.push(current)', 'void current', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_9'],
-            ['const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0', 'const count = groups?.length ?? 0', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_10'],
-            ["{ version: 1, nonce: '0'.repeat(32), action: 'commit-batch', identity, groups: [group] },", "{ version: 1, nonce: '0'.repeat(32), action: 'commit', identity, entries: receiptEntries },", 'ARCH050_NESTED_PUBLICATION_AUTHORITY_8'],
-            ["runPublicationBatches('verify-batch', prepared.root, transactionRootIdentity, applied,", "runPublicationBatches('publish-batch', prepared.root, transactionRootIdentity, applied,", 'ARCH050_NESTED_PUBLICATION_AUTHORITY_11'],
-            ["runPublicationBatches('commit-batch', prepared.root, transactionRootIdentity, applied,\n            node, adapters, nextForwardDeadline).catch(() => false)", "runPublicationBatches('commit-batch', prepared.root, transactionRootIdentity, applied,\n            node, adapters, nextForwardDeadline)", 'ARCH050_NESTED_PUBLICATION_AUTHORITY_11'],
-            ['if (!finalized || forwardCallsRemaining !== 0)', 'if (!finalized)', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_11'],
-            ['generated bytes were published but retained backups could not be safely finalized; recover retained local backups before retrying', 'generated finalization failed', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_11'],
-        ] as const) {
-            const applicationOwned = ['ARCH050_NESTED_PUBLICATION_AUTHORITY_1', 'ARCH050_NESTED_PUBLICATION_AUTHORITY_2'].includes(violation)
-            const source = applicationOwned ? application : transaction
-            const replacement = violation === 'ARCH050_NESTED_PUBLICATION_AUTHORITY_10'
-                ? source.replaceAll(from, to) : source.replace(from, to)
-            expect(replacement, from).not.toBe(source)
-            expect(nestedPublicationAuthorityViolations(applicationOwned ? replacement : application,
-                applicationOwned ? transaction : replacement), from).toContain(violation)
-        }
-    })
-
-    it('rejects private publication declarations duplicated across both owners', () => {
-        const sources = productionSources()
-        const application = sources.get('packages/cockpit/src/environment/generated-application.ts')
-        const transaction = sources.get('packages/cockpit/src/generated-environment/transaction.ts')
-        if (!application || !transaction) throw new Error('generated publication owners are missing')
-        expect(nestedPublicationAuthorityViolations(application, transaction)).toEqual([])
-        expect(nestedPublicationAuthorityViolations(`${application}\nfunction groupMutations() {}`, transaction))
-            .toContain('ARCH050_NESTED_PUBLICATION_AUTHORITY_3')
-        expect(nestedPublicationAuthorityViolations(application, `${transaction}\nfunction prepareSurfaces() {}`))
-            .toContain('ARCH050_NESTED_PUBLICATION_AUTHORITY_1')
-    })
-
-    it('keeps check read-only and filesystem publication behind sync', () => {
-        const sources = productionSources()
-        const application = sources.get('packages/cockpit/src/environment/generated-application.ts')
-        const source = sources.get('packages/cockpit/src/generated-environment/transaction.ts')
-        if (!application || !source) throw new Error('generated publication owners are missing')
-        const readGraph = (application: string, transaction: string): ts.SourceFile =>
-            ts.createSourceFile('publication-read-graph.ts', `${application}\n${transaction}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-        const sourceFile = readGraph(application, source)
-        expect(publicationBatchAuthorityViolations(source)).toEqual([])
-        for (const [from, to] of [
-            ["readonly action: 'validate-batch' | 'publish-batch' | 'verify-batch' | 'commit-batch'", "readonly action: string"],
-            ["helperStep(node, root, 'generated-environment', request, [], deadline)", "helperStep(node, groups[offset]!.path, groups[offset]!.parent, request, [], deadline)"],
-            ['identity: group.identity,\n            chain: Object.freeze(chain),', 'identity: group.identity,\n            chain: Object.freeze([]),'],
-            ['identity: group.identity,', 'identity: rootIdentity,'],
-            ['entries: group.entries,', 'entries: Object.freeze([]),'],
-            ['const expected = request.groups[index]', 'const expected = request.groups.find(group => group.nonce === row?.nonce)'],
-            ['Buffer.byteLength(JSON.stringify(candidate)) > MAX_HELPER_FRAME_BYTES', 'false'],
-            ['const MAX_PUBLICATION_BATCH_GROUPS = 8', 'const MAX_PUBLICATION_BATCH_GROUPS = 9'],
-            ['const transactionRootIdentity = prepared.rootIdentity', 'const transactionRootIdentity = Object.freeze({ dev: transactionRoot.dev, ino: transactionRoot.ino })'],
-            ['request.groups.length < 1 || request.groups.length > 8', 'request.groups.length < 1'],
-            ['const chain = walkExpected(group.chain);', 'const chain = [];'],
-            ['if (!same(final, group.identity)) throw new Error("group-identity");', 'void final;'],
-            ['if (request.action === "publish-batch") publishEntries(group.entries);\n      else if (request.action === "validate-batch") validateEntries(group.entries);\n      else verifyEntries(group.entries);\n      verifySourceChain(chain);', 'if (request.action === "publish-batch") publishEntries(group.entries);\n      else if (request.action === "validate-batch") validateEntries(group.entries);\n      else verifyEntries(group.entries);\n      void chain;'],
-            ['groups.push({ nonce: group.nonce, parent: group.parent, kind: "complete" });', 'groups.push({ nonce: group.nonce, parent: ".", kind: "complete" });'],
-            ["runPublicationBatches('publish-batch', prepared.root, transactionRootIdentity, applied,", "runPublicationBatches('verify-batch', prepared.root, transactionRootIdentity, applied,"],
-            ['if (request.action === "commit-batch") {', 'if (false) {'],
-            ['verifyEntries([entry], group.identity);', 'void entry;'],
-            ['if (entry.backup !== null) fs.unlinkSync(name(entry.backup));', 'if (entry.backup !== null) void name(entry.backup);'],
-            ['syncDirectory(); verifySourceChain(nested, group.identity);', 'syncDirectory();'],
-            ['syncDirectory(); verifySourceChain(nested, group.identity);', 'verifySourceChain(nested, group.identity);'],
-            ["action: 'publish' | 'verify' | 'rollback')", "action: 'publish' | 'verify' | 'rollback' | 'commit')"],
-        ] as const) {
-            const replacement = source.replace(from, to)
-            expect(replacement).not.toBe(source)
-            expect(publicationBatchAuthorityViolations(replacement).length, from).toBeGreaterThan(0)
-        }
-        const reachableMutations = (candidate: ts.SourceFile, entry: string): string[] => {
-            const functions = new Map<string, ts.FunctionLikeDeclaration>()
-            let constantsShadowed = false
-            let openShadowed = false
-            const customWorker = candidate.statements.flatMap((statement) => ts.isVariableStatement(statement)
-                ? [...statement.declarationList.declarations] : []).find((declaration) =>
-                ts.isIdentifier(declaration.name) && declaration.name.text === 'CUSTOM_SURFACE_WORKER')?.initializer
-            const customWorkerText = customWorker?.getText(candidate)
-            const exactCustomWorker = customWorkerText !== undefined
-                && (customWorkerText.match(/process\.argv\[2\]/g) ?? []).length === 1
-                && (customWorkerText.match(/fs\.readFileSync\(/g) ?? []).length === 1
-                && customWorkerText.includes('const source = fs.readFileSync(process.argv[2]);')
-                && customWorkerText.includes("if (digest(source) !== request.sourceSha256) throw new Error('module changed');")
-                && customWorkerText.includes("await import('data:text/javascript;base64,' + source.toString('base64'))")
-                && !customWorkerText.includes('request.modulePath') && !customWorkerText.includes('pathToFileURL')
-            const scratchNames = new Set(['mkdtemp', 'rm', 'join', 'tmpdir', 'realpath', 'writeFile'])
-            const scratchShadowed = new Set<string>()
-            const imported = (name: string, module: string): boolean => candidate.statements.some((statement) =>
-                ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
-                && statement.moduleSpecifier.text === module && statement.importClause && !statement.importClause.isTypeOnly
-                && statement.importClause.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
-                && statement.importClause.namedBindings.elements.some((element) => !element.isTypeOnly
-                    && element.name.text === name && (element.propertyName ?? element.name).text === name))
-            const collect = (node: ts.Node): void => {
-                if ((ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)
-                    || ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node))
-                    && node.name && ts.isIdentifier(node.name) && scratchNames.has(node.name.text)) scratchShadowed.add(node.name.text)
-                if ((ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)
-                    || ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node))
-                    && node.name && ts.isIdentifier(node.name) && node.name.text === 'constants') constantsShadowed = true
-                if ((ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)
-                    || ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node))
-                    && node.name && ts.isIdentifier(node.name) && node.name.text === 'open') openShadowed = true
-                if (ts.isFunctionDeclaration(node) && node.name?.text && node.body) functions.set(node.name.text, node)
-                ts.forEachChild(node, collect)
-            }
-            collect(candidate)
-            const pending = [entry]
-            const visited = new Set<string>()
-            const mutations = new Set<string>()
-            while (pending.length > 0) {
-                const name = pending.pop()!
-                if (visited.has(name)) continue
-                visited.add(name)
-                const declaration = functions.get(name)
-                if (!declaration?.body) throw new Error(`${name} is missing`)
-                const directoryDeclarations: ts.VariableDeclaration[] = []
-                const directoryAssignments: ts.BinaryExpression[] = []
-                const locals = new Map<string, ts.VariableDeclaration>()
-                const reassigned = new Set<string>()
-                const captureDirectory = (node: ts.Node): void => {
-                    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-                        if (locals.has(node.name.text)) reassigned.add(node.name.text)
-                        locals.set(node.name.text, node)
-                        if (node.name.text === 'directory' || node.name.text === 'scratch') directoryDeclarations.push(node)
-                    }
-                    if (ts.isBinaryExpression(node)
-                        && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
-                        if (ts.isIdentifier(node.left)) {
-                            reassigned.add(node.left.text)
-                            if (node.left.text === 'directory' || node.left.text === 'scratch') directoryAssignments.push(node)
-                        } else if (ts.isPropertyAccessExpression(node.left) && ts.isIdentifier(node.left.expression)) {
-                            reassigned.add(node.left.expression.text)
-                        } else if (ts.isElementAccessExpression(node.left) && ts.isIdentifier(node.left.expression)) {
-                            reassigned.add(node.left.expression.text)
-                        }
-                    }
-                    ts.forEachChild(node, captureDirectory)
-                }
-                captureDirectory(declaration.body)
-                const helperRequests = new Set<string>()
-                const helperCalls: ts.CallExpression[] = []
-                let actionUnmodified = true
-                let helperUnaliased = true
-                const property = (object: ts.ObjectLiteralExpression, key: string): ts.Expression | undefined => {
-                    if (object.properties.some(ts.isSpreadAssignment)) return undefined
-                    const matches = object.properties.filter(row => row.name && ts.isIdentifier(row.name) && row.name.text === key)
-                    if (matches.length !== 1) return undefined
-                    const row = matches[0]!
-                    return ts.isPropertyAssignment(row) ? row.initializer : ts.isShorthandPropertyAssignment(row) ? row.name : undefined
-                }
-                const initializer = (key: string): ts.Expression | undefined => {
-                    const local = locals.get(key)
-                    return local && ts.isVariableDeclarationList(local.parent) && (local.parent.flags & ts.NodeFlags.Const) !== 0
-                        && !reassigned.has(key) ? local.initializer : undefined
-                }
-                const compact = (node: ts.Node | undefined): string | undefined => node?.getText(candidate).replace(/\s+/g, '')
-                const batchEntries = initializer('entries')
-                const batchMap = batchEntries && ts.isCallExpression(batchEntries)
-                    && batchEntries.expression.getText(candidate) === 'resolved.map' && batchEntries.arguments.length === 1
-                    && ts.isArrowFunction(batchEntries.arguments[0]!) ? batchEntries.arguments[0] : undefined
-                const batchRow = batchMap && ts.isCallExpression(batchMap.body)
-                    && batchMap.body.expression.getText(candidate) === 'Object.freeze' && batchMap.body.arguments.length === 1
-                    && ts.isObjectLiteralExpression(batchMap.body.arguments[0]!) ? batchMap.body.arguments[0] : undefined
-                const batchType = candidate.statements.find(statement => ts.isInterfaceDeclaration(statement)
-                    && statement.name.text === 'AnchoredBatchReadRequest')
-                const boundedBatch = name === 'readAnchoredBatch' && batchRow
-                    && compact(property(batchRow, 'output')) === 'join(directory!,`source-${index}`)'
-                    && compact(property(batchRow, 'action')) === 'request!.action'
-                    && compact(property(batchRow, 'maxBytes')) === 'request!.maxBytes'
-                    && compact(property(batchRow, 'segments')) === 'request!.parts.slice(0,-1)'
-                    && compact(property(batchRow, 'name')) === 'request!.parts.at(-1)'
-                    && !reassigned.has('entries') && !reassigned.has('resolved')
-                    && batchType && ts.isInterfaceDeclaration(batchType)
-                    && batchType.members.some(member => ts.isPropertySignature(member)
-                        && member.name.getText(candidate) === 'action'
-                        && compact(member.type) === "'read-file'|'read-persona'|'read-entry'")
-                    && declaration.body.getText(candidate).includes('requests.length > MAX_AUTHENTICATED_READ_BATCH')
-                    && declaration.body.getText(candidate).includes('requests.reduce((total, request) => total + request.maxBytes, 0) > MAX_AUTHENTICATED_READ_BATCH_BYTES')
-                    && declaration.body.getText(candidate).includes('constants.O_NOFOLLOW === undefined')
-                    && declaration.body.getText(candidate).includes('readRoot.dev !== rootStatus.dev || readRoot.ino !== rootStatus.ino')
-                    && declaration.body.getText(candidate).includes('sha256(bytes) !== row.sha256')
-                    && initializer('receiptOutput')?.getText(candidate) === "join(directory, 'receipt')"
-                    && declaration.body.getText(candidate).includes('sha256(receiptBytes) !== summary.receiptSha256')
-                    && declaration.body.getText(candidate).includes('receiptBytes.length !== summary.receiptBytes')
-                    && declaration.body.getText(candidate).includes("new TextDecoder('utf-8', { fatal: true }).decode(receiptBytes)")
-                    && declaration.body.getText(candidate).includes("JSON.stringify(receiptValue) + '\\n' !== receiptText")
-                    && declaration.body.getText(candidate).includes('(summary.receiptBytes as number) > MAX_AUTHENTICATED_READ_BATCH_RECEIPT_BYTES')
-                const captureHelper = (node: ts.Node): void => {
-                    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
-                        && ts.isVariableDeclarationList(node.parent) && (node.parent.flags & ts.NodeFlags.Const) !== 0
-                        && ts.isCallExpression(node.initializer) && node.initializer.expression.getText(candidate) === 'Object.freeze'
-                        && node.initializer.arguments.length === 1 && ts.isObjectLiteralExpression(node.initializer.arguments[0]!)) {
-                        const properties = node.initializer.arguments[0]!.properties.filter((property) => property.name?.getText(candidate) === 'action')
-                        const request = node.initializer.arguments[0]!
-                        const output = property(request, 'output')
-                        const privateOutput = output && ts.isIdentifier(output) && output.text === 'output'
-                            && initializer('output')?.getText(candidate) === "join(directory, 'source')"
-                        const fixedEntry = name === 'readAnchoredEntry' && properties.length === 1 && ts.isPropertyAssignment(properties[0]!)
-                            && ts.isStringLiteral(properties[0]!.initializer) && properties[0]!.initializer.text === 'read-entry'
-                        const fixedBatch = boundedBatch && properties.length === 1 && ts.isPropertyAssignment(properties[0]!)
-                            && ts.isStringLiteral(properties[0]!.initializer) && properties[0]!.initializer.text === 'read-batch'
-                            && compact(property(request, 'entries')) === 'Object.freeze(entries)'
-                            && compact(property(request, 'receiptOutput')) === 'receiptOutput'
-                        if (properties.length === 1 && !reassigned.has(node.name.text)
-                            && (fixedBatch || privateOutput && (fixedEntry || ts.isShorthandPropertyAssignment(properties[0]!)
-                                && properties[0]!.name.text === 'action' && !properties[0]!.objectAssignmentInitializer))) helperRequests.add(node.name.text)
-                    }
-                    if (ts.isIdentifier(node) && node.text === 'action') {
-                        const parent = node.parent
-                        const property = ts.isPropertyAccessExpression(parent) && parent.name === node
-                            || ts.isPropertyAssignment(parent) && parent.name === node
-                                && (ts.isStringLiteral(parent.initializer) && (parent.initializer.text === 'read-entry'
-                                    || name === 'readAnchoredBatch' && parent.initializer.text === 'read-batch')
-                                    || name === 'readAnchoredBatch' && compact(parent.initializer) === 'request!.action')
-                        const comparison = ts.isBinaryExpression(parent)
-                            && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(parent.operatorToken.kind)
-                        const request = ts.isShorthandPropertyAssignment(parent) && !parent.objectAssignmentInitializer
-                            && ts.isObjectLiteralExpression(parent.parent) && ts.isCallExpression(parent.parent.parent)
-                            && parent.parent.parent.expression.getText(candidate) === 'Object.freeze'
-                            && parent.parent.parent.arguments.length === 1
-                            && ts.isVariableDeclaration(parent.parent.parent.parent)
-                            && ts.isVariableDeclarationList(parent.parent.parent.parent.parent)
-                            && (parent.parent.parent.parent.parent.flags & ts.NodeFlags.Const) !== 0
-                        if (!property && !comparison && !request) actionUnmodified = false
-                    }
-                    if (ts.isIdentifier(node) && node.text === 'helperStep'
-                        && !(ts.isCallExpression(node.parent) && node.parent.expression === node)) helperUnaliased = false
-                    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'helperStep') helperCalls.push(node)
-                    ts.forEachChild(node, captureHelper)
-                }
-                captureHelper(declaration.body)
-                const readHelpersOnly = helperCalls.every((call) => call.arguments[3] !== undefined && ts.isIdentifier(call.arguments[3]!) && helperRequests.has(call.arguments[3]!.text))
-                const action = declaration.parameters.find((parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === 'action')
-                const privateRead = (name === 'readAnchoredFile' || name === 'readAnchoredEntry' || name === 'readAnchoredBatch')
-                    && scratchShadowed.size === 0 && readHelpersOnly && actionUnmodified && helperUnaliased
-                    && imported('mkdtemp', 'node:fs/promises') && imported('rm', 'node:fs/promises')
-                    && imported('join', 'node:path') && imported('tmpdir', 'node:os')
-                    && (name === 'readAnchoredEntry' || boundedBatch || action?.type?.getText(candidate) === "'read-file' | 'read-persona'"
-                        && action.initializer?.getText(candidate) === "'read-file'")
-                    && directoryDeclarations.length === 1 && !directoryDeclarations[0]!.initializer
-                    && directoryAssignments.length === 1 && directoryAssignments[0]!.operatorToken.kind === ts.SyntaxKind.EqualsToken
-                    && directoryAssignments[0]!.right.getText(candidate) === (name === 'readAnchoredEntry'
-                        ? "await mkdtemp(join(tmpdir(), 'cockpit-generated-entry-'))" : name === 'readAnchoredBatch'
-                            ? "await mkdtemp(join(tmpdir(), 'cockpit-generated-read-batch-'))" : "await mkdtemp(join(tmpdir(), 'cockpit-generated-read-'))")
-                const stepInitializer = initializer('step')
-                const stepObject = stepInitializer && ts.isCallExpression(stepInitializer)
-                    && stepInitializer.expression.getText(candidate) === 'snapshotExecutionStep' && stepInitializer.arguments.length === 1
-                    && ts.isObjectLiteralExpression(stepInitializer.arguments[0]!) ? stepInitializer.arguments[0] : undefined
-                const customRequest = initializer('request')
-                const customArgv = stepObject && property(stepObject, 'argv')
-                const consumed = stepObject && property(stepObject, 'consumedFiles')
-                const authenticatedInputs = consumed && ts.isArrayLiteralExpression(consumed) && consumed.elements.length === 2
-                    && consumed.elements.every(ts.isObjectLiteralExpression) && consumed.elements.every((row, index) => {
-                        if (!ts.isObjectLiteralExpression(row)) return false
-                        return property(row, 'path')?.getText(candidate) === (index === 0 ? 'prepared.node.canonicalPath' : 'absoluteModule')
-                            && property(row, 'sha256')?.getText(candidate) === (index === 0 ? 'prepared.node.sha256' : 'moduleRead.sha256')
-                            && compact(property(row, 'argvIndexes')) === (index === 0 ? '[0]' : '[3,9]')
-                            && property(row, 'executable')?.getText(candidate) === (index === 0 ? 'true' : 'false')
-                    })
-                let authenticatedCustomExecute = false
-                let customUnaliased = true
-                const captureCustomDispatch = (node: ts.Node): void => {
-                    if (ts.isIdentifier(node) && ['snapshotExecutionStep', 'authenticatedExecutionOutcome'].includes(node.text)
-                        && !(ts.isCallExpression(node.parent) && node.parent.expression === node)) customUnaliased = false
-                    if (ts.isPropertyAccessExpression(node) && node.expression.getText(candidate) === 'adapters' && node.name.text === 'execute') {
-                        const call = node.parent
-                        const awaited = call.parent
-                        const authentication = awaited.parent
-                        const authenticated = ts.isCallExpression(call) && call.expression === node && call.arguments.length === 1
-                            && call.arguments[0]?.getText(candidate) === 'step' && ts.isAwaitExpression(awaited)
-                            && ts.isCallExpression(authentication) && authentication.expression.getText(candidate) === 'authenticatedExecutionOutcome'
-                            && authentication.arguments.length === 2 && authentication.arguments[0] === awaited
-                            && authentication.arguments[1]?.getText(candidate) === 'step'
-                        authenticatedCustomExecute = authenticatedCustomExecute || authenticated
-                        if (!authenticated) customUnaliased = false
-                    }
-                    ts.forEachChild(node, captureCustomDispatch)
-                }
-                captureCustomDispatch(declaration.body)
-                const privateCustom = name === 'executeCustomCapability' && scratchShadowed.size === 0
-                    && imported('mkdtemp', 'node:fs/promises') && imported('rm', 'node:fs/promises')
-                    && imported('realpath', 'node:fs/promises') && imported('join', 'node:path')
-                    && imported('tmpdir', 'node:os')
-                    && directoryDeclarations.length === 1 && directoryDeclarations[0]!.name.getText(candidate) === 'scratch'
-                    && !directoryDeclarations[0]!.initializer && directoryAssignments.length === 1
-                    && compact(directoryAssignments[0]!.right) === "awaitrealpath(awaitmkdtemp(join(tmpdir(),'cockpit-custom-surface-')))"
-                    && compact(initializer('permissionFlag')) === "process.allowedNodeEnvironmentFlags.has('--permission')?'--permission':process.allowedNodeEnvironmentFlags.has('--experimental-permission')?'--experimental-permission':undefined"
-                    && ts.isBlock(declaration.body) && declaration.body.statements.some(statement => ts.isIfStatement(statement)
-                        && compact(statement.expression) === "!permissionFlag||!process.allowedNodeEnvironmentFlags.has('--allow-fs-read')||!process.allowedNodeEnvironmentFlags.has('--allow-fs-write')"
-                        && ts.isReturnStatement(statement.thenStatement) && statement.thenStatement.expression?.getText(candidate) === 'undefined')
-                    && declaration.body.statements.some(statement => ts.isTryStatement(statement)
-                        && statement.tryBlock.statements.some(child => ts.isIfStatement(child)
-                            && compact(child.expression) === "!absoluteModule||[scratch,absoluteModule].some(path=>path.includes('*'))"
-                            && ts.isReturnStatement(child.thenStatement) && child.thenStatement.expression?.getText(candidate) === 'undefined'))
-                    && customRequest && ts.isObjectLiteralExpression(customRequest) && property(customRequest, 'output')?.getText(candidate) === 'scratch'
-                    && property(customRequest, 'modulePath') === undefined
-                    && stepObject && property(stepObject, 'cwd')?.getText(candidate) === 'scratch'
-                    && compact(property(stepObject, 'env')) === '{}'
-                    && customArgv && ts.isArrayLiteralExpression(customArgv)
-                    && customArgv.elements.map(element => compact(element)).join('|') === [
-                        'prepared.node.canonicalPath', 'permissionFlag', "'--allow-fs-read'", 'absoluteModule',
-                        '`--allow-fs-read=${scratch}`', '`--allow-fs-write=${scratch}`', "'-e'", 'CUSTOM_SURFACE_WORKER', 'raw', 'absoluteModule',
-                    ].join('|')
-                    && initializer('raw')?.getText(candidate) === 'JSON.stringify(request)'
-                    && compact(initializer('absoluteModule')) === 'confined(prepared.root,capability.mechanism.module)'
-                    && authenticatedInputs && exactCustomWorker
-                    && authenticatedCustomExecute && customUnaliased
-                const nativeProjection = initializer('projection')
-                const nativeProjectionCall = nativeProjection && ts.isAwaitExpression(nativeProjection)
-                    && ts.isCallExpression(nativeProjection.expression)
-                    && nativeProjection.expression.expression.getText(candidate) === 'projectNativeHooks'
-                    && nativeProjection.expression.arguments.length === 1
-                    && ts.isObjectLiteralExpression(nativeProjection.expression.arguments[0]!)
-                    ? nativeProjection.expression.arguments[0] : undefined
-                const nativeBudget = nativeProjectionCall && property(nativeProjectionCall, 'budget')
-                const nativeMeasurement = nativeBudget && ts.isObjectLiteralExpression(nativeBudget)
-                    ? property(nativeBudget, 'prepareMeasurement') : undefined
-                const nativePath = initializer('path')
-                const nativeConsumed = stepObject && property(stepObject, 'consumedFiles')
-                const nativeOuterTry = ts.isBlock(declaration.body)
-                    ? declaration.body.statements.find((statement): statement is ts.TryStatement =>
-                        ts.isTryStatement(statement) && statement.finallyBlock !== undefined)
-                    : undefined
-                const nativeInitialGuard = nativeOuterTry?.tryBlock.statements.find((statement): statement is ts.IfStatement =>
-                    ts.isIfStatement(statement) && compact(statement.expression) === '!status.isDirectory()||status.isSymbolicLink()')
-                const nativeIdentityAssignments: ts.BinaryExpression[] = []
-                if (nativeOuterTry) {
-                    const collectIdentityAssignments = (node: ts.Node): void => {
-                        if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
-                            && ts.isIdentifier(node.left) && node.left.text === 'scratchIdentity') nativeIdentityAssignments.push(node)
-                        ts.forEachChild(node, collectIdentityAssignments)
-                    }
-                    collectIdentityAssignments(nativeOuterTry.tryBlock)
-                }
-                const nativeScratchGuard = nativeOuterTry?.finallyBlock?.statements.length === 1
-                    && ts.isIfStatement(nativeOuterTry.finallyBlock.statements[0]!)
-                    ? nativeOuterTry.finallyBlock.statements[0] : undefined
-                const nativeCleanupTry = nativeScratchGuard && compact(nativeScratchGuard.expression) === 'scratch&&scratchIdentity'
-                    && ts.isBlock(nativeScratchGuard.thenStatement) && nativeScratchGuard.thenStatement.statements.length === 1
-                    && ts.isTryStatement(nativeScratchGuard.thenStatement.statements[0]!)
-                    ? nativeScratchGuard.thenStatement.statements[0] : undefined
-                const nativeCleanupCurrent = nativeCleanupTry?.tryBlock.statements[0]
-                const nativeCleanupGuard = nativeCleanupTry?.tryBlock.statements[1]
-                const exactNativeCleanup = nativeCleanupTry?.tryBlock.statements.length === 2
-                    && ts.isVariableStatement(nativeCleanupCurrent!)
-                    && compact(nativeCleanupCurrent) === 'constcurrent=awaitlstat(scratch)'
-                    && ts.isIfStatement(nativeCleanupGuard!)
-                    && compact(nativeCleanupGuard.expression) === 'current.isDirectory()&&!current.isSymbolicLink()&&current.dev===scratchIdentity.dev&&current.ino===scratchIdentity.ino'
-                    && ts.isBlock(nativeCleanupGuard.thenStatement) && nativeCleanupGuard.thenStatement.statements.length === 1
-                    && compact(nativeCleanupGuard.thenStatement.statements[0]) === 'awaitrm(scratch,{recursive:true,force:true})'
-                    && compact(nativeCleanupTry.catchClause) === "catch(error){if((errorasNodeJS.ErrnoException).code!=='ENOENT')throwerror}"
-                const privateNativeHook = name === 'projectExplicitNativeHooks' && scratchShadowed.size === 0
-                    && imported('mkdtemp', 'node:fs/promises') && imported('rm', 'node:fs/promises')
-                    && imported('realpath', 'node:fs/promises') && imported('writeFile', 'node:fs/promises')
-                    && imported('join', 'node:path') && imported('tmpdir', 'node:os')
-                    && imported('projectNativeHooks', '../testing/hooks.js')
-                    && imported('snapshotExecutionStep', './contract.js')
-                    && imported('authenticatedExecutionOutcome', '../environment-exec/execute.js')
-                    && directoryDeclarations.length === 1 && directoryDeclarations[0]!.name.getText(candidate) === 'scratch'
-                    && !directoryDeclarations[0]!.initializer && directoryAssignments.length === 1
-                    && compact(directoryAssignments[0]!.right) === "awaitrealpath(awaitmkdtemp(join(tmpdir(),'cockpit-native-hook-cost-')))"
-                    && compact(initializer('status')) === 'awaitlstat(scratch)'
-                    && nativeInitialGuard && ts.isReturnStatement(nativeInitialGuard.thenStatement)
-                    && nativeInitialGuard.thenStatement.expression?.getText(candidate) === 'undefined'
-                    && nativeIdentityAssignments.length === 1
-                    && compact(nativeIdentityAssignments[0]!.right) === 'Object.freeze({dev:status.dev,ino:status.ino})'
-                    && nativeProjectionCall && property(nativeProjectionCall, 'install')?.getText(candidate) === "'explicit-native'"
-                    && property(nativeProjectionCall, 'cockpitId')?.getText(candidate) === 'prepared.cockpitId'
-                    && property(nativeProjectionCall, 'harnesses')?.getText(candidate) === 'harnesses'
-                    && nativeBudget && ts.isObjectLiteralExpression(nativeBudget)
-                    && property(nativeBudget, 'policy')?.getText(candidate) === 'policy'
-                    && nativeMeasurement && ts.isArrowFunction(nativeMeasurement)
-                    && nativeMeasurement.modifiers?.some(({ kind }) => kind === ts.SyntaxKind.AsyncKeyword)
-                    && nativeMeasurement.parameters.length === 1 && nativeMeasurement.parameters[0]!.name.getText(candidate) === 'entry'
-                    && nativePath?.getText(candidate) === "join(scratch!, 'pre-push')"
-                    && declaration.body.getText(candidate).includes("await writeFile(path, entry.bytes, { flag: 'wx', mode: 0o700 })")
-                    && stepObject && property(stepObject, 'id')?.getText(candidate) === "'native-hook-cost'"
-                    && property(stepObject, 'cwd')?.getText(candidate) === 'prepared.root'
-                    && compact(property(stepObject, 'env')) === '{PATH:dirname(git.value.canonicalPath)}'
-                    && compact(property(stepObject, 'argv')) === "[shell.value.canonicalPath,'-c',NATIVE_HOOK_COST_SCRIPT,'native-hook-cost',path,revisions[0]!,revisions[1]!]"
-                    && nativeConsumed && ts.isArrayLiteralExpression(nativeConsumed) && nativeConsumed.elements.length === 2
-                    && nativeConsumed.elements.every(ts.isObjectLiteralExpression)
-                    && compact(nativeConsumed.elements[0]) === '{path:shell.value.canonicalPath,sha256:shell.value.sha256,maxBytes:MAX_EXECUTABLE_BYTES,argvIndexes:[0],executable:true,executionMode:shell.value.executionMode}'
-                    && compact(nativeConsumed.elements[1]) === '{path,sha256:entry.sha256,maxBytes:Buffer.byteLength(entry.bytes),argvIndexes:[4],executable:false}'
-                    && compact(property(stepObject, 'filesystemChecks')) === "[{path:prepared.root,expected:'directory'},{path:scratch!,expected:'directory'}]"
-                    && declaration.body.getText(candidate).includes('const revisionOutcome = authenticatedExecutionOutcome(await adapters.execute(revisionStep), revisionStep)')
-                    && exactNativeCleanup
-                const privateCapture = privateRead || privateCustom || privateNativeHook
-                const inspect = (node: ts.Node): void => {
-                    if (ts.isIdentifier(node) && node.text === 'helperStep'
-                        && !(ts.isCallExpression(node.parent) && node.parent.expression === node)) mutations.add('helperStep')
-                    if (ts.isCallExpression(node)) {
-                        const called = ts.isIdentifier(node.expression)
-                            ? node.expression.text
-                            : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : undefined
-                        const readOnlyOpen = !constantsShadowed && !openShadowed && ts.isIdentifier(node.expression)
-                            && called === 'open' && node.arguments.length === 2
-                            && candidate.statements.some((statement) => ts.isImportDeclaration(statement)
-                                && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === 'node:fs/promises'
-                                && statement.importClause && !statement.importClause.isTypeOnly
-                                && statement.importClause.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
-                                && statement.importClause.namedBindings.elements.some((element) => !element.isTypeOnly
-                                    && element.name.text === 'open' && (element.propertyName ?? element.name).text === 'open'))
-                            && ['constants.O_RDONLY | constants.O_NOFOLLOW', 'constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW']
-                                .includes(node.arguments[1]?.getText(candidate) ?? '')
-                            && candidate.statements.some((statement) => ts.isImportDeclaration(statement)
-                                && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === 'node:fs'
-                                && statement.importClause && !statement.importClause.isTypeOnly
-                                && statement.importClause.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
-                                && statement.importClause.namedBindings.elements.some((element) => !element.isTypeOnly
-                                    && element.name.text === 'constants' && (element.propertyName ?? element.name).text === 'constants'))
-                        const scratchCall = privateCapture && ts.isIdentifier(node.expression)
-                            && ((called === 'mkdtemp' && node.arguments.length === 1
-                                && node.arguments[0]?.getText(candidate) === (privateNativeHook ? "join(tmpdir(), 'cockpit-native-hook-cost-')"
-                                    : privateCustom ? "join(tmpdir(), 'cockpit-custom-surface-')"
-                                    : name === 'readAnchoredEntry' ? "join(tmpdir(), 'cockpit-generated-entry-')"
-                                        : name === 'readAnchoredBatch' ? "join(tmpdir(), 'cockpit-generated-read-batch-')" : "join(tmpdir(), 'cockpit-generated-read-')"))
-                                || (called === 'rm' && node.arguments.length === 2
-                                    && node.arguments[0]?.getText(candidate) === (privateCustom || privateNativeHook ? 'scratch' : 'directory')
-                                    && node.arguments[1]?.getText(candidate) === '{ recursive: true, force: true }')
-                                || (privateNativeHook && called === 'writeFile' && node.arguments.length === 3
-                                    && node.arguments[0]?.getText(candidate) === 'path'
-                                    && node.arguments[1]?.getText(candidate) === 'entry.bytes'
-                                    && node.arguments[2]?.getText(candidate) === "{ flag: 'wx', mode: 0o700 }"))
-                        if (called && /^(?:rename|mkdir|mkdtemp|open|rm|rmdir|unlink|writeFile)$/.test(called)
-                            && !readOnlyOpen && !scratchCall) mutations.add(called)
-                        if (called === 'helperStep' && !privateCapture) mutations.add(called)
-                        if (name === 'executeCustomCapability' && called === 'execute' && !privateCustom) mutations.add('execute')
-                        if (called && functions.has(called) && !visited.has(called)) pending.push(called)
-                    }
-                    ts.forEachChild(node, inspect)
-                }
-                inspect(declaration.body)
-            }
-            return [...mutations].sort()
-        }
-
-        const scratchSource = `
-            import { mkdtemp, rm } from 'node:fs/promises'
-            import { tmpdir } from 'node:os'
-            import { join } from 'node:path'
-            async function readAnchoredFile(action: 'read-file' | 'read-persona' = 'read-file') {
-                let directory: string
-                directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-read-'))
-                try { return 'bounded read' }
-                finally { await rm(directory, { recursive: true, force: true }) }
-            }
-            async function check() { return readAnchoredFile() }
-        `
-        const scratch = ts.createSourceFile('scratch.ts', scratchSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-        expect(reachableMutations(scratch, 'check')).toEqual([])
-        for (const replacement of [
-            scratchSource.replace('rm(directory,', "rm('consumer-output',"),
-            scratchSource.replace("try { return 'bounded read' }", "directory = 'consumer-output'; try { return 'bounded read' }"),
-            scratchSource.replace("join(tmpdir(), 'cockpit-generated-read-')", "join(root, 'consumer-output')"),
-            scratchSource.replace("from 'node:fs/promises'", "from './foreign.js'"),
-            scratchSource.replace("async function check()", "function mkdtemp() {} async function check()"),
-            scratchSource.replace("action: 'read-file' | 'read-persona' = 'read-file'", "action: 'apply' = 'apply'"),
-            scratchSource.replace("try { return 'bounded read' }", "const request = Object.freeze({ action: 'publish' }); helperStep(node, root, '.', request); try { return 'bounded read' }"),
-            scratchSource.replace("try { return 'bounded read' }", "helperStep(); try { return 'bounded read' }"),
-            scratchSource.replace("try { return 'bounded read' }", "action = ('publish' as never); const request = Object.freeze({ action }); helperStep(node, root, '.', request); try { return 'bounded read' }"),
-            scratchSource.replace("try { return 'bounded read' }", "const dispatch = helperStep; dispatch(node, root, '.', { action: 'publish' }); try { return 'bounded read' }"),
-            scratchSource.replace("try { return 'bounded read' }", "; ({ action } = ({ 'action': 'publish' } as never)); const request = Object.freeze({ action }); helperStep(node, root, '.', request); try { return 'bounded read' }"),
-        ]) {
-            const unsafe = ts.createSourceFile('unsafe.ts', replacement, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-            expect(reachableMutations(unsafe, 'check').length).toBeGreaterThan(0)
-        }
-
-        expect(application).toMatch(/function syncGeneratedEnvironment[\s\S]*applyGeneratedEnvironmentRepair/)
-        expect(application).toMatch(/function applyGeneratedEnvironmentRepair[\s\S]*runPublicationPlan\(record.plan,/)
-        expect(source).toMatch(/function runPublicationPlan[\s\S]*runPlan\(plan, adapters\)/)
-        expect(source).toMatch(/function runPlan[\s\S]*applyPrepared\(record, adapters\)/)
-        expect(reachableMutations(sourceFile, 'checkGeneratedEnvironment')).toEqual([])
-
-        const batchSource = [
-                ["output: join(directory!, `source-${index}`)", "output: join(root, `source-${index}`)"],
-                ["version: 1, nonce, action: 'read-batch'", "version: 1, nonce, action: 'publish'"],
-                ['action: request!.action', "action: 'publish'"],
-                ['requests.length > MAX_AUTHENTICATED_READ_BATCH', 'false'],
-                ['requests.reduce((total, request) => total + request.maxBytes, 0) > MAX_AUTHENTICATED_READ_BATCH_BYTES', 'false'],
-                ['sha256(bytes) !== row.sha256', 'false'],
-                ['if (!readRoot || readRoot.dev !== rootStatus.dev || readRoot.ino !== rootStatus.ino || !file || !chain\n', 'if (!readRoot || false || !file || !chain\n'],
-                ["const receiptOutput = join(directory, 'receipt')", "const receiptOutput = join(root, 'receipt')"],
-                ['sha256(receiptBytes) !== summary.receiptSha256', 'false'],
-                ['receiptBytes.length !== summary.receiptBytes', 'false'],
-                ["new TextDecoder('utf-8', { fatal: true }).decode(receiptBytes)", "new TextDecoder('utf-8').decode(receiptBytes)"],
-                ["JSON.stringify(receiptValue) + '\\n' !== receiptText", 'false'],
-                ['(summary.receiptBytes as number) > MAX_AUTHENTICATED_READ_BATCH_RECEIPT_BYTES', 'false'],
-                ["directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-read-batch-'))", "directory = await mkdtemp(join(root, 'cockpit-generated-read-batch-'))"],
-            ]
-        for (const [from, to] of [
-            ...batchSource,
-            ["const output = join(directory, 'source')", "const output = join(root, 'consumer-output')"],
-            ["const output = join(directory, 'source')\n        const request = Object.freeze({ version: 1", "const output = join(root, 'consumer-output')\n        const request = Object.freeze({ version: 1"],
-            ["action: 'read-entry', maxBytes", "action: 'publish', maxBytes"],
-            ["cwd: scratch, env: {}", "cwd: prepared.root, env: {}"],
-            ['`--allow-fs-write=${scratch}`', '`--allow-fs-write=${prepared.root}`'],
-            ['`--allow-fs-write=${scratch}`', "'--allow-fs-write=*'"],
-            ['argv: [prepared.node.canonicalPath, permissionFlag,', 'argv: [prepared.node.canonicalPath,'],
-            ['argv: [prepared.node.canonicalPath, permissionFlag,', "argv: [prepared.node.canonicalPath, '--allow-child-process', permissionFlag,"],
-            ['argv: [prepared.node.canonicalPath, permissionFlag,', "argv: [prepared.node.canonicalPath, '--allow-worker', permissionFlag,"],
-            ['argv: [prepared.node.canonicalPath, permissionFlag,', "argv: [prepared.node.canonicalPath, '--allow-addons', permissionFlag,"],
-            ["const request = Object.freeze({ version: 1, nonce, action: 'read-entry'", "const dispatch = helperStep; const request = Object.freeze({ version: 1, nonce, action: 'read-entry'"],
-            ['const outcome = authenticatedExecutionOutcome(await adapters.execute(step), step)', 'const dispatch = adapters.execute; const outcome = authenticatedExecutionOutcome(await dispatch(step), step)'],
-            ["process.allowedNodeEnvironmentFlags.has('--permission')", "true"],
-            ['argvIndexes: [3, 9], executable: false', 'argvIndexes: [9], executable: false'],
-            ["'--allow-fs-read', absoluteModule", "'--allow-fs-read', prepared.root"],
-            ["'--allow-fs-read', absoluteModule", "'--allow-fs-read=*', absoluteModule"],
-            ["'--allow-fs-read', absoluteModule", "'--allow-fs-read', dirname(absoluteModule)"],
-            ["[scratch, absoluteModule].some(path => path.includes('*'))", "[scratch].some(path => path.includes('*'))"],
-            ['const source = fs.readFileSync(process.argv[2]);', 'const source = fs.readFileSync(request.modulePath);'],
-            ["await import('data:text/javascript;base64,' + source.toString('base64'))", 'await import(process.argv[2])'],
-            ['const request = { export: capability.mechanism.export, input, output: scratch,', 'const request = { export: capability.mechanism.export, input, output: prepared.root,'],
-            ["scratch = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-native-hook-cost-')))", "scratch = await realpath(await mkdtemp(join(prepared.root, 'cockpit-native-hook-cost-')))"],
-            ["const path = join(scratch!, 'pre-push')", "const path = join(prepared.root, 'pre-push')"],
-            ["await writeFile(path, entry.bytes, { flag: 'wx', mode: 0o700 })", "await writeFile(path, entry.bytes, { flag: 'w', mode: 0o700 })"],
-            ['scratchIdentity = Object.freeze({ dev: status.dev, ino: status.ino })', 'scratchIdentity = Object.freeze({ dev: 0, ino: status.ino })'],
-            ['const projection = await projectNativeHooks({', 'const hookProjection = projectNativeHooks; const projection = await hookProjection({'],
-            ['const step = snapshotExecutionStep({\n                        id: \'native-hook-cost\'', 'const step = ({\n                        id: \'native-hook-cost\''],
-            ["id: 'native-hook-cost',\n                        argv: [shell.value.canonicalPath", "id: 'native-hook-cost',\n                        argv: [git.value.canonicalPath"],
-            ['{ path: shell.value.canonicalPath, sha256: shell.value.sha256, maxBytes: MAX_EXECUTABLE_BYTES,', '{ path: prepared.root, sha256: shell.value.sha256, maxBytes: MAX_EXECUTABLE_BYTES,'],
-            ['{ path, sha256: entry.sha256, maxBytes: Buffer.byteLength(entry.bytes), argvIndexes: [4], executable: false }', '{ path: prepared.root, sha256: entry.sha256, maxBytes: Buffer.byteLength(entry.bytes), argvIndexes: [4], executable: false }'],
-            ["{ path: prepared.root, expected: 'directory' }, { path: scratch!, expected: 'directory' }", "{ path: prepared.root, expected: 'directory' }"],
-            ['const revisionOutcome = authenticatedExecutionOutcome(await adapters.execute(revisionStep), revisionStep)', 'const revisionOutcome = await adapters.execute(revisionStep)'],
-            [`return Object.freeze({
-            projection,
-            source,
-        })
-    } finally {
-        if (scratch && scratchIdentity) {`, `return Object.freeze({
-            projection,
-            source,
-        })
-    } finally {
-        if (scratch && scratchIdentity) {
-            await rm(scratch, { recursive: true, force: true })`],
-        ]) {
-            const transactionOwned = batchSource.some(([pattern]) => pattern === from)
-                || ["const output = join(directory, 'source')", "const output = join(directory, 'source')\n        const request = Object.freeze({ version: 1",
-                    "action: 'read-entry', maxBytes", "const request = Object.freeze({ version: 1, nonce, action: 'read-entry'"].includes(from)
-            const owner = transactionOwned ? source : application
-            const replacement = owner.replace(from, to)
-            expect(replacement, from).not.toBe(owner)
-            const unsafe = readGraph(transactionOwned ? application : replacement, transactionOwned ? replacement : source)
-            expect(reachableMutations(unsafe, 'checkGeneratedEnvironment').length, from).toBeGreaterThan(0)
-        }
-
-        const planted = ts.createSourceFile('planted.ts', `
-            async function hiddenMutation() { await rename('source', 'destination') }
-            async function plantedCheck() { await hiddenMutation() }
-        `, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-        expect(reachableMutations(planted, 'plantedCheck')).toEqual(['rename'])
-        const readOnly = ts.createSourceFile('readonly.ts', `
-            import { open } from 'node:fs/promises'
-            import { constants } from 'node:fs'
-            async function check() { return open('source', constants.O_RDONLY | constants.O_NOFOLLOW) }
-        `, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-        expect(reachableMutations(readOnly, 'check')).toEqual([])
-        const readOnlyDirectory = ts.createSourceFile('readonly-directory.ts', `
-            import { open } from 'node:fs/promises'
-            import { constants } from 'node:fs'
-            async function check() { return open('source', constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW) }
-        `, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-        expect(reachableMutations(readOnlyDirectory, 'check')).toEqual([])
-        const shadowed = ts.createSourceFile('shadowed.ts', `
-            import { open } from 'node:fs/promises'
-            import { constants } from 'node:fs'
-            async function check(constants) { return open('source', constants.O_RDONLY | constants.O_NOFOLLOW) }
-        `, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-        expect(reachableMutations(shadowed, 'check')).toEqual(['open'])
-
-        for (const body of [
-            `function open(path, flags) { return rename(path, 'destination') }
-             async function check() { return open('source', constants.O_RDONLY | constants.O_NOFOLLOW) }`,
-            `async function check() { return rogue.open('source', constants.O_RDONLY | constants.O_NOFOLLOW) }`,
-            `async function check(open) { return open('source', constants.O_RDONLY | constants.O_NOFOLLOW) }`,
-        ]) {
-            const impostor = ts.createSourceFile('impostor.ts', `
-                import { open } from 'node:fs/promises'
-                import { constants } from 'node:fs'
-                ${body}
-            `, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-            expect(reachableMutations(impostor, 'check')).toContain('open')
-        }
-
-        for (const flags of ['constants.O_WRONLY | constants.O_NOFOLLOW', 'constants.O_RDONLY | constants.O_DIRECTORY | constants.O_CREAT | constants.O_NOFOLLOW', 'unknownFlags']) {
-            const writable = ts.createSourceFile('writable.ts', `
-                import { constants } from 'node:fs'
-                async function check() { return open('source', ${flags}) }
-            `, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-            expect(reachableMutations(writable, 'check')).toEqual(['open'])
-        }
-
-    })
-
-    it('exposes one authoritative environment application sequence', () => {
-        const applicationModule = 'packages/cockpit/src/environment/application.ts'
-        const source = productionSources().get(applicationModule)
-        if (!source) throw new Error('environment application owner is missing')
-        const declarations = mechanismDeclarations(new Map([[applicationModule, source]]))
-
-        expect(declarations).toEqual([{
-            declaredBy: applicationModule,
-            id: 'environment-application',
-            module: applicationModule,
-            exports: [
-                'setupEnvironment', 'issueSetupRunContext', 'runSetup',
-                'issueLifecycleRunContext', 'withLifecycleConfiguration', 'decodeLifecycleRecord', 'revalidateService', 'runUp', 'runSession', 'runSleep',
-                'issueDestructiveRunContext', 'runDown', 'runReset', 'beginOperatorReset',
-                'runPreflight', 'runDoctor', 'runLogs', 'runBaselineRecord', 'beginOperatorBaselineRecord',
-                'prepareGuardEvaluationPolicy', 'runGuardEvaluationApplication',
-            ],
-        }])
-        expect([...exportedImplementations(source)].sort()).toEqual([
-            'beginOperatorBaselineRecord',
-            'beginOperatorReset',
-            'decodeLifecycleRecord',
-            'issueDestructiveRunContext',
-            'issueLifecycleRunContext',
-            'issueSetupRunContext',
-            'prepareGuardEvaluationPolicy',
-            'revalidateService',
-            'runBaselineRecord',
-            'runDoctor',
-            'runDown',
-            'runGuardEvaluationApplication',
-            'runLogs',
-            'runPreflight',
-            'runReset',
-            'runSession',
-            'runSetup',
-            'runSleep',
-            'runUp',
-            'setupEnvironment',
-            'withLifecycleConfiguration',
-        ])
     })
 
     it('keeps environment command ownership in the application instead of pass-through modules', () => {
@@ -6800,7 +5936,7 @@ describe('maintainer reference dependency controls', () => {
         const owner = 'scripts/diagnostic-inventory.mjs'
         for (const name of ['diagnosticInventory', 'productionTypeScriptPaths', 'typeScriptSource', 'exported']) {
             const implementations = [...sources].filter(([, body]) => {
-                const file = ts.createSourceFile('source.ts', body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+                const file = parseModule(body)
                 return file.statements.some(node => ts.isFunctionDeclaration(node) && node.name?.text === name)
             }).map(([path]) => path)
             expect(implementations, name).toEqual([owner])
