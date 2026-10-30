@@ -500,6 +500,16 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             .resolves.toMatchObject({ kind: 'complete', value: { kind: 'unlocked', lockId: '.identity-admission' } })
     }, 120_000)
 
+    // `sibling add --create` makes a repository with no commits; every work command then refused with
+    // an unnamed "repository revision is unavailable" and no way forward.
+    it('names the repository and its first commit as the fix when a sibling has no commits yet', async () => {
+        const fixture = await configuredFixture({ externalSibling: true })
+        await rm(join(fixture.applicationRoot, '.git'), { recursive: true, force: true })
+        expect(spawnSync('/usr/bin/git', ['init', '--quiet'], { cwd: fixture.applicationRoot }).status).toBe(0)
+        await expect(runWorkApplication({ operation: 'work-intake', intent: 'intents/work.json', candidate: 'candidates/WO-004.md' }, fixture.composition))
+            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining(`has no commits yet; fix: commit once in ${fixture.applicationRoot}`) })
+    }, 120_000)
+
     it('fails closed when repository identity evidence is unavailable, malformed, or changes before publication', async () => {
         const fixture = await configuredFixture()
         const faultHelper = join(fixture.root, 'tools/git-faults.cjs')

@@ -674,7 +674,14 @@ async function observeRepositorySubject(repository: Readonly<{ identity: string;
             normalizedRecords.push(record)
             if (pairedRecord !== undefined) normalizedRecords.push(pairedRecord)
         }
-        if (!revision || !/^(?=[a-f0-9]*[1-9a-f])(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision)) throw new Error('repository revision is unavailable')
+        // A repository made by `sibling add --create` has no HEAD until its first commit, and a work
+        // order binds every repository's revision, so name where that commit is missing.
+        if (revision === '(initial)') {
+            throw new Error(`repository ${repository.identity} at ${repository.root} has no commits yet; fix: commit once in ${repository.root}`)
+        }
+        if (!revision || !/^(?=[a-f0-9]*[1-9a-f])(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision)) {
+            throw new Error(`repository revision is unavailable for ${repository.identity} at ${repository.root}`)
+        }
         changes.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
         return Object.freeze({ revision, changes: Object.freeze(changes), normalizedRecords: Object.freeze(normalizedRecords) })
     }
