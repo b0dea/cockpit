@@ -135,6 +135,12 @@ symlink, lies outside the configured roots, or is an undeclared `.env*` file fal
 prompt, as does a search whose tree contains an instance or the secrets directory, since the guard
 cannot see which files the search would read.
 
+The guard hook sees shell commands and edits only. Claude Code's own Read, Grep and Glob tools never
+reach it, so `sync` also writes Claude `Read` deny rules into `.claude/settings.json`: one for every
+`.secrets` directory and one per declared instance, anchored on the path below the sibling's parent
+so the committed file is identical on every clone. A deny rule can match more than the instance (any
+file with the same sibling-relative suffix), never less.
+
 ## Native adapter behavior
 
 The [transport and adapter owner](../packages/cockpit/src/guards/harness-adapter.ts) translates a

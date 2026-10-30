@@ -356,7 +356,7 @@ async function authenticateSiblingRoots(
         }) }
     } catch (error) {
         const reason = error instanceof Error ? error.message : 'unknown filesystem error'
-        return { kind: 'refusal', reason: `sibling root authentication failed (${reason})` }
+        return { kind: 'refusal', reason: `could not verify the sibling root (${reason})` }
     }
 }
 
@@ -1818,7 +1818,36 @@ function readSurfaceAsset(
     } catch { return undefined }
 }
 
-function nativeSources(mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>, grants: readonly { target: SurfaceTarget; path: string }[]): readonly SurfaceSourceFile[] {
+/**
+ * Claude Code's native Read, Grep and Glob tools never reach the guard hook, so the read denial the
+ * hook applies to shell commands is restated as Claude `Read` deny rules. Siblings sit outside the
+ * project root, where neither `./`, `/..` nor `../` rules match and an absolute path would differ
+ * per clone, so each rule is anchored with `//**` on the sibling-relative suffix. Measured on Claude
+ * Code 2.1.314, 2026-10-30, with an unruled control file beside them: `//**` rules refused Read and
+ * Grep of sibling instances and of nested `.secrets` files while the control stayed readable.
+ * Over-matching a deny is safe; glob metacharacters in a path become `?` so a literal bracket
+ * cannot narrow the rule.
+ */
+function claudeReadDenials(
+    grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
+    instances: readonly { slug: string; path: string }[],
+): readonly string[] {
+    const literal = (path: string) => path.replace(/[*?[\]\\!#()]/g, '?')
+    const rules = ['//**/.secrets/**']
+    for (const instance of instances) {
+        const grant = grants.find(row => row.target === 'claudecode' && row.slug === instance.slug)
+        if (!grant) continue
+        const suffix = [...grant.path.split('/'), ...instance.path.split('/')].filter(part => part !== '..' && part !== '.' && part !== '')
+        rules.push(`//**/${literal(suffix.join('/'))}`)
+    }
+    return [...new Set(rules)].sort(compareCodeUnits)
+}
+
+function nativeSources(
+    mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
+    grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
+    instances: readonly { slug: string; path: string }[],
+): readonly SurfaceSourceFile[] {
     const sources: SurfaceSourceFile[] = []
     if (mcp.result.servers.length > 0) {
         const transports = mcp.result.harnesses.flatMap(row => row.servers)
@@ -1833,33 +1862,32 @@ function nativeSources(mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
         }))
         sources.push(Object.freeze({ path: 'mcp.jsonc', bytes: `${JSON.stringify({ mcpServers: servers, ...targets }, null, 2)}\n` }))
     }
-    if (grants.length > 0 || mcp.result.servers.length > 0) {
-        const paths = (target: SurfaceTarget) => [...new Set(grants.filter(grant => grant.target === target).map(grant => grant.path))].sort(compareCodeUnits)
-        const enabledMcpjsonServers = mcp.result.harnesses.find(row => row.target === 'claudecode')!.servers
-            .filter(server => server.enabled).map(server => server.name).sort()
-        sources.push(Object.freeze({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
-            permission: {},
-            claudecode: {
-                permissions: { additionalDirectories: paths('claudecode') },
-                enabledMcpjsonServers,
+    const paths = (target: SurfaceTarget) => [...new Set(grants.filter(grant => grant.target === target).map(grant => grant.path))].sort(compareCodeUnits)
+    const enabledMcpjsonServers = mcp.result.harnesses.find(row => row.target === 'claudecode')!.servers
+        .filter(server => server.enabled).map(server => server.name).sort()
+    sources.push(Object.freeze({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
+        permission: {},
+        claudecode: {
+            permission: { read: Object.fromEntries(claudeReadDenials(grants, instances).map(rule => [rule, 'deny'])) },
+            permissions: { additionalDirectories: paths('claudecode') },
+            enabledMcpjsonServers,
+        },
+        opencode: {
+            permission: { external_directory: Object.fromEntries(paths('opencode').map(path => [`${path}/**`, 'allow'])) },
+        },
+        cursor: {
+            permission: {
+                read: Object.fromEntries(paths('cursor').map(path => [`${path}/**`, 'allow'])),
+                write: Object.fromEntries(paths('cursor').map(path => [`${path}/**`, 'allow'])),
             },
-            opencode: {
-                permission: { external_directory: Object.fromEntries(paths('opencode').map(path => [`${path}/**`, 'allow'])) },
+        },
+        grokcli: {
+            permission: {
+                read: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
+                edit: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
             },
-            cursor: {
-                permission: {
-                    read: Object.fromEntries(paths('cursor').map(path => [`${path}/**`, 'allow'])),
-                    write: Object.fromEntries(paths('cursor').map(path => [`${path}/**`, 'allow'])),
-                },
-            },
-            grokcli: {
-                permission: {
-                    read: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
-                    edit: Object.fromEntries(paths('grokcli').map(path => [`${path}/**`, 'allow'])),
-                },
-            },
-        }, null, 2)}\n` }))
-    }
+        },
+    }, null, 2)}\n` }))
     return Object.freeze(sources)
 }
 
@@ -2468,7 +2496,7 @@ async function prepareSurfaces(
         bytes: source.path.startsWith('rules/') && !source.bytes.startsWith('---\n')
             ? `---\nroot: true\ntargets: ["*"]\n---\n${source.bytes}` : source.bytes,
     }))
-    const generatedNativeSources = nativeSources(mcp, projection.grants)
+    const generatedNativeSources = nativeSources(mcp, projection.grants, prepared.registry.secretPaths)
     const generatedSources = [...mergedSources, ...generatedNativeSources]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(generatedSources.map(source => source.path)).size !== generatedSources.length) {

@@ -64,6 +64,7 @@ describe('public surface publication transaction', () => {
             }
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as {
                 enabledMcpjsonServers: string[]
+                permissions: { deny?: string[] }
             }
             const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
                 mcp_servers: Record<string, { enabled?: boolean }>
@@ -98,6 +99,9 @@ describe('public surface publication transaction', () => {
             }
             expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect(settings.enabledMcpjsonServers).toEqual(['approved-server'])
+            // Claude's Read, Grep and Glob bypass the guard hook, so the read denial is native: every
+            // secrets directory, and each declared instance by its clone-independent sibling suffix.
+            expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({
