@@ -85,7 +85,9 @@ the guide section with the detail.
   and run `./node_modules/.bin/cockpit setup --config cockpit.toml --json`. Guide: *Scattered repositories*.
 - **An existing Compose file.** Answer `environment.compose_files = ["compose.yml"]` instead of a
   generated stack (for a Compose file inside a product repository, declare that repository as a
-  sibling and point `compose_files` at the file in the sibling checkout), and ask the human for the `environment.machine` floors `init` asks next.
+  sibling and point `compose_files` at the file in the sibling checkout), and ask the human for the
+  `environment.machine` floors and the `environment.posture` (how the product is reached and signed
+  into) that `init` asks next.
   Guide: *Existing Compose file*.
 - **A service with no local setup.** Follow **Create a local setup** below.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`

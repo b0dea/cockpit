@@ -242,13 +242,15 @@ describe('init operator command', () => {
             writeArtifact: async () => undefined }
         const machine = { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
         const guards = { hosted_db_hosts: ['db.staging.example.invalid'], vendor_endpoint_hosts: [] }
+        const posture = { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
         const answers = { sibling: [{ slug: 'app' }], ports: { bases: {} },
             environment: { install_policies: [], test_data: { seeded_data: false, signed_in_users: false },
-                compose_files: ['compose.yml'], machine }, guards }
+                compose_files: ['compose.yml'], machine, posture }, guards }
         const walk = (given: string[]) => {
             const sent: string[] = []
             const questions = [asking('sibling'), asking('ports.bases'), asking('environment.install_policies'),
-                asking('environment.test_data'), asking('environment.generated'), asking('environment.machine'), asking('guards'),
+                asking('environment.test_data'), asking('environment.generated'), asking('environment.machine'),
+                asking('environment.posture'), asking('guards'),
                 asking('configuration.defaults', defaultsDigest)]
             const application = async (input: { accepted: boolean; greenfieldAnswer?: { bytes: string } }) => {
                 if (!input.accepted) return pending()
@@ -267,7 +269,7 @@ describe('init operator command', () => {
             expect(outcome.kind).toBe('complete')
             expect(sent).toEqual([
                 '[{"slug":"app"}]', '{}', '[]', '{"seeded_data":false,"signed_in_users":false}',
-                '{"compose_files":["compose.yml"]}', JSON.stringify(machine), JSON.stringify(guards),
+                '{"compose_files":["compose.yml"]}', JSON.stringify(machine), JSON.stringify(posture), JSON.stringify(guards),
                 JSON.stringify({ confirmed: true, sha256: defaultsDigest }),
             ])
         })

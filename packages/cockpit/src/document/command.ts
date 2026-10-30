@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml'
 import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { snapshotJson } from '../environment/contract.js'
+import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
 import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
@@ -103,7 +104,7 @@ export interface DocumentCommandInput {
 
 export type DocumentConfigurationField = 'cockpit.name' | 'sibling' | 'estate.runnable' | 'ports.bases'
     | 'environment.install_policies' | 'environment.test_data' | 'environment.generated' | 'environment.machine'
-    | 'guards' | 'configuration.defaults'
+    | 'environment.posture' | 'guards' | 'configuration.defaults'
 export interface DocumentConfigurationQuestion {
     readonly id: `question:${string}`
     readonly field: DocumentConfigurationField
@@ -696,7 +697,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
         || typeof record.sourceObservationSha256 !== 'string' || !SHA256.test(record.sourceObservationSha256)
         || record.classification !== undefined && !['one-sibling', 'incomplete-multi-repository',
             'no-runnable-product', 'ready-multi-repository'].includes(record.classification as string)
-        || !Array.isArray(record.answers) || record.answers.length > 10) return undefined
+        || !Array.isArray(record.answers) || record.answers.length > 11) return undefined
     const answers: DocumentConfigurationAnswer[] = []
     for (const value of record.answers) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -725,6 +726,7 @@ const QUESTION_WHY = {
     testData: 'answer with exactly { seeded_data: boolean, signed_in_users: boolean } to state whether this local setup needs seeded data and signed-in users; each false field records a precise not-declared decision, while true keeps the product-owned declaration work visible without claiming that data or authentication exists',
     generated: 'declare the exact generated environment: compose path, services, pinned images, commands, health probes, mounts, data modes, fixtures, volumes, vendors, decisions, and their provenance; or, to run a Compose file the checkout already has, answer { "compose_files": ["compose.yml"] }',
     machine: 'declare the machine floor the product needs from the container runtime: runtime_memory_mb, runtime_cpus, free_disk_mb and cold_start_seconds; these are product requirements, so cockpit proposes them only from the product\'s own files and never invents them',
+    posture: `preflight refuses a runtime until its posture is declared: addressing is "port" (localhost:<port>) or "hostname"; authentication is "none" (no sign-in), "bypassed" (sign-in turned off locally) or "real"; posture_requirements names what depends on them, each tagged with the posture it needs. For a plain localhost stack with no sign-in, answer ${JSON.stringify({ addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] })}`,
     guards: 'name the database hosts and live vendor API hosts of every non-local environment the product has (production, staging, shared dev or QA): cockpit runs only locally, so the guard denies agent commands that reach them; answer { "hosted_db_hosts": [], "vendor_endpoint_hosts": [] } to record that none exists',
     defaults: 'confirm the exact surfaced inferred and schema-default values before completing the document',
 } as const
@@ -756,6 +758,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
             { field: 'environment.test_data' as const, why: QUESTION_WHY.testData },
             { field: 'environment.generated' as const, why: QUESTION_WHY.generated },
             { field: 'environment.machine' as const, why: QUESTION_WHY.machine },
+            { field: 'environment.posture' as const, why: QUESTION_WHY.posture },
         ]),
         // Asked even with nothing to run: the guard governs the agent's commands, not the runtime.
         { field: 'guards' as const, why: QUESTION_WHY.guards },
@@ -1120,6 +1123,27 @@ function completeConfigurationDocument(
         if (!parsedMachine.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             `the operator-confirmed machine floor does not match the schema: ${issueSummary(parsedMachine.error)}`, machineQuestion.field)
         environment = { ...environment, machine: parsedMachine.data }
+        answerIndex += 1
+
+        const postureQuestion = configurationQuestion(context, 'environment.posture', QUESTION_WHY.posture)
+        const postureRead = readConfigurationAnswer(configuration.answers, answerIndex, postureQuestion)
+        if (postureRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
+            attributions, gaps: [] }, destination, postureQuestion)
+        if (postureRead.kind === 'refusal') return postureRead.outcome
+        const postureAnswer = postureRead.value
+        const parsedPosture = postureAnswer && typeof postureAnswer === 'object' && !Array.isArray(postureAnswer)
+            && Object.keys(postureAnswer).sort().join(',') === 'addressing,authentication,posture_requirements'
+            ? CockpitConfig.shape.environment.safeParse({ ...environment, ...postureAnswer }) : undefined
+        if (!parsedPosture?.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed posture must be exactly { addressing, authentication, posture_requirements }${parsedPosture
+                ? `: ${issueSummary(parsedPosture.error)}` : ''}`, postureQuestion.field)
+        // The same judgement preflight gates on, so a posture that could never pass is refused here.
+        const postureFailures = judgePostureDeclaration({ addressing: parsedPosture.data.addressing ?? null,
+            authentication: parsedPosture.data.authentication ?? null }, parsedPosture.data.posture_requirements ?? [])
+            .filter(row => !row.pass)
+        if (postureFailures.length > 0) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+            `the operator-confirmed posture would fail preflight: ${postureFailures.map(row => row.reason).join('; ')}`, postureQuestion.field)
+        environment = parsedPosture.data
         answerIndex += 1
     }
 

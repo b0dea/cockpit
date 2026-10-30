@@ -726,7 +726,7 @@ describe('init application', () => {
             answered: [], inferenceSkipped: [{ source: 'app/.github/workflows/ci.yml' }] } } })
         const planned = preview.result!.interview!.outstanding
         expect(planned.map(row => row.field)).toEqual(['sibling', 'ports.bases', 'environment.install_policies',
-            'environment.test_data', 'environment.generated', 'environment.machine', 'guards', 'configuration.defaults'])
+            'environment.test_data', 'environment.generated', 'environment.machine', 'environment.posture', 'guards', 'configuration.defaults'])
         expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
             provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }])
         expect(planned.find(row => row.field === 'sibling')!.inferred).toEqual([])
@@ -738,8 +738,8 @@ describe('init application', () => {
             questionId: first.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
         expect(second.result!.interview).toMatchObject({ answered: ['sibling'] })
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
-            'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.machine', 'guards',
-            'configuration.defaults'])
+            'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.machine',
+            'environment.posture', 'guards', 'configuration.defaults'])
     })
 
     it('refuses a different target after bootstrap state is bound', async () => {
@@ -863,7 +863,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     const accepted = { ...greenfieldInput, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
-        expect(count).toBeLessThan(8)
+        expect(count).toBeLessThan(9)
         const question = outcome.result.question
         if (question.field === 'configuration.defaults') {
             if (largePurpose) expect(Buffer.byteLength(defaultsDocument!)).toBeGreaterThan(65_536)
@@ -918,6 +918,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
                 : question.field === 'environment.generated' ? sourceConfig.environment.generated
                 : question.field === 'environment.machine'
                     ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
+                : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
                 : question.field === 'guards' ? { hosted_db_hosts: [], vendor_endpoint_hosts: [] }
                     : question.field === 'configuration.defaults'
                         ? { confirmed: true, sha256: question.expectedSha256 }
@@ -997,6 +998,7 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
                         : question.field === 'environment.generated' ? sourceConfig.environment.generated
                             : question.field === 'environment.machine'
                                 ? { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
+                                : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
                                 : question.field === 'guards' ? guards : undefined
         expect(value, question.field).toBeDefined()
         const bytes = JSON.stringify(value)

@@ -29,6 +29,8 @@ portlessGeneratedDeclaration.services[0]!.ports = []
 portlessGeneratedDeclaration.decisions.entries = portlessGeneratedDeclaration.decisions.entries
     .filter(entry => entry.subject !== 'port')
 const machineFloor = { runtime_memory_mb: 2048, runtime_cpus: 2, free_disk_mb: 10240, cold_start_seconds: 120 }
+const localPosture = { addressing: 'port', authentication: 'none',
+    posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
 const guardHosts = { hosted_db_hosts: ['db.staging.example.invalid'], vendor_endpoint_hosts: ['api.vendor.example.invalid'] }
 const scratch: string[] = []
 
@@ -466,6 +468,8 @@ describe('public estate observation', () => {
         pending = await documentObservedCommand({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, machineFloor))
         pending = await documentObservedCommand({ root: canonical, configuration })
+        configuration.answers.push(answerQuestion(pending.question!, localPosture))
+        pending = await documentObservedCommand({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, guardHosts))
         pending = await documentObservedCommand({ root: canonical, configuration })
         configuration.answers.push(answerQuestion(pending.question!, {
@@ -828,19 +832,23 @@ describe('operator-confirmed document completion', () => {
             ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
-        const guards = await documentCommand({ ...input, configuration: {
+        const posture = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const postureAnswer = answer(posture.question!, localPosture)
+        const guards = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const defaults = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
+            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: {
             field: 'configuration.defaults', expectedSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         } })
         expect(defaults.diagnostics.some(item => item.code === 'DOCUMENT_DEFAULT')).toBe(true)
         const complete = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)],
+            ...configuration, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer, confirmDefaults(defaults.question!)],
         } })
 
         expect(complete).toMatchObject({ kind: 'complete', status: 0, question: null })
@@ -869,21 +877,32 @@ describe('operator-confirmed document completion', () => {
             composeAnswer, answer(machine.question!, { runtime_memory_mb: 2048 })] } })).toMatchObject({ kind: 'refusal',
             diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID', message: expect.stringContaining('machine floor') }] })
         const machineAnswer = answer(machine.question!, machineFloor)
-        const guards = await documentCommand({ ...input, configuration: {
+        // Preflight refuses a runtime whose posture is undeclared, so it is asked with a plain-localhost example.
+        const posture = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer] } })
+        expect(posture).toMatchObject({ kind: 'gap-draft', question: { field: 'environment.posture',
+            why: expect.stringContaining(JSON.stringify(localPosture)) } })
+        expect(await documentCommand({ ...input, configuration: { ...configuration, answers: [portAnswer, policyAnswer,
+            composeAnswer, machineAnswer, answer(posture.question!, { ...localPosture, authentication: 'real' })] } })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+                message: expect.stringContaining('authentication posture real is not named by a requirement') }] })
+        const postureAnswer = answer(posture.question!, localPosture)
+        const guards = await documentCommand({ ...input, configuration: {
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer] } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const defaults = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, guardAnswer] } })
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, guardAnswer] } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(defaults.artifact).not.toContain('# [default] environment.compose_files')
         expect(defaults.artifact).toContain('# [default] environment.resettable_volumes = []')
         const complete = await documentCommand({ ...input, configuration: {
-            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!)] } })
+            ...configuration, answers: [portAnswer, policyAnswer, composeAnswer, machineAnswer, postureAnswer, guardAnswer, confirmDefaults(defaults.question!)] } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
         const document = parseToml(complete.artifact!) as { environment: { compose_files: string[]; generated?: unknown; machine?: unknown } }
         expect(document.environment.compose_files).toEqual(['compose.yml'])
         expect(document.environment.generated).toBeUndefined()
         expect(document.environment.machine).toEqual(machineFloor)
+        expect(document.environment).toMatchObject(localPosture)
 
         const empty = await documentCommand({ ...input, configuration: {
             ...configuration, answers: [portAnswer, policyAnswer, answer(generated.question!, { compose_files: [] })] } })
@@ -935,12 +954,16 @@ describe('operator-confirmed document completion', () => {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
-        const guards = await documentCommand({ ...base, configuration: {
+        const posture = await documentCommand({ ...base, configuration: {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer],
+        } })
+        const postureAnswer = answer(posture.question!, localPosture)
+        const guards = await documentCommand({ ...base, configuration: {
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const defaults = await documentCommand({ ...base, configuration: {
-            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, guardAnswer],
+            ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         // There is no registry here, so no default may be explained by one.
@@ -948,7 +971,7 @@ describe('operator-confirmed document completion', () => {
         expect(defaults.artifact).not.toMatch(/registry dialect|source registry/)
         const complete = await documentCommand({ ...base, configuration: {
             ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, guardAnswer,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer,
                 confirmDefaults(defaults.question!)],
         } })
         expect(complete).toMatchObject({ kind: 'complete', status: 0 })
@@ -958,7 +981,7 @@ describe('operator-confirmed document completion', () => {
         const declared = await documentCommand({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer,
-                answer(testData.question!, { seeded_data: true, signed_in_users: true }), generatedAnswer, machineAnswer,
+                answer(testData.question!, { seeded_data: true, signed_in_users: true }), generatedAnswer, machineAnswer, postureAnswer,
                 guardAnswer, confirmDefaults(defaults.question!)],
         } })
         expect(declared).toMatchObject({ kind: 'complete', status: 0 })
@@ -968,14 +991,14 @@ describe('operator-confirmed document completion', () => {
         const composeAnswer = answer(generated.question!, { compose_files: ['compose.yml'] })
         const unresolvedDefaults = await documentCommand({ ...base, configuration: {
             ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer,
                 guardAnswer],
         } })
         expect(unresolvedDefaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         expect(unresolvedDefaults.artifact).not.toContain('# [default] environment.compose_files')
         const unresolved = await documentCommand({ ...base, configuration: {
             ...base.configuration,
-            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer,
+            answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, requiredTestData, composeAnswer, machineAnswer, postureAnswer,
                 guardAnswer, confirmDefaults(unresolvedDefaults.question!)],
         } })
         expect(unresolved).toMatchObject({ kind: 'complete', status: 0 })
@@ -1028,12 +1051,16 @@ describe('operator-confirmed document completion', () => {
             sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
-        const guards = await documentCommand({ ...input, configuration: {
+        const posture = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const postureAnswer = answer(posture.question!, localPosture)
+        const guards = await documentCommand({ ...input, configuration: {
+            sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const defaults = await documentCommand({ ...input, configuration: {
-            sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
+            sourceObservationSha256, answers: [valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer],
         } })
         const cases = [
             [{ ...valid, questionId: `question:${'b'.repeat(64)}` }],
@@ -1045,7 +1072,7 @@ describe('operator-confirmed document completion', () => {
                 .toMatchObject({ kind: 'refusal', status: 2 })
         }
         expect(await documentCommand({ ...input, configuration: { sourceObservationSha256,
-            answers: [valid, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, confirmDefaults(defaults.question!), valid] } }))
+            answers: [valid, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer, confirmDefaults(defaults.question!), valid] } }))
             .toMatchObject({ kind: 'refusal', status: 2,
                 diagnostics: [expect.objectContaining({ code: 'DOCUMENT_CONFIGURATION_ANSWER_EXTRA' })] })
 
@@ -1071,17 +1098,21 @@ describe('operator-confirmed document completion', () => {
             sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer],
         } })
         const machineAnswer = answer(machine.question!, machineFloor)
-        const guards = await documentCommand({ ...input, configuration: {
+        const posture = await documentCommand({ ...input, configuration: {
             sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer],
+        } })
+        const postureAnswer = answer(posture.question!, localPosture)
+        const guards = await documentCommand({ ...input, configuration: {
+            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer],
         } })
         const guardAnswer = answer(guards.question!, guardHosts)
         const defaults = await documentCommand({ ...input, configuration: {
-            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer],
+            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
         const changed = answer(defaults.question!, { confirmed: true, sha256: 'f'.repeat(64) })
         expect(await documentCommand({ ...input, configuration: {
-            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, guardAnswer, changed],
+            sourceObservationSha256, answers: [portAnswer, policyAnswer, generatedAnswer, machineAnswer, postureAnswer, guardAnswer, changed],
         } })).toMatchObject({ kind: 'refusal', status: 2 })
     })
 
@@ -1093,7 +1124,7 @@ describe('operator-confirmed document completion', () => {
             let pending = await documentCommand({ root: estateRoot, configuration })
             for (const value of [generatedConfig.sibling, { APP_HOST_PORT: 4100 },
                 generatedConfig.environment.install_policies, { seeded_data: false, signed_in_users: false },
-                generatedDeclaration, machineFloor, guardHosts]) {
+                generatedDeclaration, machineFloor, localPosture, guardHosts]) {
                 configuration.answers.push(answer(pending.question!, value))
                 pending = await documentCommand({ root: estateRoot, configuration })
             }

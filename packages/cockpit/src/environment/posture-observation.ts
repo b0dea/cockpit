@@ -17,7 +17,7 @@ import { isStateObservation } from './state.js'
 export const mechanism = {
     id: 'environment-posture-observation',
     module: 'packages/cockpit/src/environment/posture-observation.ts',
-    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'authenticateObservationPostureContext'],
+    exports: ['resolveObservationPostures', 'refreshObservationPostures', 'authenticateObservationPostureContext', 'judgePostureDeclaration'],
 } as const
 
 const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
@@ -237,6 +237,37 @@ interface PostureRequirementCheck {
     readonly expected: EnvironmentObservation['expectation']
 }
 
+export type PostureDimension = 'addressing' | 'authentication'
+
+/**
+ * Whether each selected posture is named by the requirements that depend on it, and every tag agrees.
+ * Preflight gates on this; init applies it to an operator's posture answer so a draft that can never
+ * pass preflight is refused while the operator is still answering.
+ */
+export function judgePostureDeclaration(
+    postures: ResolvedPostureAuthority['environmentPostures'],
+    requirements: ResolvedPostureAuthority['postureRequirements'],
+): readonly Readonly<{ dimension: PostureDimension; selected: AddressingPosture | AuthPosture | null; pass: boolean; reason: string }>[] {
+    return (['addressing', 'authentication'] as const).map((dimension) => {
+        const selected = postures[dimension]
+        const tagged = requirements.filter((requirement) => requirement[dimension] !== undefined)
+        // A stack with no sign-in has nothing that depends on one, so it needs no tagged requirement.
+        const untaggedNone = selected === 'none' && tagged.length === 0 && requirements.length > 0
+        const matched = selected !== null && tagged.some((requirement) => requirement[dimension] === selected)
+        const pass = untaggedNone || matched && tagged.every((requirement) => requirement[dimension] === selected)
+        const reason = selected === null
+            ? `${dimension} posture is not declared`
+            : requirements.length === 0
+                ? 'posture requirement catalog is not declared'
+                : untaggedNone ? 'no authentication is declared, and no requirement depends on one'
+                    : tagged.length === 0
+                        ? `${dimension} posture ${selected} is not named by a requirement`
+                        : !pass ? `${dimension} requirement tags do not match selected posture ${selected}`
+                            : 'declared requirement tags match the selected posture'
+        return Object.freeze({ dimension, selected, pass, reason })
+    })
+}
+
 export function authenticateObservationPostureContext(context: PreflightContext) {
     const evaluationInstant = Date.now()
     const authorityInputs = boundedDenseArray(context?.authorities)
@@ -281,38 +312,19 @@ export function authenticateObservationPostureContext(context: PreflightContext)
         stages.set(authority.stackId, stage)
     }
     if (stages.size !== authorities.size) throw new TypeError('preflight needs one matching lifecycle stage authority per stack')
-    const postureChecks = [...authorities.values()].flatMap((authority): PostureRequirementCheck[] => {
-        const requirements = authority.postureRequirements
-        return (['addressing', 'authentication'] as const).map((dimension) => {
-            const selected = authority.environmentPostures[dimension]
-            const tagged = requirements.filter((requirement) => requirement[dimension] !== undefined)
-            // A stack with no sign-in has nothing that depends on one, so it needs no tagged requirement.
-            const untaggedNone = selected === 'none' && tagged.length === 0 && requirements.length > 0
-            const matched = selected !== null && tagged.some((requirement) => requirement[dimension] === selected)
-            const exact = untaggedNone || matched && tagged.every((requirement) => requirement[dimension] === selected)
-            const reason = selected === null
-                ? `${dimension} posture is not declared`
-                : requirements.length === 0
-                    ? 'posture requirement catalog is not declared'
-                    : untaggedNone ? 'no authentication is declared, and no requirement depends on one'
-                        : tagged.length === 0
-                            ? `${dimension} posture ${selected} is not named by a requirement`
-                            : !exact ? `${dimension} requirement tags do not match selected posture ${selected}`
-                                : 'declared requirement tags match the selected posture'
-            return Object.freeze({
-                code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-                owner: 'posture-requirements',
-                stackId: authority.stackId,
-                source: `${authority.source}:${dimension}`,
-                verdict: exact ? 'pass' as const : 'fail' as const,
-                reason,
-                remedy: `declare ${dimension} and tag every dependent requirement with the same posture`,
-                observedAt: authority.evaluatedAt,
-                ...(selected === null ? {} : { measured: selected }),
-                expected: { kind: 'present' as const },
-            })
-        })
-    })
+    const postureChecks = [...authorities.values()].flatMap((authority): PostureRequirementCheck[] =>
+        judgePostureDeclaration(authority.environmentPostures, authority.postureRequirements).map(({ dimension, selected, pass, reason }) => Object.freeze({
+            code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            owner: 'posture-requirements',
+            stackId: authority.stackId,
+            source: `${authority.source}:${dimension}`,
+            verdict: pass ? 'pass' as const : 'fail' as const,
+            reason,
+            remedy: `declare ${dimension} and tag every dependent requirement with the same posture`,
+            observedAt: authority.evaluatedAt,
+            ...(selected === null ? {} : { measured: selected }),
+            expected: { kind: 'present' as const },
+        })))
     return Object.freeze({ evaluationInstant, authorities, stages,
         checks: Object.freeze(postureChecks) })
 }

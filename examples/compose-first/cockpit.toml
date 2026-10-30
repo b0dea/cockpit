@@ -30,6 +30,10 @@ WEB_HOST_PORT = 4300
 
 [environment]
 compose_files = ["compose.yml"]
+# Reached on leased localhost ports, with no sign-in; preflight refuses until this is declared.
+addressing = "port"
+authentication = "none"
+posture_requirements = [{ requirement = "leased-localhost-ports", addressing = "port" }]
 
 # Runtime commands refuse to start on a machine below this floor.
 [environment.machine]

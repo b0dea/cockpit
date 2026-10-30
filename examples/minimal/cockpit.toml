@@ -13,6 +13,12 @@ purpose = "Tiny api"
 [ports.bases]
 API_HOST_PORT = 4100
 
+[environment]
+# Reached on leased localhost ports, with no sign-in; preflight refuses until this is declared.
+addressing = "port"
+authentication = "none"
+posture_requirements = [{ requirement = "leased-localhost-ports", addressing = "port" }]
+
 [environment.machine]
 runtime_memory_mb = 512
 runtime_cpus = 1
