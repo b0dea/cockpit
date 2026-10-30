@@ -13,7 +13,7 @@ import { deriveSiblingVariable } from '../schema.js'
 export const mechanism = {
     id: 'init-inference',
     module: 'packages/cockpit/src/init/derive.ts',
-    exports: ['deriveInferredFacts'],
+    exports: ['COMPOSE_NAMES', 'deriveInferredFacts', 'readDockerfileFacts'],
 } as const
 
 export interface InferredProvenance {

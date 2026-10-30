@@ -649,7 +649,6 @@ it('resumes and normalizes an authenticated source install during installed init
     writeFileSync(join(root, 'library/package.json'), `${JSON.stringify({
         name: 'synthetic-library', version: '0.0.0', scripts: { test: 'node test.mjs' },
     })}\n`)
-    writeFileSync(join(root, 'library/Dockerfile'), 'FROM node:22-slim\nEXPOSE 4100\nCMD ["node", "index.mjs"]\n')
     const answers = join(packScratch, 'source-install-answers.toml')
     writeFileSync(answers, [
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
@@ -852,7 +851,6 @@ it('runs installed init for each isolated target and refuses missing roots or br
         estate: { classification: 'one-sibling', answers: [expect.objectContaining({ provenance: 'operator-confirmed' })] },
         question: { field: 'ports.bases' },
     })
-    // An agent has no terminal at any point: three runs, each given only what the previous one printed.
     mkdirSync(join(packScratch, 'init-headless'))
     const headless = realpathSync(join(packScratch, 'init-headless'))
     mkdirSync(join(headless, 'library'))
@@ -868,44 +866,62 @@ it('runs installed init for each isolated target and refuses missing roots or br
     const first = run()
     expect(first.status, first.stderr).toBe(0)
     const listed = JSON.parse(first.stdout).result
-    expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['sibling', 'ports.bases', 'guards', 'configuration.defaults'])
+    expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
+        'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
+        'environment.generated', 'environment.machine', 'guards', 'configuration.defaults',
+    ])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
     ])
-    const second = run('--accept-preview', listed.previewSha256, '--answers', answersFile)
+
+    // An agent has no terminal at any point: three runs, each given only what the previous one printed.
+    const portableRequested = join(packScratch, 'init-portable')
+    mkdirSync(portableRequested)
+    const portable = realpathSync(portableRequested)
+    mkdirSync(join(portable, 'library'))
+    writeFileSync(join(portable, 'library/package.json'), `${JSON.stringify({ name: 'synthetic-library', version: '0.0.0', scripts: { test: 'node test.mjs' } })}\n`)
+    const portableRun = (...args: string[]) => spawnSync(process.execPath, [launcher, 'init', portable, '--target', 'opencode', ...args, '--json'],
+        { cwd: portable, env, encoding: 'utf8' })
+    const portableFirst = portableRun()
+    expect(portableFirst.status, portableFirst.stderr).toBe(0)
+    const portableListed = JSON.parse(portableFirst.stdout).result
+    expect(portableListed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
+        'sibling', 'ports.bases', 'guards', 'configuration.defaults',
+    ])
+    const second = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile)
     expect(second.status, second.stderr).toBe(0)
     const defaults = JSON.parse(second.stdout).result.question
     expect(defaults).toMatchObject({ field: 'configuration.defaults' })
-    const third = run('--accept-preview', listed.previewSha256, '--answers', answersFile, '--accept-defaults', defaults.expectedSha256)
+    const third = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile, '--accept-defaults', defaults.expectedSha256)
     expect(third.status, third.stdout + third.stderr).toBe(0)
     expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'environment-verified' })
-    expect(existsSync(join(headless, 'cockpit.toml'))).toBe(true)
+    expect(existsSync(join(portable, 'cockpit.toml'))).toBe(true)
 
     // A teammate's clone has a different checkout path and HOME. The local tarball stands in for
     // the registry artifact while package.json retains the exact published version a real team
     // commits; npm's lockfile records where this test can fetch those same bytes.
-    writeFileSync(join(headless, 'cockpit.toml'), readFileSync(join(headless, 'cockpit.toml'), 'utf8')
+    writeFileSync(join(portable, 'cockpit.toml'), readFileSync(join(portable, 'cockpit.toml'), 'utf8')
         .replace('dir = "library"', 'dir = "."'))
     execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact',
-        join(packScratch, 'artifact', packedArtifact().filename)], { cwd: headless, env, stdio: 'ignore', timeout: 30_000 })
-    const teamPackage = JSON.parse(readFileSync(join(headless, 'package.json'), 'utf8'))
+        join(packScratch, 'artifact', packedArtifact().filename)], { cwd: portable, env, stdio: 'ignore', timeout: 30_000 })
+    const teamPackage = JSON.parse(readFileSync(join(portable, 'package.json'), 'utf8'))
     teamPackage.devDependencies['@b0dea/cockpit'] = '0.0.0'
-    writeFileSync(join(headless, 'package.json'), `${JSON.stringify(teamPackage, null, 2)}\n`)
-    const teamLock = JSON.parse(readFileSync(join(headless, 'package-lock.json'), 'utf8'))
+    writeFileSync(join(portable, 'package.json'), `${JSON.stringify(teamPackage, null, 2)}\n`)
+    const teamLock = JSON.parse(readFileSync(join(portable, 'package-lock.json'), 'utf8'))
     teamLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
-    writeFileSync(join(headless, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
-    const preparedTeam = spawnSync(process.execPath, [launcher, 'sync', '--config', join(headless, 'cockpit.toml'), '--json'], {
-        cwd: headless, env, encoding: 'utf8', timeout: 30_000,
+    writeFileSync(join(portable, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
+    const preparedTeam = spawnSync(process.execPath, [launcher, 'sync', '--config', join(portable, 'cockpit.toml'), '--json'], {
+        cwd: portable, env, encoding: 'utf8', timeout: 30_000,
     })
     expect(preparedTeam.status, preparedTeam.stdout + preparedTeam.stderr).toBe(0)
-    execFileSync('git', ['init', '--quiet', headless])
-    execFileSync('git', ['-C', headless, 'add', '.'])
-    execFileSync('git', ['-C', headless, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.test',
+    execFileSync('git', ['init', '--quiet', portable])
+    execFileSync('git', ['-C', portable, 'add', '.'])
+    execFileSync('git', ['-C', portable, '-c', 'user.name=Synthetic Maintainer', '-c', 'user.email=maintainer@example.test',
         'commit', '--quiet', '-m', 'Add synthetic cockpit'])
     const teammatePath = join(packScratch, 'teammate-clone')
     const teammateHome = join(packScratch, 'teammate-home')
     mkdirSync(teammateHome)
-    execFileSync('git', ['clone', '--quiet', headless, teammatePath])
+    execFileSync('git', ['clone', '--quiet', portable, teammatePath])
     const teammate = realpathSync(teammatePath)
     const teammateEnv = { ...env, HOME: teammateHome, XDG_STATE_HOME: join(teammateHome, 'state'),
         GIT_CONFIG_GLOBAL: join(teammateHome, 'missing-gitconfig'), GIT_CONFIG_NOSYSTEM: '1' }
