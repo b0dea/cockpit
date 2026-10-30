@@ -942,6 +942,9 @@ describe('operator-confirmed document completion', () => {
             ...base.configuration, answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, guardAnswer],
         } })
         expect(defaults).toMatchObject({ kind: 'gap-draft', question: { field: 'configuration.defaults' } })
+        // There is no registry here, so no default may be explained by one.
+        expect(defaults.diagnostics.filter(item => item.code === 'DOCUMENT_DEFAULT').length).toBeGreaterThan(0)
+        expect(defaults.artifact).not.toMatch(/registry dialect|source registry/)
         const complete = await documentCommand({ ...base, configuration: {
             ...base.configuration,
             answers: [nameAnswer, siblingAnswer, portAnswer, policyAnswer, testDataAnswer, generatedAnswer, machineAnswer, guardAnswer,

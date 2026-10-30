@@ -2029,14 +2029,11 @@ describe('document output execution', () => {
         const output = join(dirname(cockpitRoot), 'generated', 'cockpit.toml')
         mkdirSync(dirname(output))
         const result = run(['document', cockpitRoot, '--output', output])
-        const schema = join(root, 'packages/cockpit/cockpit.schema.json')
-        const schemaPath = relative(dirname(output), schema).split(sep).join('/')
 
         expect(result.status).not.toBe(0)
         expect(result.stdout).toBe('')
-        expect(readFileSync(output, 'utf8')).toMatch(
-            new RegExp(`^#:schema ${schemaPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n`),
-        )
+        // The file is committed, so the directive names the cockpit's own install, never this machine's package path.
+        expect(readFileSync(output, 'utf8')).toMatch(/^#:schema \.\/node_modules\/@b0dea\/cockpit\/cockpit\.schema\.json\n/)
         expect(readFileSync(output, 'utf8')).toContain('INCOMPLETE DRAFT')
     })
 

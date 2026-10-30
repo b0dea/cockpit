@@ -30,7 +30,7 @@ export function emitToml(config: CockpitConfig): string {
  */
 export function emitGaps(gaps: readonly Gap[]): string {
     if (gaps.length === 0) return ''
-    const lines = ['# Gaps — cockpit could not read these from the source registry.', '#']
+    const lines = ['# Gaps — cockpit could not read these from its sources.', '#']
     for (const g of gaps) {
         const mark = g.blocking ? 'REQUIRED' : 'optional'
         lines.push(`# [${mark}] ${g.slug}.${g.field}: ${g.why}`)
