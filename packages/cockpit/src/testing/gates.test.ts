@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installedPackageMetadata } from '../package-metadata.js'
+import { stripDevelopmentMarkers } from '../surfaces/development-markers.js'
 import { createGateRegistry, runGate, renderTierGuide, TESTING_GUIDE_REGISTRY, GATE_SELECTOR_OPTION, type GateSelector, type ProductGateInvocation } from './gates.js'
 import type { ProjectionPlannerInput } from '../surfaces/projection.js'
 
@@ -144,7 +144,9 @@ describe('product-owned gates', () => {
         const guide = renderTierGuide(TESTING_GUIDE_REGISTRY, guideInput())
         expect(guide.kind).toBe('complete')
         if (guide.kind !== 'complete') throw new Error('guide refused')
-        expect(guide.bytes).toContain(`<!-- cockpit:verified version=${installedPackageMetadata.version} -->`)
+        // The guide is compared with the shipped file on every sync, so a version marker rendered
+        // from the installed package made sync refuse after each release bump.
+        expect(guide.bytes).not.toContain('cockpit:verified')
         expect(guide.bytes).toContain('| None |')
         expect(guide.bytes).toContain('Targeted')
         expect(guide.bytes).toContain('Full')
@@ -166,6 +168,6 @@ describe('product-owned gates', () => {
         expect(renderTierGuide(TESTING_GUIDE_REGISTRY, { ...guideInput(), loadCharacterizations: {} }).kind).toBe('refusal')
         expect(renderTierGuide(registry(), guideInput())).toMatchObject({ kind: 'complete', bytes: expect.stringContaining('focused') })
         expect(() => renderTierGuide({ ...TESTING_GUIDE_REGISTRY }, guideInput())).toThrow('issued')
-        expect(readFileSync(new URL('../../surfaces/references/testing-tiers.md', import.meta.url), 'utf8')).toBe(guide.bytes)
+        expect(stripDevelopmentMarkers(readFileSync(new URL('../../surfaces/references/testing-tiers.md', import.meta.url), 'utf8'))).toBe(guide.bytes)
     })
 })

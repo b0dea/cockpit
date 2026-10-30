@@ -2651,7 +2651,7 @@ async function prepareSurfaces(
     if (projection.kind !== 'complete') return refuse(projection.diagnostic.code, projection.diagnostic.message, projection.diagnostic.target)
     const tierGuide = renderTierGuide(testingRegistry, projectionInput)
     if (tierGuide.kind !== 'complete') return refuse('SURFACE_INPUT_INVALID', tierGuide.reason, 'testing-tiers')
-    if (!prepared.workEnvironment.testing && tierGuide.bytes !== asset('references/testing-tiers.md').bytes) {
+    if (!prepared.workEnvironment.testing && tierGuide.bytes !== stripDevelopmentMarkers(asset('references/testing-tiers.md').bytes)) {
         return refuse('SURFACE_INPUT_INVALID', 'the shipped testing tier guide differs from its canonical registry projection', 'references/testing-tiers.md')
     }
     const rendered = renderSurfaceSet({ configuredHarnesses, merge, generated, projection, mcp, restrictions, instructions,

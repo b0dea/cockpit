@@ -1,7 +1,6 @@
 import { compareEnvironmentSnapshot, type EnvironmentSnapshot, type RuntimeEvidence } from '../environment/evidence.js'
 import { planSiblingProjection, type ProjectionPlannerInput, type StandingCost } from '../surfaces/projection.js'
 import { GUARD_SURFACE_TARGETS } from '../surfaces/harness-registry.js'
-import { installedPackageMetadata } from '../package-metadata.js'
 import { classifyRun, type RunClassification, type RunInput, type StageObservation, type StageResult } from './verdict.js'
 
 export const mechanism = {
@@ -166,7 +165,7 @@ export function renderTierGuide(registry: GateRegistry, projection: ProjectionPl
         const gates = registry.gates.filter(gate => gate.tier === tier.id)
         return `| ${tier.title} | ${gates.map(gate => cell(gate.changes)).join('; ') || tier.changes} | ${gates.map(gate => `\`${gate.id}\` (${gate.stages.join(', ')})`).join('; ') || tier.gate} |`
     })
-    const bytes = `# Testing tiers\n\n<!-- cockpit:verified version=${installedPackageMetadata.version} -->\n\nChoose the narrowest product-owned gate that proves the change.\n\n`
+    const bytes = `# Testing tiers\n\nChoose the narrowest product-owned gate that proves the change.\n\n`
         + '| Tier | Change | Gate and ordered stages |\n| --- | --- | --- |\n' + rows.join('\n') + '\n\n'
         + 'Extend an existing behavior test at the nearest public boundary when it can prove the change; add a test only when no existing test owns that behavior. Each test must fail when that behavior regresses. Do not duplicate proof already supplied by a stronger test.\n\n'
         + `Run a gate with \`cockpit test-run --gate <id>\`. Narrow it with \`cockpit test-run ${GATE_SELECTOR_OPTION} <kind>:<value>\`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.\n\n`
