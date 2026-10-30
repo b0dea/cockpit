@@ -22,8 +22,8 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/adoption.md', [operator, operator, operator]],
     ['docs/agent-adoption.md', [operator, operator, operator, operator, operator, runtime, operator, operator, operator, operator, runtime, runtime, operator]],
     ['docs/contributing/style.md', [developer]],
-    ['docs/environment.md', [runtime, runtime]],
-    ['docs/getting-started.md', [packageInstall, packageInstall, packageInstall, operator, operator, operator, operator, operator, runtime, operator, operator, operator, runtime]],
+    ['docs/environment.md', [runtime, runtime, runtime]],
+    ['docs/getting-started.md', [packageInstall, packageInstall, packageInstall, operator, packageInstall, operator, operator, operator, operator, runtime, operator, operator, operator, runtime, runtime]],
     ['docs/harness-surfaces.md', [operator]],
     ['docs/joining-a-team.md', [packageInstall, operator, operator]],
     ['docs/contributing/releasing.md', [operator, developer, developer]],
@@ -159,7 +159,7 @@ describe('the public synthetic cockpit', () => {
             ['git', '-C'], ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
             ['./node_modules/.bin/cockpit', 'preflight'], ['./node_modules/.bin/cockpit', 'up'],
-            ['./node_modules/.bin/cockpit', 'down'],
+            ['DOCKER_CONTEXT="$(docker', 'context'],
         ])
         for (const argv of executable) {
             if (argv[1] === 'setup') {
@@ -293,7 +293,7 @@ describe('the public synthetic cockpit', () => {
         const planted = new Map(documents)
         planted.set('docs/environment.md', `${planted.get('docs/environment.md')}\n\`\`\`sh\ncockpit unknown-command\n\`\`\`\n`)
         expect(publicShellInventory(planted).filter(row => row.kind === 'unclassified')).toContainEqual({
-            path: 'docs/environment.md', block: 3, kind: 'unclassified', reason: 'shell block and classification table differ',
+            path: 'docs/environment.md', block: 4, kind: 'unclassified', reason: 'shell block and classification table differ',
         })
     })
 })
