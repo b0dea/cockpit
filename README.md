@@ -172,7 +172,8 @@ repository carries only synthetic fixtures. What is true today:
   can change between minors. [Release policy](docs/release-policy.md) covers deprecation and
   migration notes.
 - **macOS and Linux.** CI runs both; supported Node versions are in
-  [Getting started](docs/getting-started.md#install-cockpit). Windows is not supported.
+  [Getting started](docs/getting-started.md#install-cockpit). On native Windows every command
+  stops at startup with `CLI_PLATFORM_UNSUPPORTED`.
 - **Runtime commands need a local Docker-compatible runtime that cockpit has measured.** `up`,
   `session`, `preflight`, `down` and `reset` require Docker Compose and a successful
   `cockpit runtime measure`.

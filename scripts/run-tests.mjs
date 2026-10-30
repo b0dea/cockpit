@@ -24,13 +24,6 @@ const IMMEDIATE_FAILURE_REPORTER = fileURLToPath(new URL('./immediate-failure-re
 const EXPECTED_PLATFORM_SKIPS = process.platform === 'linux' ? [
     [/refuses ownership aliases of authenticated inputs on case-insensitive filesystems$/, 1],
     [/refuses ownership alias checks during a restored (?:input|root) namespace swap$/, 2],
-] : process.platform === 'win32' ? [
-    [/reports staging cleanup failure without deleting an unrelated path$/, 1],
-    [/preserves staging and skips compensation when termination cannot be confirmed$/, 1],
-    [/withholds a finished receipt when termination cannot be confirmed$/, 1],
-    [/confirms the process group is gone before issuing a successful receipt$/, 1],
-    [/preserves an exact staging-cleanup refusal at the install boundary$/, 1],
-    [/refuses FIFO owner evidence without blocking$/, 1],
 ] : []
 
 const TEMP_CLEANUP_PROGRAM = `

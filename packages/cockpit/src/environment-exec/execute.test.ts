@@ -69,7 +69,7 @@ afterEach(() => {
 })
 
 describe('mechanical environment executor', () => {
-    it.skipIf(process.platform === 'win32')('cancels a delayed fenced starter before any destructive effect can begin', async () => {
+    it('cancels a delayed fenced starter before any destructive effect can begin', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-cancel-race-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -87,7 +87,7 @@ describe('mechanical environment executor', () => {
         expect(existsSync(effect)).toBe(false)
     })
 
-    it.skipIf(process.platform === 'win32').each(['parent', 'supervisor', 'runner'] as const)(
+    it.each(['parent', 'supervisor', 'runner'] as const)(
         'refuses expiry at the fenced %s release without retaining execution authority', async boundary => {
             const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-expiry-'))
             scratch.push(directory)
@@ -147,7 +147,7 @@ describe('mechanical environment executor', () => {
         },
     )
 
-    it.skipIf(process.platform === 'win32')('refuses swapped, oversized and blocking execution markers', async () => {
+    it('refuses swapped, oversized and blocking execution markers', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-hostile-marker-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -176,7 +176,7 @@ describe('mechanical environment executor', () => {
         await expect(repairFencedExecution(fence)).resolves.toMatchObject({ kind: 'refusal' })
     })
 
-    it.skipIf(process.platform === 'win32')('repairs an exact attempt that ended before durable execution acknowledgement', async () => {
+    it('repairs an exact attempt that ended before durable execution acknowledgement', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-unstarted-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -193,7 +193,7 @@ describe('mechanical environment executor', () => {
         expect(consumeFencedExecutionTermination(repaired.evidence, fence)).toBe(true)
     })
 
-    it.skipIf(process.platform === 'win32')('starts no effect when durable fence acknowledgement is refused', async () => {
+    it('starts no effect when durable fence acknowledgement is refused', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-gate-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -209,7 +209,7 @@ describe('mechanical environment executor', () => {
         expect(existsSync(effect)).toBe(false)
     })
 
-    it.skipIf(process.platform === 'win32')('repairs an orphaned fenced executor only after its exact action group is gone', async () => {
+    it('repairs an orphaned fenced executor only after its exact action group is gone', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-orphan-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -257,7 +257,7 @@ describe('mechanical environment executor', () => {
         }
     })
 
-    it.skipIf(process.platform === 'win32')('confirms the fenced action group is gone before issuing a timeout receipt', async () => {
+    it('confirms the fenced action group is gone before issuing a timeout receipt', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-timeout-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -281,7 +281,7 @@ describe('mechanical environment executor', () => {
         expect(() => process.kill(actionPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
     })
 
-    it.skipIf(process.platform === 'win32')('retains the fenced group leader until same-group descendants are gone', async () => {
+    it('retains the fenced group leader until same-group descendants are gone', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-group-leader-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -303,7 +303,7 @@ describe('mechanical environment executor', () => {
         expect(() => process.kill(descendantPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
     })
 
-    it.skipIf(process.platform === 'win32')('stops the action group and leaves durable repair evidence when the supervisor pipe is lost', async () => {
+    it('stops the action group and leaves durable repair evidence when the supervisor pipe is lost', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-pipe-loss-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -346,7 +346,7 @@ describe('mechanical environment executor', () => {
         }
     })
 
-    it.skipIf(process.platform === 'win32')('stops the action even when pipe-loss evidence cannot be published', async () => {
+    it('stops the action even when pipe-loss evidence cannot be published', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-fenced-pipe-loss-refusal-'))
         scratch.push(directory)
         const attemptId = sha256(directory)
@@ -444,65 +444,6 @@ describe('mechanical environment executor', () => {
             controller.abort()
             await pending
         }
-    })
-
-    it('refuses a Windows probe before spawning without owned process-tree support', async () => {
-        const directory = mkdtempSync(join(tmpdir(), 'cockpit-process-admission-'))
-        scratch.push(directory)
-        const marker = join(directory, 'spawned')
-        const step = nodeStep('unsupported-probe', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'spawned')`)
-        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
-        let outcome: Awaited<ReturnType<typeof executeProbe>>
-        try {
-            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-            outcome = await executeProbe(step)
-        } finally {
-            Object.defineProperty(process, 'platform', platform)
-        }
-
-        expect(outcome).toEqual(expect.objectContaining({
-            kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED',
-            execution: expect.objectContaining({ started: false, exitCode: 1 }),
-        }))
-        expect(outcome).not.toHaveProperty('receipt')
-        expect(executionOutcomeMatches(outcome, step)).toBe(true)
-        expect(existsSync(marker)).toBe(false)
-    })
-
-    it('refuses a Windows plan without starting its primary or compensation commands', async () => {
-        const directory = mkdtempSync(join(tmpdir(), 'cockpit-plan-admission-'))
-        scratch.push(directory)
-        const primary = join(directory, 'primary')
-        const compensation = join(directory, 'compensated')
-        const step = nodeStep('unsupported-primary',
-            `require('node:fs').writeFileSync(${JSON.stringify(primary)}, 'spawned'); process.exitCode = 1`, {
-                compensation: [nodeStep('must-not-compensate',
-                    `require('node:fs').writeFileSync(${JSON.stringify(compensation)}, 'compensated')`)],
-            })
-        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
-        let outcome: Awaited<ReturnType<typeof executePlan>>
-        try {
-            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-            outcome = await executePlan({ steps: [step] })
-        } finally {
-            Object.defineProperty(process, 'platform', platform)
-        }
-
-        expect(outcome).toEqual(expect.objectContaining({
-            kind: 'refusal', status: 2,
-            diagnostics: [expect.objectContaining({
-                code: 'EXECUTION_PRECONDITION_CHANGED',
-                message: 'execution step unsupported-primary cannot run on Windows: cockpit cannot confirm that all child-process descendants have stopped; fix: rerun the command on a supported macOS or Linux host',
-            })],
-            execution: {
-                completedStepIds: [], failedStep: { id: step.id, started: false },
-                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-            },
-        }))
-        expect(existsSync(primary)).toBe(false)
-        expect(existsSync(compensation)).toBe(false)
     })
 
     it('refuses an already-expired step before spawning it', async () => {
@@ -857,7 +798,7 @@ done
         expect((await executeProbe(step)).kind).toBe('complete')
     })
 
-    it.skipIf(process.platform === 'win32')('reports staging cleanup failure without deleting an unrelated path', async () => {
+    it('reports staging cleanup failure without deleting an unrelated path', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-cleanup-control-'))
         scratch.push(directory)
         const executable = join(directory, 'runtime')
@@ -1272,7 +1213,7 @@ done
         }
     })
 
-    it.skipIf(process.platform === 'win32')('preserves staging and skips compensation when termination cannot be confirmed', async () => {
+    it('preserves staging and skips compensation when termination cannot be confirmed', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-unconfirmed-termination-'))
         scratch.push(directory)
         const executable = join(directory, 'primary')
@@ -1334,7 +1275,7 @@ while :; do sleep 1; done
         }
     })
 
-    it.skipIf(process.platform === 'win32')('withholds a finished receipt when termination cannot be confirmed', async () => {
+    it('withholds a finished receipt when termination cannot be confirmed', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-unconfirmed-receipt-'))
         scratch.push(directory)
         const started = join(directory, 'started')
@@ -1391,7 +1332,7 @@ while :; do sleep 1; done
         }
     })
 
-    it.skipIf(process.platform === 'win32')('confirms the process group is gone before issuing a successful receipt', async () => {
+    it('confirms the process group is gone before issuing a successful receipt', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-successful-group-'))
         scratch.push(directory)
         const executable = join(directory, 'leader')

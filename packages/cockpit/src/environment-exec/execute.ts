@@ -163,7 +163,7 @@ async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string
     readonly spawnExpired: () => boolean
 } | undefined> {
     const fence = step.executionFence
-    if (!fence || !validExecutionFence(fence) || process.platform === 'win32' || !await secureFenceSocketDirectory(fence)) return undefined
+    if (!fence || !validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return undefined
     const [command, ...args] = argv
     const encoded = Buffer.from(JSON.stringify({ command, args, argv0: step.argv0, cwd: step.cwd, spawnNotAfter: step.spawnNotAfter, fence })).toString('base64url')
     const supervisor = spawn(process.execPath, ['--', FENCED_SUPERVISOR, encoded], {
@@ -580,8 +580,6 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
     const spawnExpired = (): boolean => step.spawnNotAfter !== undefined && Date.now() > Date.parse(step.spawnNotAfter)
     if (spawnExpired()) return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
     if (signal?.aborted) return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_ABORTED)
-    // A Windows child exiting does not prove its descendants stopped; no owned-tree adapter exists.
-    if (process.platform === 'win32') return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
     if (!await filesystemChecksPass(step.filesystemChecks)) {
         return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
     }
@@ -956,7 +954,7 @@ export async function executeForegroundProcess(
         return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
             exitCode: 1, signal: null, started: false, terminationConfirmed: true })
     }
-    if (!captured || process.platform === 'win32' || signal?.aborted) return Object.freeze({
+    if (!captured || signal?.aborted) return Object.freeze({
         kind: 'refusal',
         code: signal?.aborted ? ENVIRONMENT_CODES.EXECUTION_ABORTED : ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         exitCode: 1, signal: null, started: false, terminationConfirmed: true,
@@ -1178,10 +1176,7 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
             kind: 'refusal', status: 2, result: null,
             diagnostics: [
                 { severity: 'error', code: observation.failure,
-                    message: observation.failure === ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED
-                        && !observation.started && process.platform === 'win32'
-                        ? `execution step ${observation.id} cannot run on Windows: cockpit cannot confirm that all child-process descendants have stopped; fix: rerun the command on a supported macOS or Linux host`
-                        : `execution step ${observation.id} failed`,
+                    message: `execution step ${observation.id} failed`,
                     target: observation.id },
                 ...compensationDiagnostics,
             ],

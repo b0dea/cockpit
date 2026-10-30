@@ -61,13 +61,6 @@ const platformSkips = process.platform === 'linux' ? [
   'refuses ownership aliases of authenticated inputs on case-insensitive filesystems',
   'refuses ownership alias checks during a restored input namespace swap',
   'refuses ownership alias checks during a restored root namespace swap',
-] : process.platform === 'win32' ? [
-  'reports staging cleanup failure without deleting an unrelated path',
-  'preserves staging and skips compensation when termination cannot be confirmed',
-  'withholds a finished receipt when termination cannot be confirmed',
-  'confirms the process group is gone before issuing a successful receipt',
-  'preserves an exact staging-cleanup refusal at the install boundary',
-  'refuses FIFO owner evidence without blocking',
 ] : []
 const assertions = [
   { status: 'passed', fullName: 'synthetic passes' },
