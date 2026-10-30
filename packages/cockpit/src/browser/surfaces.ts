@@ -6,6 +6,7 @@ import { isProxy } from 'node:util/types'
 import { z } from 'zod'
 import { isCanonicalTimestamp, snapshotJson, type ExecutionStep, type FilesystemIdentity, type HolderId, type StackId } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock, readState, transactState, withStateScopedLock,
     type StateNamespace, type StateRecord } from '../environment/state.js'
 import { GeneratedHostPath } from '../schema.js'
@@ -164,154 +165,6 @@ const digest = (bytes: string | Uint8Array): string => createHash('sha256').upda
 const MAX_ARIA_BYTES = 65_536
 const MAX_SCREENSHOT_BYTES = 8_388_608
 const COMMAND_TIMEOUT_MS = 30_000
-const SCRIPT = String.raw`const fs = require('node:fs')
-const crypto = require('node:crypto')
-const args = process.argv.slice(1)
-const one = name => { const index = args.indexOf(name); if (index < 0 || index + 1 >= args.length) throw new Error('missing argument'); return args[index + 1] }
-const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
-async function main() {
-  const moduleProof = fs.readFileSync(one('--module-proof'))
-  const modulePath = one('--module')
-  const moduleBytes = fs.readFileSync(modulePath)
-  if (digest(moduleProof) !== digest(moduleBytes)) throw new Error('module changed')
-  const api = require(modulePath)
-  const engine = one('--engine')
-  const browserType = api && api[engine]
-  const connection = one('--connection')
-  if (!['chromium', 'firefox', 'webkit'].includes(engine) || !browserType
-      || connection === 'remote' && typeof browserType.connect !== 'function'
-      || connection === 'local' && typeof browserType.launch !== 'function') throw new Error('browser module lacks selected engine operation')
-  const operation = one('--operation')
-  const url = one('--url')
-  const timeout = Number(one('--timeout'))
-  const deadline = Date.now() + timeout
-  const remaining = () => { const value = deadline - Date.now(); if (value <= 0) throw new Error('browser operation deadline expired'); return value }
-  const resolverRule = args.includes('--resolver-rule') ? one('--resolver-rule') : undefined
-  const categories = { connect: 'availability', context: 'setup', navigation: 'navigation', accessibility: 'observation',
-    screenshot: 'observation', artifact: 'artifact', cleanup: 'cleanup' }
-  let browser, context, page, observation, failurePhase, cleanupFailed = false, phase = 'connect'
-  try {
-    browser = connection === 'remote'
-      ? await browserType.connect(one('--endpoint'), { timeout: remaining(), exposeNetwork: one('--expose-network') })
-      : await browserType.launch({ headless: true, timeout: remaining(),
-          ...(resolverRule ? { args: ['--host-resolver-rules=' + resolverRule] } : {}) })
-    phase = 'context'
-    const state = process.env.COCKPIT_BROWSER_STORAGE_STATE
-    const stateProof = state ? fs.readFileSync(one('--state-proof')) : undefined
-    if (state && digest(fs.readFileSync(state)) !== digest(stateProof)) throw new Error('storage state changed')
-    const storageState = stateProof ? JSON.parse(stateProof.toString('utf8')) : undefined
-    context = await browser.newContext({ ...(storageState ? { storageState } : {}), serviceWorkers: 'block' })
-    const controlAuthorities = new Set(JSON.parse(one('--control-authorities')))
-    const controlPorts = new Set(JSON.parse(one('--control-ports')).map(String))
-    const isControlAuthority = value => { try {
-      const parsed = new URL(value)
-      const port = parsed.port || (parsed.protocol === 'http:' || parsed.protocol === 'ws:' ? '80'
-        : parsed.protocol === 'https:' || parsed.protocol === 'wss:' ? '443' : '')
-      return controlAuthorities.has(parsed.hostname + ':' + port) || controlPorts.has(port)
-    } catch { return true } }
-    const origin = one('--origin')
-    let mainNavigationAttempts = 0
-    await context.route('**/*', async (route, request) => {
-      if (isControlAuthority(request.url())) return route.abort('blockedbyclient')
-      const frame = request.frame()
-      const mainNavigation = request.isNavigationRequest() && page && frame === page.mainFrame()
-      if (request.isNavigationRequest() && !mainNavigation
-          && (!frame || typeof frame.parentFrame !== 'function' || frame.parentFrame() === null)) return route.abort('blockedbyclient')
-      if (mainNavigation) mainNavigationAttempts += 1
-      await route.continue()
-    })
-    if (typeof context.routeWebSocket !== 'function') throw new Error('browser module lacks WebSocket routing')
-    await context.routeWebSocket(() => true, webSocket => {
-      if (isControlAuthority(webSocket.url())) return webSocket.close({ code: 1008, reason: 'browser control authority blocked' })
-      webSocket.connectToServer()
-    })
-    phase = 'navigation'
-    page = await context.newPage()
-    let documentEpoch = 0
-    let documentResponse
-    page.on('framenavigated', frame => { if (frame === page.mainFrame()) documentEpoch += 1 })
-    page.on('response', response => {
-      const request = response.request()
-      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) documentResponse = response
-    })
-    const currentDocument = () => {
-      const displayed = new URL(page.url())
-      if (displayed.origin !== origin || displayed.username || displayed.password || displayed.hash) throw new Error('navigation left application origin')
-      if (!documentResponse || typeof documentResponse.ok !== 'function' || !documentResponse.ok()
-          || typeof documentResponse.url !== 'function' || documentResponse.url() !== displayed.href) {
-        throw new Error('displayed document lacks a successful terminal HTTP response')
-      }
-      return { url: displayed.href, epoch: documentEpoch, attempts: mainNavigationAttempts }
-    }
-    const response = await page.goto(url, { timeout: remaining() })
-    if (!response || typeof response.ok !== 'function' || !response.ok()) throw new Error('navigation did not return a successful HTTP response')
-    documentResponse = response
-    const initialDocument = currentDocument()
-    if (operation === 'drive') observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: initialDocument.url }
-    else if (operation === 'accessibility') {
-      phase = 'accessibility'
-      const displayedBefore = currentDocument()
-      const value = await page.locator('body').ariaSnapshot()
-      if (typeof value !== 'string') throw new Error('accessibility observation is not text')
-      const bytes = Buffer.from(value, 'utf8')
-      if (bytes.byteLength > ${MAX_ARIA_BYTES}) throw new Error('accessibility observation exceeds bound')
-      const displayedAfter = currentDocument()
-      if (displayedAfter.url !== displayedBefore.url || displayedAfter.epoch !== displayedBefore.epoch
-          || displayedAfter.attempts !== displayedBefore.attempts) throw new Error('navigation changed during accessibility observation')
-      observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: displayedAfter.url, evidence: { sha256: digest(bytes), byteLength: bytes.byteLength } }
-    } else if (operation === 'screenshot') {
-      phase = 'screenshot'
-      const displayedBefore = currentDocument()
-      const bytes = await page.screenshot()
-      if (!Buffer.isBuffer(bytes) || bytes.byteLength > ${MAX_SCREENSHOT_BYTES}) throw new Error('screenshot observation exceeds bound')
-      const displayedAfter = currentDocument()
-      if (displayedAfter.url !== displayedBefore.url || displayedAfter.epoch !== displayedBefore.epoch
-          || displayedAfter.attempts !== displayedBefore.attempts) throw new Error('navigation changed during screenshot observation')
-      const output = one('--output')
-      const root = one('--artifact-root')
-      const expectedDev = Number(one('--artifact-dev'))
-      const expectedIno = Number(one('--artifact-ino'))
-      phase = 'artifact'
-      if (require('node:path').dirname(output) !== root || require('node:path').basename(output) !== one('--output-name')) throw new Error('screenshot output escaped root')
-      let rootDescriptor, dotDescriptor, descriptor
-      try {
-        rootDescriptor = fs.openSync(root, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)
-        const held = fs.fstatSync(rootDescriptor)
-        const named = fs.lstatSync(root)
-        if (!held.isDirectory() || named.isSymbolicLink() || held.dev !== expectedDev || held.ino !== expectedIno || named.dev !== held.dev || named.ino !== held.ino) throw new Error('artifact root changed')
-        process.chdir(root)
-        dotDescriptor = fs.openSync('.', fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW)
-        const anchored = fs.fstatSync(dotDescriptor)
-        if (anchored.dev !== held.dev || anchored.ino !== held.ino) throw new Error('artifact root changed')
-        descriptor = fs.openSync(one('--output-name'), fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600)
-        fs.fchmodSync(descriptor, 0o600); fs.writeFileSync(descriptor, bytes); fs.fsyncSync(descriptor)
-        const after = fs.fstatSync(dotDescriptor)
-        if (after.dev !== held.dev || after.ino !== held.ino) throw new Error('artifact root changed')
-      } finally {
-        if (descriptor !== undefined) fs.closeSync(descriptor)
-        if (dotDescriptor !== undefined) fs.closeSync(dotDescriptor)
-        if (rootDescriptor !== undefined) fs.closeSync(rootDescriptor)
-      }
-      observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: displayedAfter.url, evidence: { sha256: digest(bytes), byteLength: bytes.byteLength } }
-    } else throw new Error('unsupported operation')
-  } catch { failurePhase = phase }
-  finally {
-    for (const value of [page, context, browser]) if (value && typeof value.close === 'function') {
-      try { await value.close() } catch { cleanupFailed = true }
-    }
-  }
-  if (failurePhase || cleanupFailed || !observation) {
-    const failedAt = failurePhase || 'cleanup'
-    process.stderr.write(JSON.stringify({ schema: 'cockpit-browser-failure/v1', phase: failedAt,
-      category: categories[failedAt], cleanup: cleanupFailed }))
-    process.exitCode = 1
-    return
-  }
-  process.stdout.write(JSON.stringify(observation))
-}
-main().catch(() => { process.stderr.write('{"schema":"cockpit-browser-failure/v1","phase":"context","category":"setup","cleanup":false}'); process.exitCode = 1 })
-`
-
 function observedFile(path: string, maxBytes: number): Buffer {
     let descriptor: number | undefined
     try {
@@ -474,7 +327,10 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
     const controlAuthorities = browserRuntimeControlAuthorities(runtime)
     const controlPorts = browserRuntimeControlPorts(runtime)
     if (!controlAuthorities || !controlPorts) throw new TypeError('browser operation requires issued control authorities')
-    const argv = [client.node.path, '-e', SCRIPT, '--', '--module-proof', client.module.path, '--module', client.module.path,
+    const program = libexecProgram('browser-operation.cjs')
+    // '--' ends Node's own options, so the program path can never be read as one.
+    const argv = [client.node.path, '--', program.path, '--aria-limit', String(MAX_ARIA_BYTES), '--screenshot-limit', String(MAX_SCREENSHOT_BYTES),
+        '--module-proof', client.module.path, '--module', client.module.path,
         '--manifest-proof', client.manifest.path, '--lock-proof', client.lock.path, '--operation', operation.kind,
         '--engine', runtime.server.engine, '--connection', runtime.connection.kind === 'remote' ? 'remote' : 'local',
         ...(runtime.connection.kind === 'remote' ? ['--endpoint', runtime.connection.endpoint, '--expose-network', runtime.networkExposure] : []),
@@ -496,6 +352,7 @@ function operationStep(client: BrowserProjectClient, runtime: BrowserRuntimeProj
         labels: Object.freeze({ browser: operation.kind }), expected: Object.freeze([]),
         consumedFiles: Object.freeze([
             { path: client.node.path, sha256: client.node.sha256, maxBytes: client.node.maxBytes, argvIndexes: Object.freeze([0]), executable: true as const, executionMode: 'verified-path' as const },
+            { path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: Object.freeze([2]), executable: false as const },
             { path: client.module.path, sha256: client.module.sha256, maxBytes: client.module.maxBytes, argvIndexes: Object.freeze([index(client.module.path)]), executable: false as const },
             { path: client.manifest.path, sha256: client.manifest.sha256, maxBytes: client.manifest.maxBytes, argvIndexes: Object.freeze([index(client.manifest.path)]), executable: false as const },
             { path: client.lock.path, sha256: client.lock.sha256, maxBytes: client.lock.maxBytes, argvIndexes: Object.freeze([index(client.lock.path)]), executable: false as const },

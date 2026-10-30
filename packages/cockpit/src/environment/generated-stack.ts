@@ -6,6 +6,7 @@ import { isProxy } from 'node:util/types'
 import { parse as parseYaml } from 'yaml'
 
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { decisionSubjects, type GeneratedEnvironment as GeneratedEnvironmentDeclaration } from '../schema.js'
 import { ENVIRONMENT_CODES, inStackCommand, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type StackId } from './contract.js'
 import { resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
@@ -301,46 +302,6 @@ export function inspectGeneratedEnvironment(input: {
 const SAFE_RUNTIME_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 const GENERATED_RUNTIME_IDENTITY_ENV = new Set(['COCKPIT_OWNER_ID', 'COCKPIT_STACK_ID'])
 
-// Walking through the child process cwd pins each directory before reading the next segment.
-// Checking a complete string path once would let an intermediate symlink redirect a later read.
-const HOST_INPUT_PROBE = `
-const fs = require('node:fs'); const path = require('node:path');
-const root = JSON.parse(process.argv[2]);
-const same = (status, identity) => status.dev === identity.dev && status.ino === identity.ino;
-if (fs.realpathSync(root.path) !== root.path) throw new Error('generated host input root changed');
-process.chdir(root.path);
-const base = fs.lstatSync('.');
-if (!base.isDirectory() || base.isSymbolicLink() || !same(base, root)) throw new Error('generated host input root changed');
-const relative = path.relative(root.path, process.argv[1]);
-const segments = relative === '' ? [] : relative.split(path.sep);
-if (path.isAbsolute(relative) || segments.some(segment => segment === '..' || segment === '.')) throw new Error('generated host input escaped its sibling');
-const name = segments.pop() || '.';
-for (const segment of segments) {
-    const before = fs.lstatSync(segment);
-    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('generated host input crosses a symbolic or non-directory entry');
-    process.chdir(segment);
-    if (!same(fs.lstatSync('.'), before)) throw new Error('generated host input directory changed');
-}
-const entry = fs.lstatSync(name);
-if (entry.isSymbolicLink()) throw new Error('generated host input is a symbolic entry');
-if (process.argv[3] === 'mount-lstat') {
-    if (!(process.argv[4] === 'file' ? entry.isFile() : entry.isDirectory())) throw new Error('generated mount input type differs');
-} else {
-    if (!entry.isFile() || entry.size > 1024 || fs.constants.O_NOFOLLOW === undefined) throw new Error('generated toolchain input is not a bounded file');
-    const fd = fs.openSync(name, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-    try {
-        const before = fs.fstatSync(fd);
-        if (!same(before, entry) || !before.isFile() || before.size > 1024) throw new Error('generated toolchain input changed');
-        const bytes = Buffer.alloc(1025);
-        const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
-        const after = fs.fstatSync(fd);
-        if (length !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) throw new Error('generated toolchain input changed');
-        const value = bytes.subarray(0, length).toString('utf8').trim();
-        if (value !== process.argv[4] || value !== process.argv[5]) throw new Error('generated toolchain input differs from its pin');
-    } finally { fs.closeSync(fd); }
-}
-`
-
 function generatedComposePrefix(
     runtime: GeneratedObservationRuntime,
     docker: ResolvedExecutable,
@@ -394,13 +355,19 @@ function generatedObservationStep(
         if (observation.kind === 'mount-lstat' && expectedType !== 'file' && expectedType !== 'directory'
             || observation.kind === 'toolchain-pin' && (typeof observed !== 'string' || typeof pinned !== 'string')) return undefined
         measuredPaths = Object.freeze([target])
-        argv = Object.freeze([node.canonicalPath, '-e', HOST_INPUT_PROBE, target, JSON.stringify(root), observation.kind,
+        // Throws with the cause; the planner reports it as the observation's unavailable reason.
+        const probe = libexecProgram('host-input-probe.cjs')
+        // '--' ends Node's own options, so the program path can never be read as one.
+        argv = Object.freeze([node.canonicalPath, '--', probe.path, target, JSON.stringify(root), observation.kind,
             ...(observation.kind === 'mount-lstat' ? [expectedType as string] : [observed as string, pinned as string])]) as readonly [string, ...string[]]
         argv0 = node.invocationPath
         timeoutMs = 5_000
         consumedFiles = Object.freeze([{
             path: node.canonicalPath, sha256: node.sha256, maxBytes: 536_870_912,
             argvIndexes: Object.freeze([0]), executable: true, executionMode: node.executionMode,
+        }, {
+            path: probe.path, sha256: probe.sha256, maxBytes: probe.maxBytes,
+            argvIndexes: Object.freeze([2]), executable: false,
         }])
     } else if (observation.kind === 'image-startup-launcher') {
         argv = Object.freeze([
@@ -729,7 +696,12 @@ export function createGeneratedObservationExecution(input: {
     const activeProfiles = generatedAuthority.declaration.services.flatMap(({ profiles }) => profiles)
     const plan = effectiveObservationPlan(observation as GeneratedObservationPlan, generatedAuthority.runtime)
     if (!plan) return Object.freeze({ kind: 'unavailable', id: (observation as GeneratedObservationPlan).id, reason: 'generated observation has no authentic executable plan' })
-    const step = generatedObservationStep(plan, generatedAuthority.runtime, activeProfiles, declaredPortVariables, generatedAuthority.hostInputRoots)
+    let step: ExecutionStep | undefined
+    try {
+        step = generatedObservationStep(plan, generatedAuthority.runtime, activeProfiles, declaredPortVariables, generatedAuthority.hostInputRoots)
+    } catch (error) {
+        return Object.freeze({ kind: 'unavailable', id: plan.id, reason: error instanceof Error ? error.message : String(error) })
+    }
     if (!step) return Object.freeze({ kind: 'unavailable', id: plan.id, reason: 'generated observation has no authentic executable plan' })
     const execution = Object.freeze({ kind: 'planned' as const, id: plan.id, step })
     issuedObservationExecutions.set(execution, Object.freeze({
