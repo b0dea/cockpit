@@ -286,7 +286,7 @@ function transferOperands(command: 'cp' | 'install' | 'mv', args: readonly strin
     }
 }
 
-interface VisibleWrites { readonly paths: readonly string[]; readonly reads?: readonly string[]; readonly uncertain: boolean }
+interface VisibleWrites { readonly paths: readonly string[]; readonly reads?: readonly string[]; readonly truncates: boolean; readonly uncertain: boolean }
 
 /** Git abbreviates long options and bundles short ones, so output recognition must consume every known option value. */
 function gitArchiveWrites(args: readonly string[]): VisibleWrites | undefined {
@@ -347,7 +347,7 @@ function gitArchiveWrites(args: readonly string[]): VisibleWrites | undefined {
             }
         }
     }
-    return output || uncertain ? { paths, uncertain } : undefined
+    return output || uncertain ? { paths, truncates: true, uncertain } : undefined
 }
 
 function tarExtractionWrites(args: readonly string[]): VisibleWrites {
@@ -392,7 +392,7 @@ function tarExtractionWrites(args: readonly string[]): VisibleWrites {
         if (/^-[^-]*x/.test(arg) || arg.startsWith('--extract=') || arg.startsWith('--get=')) extraction = true
         uncertain = true
     }
-    return { paths: extraction ? [destination] : [], reads: archive === undefined ? [] : [archive], uncertain: uncertain || !extraction }
+    return { paths: extraction ? [destination] : [], reads: archive === undefined ? [] : [archive], truncates: false, uncertain: uncertain || !extraction }
 }
 
 /** Destinations exposed directly by bounded filesystem writer grammars. */
@@ -401,22 +401,45 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
     const name = posix.basename(invocation.executable)
     if (name === 'cp' || name === 'install' || name === 'mv') {
         const transfer = transferOperands(name, invocation.argv)
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, uncertain: transfer.uncertain }
+        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, truncates: false, uncertain: transfer.uncertain }
     }
     if (name === 'dd') {
         const paths = invocation.argv.filter(arg => arg.startsWith('of=')).map(arg => arg.slice(3)).filter(Boolean)
         const reads = invocation.argv.filter(arg => arg.startsWith('if=')).map(arg => arg.slice(3)).filter(Boolean)
-        return { paths, reads, uncertain: invocation.argv.some(arg => !/^[a-z_]+=/i.test(arg)) }
+        const operands = new Set(['if', 'of', 'bs', 'ibs', 'obs', 'cbs', 'count', 'skip', 'seek', 'iseek', 'oseek', 'files', 'fillchar', 'speed', 'status', 'conv', 'iflag', 'oflag'])
+        const conversions = new Set(['ascii', 'ebcdic', 'ibm', 'block', 'unblock', 'lcase', 'ucase', 'swab', 'noerror', 'notrunc', 'sync',
+            'osync', 'sparse', 'fsync', 'fdatasync', 'excl', 'nocreat', 'oldascii', 'oldebcdic', 'oldibm', 'pareven', 'parnone', 'parodd', 'parset'])
+        const flags = new Set(['append', 'binary', 'cio', 'direct', 'directory', 'dsync', 'noatime', 'nocache', 'noctty', 'nofollow',
+            'nolinks', 'nonblock', 'sync', 'text', 'fullblock', 'count_bytes', 'skip_bytes', 'seek_bytes', 'fsync'])
+        let truncates = true
+        let uncertain = false
+        for (const arg of invocation.argv) {
+            const [operand, value] = arg.split(/=(.*)/s)
+            if (!operands.has(operand!) || !value) { uncertain = true; continue }
+            if (operand === 'conv') {
+                const values = value.split(',')
+                if (values.some(value => !conversions.has(value))) uncertain = true
+                // GNU and BSD accumulate conversions across operands; later conv= cannot undo notrunc.
+                if (values.includes('notrunc')) truncates = false
+            } else if (operand === 'iflag' || operand === 'oflag') {
+                if (value.split(',').some(value => !flags.has(value))) uncertain = true
+            }
+        }
+        return { paths, reads, truncates, uncertain }
     }
     if (name === 'tar') return tarExtractionWrites(invocation.argv)
     const scan = (plain: Set<string>, valued: Set<string>) => {
         const operands: string[] = []
+        const optionArguments: string[] = []
+        let optionsAfterOperand = false
         let uncertain = false
         let options = true
         for (let index = 0; index < invocation.argv.length; index++) {
             const arg = invocation.argv[index]!
             if (options && arg === '--') { options = false; continue }
             if (options && arg.startsWith('-') && arg !== '-') {
+                optionArguments.push(arg)
+                if (operands.length) optionsAfterOperand = true
                 const option = arg.split('=')[0]!
                 if (valued.has(option)) {
                     if (!arg.includes('=') && invocation.argv[++index] === undefined) uncertain = true
@@ -425,24 +448,27 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
             }
             operands.push(arg)
         }
-        return { operands, uncertain }
+        return { operands, optionArguments, optionsAfterOperand, uncertain }
     }
     if (name === 'tee') {
         const result = scan(new Set(['-a', '-i', '-p', '--append', '--ignore-interrupts', '--output-error']), new Set())
-        return { paths: result.operands, uncertain: result.uncertain }
+        // BSD stops option parsing at the first filename; GNU may permute later options.
+        const append = !result.optionsAfterOperand && result.optionArguments.some(arg => arg === '--append' || /^-[aip]*a[aip]*$/.test(arg))
+        return { paths: result.operands, truncates: !append, uncertain: result.uncertain || result.optionsAfterOperand
+            || result.optionArguments.some(arg => arg.includes('=') && !/^--output-error=(?:warn|warn-nopipe|exit|exit-nopipe)$/.test(arg)) }
     }
     if (name === 'touch') {
         const result = scan(new Set(['-a', '-c', '-h', '-m', '--no-create']), new Set(['-A', '-d', '-r', '-t', '--date', '--reference', '--time']))
-        return { paths: result.operands, uncertain: result.uncertain }
+        return { paths: result.operands, truncates: false, uncertain: result.uncertain }
     }
     if (name === 'truncate') {
         const result = scan(new Set(['-c', '--no-create']), new Set(['-r', '-s', '--reference', '--size']))
-        return { paths: result.operands, uncertain: result.uncertain }
+        return { paths: result.operands, truncates: true, uncertain: result.uncertain }
     }
     if (name === 'chmod') {
         const result = scan(new Set(['-f', '-h', '-v', '-R', '-H', '-L', '-P', '-E', '-C', '-N', '-i', '-I']), new Set(['--reference']))
         const hasMode = result.operands.length > 1 && /^(?:[0-7]{3,4}|[ugoa]*[-+=][rwxXstugo,]+)$/.test(result.operands[0]!)
-        return { paths: result.operands.slice(hasMode ? 1 : 0), uncertain: result.uncertain || result.operands.length === 0 }
+        return { paths: result.operands.slice(hasMode ? 1 : 0), truncates: false, uncertain: result.uncertain || result.operands.length === 0 }
     }
     return undefined
 }
@@ -693,14 +719,14 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
         const writes = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
-            return { paths: transfer.writes, reads: [], uncertain: transfer.uncertain }
+            return { paths: transfer.writes, reads: [], truncates: false, uncertain: transfer.uncertain }
         })() : git?.verb === 'archive' ? gitArchiveWrites(git.args) : visibleWrites(invocation)
         if (writes) {
             const writeCwd = git && ['archive', 'mv'].includes(git.verb) ? git.cwd : invocation.cwd
             for (const path of writes.paths) {
                 pathCount++
                 inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
-                if (git?.verb === 'archive' || invocation.executable !== null && posix.basename(invocation.executable) === 'truncate') inspectRemoval(path, writeCwd)
+                if (writes.truncates) inspectRemoval(path, writeCwd)
             }
             if (writes.reads?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: writes.reads, trees: [], listings: [] })) {
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))

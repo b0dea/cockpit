@@ -588,10 +588,23 @@ describe('cockpit structure protection', () => {
             'truncate --no-create --size=0 cockpit.toml', 'truncate -o -s 0 cockpit.toml', 'truncate --io-blocks --size=0 cockpit.toml',
             'truncate -r reference cockpit.toml', 'truncate -rreference cockpit.toml', 'truncate --reference reference cockpit.toml', 'truncate --reference=reference cockpit.toml',
             '/usr/bin/truncate -s 0 cockpit.toml', 'truncate -s 0 .cockpit/generated-environment-ownership.json',
+            'dd count=0 of=cockpit.toml', 'dd if=source.txt of=cockpit.toml', 'dd of=./COCKPIT.TOML conv=sync',
+            'dd of=notes.txt of=cockpit.toml', 'dd of=cockpit.toml of=notes.txt', 'dd seek=1 of=cockpit.toml',
+            'dd oflag=append of=cockpit.toml', 'dd conv=notruncate of=cockpit.toml',
+            '/bin/dd of=subdir/../cockpit.toml', 'dd count=0 of=.cockpit/generated-environment-ownership.json',
+            'tee cockpit.toml', 'tee -i ./COCKPIT.TOML', 'tee -- cockpit.toml -a',
+            'tee --output-error=warn cockpit.toml', 'tee cockpit.toml -a', '/usr/bin/tee subdir/../cockpit.toml',
+            'tee .cockpit/generated-environment-ownership.json',
         ]) {
             const configured = policy()
-            configured.declaredAllows.push({ argv: command.split(' '), reason: 'Repository file resizing is declared safe.' })
-            expect(decide(command, configured), command).toEqual({ decision: 'deny', reason: removal })
+            const [executable, ...argv] = command.split(' ')
+            configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable, argv })
+            expect.soft(decide(command, configured), command).toEqual({ decision: 'deny', reason: removal })
+        }
+        for (const command of ['dd of=../cockpit.toml', 'tee ../cockpit.toml']) {
+            const nested = policy()
+            nested.declaredAllows.push({ argv: command.split(' '), cwd: `${root}/subdir`, reason: 'Repository writes are declared safe.' })
+            expect(decide(command, nested, `${root}/subdir`), command).toEqual({ decision: 'deny', reason: removal })
         }
         const nested = policy()
         nested.declaredAllows.push({ argv: ['truncate', '-s', '0', '../cockpit.toml'], cwd: `${root}/subdir`, reason: 'Repository file resizing is declared safe.' })
@@ -605,8 +618,7 @@ describe('cockpit structure protection', () => {
                 identity: resolved.endsWith('/alias.toml') ? '7:5' : resolved.endsWith('/archive') ? '7:1' : null, ancestors: [] }
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('rm alias.toml')), linked, facts)).toEqual({ decision: 'deny', reason: removal })
-        for (const path of ['alias.toml', 'archive']) {
-            const command = `truncate -s 0 ${path}`
+        for (const command of ['truncate -s 0 alias.toml', 'truncate -s 0 archive', 'dd of=alias.toml', 'tee alias.toml']) {
             linked.declaredAllows.push({ argv: command.split(' '), reason: 'Repository file resizing is declared safe.' })
             expect(evaluateGuard(parseGuardInput(shellPayload(command)), linked, facts), command).toEqual({ decision: 'deny', reason: removal })
         }
@@ -897,8 +909,25 @@ describe('cockpit structure protection', () => {
         for (const command of ['rm src/a.ts', 'mv old.toml cockpit.toml', 'rm -rf /tmp/scratch', 'printf x >> cockpit.toml']) {
             expect(decide(command).decision, command).toBe('ask')
         }
-        const configured = policy()
-        configured.declaredAllows.push({ argv: ['truncate', '-s', '0', 'notes.txt'], reason: 'Repository file resizing is declared safe.' })
-        expect(decide('truncate -s 0 notes.txt', configured)).toEqual({ decision: 'allow', reason: 'Repository file resizing is declared safe.' })
+        for (const command of [
+            'truncate -s 0 notes.txt', 'dd count=0 of=notes.txt', 'tee notes.txt',
+            'dd if=source.txt of=cockpit.toml conv=notrunc', 'dd of=cockpit.toml conv=sync,notrunc',
+            'dd conv=notrunc conv=sync of=cockpit.toml', 'dd conv=sync conv=notrunc of=cockpit.toml',
+            'tee -a cockpit.toml', 'tee --append cockpit.toml', 'tee -ai cockpit.toml', 'tee -ia -- cockpit.toml',
+            'cp source.txt cockpit.toml', 'install source.txt cockpit.toml', 'mv old.toml cockpit.toml',
+            'touch cockpit.toml', 'chmod 600 cockpit.toml',
+        ]) {
+            const configured = policy()
+            const [executable, ...argv] = command.split(' ')
+            configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable, argv })
+            expect(decide(command, configured).decision, command).toBe('allow')
+        }
+        for (const command of ['dd unsupported=value conv=notrunc of=notes.txt', 'dd conv= of=notes.txt',
+            'dd conv=notrunc,unknown of=cockpit.toml', 'dd conv=notrunc oflag=unknown of=cockpit.toml',
+            'dd of=', 'tee -a --output-error=unknown cockpit.toml', 'tee --append=yes notes.txt', 'tee notes.txt -a', 'tee --unknown notes.txt']) {
+            const configured = policy()
+            configured.declaredAllows.push({ argv: command.split(' '), reason: 'Repository writes are declared safe.' })
+            expect.soft(decide(command, configured).decision, command).toBe('unavailable')
+        }
     })
 })

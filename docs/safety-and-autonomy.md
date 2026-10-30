@@ -57,11 +57,13 @@ redirects, heredocs, comments, and definitions do not count as executable host u
 
 Deleting, renaming or truncating the configuration file or
 `.cockpit/generated-environment-ownership.json` is a hard denial, through `rm`, `unlink`, `mv`,
-`git rm`, `git mv`, `find -delete`, a patch delete or move, or a `>` redirect, and so is removing a
-directory that contains either. Every later guarded call reads both files, so losing one holds the
-agent until a human restores it. Editing the configuration in place stays permitted; the edit
-takes effect only after a human runs `sync`. Writing anywhere under a `.git` directory is also a hard
-denial, because Git configuration chooses programs that read-only Git commands run.
+`git rm`, `git mv`, `find -delete`, `truncate`, `git archive` output, truncating `dd` or `tee`
+writes, a patch delete or move, or a `>` redirect, and so is removing a directory that contains
+either. Every later guarded call reads both files, so losing one holds the agent until a human
+restores it. Editing the configuration in place stays permitted, including bounded `dd conv=notrunc`
+and `tee` append forms under the normal write checks; the edit takes effect only after a human runs
+`sync`. Writing anywhere under a `.git` directory is also a hard denial, because Git configuration
+chooses programs that read-only Git commands run.
 
 The Claude Code registration includes `NotebookEdit`: notebook cell changes use the same protected
 path checks as text edits, so notebook tooling cannot write a control or environment instance.
