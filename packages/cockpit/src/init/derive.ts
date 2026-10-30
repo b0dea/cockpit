@@ -50,7 +50,7 @@ export interface InferenceInput {
 
 const MAX_BYTES = 1024 * 1024
 const MAX_WORKFLOWS = 32
-const COMPOSE_NAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
+export const COMPOSE_NAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SIBLING_SLUG = /^[a-z][a-z0-9-]*$/
 // .env.example, .env.staging.example, .env.sample, .env.production.template and the like: files

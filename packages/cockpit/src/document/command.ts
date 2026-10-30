@@ -11,7 +11,7 @@ import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloo
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
 import { renderCompleteDocument, renderIncompleteDocument, type Attribution, type DocumentModel } from './render.js'
-import { readDockerfileFacts } from '../init/derive.js'
+import { COMPOSE_NAMES, readDockerfileFacts } from '../init/derive.js'
 
 export const mechanism = {
     id: 'document-outcome',
@@ -168,8 +168,7 @@ const MAX_ESTATE_EVIDENCE_BYTES = 1024 * 1024
 const MAX_ESTATE_REASON_LENGTH = 512
 const MAX_CONFIGURATION_ANSWER_BYTES = 262_144
 const LANGUAGE_MANIFESTS = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Gemfile'] as const
-const COMPOSE_MANIFESTS = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
-const PUBLIC_RUNNABLE_SOURCES = [...LANGUAGE_MANIFESTS, 'Dockerfile', ...COMPOSE_MANIFESTS] as const
+const PUBLIC_RUNNABLE_SOURCES = [...LANGUAGE_MANIFESTS, 'Dockerfile', ...COMPOSE_NAMES] as const
 const PACKAGE_RUN_SCRIPTS = ['dev', 'start', 'serve'] as const
 
 interface EstateRepositoryObservation {
@@ -271,7 +270,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
             }
             continue
         }
-        if ((COMPOSE_MANIFESTS as readonly string[]).includes(manifest)) {
+        if ((COMPOSE_NAMES as readonly string[]).includes(manifest)) {
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
             catch {
@@ -425,7 +424,7 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
             || typeof row.evidencePath !== 'string' || !SAFE_RELATIVE.test(row.evidencePath)
             || runnable !== 'confirmed' && runnable !== 'absent' && runnable !== 'unknown'
             || runnable === 'confirmed' && row.why !== undefined
-            || runnable !== 'confirmed' && (typeof row.why !== 'string' || row.why.trim() !== row.why || row.why.length < 1 || row.why.length > 512)
+            || runnable !== 'confirmed' && (typeof row.why !== 'string' || row.why.trim() !== row.why || row.why.length < 1 || row.why.length > MAX_ESTATE_REASON_LENGTH)
             || !row.source || typeof row.source !== 'object' || Array.isArray(row.source)
             || Object.keys(row.source).sort().join(',') !== 'path,sha256') return undefined
         const source = row.source as Record<string, unknown>
