@@ -121,7 +121,10 @@ declaration. Wait for the last holder to report `change: "stopped"`; `"retained"
 holder remains. Then edit `[ports.bases]`, have a person run `cockpit sync --config cockpit.toml`
 in a terminal, and run `cockpit up --config cockpit.toml --json`. Use the newly returned
 entrypoints. Release the stack before editing, because the active lease is tied to the original
-port declaration.
+port declaration. Until that `sync`, the agent guard holds every tool call, because the
+configuration no longer matches what it was generated for. Restoring `cockpit.toml` to the exact
+bytes `sync` last saw, for example with `git restore cockpit.toml`, clears the hold without a
+`sync`: the guard compares the file's content, not which file holds it.
 
 When it first allocates ports, cockpit checks that nothing listens on each port on IPv4 loopback.
 This check does not reserve the port and does not see a listener bound only to IPv6, and another
@@ -241,11 +244,24 @@ after confirming that the command's process group has stopped. A command that pr
 counts as running. Interrupting the wrapper stops only the process group it started, then sleeps.
 If cockpit cannot confirm that the process group stopped, it keeps the holder so you can clean up
 explicitly. Ordinary cockpit lifecycle commands run inside the wrapper use the same private
-session identity. A second `cockpit session` wrapper is refused.
+session identity. A second `cockpit session` wrapper is refused. Once cleanup completes, `session`
+exits with the command's own status, or 128 plus the signal number when a signal ended it, and
+names that signal, so a script can tell how its command finished. It exits 2 when cleanup fails
+and 130 when you cancel it.
+
+Each `sleep` and `down` stops containers with a stop grace: Docker sends SIGTERM and waits ten
+seconds before killing. A service whose PID 1 ignores SIGTERM, as `node` does unless the program
+handles it, pays the whole grace at every stop. Add `init: true` to such a Compose service, or
+handle SIGTERM in the program, so the stop takes a moment instead.
 
 `down` removes only the resources that cockpit's runtime, checkout and ownership records show it
-owns. It clears startup progress only after confirming those removals, which lets the next `up`
-use a new generated identity. Run `cockpit down --config cockpit.toml` before changing generated
+owns: it lists only containers, networks and images that carry this stack's ownership label, and a
+resource it cannot show is this stack's is reported and kept. It clears startup progress only after
+confirming those removals, which lets the next `up` use a new generated identity. `down` also
+retires a stack that `sleep` or an ended `session` left stopped: with no holder left, it claims the
+stack for this checkout without starting anything and removes it, so you do not have to run `up`
+first. While another session still holds the stack, `down` refuses with `CLAIM_CO_TENANT`; end
+that `cockpit session` or run `cockpit sleep` from it, then retry. Run `cockpit down --config cockpit.toml` before changing generated
 declarations, then `cockpit sync --config cockpit.toml` and `cockpit up --config cockpit.toml`.
 `sleep` and `reset` keep the previous generated identity so the stack can resume.
 
@@ -597,7 +613,10 @@ This shows that generated files are current; whether each harness enforces them 
 checked only when the current declarations select grants or registry probes. A runtime with no
 bind mounts passes as an exact empty mount comparison; declared binds must match the current
 mounts exactly. Health on a running stack rechecks the retained lease, current container
-identities, mounts and published listeners without reserving sockets. Cold-start timing applies
+identities, mounts and published listeners without reserving sockets. Compose reports a `::`
+publication beside each `0.0.0.0` one, and some runtimes forward only IPv4 loopback, so the `::`
+row is not required to listen while its `0.0.0.0` twin does; a leased port that nothing publishes
+must stay free on both address families. Cold-start timing applies
 only to services that `up` actually started; read-only health checks do not invent a new duration.
 The machine disk floor compares current free space with an explicitly declared machine floor,
 independently of generated file sizes. Without that declaration, host-floor checks do not apply.
