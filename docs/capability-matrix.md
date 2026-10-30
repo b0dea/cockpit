@@ -2,39 +2,46 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This generated matrix is for users checking what each harness can enforce, instruct or cannot provide. Shipped owner facts retain their evidence strength. Native and operator judgments remain pending where stated.
+This generated matrix is for users checking how far each harness feature is confirmed to work. The State column has four values:
 
-Source manifest: `8d71e526384c3d095997227fe653bc7bbc90c0a4b6fd319c1238d02df14fce48`.
+- `enforced`: a dated test with a deliberately broken control showed the harness refusing the forbidden operation.
+- `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the harness obeys it.
+- `generated`: cockpit writes the file for a harness that has no guard adapter or loading test, so nobody has verified that the tool even loads it.
+- `unavailable`: cockpit writes nothing for this cell; the Provenance column says why.
+
+The Evidence column names what would confirm a cell: `pending_evidence` needs a paired test of the real tool, `human_needed` needs a person's review, and `not_applicable` means there is nothing to confirm. Generating a file or passing repository tests never promotes a cell.
+
+Source manifest: `3855ddbf719d1fb4d12fb135e7ce39065127fd4da91cdad48eb430f6252c5d13`.
 
 | Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | claudecode | guard-firing | n/a | instructed | pending_evidence | paired native PreToolUse payload and decision probe | 2026-08-25 | 2.1.220 |
 | codexcli | guard-firing | n/a | instructed | pending_evidence | paired native PreToolUse payload, apply_patch and ask-decision probe | 2026-08-24 | 0.149.0 |
 | opencode | guard-firing | n/a | instructed | pending_evidence | paired native tool.execute.before payload, apply_patch and thrown-refusal probe | 2026-08-24 | 1.18.15 |
-| cursor | guard-firing | n/a | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| grokcli | guard-firing | n/a | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
+| cursor | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | 2026-10-28 | unmeasured |
+| grokcli | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | 2026-10-28 | unmeasured |
 | claudecode | instruction-loading | n/a | instructed | pending_evidence | claude-relative-import: source setup projection header and in-tree relative import measurement | 2026-09-26 | unmeasured |
 | codexcli | instruction-loading | n/a | instructed | pending_evidence | codex-root-instruction: Codex reads root AGENTS.md; native file-import syntax remains unavailable | 2026-09-26 | unmeasured |
 | opencode | instruction-loading | n/a | instructed | pending_evidence | opencode-instructions: source instructions-list loading measurement | 2026-09-26 | unmeasured |
-| cursor | instruction-loading | n/a | unavailable | not_applicable | rulesync-rules: no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| grokcli | instruction-loading | n/a | unavailable | not_applicable | rulesync-rules: no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
+| cursor | instruction-loading | n/a | generated | pending_evidence | rulesync-rules: cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| grokcli | instruction-loading | n/a | generated | pending_evidence | rulesync-rules: cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
 | claudecode | skill-parity | cockpit-explain | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-explain/SKILL.md; SHA-256 761cbf4a128e5f888409bd7588785f44e8c7be4343ffef60214a58069bfc8f73; operator parity judgment pending | unmeasured | unmeasured |
-| claudecode | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-fix/SKILL.md; SHA-256 ea36c1c1cdfb4b23fb93885c89adff39a6a6158f55c4f01d10fcbf074f18eb13; operator parity judgment pending | unmeasured | unmeasured |
-| claudecode | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-setup/SKILL.md; SHA-256 cd3f8408a0501b9b5f0ee3c4d1a83b034e558830fb9f0ea8da808c35e7e2e283; operator parity judgment pending | unmeasured | unmeasured |
-| claudecode | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-work/SKILL.md; SHA-256 ee3929ed7c5d6f5f9d49356d6097df9125499b76bade33a1f29be031e84072da; operator parity judgment pending | unmeasured | unmeasured |
+| claudecode | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-fix/SKILL.md; SHA-256 ee05e2734e84a9ef7e8a4abc0659d8b0a9cda703e6bc5a0f4f7c684578885cc7; operator parity judgment pending | unmeasured | unmeasured |
+| claudecode | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-setup/SKILL.md; SHA-256 f794b1d67ed41886c41ed657d02edc11e8a8aa52d91733ac9f3c4bdada45a99c; operator parity judgment pending | unmeasured | unmeasured |
+| claudecode | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .claude/skills/cockpit-work/SKILL.md; SHA-256 5b6609390adca8faa2715a1b3ac592c66e39e2f0074d67322ef17fd1be478c1f; operator parity judgment pending | unmeasured | unmeasured |
 | codexcli | skill-parity | cockpit-explain | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-explain/SKILL.md; SHA-256 518e396424bf14743122ca29803604b37180297d293da177e8e9152a4e87435b; operator parity judgment pending | unmeasured | unmeasured |
-| codexcli | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-fix/SKILL.md; SHA-256 4b39ef910545f1465fc1773609326cbb904dfb4ba11ed2c15cee4c73a2e94d3d; operator parity judgment pending | unmeasured | unmeasured |
-| codexcli | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-setup/SKILL.md; SHA-256 6b537d6764da08a3700cab58c18b7a3f7973faf6efd25c256829c5f2fbd774b2; operator parity judgment pending | unmeasured | unmeasured |
-| codexcli | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-work/SKILL.md; SHA-256 f12cae28ec7cf8be6946e8287c896047d3b3c7c2daf32f8609a03ef7db5ad20b; operator parity judgment pending | unmeasured | unmeasured |
+| codexcli | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-fix/SKILL.md; SHA-256 27936271fe578b56b956903881f77994f04ae45fa5f126d4ae1ef14d516be1f3; operator parity judgment pending | unmeasured | unmeasured |
+| codexcli | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-setup/SKILL.md; SHA-256 4f975336b19b26f8b3cdce45d7af10a77ba4149f689354bb6a8579add8f4a0b8; operator parity judgment pending | unmeasured | unmeasured |
+| codexcli | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .agents/skills/cockpit-work/SKILL.md; SHA-256 d086b81eaab83511b56077823d47b3d9d32c94025dfd4a76aea2d65c68830c0a; operator parity judgment pending | unmeasured | unmeasured |
 | opencode | skill-parity | cockpit-explain | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-explain/SKILL.md; SHA-256 518e396424bf14743122ca29803604b37180297d293da177e8e9152a4e87435b; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-fix/SKILL.md; SHA-256 4b39ef910545f1465fc1773609326cbb904dfb4ba11ed2c15cee4c73a2e94d3d; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-setup/SKILL.md; SHA-256 6b537d6764da08a3700cab58c18b7a3f7973faf6efd25c256829c5f2fbd774b2; operator parity judgment pending | unmeasured | unmeasured |
-| opencode | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-work/SKILL.md; SHA-256 f12cae28ec7cf8be6946e8287c896047d3b3c7c2daf32f8609a03ef7db5ad20b; operator parity judgment pending | unmeasured | unmeasured |
-| cursor | skill-parity | cockpit-explain | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| cursor | skill-parity | cockpit-fix | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| cursor | skill-parity | cockpit-setup | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| cursor | skill-parity | cockpit-work | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| grokcli | skill-parity | cockpit-explain | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| grokcli | skill-parity | cockpit-fix | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| grokcli | skill-parity | cockpit-setup | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
-| grokcli | skill-parity | cockpit-work | unavailable | not_applicable | no authenticated native candidate and broken-control probe is committed | 2026-10-28 | unmeasured |
+| opencode | skill-parity | cockpit-fix | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-fix/SKILL.md; SHA-256 27936271fe578b56b956903881f77994f04ae45fa5f126d4ae1ef14d516be1f3; operator parity judgment pending | unmeasured | unmeasured |
+| opencode | skill-parity | cockpit-setup | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-setup/SKILL.md; SHA-256 4f975336b19b26f8b3cdce45d7af10a77ba4149f689354bb6a8579add8f4a0b8; operator parity judgment pending | unmeasured | unmeasured |
+| opencode | skill-parity | cockpit-work | instructed | human_needed | inspectSkillSet rendered .opencode/skills/cockpit-work/SKILL.md; SHA-256 d086b81eaab83511b56077823d47b3d9d32c94025dfd4a76aea2d65c68830c0a; operator parity judgment pending | unmeasured | unmeasured |
+| cursor | skill-parity | cockpit-explain | generated | pending_evidence | inspectSkillSet rendered .cursor/skills/cockpit-explain/SKILL.md; SHA-256 4066a5078a045149c8432ce4d1feab70c18384b1ed542095377acbef641fe38e; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| cursor | skill-parity | cockpit-fix | generated | pending_evidence | inspectSkillSet rendered .cursor/skills/cockpit-fix/SKILL.md; SHA-256 6920ddcf7bb2e49c16986cf458980bcafa1aca0971d58860cf299694ce66f5b9; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| cursor | skill-parity | cockpit-setup | generated | pending_evidence | inspectSkillSet rendered .cursor/skills/cockpit-setup/SKILL.md; SHA-256 602426e0cf2431ddffde7b6a1da8654142f6d35579c42fc38e04bee1f2089fbd; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| cursor | skill-parity | cockpit-work | generated | pending_evidence | inspectSkillSet rendered .cursor/skills/cockpit-work/SKILL.md; SHA-256 a258786ded045633aca51db5cb160057e89cfb5a904c3cf63799b0ca4e8b231b; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| grokcli | skill-parity | cockpit-explain | generated | pending_evidence | inspectSkillSet rendered .grok/skills/cockpit-explain/SKILL.md; SHA-256 518e396424bf14743122ca29803604b37180297d293da177e8e9152a4e87435b; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| grokcli | skill-parity | cockpit-fix | generated | pending_evidence | inspectSkillSet rendered .grok/skills/cockpit-fix/SKILL.md; SHA-256 27936271fe578b56b956903881f77994f04ae45fa5f126d4ae1ef14d516be1f3; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| grokcli | skill-parity | cockpit-setup | generated | pending_evidence | inspectSkillSet rendered .grok/skills/cockpit-setup/SKILL.md; SHA-256 4f975336b19b26f8b3cdce45d7af10a77ba4149f689354bb6a8579add8f4a0b8; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |
+| grokcli | skill-parity | cockpit-work | generated | pending_evidence | inspectSkillSet rendered .grok/skills/cockpit-work/SKILL.md; SHA-256 d086b81eaab83511b56077823d47b3d9d32c94025dfd4a76aea2d65c68830c0a; cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |

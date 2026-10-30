@@ -10,7 +10,7 @@ description: "Set up or adopt cockpit for a project, bring a multi-repo product 
 # Adopt cockpit
 
 Use this when a human asks you to set cockpit up, adopt it, or bring their product up for
-agents. cockpit declares a product's repositories once in `cockpit.toml`, renders the same agent
+agents. cockpit declares a product's repositories once in `cockpit.toml`, generates the same agent
 instructions, skills, guards and permissions for every harness, and runs the stack against the
 live checkouts. The complete guide, with every situation and its completion criteria, is
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md>; read the section a
@@ -39,8 +39,9 @@ Done when the exact project-local executable lists the commands.
 
 Tell the human that cockpit is not yet published, then follow the canonical
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/getting-started.md#install-cockpit>
-installation. It owns both the intended registry install and the verified source-package
-fallback. Verify the installed dependency without permitting an implicit download:
+installation. It covers both the intended registry install and the source-package
+fallback. For an existing product, install in a dedicated cockpit directory beside the product
+repositories; leave the product repositories untouched unless the human agrees. Verify the installed dependency without permitting an implicit download:
 
 ```sh
 ./node_modules/.bin/cockpit --help
@@ -48,7 +49,7 @@ fallback. Verify the installed dependency without permitting an implicit downloa
 
 Choose your tool's target identifier from the
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>.
-It distinguishes generated surfaces from measured native enforcement. For example, Codex uses
+It separates generated files from native enforcement that has been confirmed. For example, Codex uses
 `codexcli`; substitute the appropriate target below. For an instructions-only tool, follow
 <https://raw.githubusercontent.com/b0dea/cockpit/main/docs/harness-surfaces.md#capability-states>.
 
@@ -61,7 +62,7 @@ and `invocation.exitCode`; a pending `init` also exits 0, so read its `result.st
 ## Route by what is on disk
 
 Look at the directory before asking. Several cases can apply; bootstrap first. Each line names
-the guide section that owns the detail.
+the guide section with the detail.
 
 - **Inside an existing product repository** (a Git checkout with a package manifest at its
   root). The `--json` preview's `result.cockpitRoot` asks for the cockpit root before
@@ -85,7 +86,10 @@ the guide section that owns the detail.
   each with `./node_modules/.bin/cockpit sibling add <slug> --config cockpit.toml --from <path> --purpose "<purpose>" --json`
   and run `./node_modules/.bin/cockpit setup --config cockpit.toml --json`. Guide: *Scattered repositories*.
 - **An existing Compose file.** Answer `environment.compose_files = ["compose.yml"]` instead of a
-  generated stack, and ask the human for the `environment.machine` floors `init` asks next.
+  generated stack (for a Compose file inside a product repository, declare that repository as a
+  sibling and point `compose_files` at the file in the sibling checkout), and ask the human for the
+  `environment.machine` floors and the `environment.posture` (how the product is reached and signed
+  into) that `init` asks next.
   Guide: *Existing Compose file*.
 - **A service with no local setup.** Follow **Create a local setup** below.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
@@ -103,13 +107,15 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 
 - Before the first `up`, measure the runtime with
   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
-  guide's *Measure the runtime* says which runtimes are recognised and which have been measured.
+  guide's *Measure the runtime* says which runtimes are recognised. A measurement takes a few
+  minutes with no progress output, and `--write` makes `cockpit check` fail and the guard hold
+  tool calls until a human runs `cockpit sync --config cockpit.toml`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
   `./node_modules/.bin/cockpit down` removes its runtime, so ask first.
 - Upgrade: install the new version, then run `./node_modules/.bin/cockpit check`,
   `./node_modules/.bin/cockpit sync --dry-run` and `./node_modules/.bin/cockpit sync`. The guard
-  pins the CLI it was rendered for, so after an upgrade the human may need to run
+  trusts only the CLI it was generated for, so after an upgrade the human may need to run
   `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal.
 
 ## Shipped procedure
@@ -121,11 +127,11 @@ by its reference generator so this skill and the installed one cannot disagree.
 
 Choose the current harness target explicitly from the
 [capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
-which separates generation from measured native enforcement.
+which separates what cockpit generates from what has been tested as enforced.
 For Codex CLI, preview with `./node_modules/.bin/cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
-The CLI owns registry interpretation, preview, durable state, artifact publication and environment checks.
-Do not re-derive those decisions in this procedure.
+The CLI reads the registry, shows the preview, keeps state, writes the generated files and checks the environment.
+Do not redo those steps here.
 
 Explore the repository estate before asking questions. Ask only for facts the repositories
 and CLI output cannot answer, in a small answerable round. Present inferred facts
@@ -144,10 +150,10 @@ init for `--help` to list its flags. The step is done when the result reports
 `environment-verified`. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
-named gaps. Native discovery, a real interview and clean-machine proof require separate evidence.
+named gaps. Native discovery, a real interview and a clean-machine run each still need their own check.
 
 For a dedicated cockpit, offer an instruction pointer for each product repository during the
-preview. Do not enable or write one without human approval: it changes what every agent session in
+preview. Do not enable or write one without a person's approval: it changes what every agent session in
 that repository loads. If the product has no **AGENTS.md**, show the exact proposed file as a draft;
 if it has one, show the marked block that would be appended without changing the team's text. After
 approval, record `instruction_pointer = true` on that sibling and follow **Add a repository** to
@@ -163,7 +169,7 @@ lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
 Explain the trade-off in a sentence or two from [root placement choices](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
 
-After accepted initialization, and only with explicit authorization to change product-owned fixtures
+After accepted initialization, and only with explicit permission to change the product's fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
 it as a separate product change. Bootstrap does not discover provider identities or create browser
 state.
@@ -176,7 +182,7 @@ ignore boundary.
 Use this when a repository has no local setup: it has only ever run in CI, staging or a cluster,
 so there is no Dockerfile, Compose file or documented way to start it on a laptop. Cockpit cannot
 read a setup that does not exist, and a setup it guessed would look complete while holding
-guesses. So derive each value from evidence, record it as inferred, and let the human confirm it.
+guesses. So derive each value from what the repository shows, record it as inferred, and let the human confirm it.
 
 1. Read what the repository already states, without running or changing anything: the manifests and
    lockfiles for the runtime and entrypoint, CI workflows for the services they start, deployment
@@ -184,7 +190,7 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    The init preview from **Bootstrap** already proposes several of these under `interview.outstanding`; reuse them
    rather than re-deriving. Done when you hold a list of entrypoint and runtime, ports, environment
    variable names, backing services with images, and a health endpoint, each with the file it came from.
-2. Record variable names only. Values belong to the secret owner; see **Secret handling**. Done when
+2. Record variable names only. Values belong to whoever owns the secret; see **Secret handling**. Done when
    no value from an env file, manifest or workflow appears in your notes or output.
 3. Mark every derived value as `inferred` with its source file and the reason you read it from there.
    Show the human the whole list and ask them to confirm or correct it. Done when the human has
@@ -199,7 +205,7 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    data or a login exists.
 5. Decide where the runnable pieces live. A Dockerfile or Compose file written into a product
    repository is a product change, so ask the human first and show the exact path and contents.
-   Without that authorisation, declare an environment cockpit renders itself and leave the product
+   Without that permission, declare an environment cockpit renders itself and leave the product
    untouched. Done when either the human approved that specific file or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
@@ -228,8 +234,8 @@ order, so the later central path takes precedence. For status the locked executa
 --inject vars --redact-stdout -- <exact command>`. The angle brackets describe product-resolved inputs,
 not literal commands. Resolve the executable and version
 from the product manifest and lock; runtime commands never fetch with `npx`. If the product has not
-adopted Varlock, explicit product-change authority is required to add and lock it. `varlock init`,
-provider login, encryption and secret migration remain human/operator actions; preview their file and
+adopted Varlock, you need explicit permission to change the product before adding and locking it. `varlock init`,
+provider login, encryption and secret migration stay with a person; preview their file and
 provider scope instead of running them automatically.
 
 Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
@@ -237,5 +243,5 @@ names the keys, and `varlock load` in that sibling shows why.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order
-evidence. Varlock's credential proxy is preview software and same-user code is not confined here;
-report secure agent secret use as unavailable unless a separate measured sandbox proves it.
+records. Varlock's credential proxy is preview software and same-user code is not confined here;
+report secure agent secret use as unavailable unless a sandbox that has been tested proves it.

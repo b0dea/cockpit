@@ -2,7 +2,7 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This generated reference is for users authoring or reviewing `cockpit.toml`. The runtime schema and defaults are the configuration authorities.
+This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version.
 
 ## Defaults
 
@@ -32,9 +32,6 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. The
       "main",
       "master"
     ],
-    "ask_is_deny_on": [
-      "codex"
-    ],
     "allow": [],
     "deny": []
   },
@@ -63,11 +60,11 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. The
 }
 ```
 
-## Governed standing cost
+## Skill size limits
 
-Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `738daf2662c9504c7493183159684508075aa0d0d5364ddb3f0f3719c4842eec`.
+Agent tools load every skill's frontmatter into each session and its entry point whenever the skill is used, so cockpit caps both and keeps the detail in a procedure file the agent reads only when it needs it. The limits come from `packages/cockpit/surfaces/skills/collection.json`, SHA-256 `738daf2662c9504c7493183159684508075aa0d0d5364ddb3f0f3719c4842eec`.
 
-| Target | Metric | Cap | Displacement |
+| Target | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
 | claudecode | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | codexcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
@@ -75,16 +72,16 @@ Collection authority: `packages/cockpit/surfaces/skills/collection.json`, SHA-25
 | cursor | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | grokcli | frontmatter_bytes | 8192 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-| Entrypoint | Metric | Cap | Displacement |
+| Skill entry point | Measured as | Limit | Detail moved to |
 | --- | --- | --- | --- |
 | `packages/cockpit/surfaces/skills/cockpit-setup.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-explain.skill.md` | lines | 11 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pull; budget=uncapped; SHA-256 `e0e82398b199972c3b801bc00f458e83444f04d9b26c4b6400789178092f4cd5`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `1f4eb469e7817b5476b70e015fba7a1d1ac1bda0bc0563c2b4ea71c132141971`.
 
-<!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` derives from the registry schema (default 200 lines); measured guide costs are instance-specific and come from the sibling projection owner.
+<!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
 
 
 ## JSON Schema
@@ -2631,15 +2628,6 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
             "type": "string"
           }
         },
-        "ask_is_deny_on": {
-          "default": [
-            "codex"
-          ],
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "allow": {
           "default": [],
           "maxItems": 64,
@@ -3584,7 +3572,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
           "type": "string",
           "enum": [
             "real",
-            "bypassed"
+            "bypassed",
+            "none"
           ]
         },
         "posture_requirements": {
@@ -3611,7 +3600,8 @@ Terminal `packages/cockpit/surfaces/skills/procedures/onboarding.md`: loading=pu
                 "type": "string",
                 "enum": [
                   "real",
-                  "bypassed"
+                  "bypassed",
+                  "none"
                 ]
               }
             },
