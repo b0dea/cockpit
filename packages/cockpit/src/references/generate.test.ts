@@ -176,7 +176,7 @@ describe('reference generation', () => {
         const source = prose.replace(`${begin}\n`, `${begin}\r\n`)
         const rendered = renderReferences(input(source))
         expect(rendered.kind).toBe('complete')
-        if (rendered.kind === 'complete') expect(rendered.troubleshooting.document).toContain(`${begin}\r\n| Diagnostic |`)
+        if (rendered.kind === 'complete') expect(rendered.troubleshooting.document).toContain(`${begin}\r\nEach diagnostic message`)
     })
     it('refuses source paths without matching captured bytes and snapshots admitted source bindings', async () => {
         const assets = await shippedAssets()
@@ -294,9 +294,13 @@ describe('reference generation', () => {
         expect(cli).toContain('| 0 | success |')
         expect(cli).toContain('| 2 | failure |')
         expect(cli).toContain('| 130 | cancelled |')
-        expect(cli).toContain('Configuration: `none`')
-        expect(cli).toContain('| `SYNTHETIC_FAILURE` | `packages/cockpit/src/document/command.ts` | repair the synthetic input |')
-        expect(rendered.troubleshooting.bytes).toContain('| `SYNTHETIC_FAILURE` | `packages/cockpit/src/document/command.ts` | repair the synthetic input |')
+        expect(cli).toContain('| `SYNTHETIC_FAILURE` | repair the synthetic input |')
+        expect(rendered.troubleshooting.bytes).toContain('| `SYNTHETIC_FAILURE` | repair the synthetic input |')
+        expect(rendered.troubleshooting.bytes).toContain('[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes)')
+        for (const page of [cli, rendered.troubleshooting.bytes]) expect(page).not.toContain('packages/cockpit/src/')
+        const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
+        expect(documentSection).toContain('Does not read `cockpit.toml`.')
+        expect(cli.slice(cli.indexOf('## cockpit sync'), cli.indexOf('## cockpit check'))).toContain('Reads `cockpit.toml` from `--config`.')
         expect(cli.slice(cli.indexOf('## cockpit upgrade'), cli.indexOf('\n## cockpit up\n')))
             .toContain('Status: experimental. This interface may change before a stable release.')
     })
@@ -327,12 +331,11 @@ describe('reference generation', () => {
 
     it('rejects fabricated cap authority and missing, duplicate or orphan troubleshooting rows', () => {
         expect(renderReferences({ ...input(), skills: { ...skills } }).kind).toBe('refusal')
-        const row = '| `SYNTHETIC_FAILURE` | `packages/cockpit/src/document/command.ts` | repair the synthetic input |\n'
+        const row = '| `SYNTHETIC_FAILURE` | repair the synthetic input |\n'
         expect(validateTroubleshootingIndex(input().diagnostics, '')).toEqual(expect.arrayContaining([expect.stringContaining('SYNTHETIC_FAILURE')]))
         expect(validateTroubleshootingIndex(input().diagnostics, row + row).length).toBeGreaterThan(0)
-        expect(validateTroubleshootingIndex(input().diagnostics, row + '| `ORPHAN_FAILURE` | `orphan.ts` | none |\n').length).toBeGreaterThan(0)
-        expect(validateTroubleshootingIndex(input().diagnostics, row + '| unknown-code | `orphan.ts` | none |\n').length).toBeGreaterThan(0)
-        expect(validateTroubleshootingIndex(input().diagnostics, row.replace('document/command.ts', 'wrong-owner.ts')).length).toBeGreaterThan(0)
+        expect(validateTroubleshootingIndex(input().diagnostics, row + '| `ORPHAN_FAILURE` | none |\n').length).toBeGreaterThan(0)
+        expect(validateTroubleshootingIndex(input().diagnostics, row + '| unknown-code | none |\n').length).toBeGreaterThan(0)
         expect(validateTroubleshootingIndex(input().diagnostics, row.replace('repair the synthetic input', 'stale remedy')).length).toBeGreaterThan(0)
         const missingRemedies = { ...input().diagnostics, remedies: new Map() } as Parameters<typeof validateTroubleshootingIndex>[0]
         expect(validateTroubleshootingIndex(missingRemedies, row).length).toBeGreaterThan(0)
@@ -345,9 +348,8 @@ describe('reference generation', () => {
             expect(validateTroubleshootingIndex(inventory, rendered.troubleshooting.bytes)).toEqual([])
             const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
             const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
-            expect(documentSection).toContain('Configuration: `none`')
             expect(documentSection).toContain('`DOCUMENT_GAP`')
-            expect(documentSection).toContain('`packages/cockpit/src/document/command.ts`')
+            expect(cli).not.toContain('packages/cockpit/src/')
             expect(documentSection).toContain('supply this value before treating the draft as valid')
         }
     })

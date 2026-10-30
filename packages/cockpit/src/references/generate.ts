@@ -3,7 +3,6 @@ import { isAbsolute } from 'node:path'
 
 import type { DiagnosticInventory } from '../../../../scripts/diagnostic-inventory.mjs'
 import { commands } from '../command-table.js'
-import { mechanism as configMechanism } from '../config/load.js'
 import { snapshotGeneratedJson } from '../environment/contract.js'
 import type { GeneratedSurfaceSelftestProjection } from '../environment/generated-application.js'
 import { executeProbe } from '../environment-exec/execute.js'
@@ -13,7 +12,7 @@ import {
     admitPublicationPlan, expectedState, readAnchoredEntry, runPublicationPlan,
     type PublicationMutation, type PublicationPlanInput, type PublicationRefusal, type PublicationRunAdapters,
 } from '../generated-environment/transaction.js'
-import { configurationDefaults, mechanism as schemaMechanism } from '../schema.js'
+import { configurationDefaults } from '../schema.js'
 import { renderCockpitSchema } from '../schema-json.js'
 import { SURFACE_TARGETS } from '../surfaces/contract.js'
 import { harnessFact } from '../surfaces/harness-registry.js'
@@ -203,27 +202,31 @@ function inventoryCodes(inventory: DiagnosticInventory): readonly string[] | und
     return [...codes].sort()
 }
 
+// Users look a code up to learn what to do. Which source file raises it is maintainer detail that
+// `rg <CODE> packages/cockpit/src` answers, so the user pages never list owners or test commands.
+const DIAGNOSTIC_HEADER = '| Diagnostic | What to do |\n| --- | --- |\n'
+const NO_FIXED_REMEDY = 'see the message'
+const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. Where a code always has the same fix, the table repeats it; '
+    + `otherwise it says "${NO_FIXED_REMEDY}". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n`
+
 function inventoryRemedy(inventory: DiagnosticInventory, name: string): string {
     const fixes = [...inventory.remedies.get(name)!].sort()
-    return fixes.length === 0 ? 'no static remedy captured; inspect implementing owners' : fixes.map(cell).join('; ')
+    return fixes.length === 0 ? NO_FIXED_REMEDY : fixes.map(cell).join('; ')
 }
 
 export function validateTroubleshootingIndex(inventory: DiagnosticInventory, bytes: string): readonly string[] {
     const codes = inventoryCodes(inventory)
     if (!codes) return ['diagnostic inventory is not the exact AST owner projection']
-    const rows = [...bytes.matchAll(/^\| `([A-Z][A-Z0-9_]+)` \| (.+) \| (.+) \|\r?$/gm)]
+    const rows = [...bytes.matchAll(/^\| `([A-Z][A-Z0-9_]+)` \| (.+) \|\r?$/gm)]
     const errors: string[] = []
     for (const line of bytes.split(/\r?\n/)) {
-        if (/^\s*\|/.test(line) && line !== '| Diagnostic | Implementing owners | Source remedy |' && line !== '| --- | --- | --- |'
-            && !/^\| `[A-Z][A-Z0-9_]+` \| .+ \| .+ \|$/.test(line)) errors.push(`malformed troubleshooting row: ${line}`)
+        if (/^\s*\|/.test(line) && line !== '| Diagnostic | What to do |' && line !== '| --- | --- |'
+            && !/^\| `[A-Z][A-Z0-9_]+` \| .+ \|$/.test(line)) errors.push(`malformed troubleshooting row: ${line}`)
     }
     for (const name of codes) {
         const matches = rows.filter(row => row[1] === name)
         if (matches.length !== 1) errors.push(`${name}: expected exactly one troubleshooting row, received ${matches.length}`)
-        else {
-            if (matches[0]![2] !== [...inventory.owners.get(name)!].sort().map(code).join(', ')) errors.push(`${name}: troubleshooting owners do not resolve`)
-            if (matches[0]![3] !== inventoryRemedy(inventory, name)) errors.push(`${name}: troubleshooting remedy is stale`)
-        }
+        else if (matches[0]![2] !== inventoryRemedy(inventory, name)) errors.push(`${name}: troubleshooting remedy is stale`)
     }
     for (const row of rows) if (!codes.includes(row[1]!)) errors.push(`${row[1]}: orphan troubleshooting row`)
     return errors
@@ -252,33 +255,32 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         if (!committed && !expectation) return refusal('capability projection was not accepted by the surface selftest owner')
         const codes = inventoryCodes(input.diagnostics)
         if (!codes) return refusal('diagnostic inventory is malformed or has unresolved owners')
-        const diagnosticRow = (name: string) => `| ${code(name)} | ${[...input.diagnostics.owners.get(name)!].sort().map(code).join(', ')} | ${inventoryRemedy(input.diagnostics, name)} |\n`
-        const index = '| Diagnostic | Implementing owners | Source remedy |\n| --- | --- | --- |\n' + codes.map(diagnosticRow).join('')
-        const indexErrors = validateTroubleshootingIndex(input.diagnostics, index)
+        const diagnosticRow = (name: string) => `| ${code(name)} | ${inventoryRemedy(input.diagnostics, name)} |\n`
+        const table = DIAGNOSTIC_HEADER + codes.map(diagnosticRow).join('')
+        const indexErrors = validateTroubleshootingIndex(input.diagnostics, table)
         if (indexErrors.length > 0) return refusal(indexErrors.join('; '))
+        const index = DIAGNOSTIC_GUIDE + table
         const document = replaceIndex(input.troubleshooting, index)
         if (document === undefined) return refusal('troubleshooting needs exactly one ordered pair of standalone diagnostic-index markers', 'docs/troubleshooting.md')
         const defaults = configurationDefaults()
         const exits = Object.entries(EXIT_CODES).map(([name, value]) => `| ${value} | ${name} |\n`).join('')
         const cli = documentHeading('CLI reference')
-            + 'This generated reference is for users looking up an exact command, flag, exit code or diagnostic. Commands and flags derive from the implementing command table.\n\n'
+            + 'This generated reference is for users looking up an exact command, flag, exit code or diagnostic. '
+            + 'It is generated from the CLI, so it matches this version; `cockpit <command> --help` shows the same flags.\n\n'
+            + DIAGNOSTIC_GUIDE
             + commands.map(command => {
             const commandOwners = input.diagnostics.commandOwners.get(command.handler)
             const ownedDiagnostics = commandOwners
                 ? codes.filter(name => [...input.diagnostics.emissions.get(name)!].some(owner => commandOwners.has(owner)))
                 : []
-            const configuration = command.ordinary.availability === 'available' ? command.ordinary.configuration : 'unavailable'
-            const configurationOwners = configuration === 'resolved' ? `${code(configMechanism.module)}, ${code(schemaMechanism.module)}` : 'none'
             return `## cockpit ${command.name}\n\n${command.summary}.\n\n`
                 + ('experimental' in command && command.experimental ? 'Status: experimental. This interface may change before a stable release.\n\n' : '')
-                + `Configuration: ${code(configuration)}. Owners: ${configurationOwners}.\n\n`
+                + ('config' in command.options ? 'Reads `cockpit.toml` from `--config`.\n\n' : 'Does not read `cockpit.toml`.\n\n')
                 + '| Flag | Type | Default |\n| --- | --- | --- |\n' + Object.entries(command.options).map(([flag, option]) =>
                     `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
                 + '\n| Exit | Meaning |\n| --- | --- |\n' + exits
-                + '\n| Diagnostic | Implementing owners | Source remedy |\n| --- | --- | --- |\n'
-                + (ownedDiagnostics.length > 0 ? ownedDiagnostics.map(diagnosticRow).join('')
-                    : commandOwners ? `| unavailable | ${[...commandOwners].sort().map(code).join(', ')} | no diagnostic is statically owned by the captured handler modules |\n`
-                        : '| unavailable | unavailable | no static owner binding was captured from CLI dispatch |\n')
+                + (ownedDiagnostics.length > 0 ? '\n' + DIAGNOSTIC_HEADER + ownedDiagnostics.map(diagnosticRow).join('')
+                    : '\nNo diagnostic codes are listed for this command; its messages name what failed and how to fix it.\n')
         }).join('\n')
         const sourcePath = (path: string) => {
             if (!committed) return path
@@ -291,7 +293,7 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const guideCosts = ('guideCosts' in input ? input.guideCosts : []).map(cost => cost.status === 'unavailable' ? `- ${cost.target}: unavailable (${cell(cost.reason)}).\n`
             : `- ${cost.target}: ${cost.value}/${cost.cap} ${cost.metric}; ${cost.status}; ${cell(cost.provenance)} (${cost.measuredOn}).\n`).join('')
         const configuration = documentHeading('Configuration reference')
-            + 'This generated reference is for users authoring or reviewing `cockpit.toml`. The runtime schema and defaults are the configuration authorities.\n\n'
+            + 'This generated reference is for users authoring or reviewing `cockpit.toml`. It is generated from the schema cockpit validates against, so it matches this version.\n\n'
             + '## Defaults\n\n```json\n' + JSON.stringify(defaults, null, 2) + '\n```\n\n'
             + '## Governed standing cost\n\n'
             + `Collection authority: ${code(sourcePath(collection.source.path))}, SHA-256 ${code(collection.source.sha256)}.\n\n`

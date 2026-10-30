@@ -865,12 +865,12 @@ export async function checkRepositoryReferences(root, candidate = 'HEAD') {
         const diagnostics = []
         for (const expected of prepared.rendered.files) {
             const actual = await readCurrentText(root, expected.path)
-            if (actual === undefined) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_COPY_MISSING', message: 'generated maintainer reference is missing', target: expected.path }))
-            else if (actual !== expected.bytes) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_COPY_STALE', message: 'generated maintainer reference differs from captured HEAD owners', target: expected.path }))
+            if (actual === undefined) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_COPY_MISSING', message: 'generated reference page is missing; run npm run references', target: expected.path }))
+            else if (actual !== expected.bytes) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_COPY_STALE', message: 'generated reference page differs from what the committed sources produce; run npm run references', target: expected.path }))
         }
         const actualRegion = region(troubleshooting)
         if (actualRegion === undefined) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_REGION_INVALID', message: 'diagnostic index markers are missing or ambiguous', target: TROUBLESHOOTING_PATH }))
-        else if (actualRegion !== prepared.rendered.troubleshooting.bytes) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_COPY_STALE', message: 'generated diagnostic index differs from captured HEAD owners', target: TROUBLESHOOTING_PATH }))
+        else if (actualRegion !== prepared.rendered.troubleshooting.bytes) diagnostics.push(Object.freeze({ severity: 'error', code: 'REFERENCE_COPY_STALE', message: 'troubleshooting diagnostic index differs from what the committed sources produce; run npm run references', target: TROUBLESHOOTING_PATH }))
         if (!await revalidateCommittedInputs(prepared.snapshot, prepared.owners)) return referenceRefusal('REFERENCE_SOURCE_CHANGED', 'committed reference inputs changed during check')
         return Object.freeze({ kind: 'complete', ok: diagnostics.length === 0, diagnostics: Object.freeze(diagnostics) })
     } catch (error) {
