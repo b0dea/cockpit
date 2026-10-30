@@ -1,8 +1,11 @@
 # Every published host port comes from a [ports.bases] variable, so parallel stacks do not collide;
-# each sibling is bind-mounted because cockpit.toml declares it mount = "always".
+# each sibling is bind-mounted because cockpit.toml declares it mount = "always". `init: true` runs a
+# minimal init as PID 1 so `cockpit sleep` and `down` stop node on SIGTERM instead of waiting out the
+# stop grace: node as PID 1 ignores SIGTERM.
 services:
   api:
     build: ${API_DIR:-./api}
+    init: true
     ports: ["${API_HOST_PORT:-4200}:3000"]
     volumes: ["./api:/app"]
     healthcheck:
@@ -10,6 +13,7 @@ services:
       interval: 5s
   web:
     build: ${WEB_DIR:-./web}
+    init: true
     ports: ["${WEB_HOST_PORT:-4300}:3000"]
     volumes: ["./web:/app"]
     depends_on: [api]

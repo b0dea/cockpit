@@ -1,6 +1,7 @@
 services:
   api:
     build: ${API_DIR:-./api}
+    init: true
     ports: ["${API_HOST_PORT:-4400}:3000"]
     volumes: ["./api:/app"]
     healthcheck:
