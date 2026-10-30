@@ -152,8 +152,9 @@ it('dispatches a complete core and plugin estate through two generators, two rea
     const cleanups = dispatch.steps.filter(step => step.id.startsWith('surface-cleanup-'))
     expect([generators.length, readers.length, cleanups.length]).toEqual([2, 2, 1])
     expect(new Set(generators.map(step => step.cwd)).size).toBe(2)
-    expect(generators.every(step => step.consumedFiles.length === 2)).toBe(true)
-    expect(readers.every(step => step.consumedFiles.length === 1)).toBe(true)
+    const consumedNames = (step: ExecutionStep): string[] => step.consumedFiles.slice(1).map(file => file.path.slice(file.path.lastIndexOf('/') + 1))
+    expect(generators.map(consumedNames)).toEqual([0, 1].map(() => ['surface-generator-worker.cjs', 'rulesync-generator.cjs']))
+    expect(readers.map(consumedNames)).toEqual([0, 1].map(() => ['surface-output-reader.cjs']))
     for (const reader of readers) {
         expect(dispatch.events.indexOf(`start:read:${reader.cwd}`)).toBeGreaterThan(
             dispatch.events.indexOf(`end:generate:${reader.cwd}`),

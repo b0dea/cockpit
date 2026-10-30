@@ -693,27 +693,25 @@ it('refuses generated output over the neutral file limit before completion', asy
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 
 it('evaluates the authenticated generator bytes when the bundle path can change before load', () => {
-    const adapter = readFileSync(resolve(ROOT, 'packages/cockpit/src/surfaces/generator-adapter.ts'), 'utf8')
-    const worker = adapter.slice(
-        adapter.indexOf('const ESTATE_GENERATOR_WORKER = String.raw`'),
-        adapter.indexOf('const ESTATE_READ_WORKER = String.raw`'),
-    )
-    const loader = worker.slice(worker.indexOf("const fs = require('node:fs');"), worker.indexOf('const inventory = root =>'))
+    const worker = resolve(ROOT, 'packages/cockpit/libexec/surface-generator-worker.cjs')
     const scratch = mkdtempSync(join(tmpdir(), 'cockpit-rulesync-load-'))
     const bundle = join(scratch, 'generator.cjs')
     const authenticated = "module.exports = { marker: 'authenticated' };\n"
     const changed = "module.exports = { marker: 'changed' };\n"
     try {
         writeFileSync(bundle, authenticated)
-        const script = `${loader}\nconst bytes = authenticateBundle();\nfs.writeFileSync(bundlePath, ${JSON.stringify(changed)});\nconst root = loadAuthenticatedBundle(bytes);\nprocess.stdout.write(root.marker);`
-        const request = JSON.stringify({
-            bundleSha256: createHash('sha256').update(authenticated).digest('hex'),
-            bundleMaxBytes: 1_024,
-        })
+        const script = [
+            `const fs = require('node:fs'); const worker = require(${JSON.stringify(worker)})`,
+            `const [bundlePath, sha256] = process.argv.slice(1)`,
+            'const bytes = worker.authenticateBundle(bundlePath, sha256, 1024)',
+            `fs.writeFileSync(bundlePath, ${JSON.stringify(changed)})`,
+            'process.stdout.write(worker.loadAuthenticatedBundle(bundlePath, bytes).marker)',
+        ].join('\n')
+        const digest = createHash('sha256').update(authenticated).digest('hex')
 
-        expect(execFileSync(process.execPath, ['-e', script, request, bundle], { encoding: 'utf8' })).toBe('authenticated')
+        expect(execFileSync(process.execPath, ['-e', script, bundle, digest], { encoding: 'utf8' })).toBe('authenticated')
         expect(readFileSync(bundle, 'utf8')).toBe(changed)
-        expect(worker).not.toContain('require(bundlePath)')
+        expect(readFileSync(worker, 'utf8')).not.toContain('require(bundlePath)')
     } finally {
         rmSync(scratch, { recursive: true, force: true })
     }

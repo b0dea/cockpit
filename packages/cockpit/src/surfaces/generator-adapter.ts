@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { libexecProgram, type LibexecProgram } from '../environment-exec/libexec-program.js'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotGeneratedJson, type ExecutionStep, type JsonSnapshotObject } from '../environment/contract.js'
 import {
     bundleSurfaceFiles,
@@ -199,284 +200,27 @@ const EMPTY_WARNINGS = Object.freeze([]) as readonly SurfaceGenerationWarning[]
 // This digest binds the checked-in, self-contained generator asset. The build-time package
 // tree is deliberately absent from the runtime authority boundary.
 const PINNED_GENERATOR_BUNDLE_SHA256 = '01781a4b3952c24a1ec3ec749985eccf895728e932bc41a3bea4ab1d901fe4a5'
+// The worker programs enforce these bounds; they receive them in each request so the limits keep
+// one owner here.
+const WORKER_OUTPUT_LIMITS = Object.freeze({
+    fileMaxBytes: SURFACE_FILE_MAX_BYTES,
+    outputMaxFiles: SURFACE_OUTPUT_MAX_FILES,
+    outputMaxBytes: SURFACE_OUTPUT_MAX_BYTES,
+    stdoutMaxBytes: MAX_WORKER_STDOUT_BYTES,
+})
+const GENERATOR_LIMITS = Object.freeze({
+    ...WORKER_OUTPUT_LIMITS,
+    stderrMaxBytes: MAX_WORKER_STDERR_BYTES,
+    warningCount: MAX_WARNING_COUNT,
+    warningBytes: MAX_WARNING_BYTES,
+    warningTotalBytes: MAX_WARNING_TOTAL_BYTES,
+})
 
-const ESTATE_GENERATOR_WORKER = String.raw`
-const fs = require('node:fs');
-const crypto = require('node:crypto');
-const Module = require('node:module');
-const path = require('node:path');
-const request = JSON.parse(process.argv[1]);
-const bundlePath = process.argv[2];
-const digest = value => crypto.createHash('sha256').update(value).digest('hex');
-const safe = value => typeof value === 'string' && value.length > 0 && !path.isAbsolute(value) && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part && part !== '.' && part !== '..');
-const sameDirectory = (value, expected) => value.isDirectory() && !value.isSymbolicLink() && value.dev === expected.dev && value.ino === expected.ino;
-const authenticateBundle = () => {
-  const before = fs.lstatSync(bundlePath);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > request.bundleMaxBytes || fs.constants.O_NOFOLLOW === undefined) throw new Error('rulesync bundle file changed');
-  const fd = fs.openSync(bundlePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const opened = fs.fstatSync(fd);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > request.bundleMaxBytes) throw new Error('rulesync bundle identity changed');
-    const chunks = []; const chunk = Buffer.allocUnsafe(65536); let total = 0;
-    while (true) {
-      const count = fs.readSync(fd, chunk, 0, Math.min(chunk.length, request.bundleMaxBytes - total + 1), null);
-      if (count === 0) break;
-      total += count;
-      if (total > request.bundleMaxBytes) throw new Error('rulesync bundle limit exceeded');
-      chunks.push(Buffer.from(chunk.subarray(0, count)));
-    }
-    const after = fs.fstatSync(fd);
-    if (total !== opened.size || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size
-      || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) throw new Error('rulesync bundle changed while reading');
-    const bytes = Buffer.concat(chunks, total);
-    if (digest(bytes) !== request.bundleSha256) throw new Error('rulesync bundle digest changed');
-    return bytes;
-  } finally { fs.closeSync(fd); }
-};
-const loadAuthenticatedBundle = bytes => {
-  const loaded = new Module(bundlePath, module);
-  loaded.filename = bundlePath;
-  loaded.paths = Module._nodeModulePaths(path.dirname(bundlePath));
-  loaded._compile(new TextDecoder('utf-8', { fatal: true }).decode(bytes), bundlePath);
-  return loaded.exports;
-};
-const inventory = root => {
-  const files = []; let total = 0;
-  const walk = (current, prefix = '') => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      if (!safe(entry.name)) throw new Error('unsafe generated entry');
-      const relative = prefix ? prefix + '/' + entry.name : entry.name;
-      const target = path.join(current, entry.name);
-      const status = fs.lstatSync(target);
-      if (status.isSymbolicLink()) throw new Error('generated symbolic link');
-      if (status.isDirectory()) walk(target, relative);
-      else if (status.isFile()) {
-        if (status.size > ${SURFACE_FILE_MAX_BYTES}) throw new Error('generated file limit exceeded');
-        const bytes = fs.readFileSync(target);
-        total += bytes.length;
-        if (files.length >= ${SURFACE_OUTPUT_MAX_FILES} || total > ${SURFACE_OUTPUT_MAX_BYTES}) throw new Error('generated output limit exceeded');
-        files.push({ path: relative, bytes: bytes.length, sha256: digest(bytes) });
-      } else throw new Error('generated non-regular entry');
-    }
-  };
-  walk(root);
-  return files.sort((left, right) => left.path.localeCompare(right.path));
-};
-const warningMessage = entries => {
-  const one = entries.length === 1;
-  const details = entries.map(({ label, reason }) => "'" + label + "' — " + reason).join('; ');
-  return 'Claude Code permissions: writing ' + entries.length + ' trust-affecting ' + (one ? 'setting' : 'settings') + ' to .claude/settings.json; review ' + (one ? 'it' : 'them') + ' as you would a hook because synced agent settings can widen filesystem access or approve project servers. ' + details + '.';
-};
-const nativeWarningMessage = entries => {
-  const one = entries.length === 1;
-  const details = entries.map(({ label, reason }) => "'" + label + "' — " + reason).join('; ');
-  return 'Claude Code permissions: writing ' + entries.length + ' trust-affecting ' + (one ? 'setting' : 'settings') + " to .claude/settings.json; review " + (one ? 'it' : 'them') + " as you would a hook, especially if this permissions file came from '" + ['rulesync', 'fetch'].join(' ') + "'. " + details + '.';
-};
-const knownWarningEntries = [
-  { label: 'permissions.additionalDirectories', reason: 'moves the boundary of what Claude Code may read and edit outside the project' },
-  { label: 'enabledMcpjsonServers', reason: 'auto-approves the named servers in the project \`.mcp.json\`' },
-];
-const authenticateWarnings = ({ job, captured, actualFiles }) => {
-  if (captured.length === 0) return [];
-  if (job.target !== 'claudecode' || job.warningSourceSha256 === null) return undefined;
-  const sourcePath = path.join(job.inputRoot, 'permissions.jsonc');
-  if (!fs.existsSync(sourcePath)) return undefined;
-  const sourceBytes = fs.readFileSync(sourcePath);
-  if (digest(sourceBytes) !== job.warningSourceSha256 || !actualFiles.some(file => file.path === '.claude/settings.json')) return undefined;
-  let source; let settings;
-  try { source = JSON.parse(sourceBytes.toString('utf8')); settings = JSON.parse(fs.readFileSync(path.join(job.outputRoot, '.claude/settings.json'), 'utf8')); }
-  catch { return undefined; }
-  if (source === null || typeof source !== 'object' || Array.isArray(source) || settings === null || typeof settings !== 'object' || Array.isArray(settings)) return undefined;
-  const claude = source.claudecode;
-  if (claude === null || typeof claude !== 'object' || Array.isArray(claude)) return undefined;
-  const sourcePermissions = claude.permissions;
-  const sourceAdditionalDirectories = sourcePermissions !== null && typeof sourcePermissions === 'object' && !Array.isArray(sourcePermissions) ? sourcePermissions.additionalDirectories : undefined;
-  const sourceEnabledMcpjsonServers = claude.enabledMcpjsonServers;
-  const permissions = settings.permissions;
-  const additionalDirectories = permissions !== null && typeof permissions === 'object' && !Array.isArray(permissions) ? permissions.additionalDirectories : undefined;
-  const enabledMcpjsonServers = settings.enabledMcpjsonServers;
-  const sameStrings = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => typeof value === 'string' && value === right[index]);
-  if ((additionalDirectories !== undefined || sourceAdditionalDirectories !== undefined) && !sameStrings(additionalDirectories, sourceAdditionalDirectories)
-    || (enabledMcpjsonServers !== undefined || sourceEnabledMcpjsonServers !== undefined) && !sameStrings(enabledMcpjsonServers, sourceEnabledMcpjsonServers)) return undefined;
-  const entries = [];
-  if (Array.isArray(additionalDirectories) && additionalDirectories.length > 0) entries.push(knownWarningEntries[0]);
-  if (Array.isArray(enabledMcpjsonServers)) entries.push(knownWarningEntries[1]);
-  if (entries.length === 0 || additionalDirectories !== undefined && (!Array.isArray(additionalDirectories) || !additionalDirectories.every(value => typeof value === 'string'))
-    || enabledMcpjsonServers !== undefined && (!Array.isArray(enabledMcpjsonServers) || !enabledMcpjsonServers.every(value => typeof value === 'string'))) return undefined;
-  const expected = warningMessage(entries);
-  if (captured.length !== 1 || captured[0] !== expected && captured[0] !== nativeWarningMessage(entries)) return undefined;
-  return [{ severity: 'warning', code: 'SURFACE_GENERATOR_TRUST_WARNING', target: job.target, path: '.claude/settings.json', message: expected }];
-};
-const writeReceipt = (target, value) => {
-  const bytes = Buffer.from(JSON.stringify(value) + '\n');
-  if (bytes.length > ${MAX_WORKER_STDOUT_BYTES} || fs.constants.O_NOFOLLOW === undefined) throw new Error('generator receipt limit exceeded');
-  const fd = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
-  try { fs.writeFileSync(fd, bytes); } finally { fs.closeSync(fd); }
-  return { bytes: bytes.length, sha256: digest(bytes) };
-};
-(async () => {
-  const bundleBytes = authenticateBundle();
-  const passRoot = fs.lstatSync('.');
-  if (!sameDirectory(passRoot, request.identity)) throw new Error('pass root identity changed');
-  const summaries = [];
-  for (const job of request.jobs) {
-    let failureCause = 'nonzero';
-    const captured = []; let capturedBytes = 0;
-    const stderr = []; let stderrBytes = 0;
-    const originalStderrWrite = process.stderr.write;
-    process.stderr.write = (chunk, encoding, callback) => {
-      const bytes = typeof chunk === 'string' ? Buffer.from(chunk, typeof encoding === 'string' ? encoding : undefined) : Buffer.from(chunk);
-      const remaining = ${MAX_WORKER_STDERR_BYTES} - stderrBytes;
-      if (remaining > 0) stderr.push(bytes.subarray(0, remaining));
-      stderrBytes += bytes.length;
-      const done = typeof encoding === 'function' ? encoding : callback;
-      if (typeof done === 'function') queueMicrotask(done);
-      return true;
-    };
-    try {
-      const cwdStatus = fs.lstatSync(job.cwd);
-      const outputStatus = fs.lstatSync(job.outputRoot);
-      if (!sameDirectory(cwdStatus, job.cwdIdentity) || !sameDirectory(outputStatus, job.identity)) throw new Error('job root identity changed');
-      process.chdir(job.cwd);
-      if (!sameDirectory(fs.lstatSync('.'), job.cwdIdentity)) throw new Error('job working directory changed');
-      const root = loadAuthenticatedBundle(bundleBytes);
-      if (typeof root.generate !== 'function') throw new Error('rulesync root generate export unavailable');
-      const originalWarn = console.warn;
-      console.warn = (...args) => {
-        const warning = args.length === 1 && typeof args[0] === 'string' ? args[0] : args.map(value => String(value)).join(' ');
-        const bytes = Buffer.byteLength(warning);
-        if (captured.length >= ${MAX_WARNING_COUNT} || bytes > ${MAX_WARNING_BYTES} || capturedBytes + bytes > ${MAX_WARNING_TOTAL_BYTES}) {
-          failureCause = 'stderr'; captured.splice(0, captured.length, 'surface generator emitted an unbounded diagnostic'); return;
-        }
-        captured.push(warning); capturedBytes += bytes;
-      };
-      let result;
-      try {
-        result = await root.generate({ configPath: 'rulesync.jsonc', inputRoots: [job.inputRoot], outputRoots: [job.outputRoot], targets: [job.target], features: job.features, global: false, delete: false, silent: false });
-      } catch (error) {
-        if (captured.length > 0) { failureCause = 'stderr'; throw new Error(captured.join('\n')); }
-        throw error;
-      } finally { console.warn = originalWarn; }
-      if (stderrBytes > 0) { failureCause = 'stderr'; throw new Error(Buffer.concat(stderr).toString('utf8')); }
-      if (result.sourceLoadFailed !== false || !Array.isArray(result.sourceLoadFailedFeatures) || result.sourceLoadFailedFeatures.length !== 0) throw new Error('rulesync could not load every requested source');
-      const features = job.features.map(feature => ({ feature, count: result[feature + 'Count'], paths: result[feature + 'Paths'] }));
-      const reportedPaths = [...new Set(features.flatMap(feature => feature.paths))].sort((left, right) => left.localeCompare(right));
-      const actualFiles = inventory(job.outputRoot);
-      const warnings = authenticateWarnings({ job, captured, actualFiles });
-      if (warnings === undefined) { failureCause = 'stderr'; throw new Error(captured.join('\n')); }
-      if (!sameDirectory(fs.lstatSync(job.outputRoot), job.identity)) throw new Error('output root identity changed');
-      const receipt = writeReceipt(job.receiptOutput, { version: 1, target: job.target, features, reportedPaths, actualFiles, warnings: warnings ?? [] });
-      summaries.push({ id: job.id, target: job.target, kind: 'complete', ...receipt });
-    } catch (error) {
-      if (stderrBytes > 0) failureCause = 'stderr';
-      const message = stderrBytes > 0 ? Buffer.concat(stderr).toString('utf8') : String(error && (error.stack || error.message) || error);
-      summaries.push({ id: job.id, target: job.target, kind: 'error', cause: failureCause, message: message.slice(0, 1024) });
-    } finally {
-      process.stderr.write = originalStderrWrite;
-      process.chdir(request.passRoot);
-      if (!sameDirectory(fs.lstatSync('.'), request.identity)) throw new Error('pass root changed');
-    }
-  }
-  process.stdout.write(JSON.stringify({ version: 1, jobs: summaries }) + '\n');
-})().catch(error => { process.stderr.write(String(error && (error.stack || error.message) || error) + '\n'); process.exitCode = 1; });
-`
-
-const ESTATE_READ_WORKER = String.raw`
-const fs = require('node:fs');
-const crypto = require('node:crypto');
-const request = JSON.parse(process.argv[1]);
-const c = fs.constants;
-const digest = value => crypto.createHash('sha256').update(value).digest('hex');
-const safe = value => typeof value === 'string' && value.length > 0 && value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\') && !value.includes('\0');
-const sameDirectory = (value, expected) => value.isDirectory() && !value.isSymbolicLink() && value.dev === expected.dev && value.ino === expected.ino;
-const samePaths = (left, right) => left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index]);
-const readFile = name => {
-  const before = fs.lstatSync(name);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > ${SURFACE_FILE_MAX_BYTES} || c.O_NOFOLLOW === undefined) throw new Error('unsafe output file');
-  const fd = fs.openSync(name, c.O_RDONLY | c.O_NOFOLLOW);
-  try {
-    const opened = fs.fstatSync(fd);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > ${SURFACE_FILE_MAX_BYTES}) throw new Error('output identity changed');
-    const chunks = []; const chunk = Buffer.allocUnsafe(65536); let total = 0;
-    while (true) {
-      const count = fs.readSync(fd, chunk, 0, Math.min(chunk.length, ${SURFACE_FILE_MAX_BYTES} - total + 1), null);
-      if (count === 0) break;
-      total += count;
-      if (total > ${SURFACE_FILE_MAX_BYTES}) throw new Error('output file limit exceeded');
-      chunks.push(Buffer.from(chunk.subarray(0, count)));
-    }
-    const after = fs.fstatSync(fd);
-    if (total !== opened.size || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) throw new Error('output changed while reading');
-    const bytes = Buffer.concat(chunks, total);
-    return { bytes: bytes.length, sha256: digest(bytes), bytesBase64: bytes.toString('base64') };
-  } finally { fs.closeSync(fd); }
-};
-const inventory = job => {
-  const files = []; let total = 0;
-  const walk = (prefix = '') => {
-    const parent = fs.lstatSync('.');
-    if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error('unsafe output directory');
-    for (const entry of fs.readdirSync('.', { withFileTypes: true })) {
-      if (!safe(entry.name)) throw new Error('unsafe output entry');
-      const status = fs.lstatSync(entry.name);
-      const relative = prefix ? prefix + '/' + entry.name : entry.name;
-      if (status.isSymbolicLink()) throw new Error('output symbolic link');
-      if (status.isDirectory()) {
-        process.chdir(entry.name);
-        if (!sameDirectory(fs.lstatSync('.'), status)) throw new Error('output directory changed');
-        walk(relative);
-        process.chdir('..');
-        if (!sameDirectory(fs.lstatSync('.'), parent) || !sameDirectory(fs.lstatSync(entry.name), status)) throw new Error('output directory identity changed');
-      } else if (status.isFile()) {
-        const file = readFile(entry.name);
-        total += file.bytes;
-        if (files.length >= ${SURFACE_OUTPUT_MAX_FILES} || total > ${SURFACE_OUTPUT_MAX_BYTES}) throw new Error('output set limit exceeded');
-        files.push({ path: relative, ...file });
-      } else throw new Error('output non-regular entry');
-    }
-  };
-  process.chdir(job.outputRoot);
-  if (!sameDirectory(fs.lstatSync('.'), job.identity)) throw new Error('output root identity changed');
-  walk();
-  if (!sameDirectory(fs.lstatSync('.'), job.identity)) throw new Error('output root changed');
-  files.sort((left, right) => left.path.localeCompare(right.path));
-  if (!samePaths(files.map(file => file.path), job.expected)) throw new Error('output path set changed');
-  return files;
-};
-const writeReceipt = (target, value) => {
-  const bytes = Buffer.from(JSON.stringify(value) + '\n');
-  if (bytes.length > ${MAX_WORKER_STDOUT_BYTES} || c.O_NOFOLLOW === undefined) throw new Error('reader receipt limit exceeded');
-  const fd = fs.openSync(target, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_NOFOLLOW, 0o600);
-  try { fs.writeFileSync(fd, bytes); } finally { fs.closeSync(fd); }
-  return { bytes: bytes.length, sha256: digest(bytes) };
-};
-const passRoot = fs.lstatSync('.');
-if (!sameDirectory(passRoot, request.identity)) throw new Error('pass root identity changed');
-const summaries = [];
-for (const job of request.jobs) {
-  try {
-    const files = inventory(job);
-    const receipt = writeReceipt(job.receiptOutput, { version: 1, files });
-    summaries.push({ id: job.id, target: job.target, kind: 'complete', ...receipt });
-  } catch (error) {
-    summaries.push({ id: job.id, target: job.target, kind: 'error', cause: 'artifact', message: String(error && (error.stack || error.message) || error).slice(0, 4096) });
-  } finally {
-    process.chdir(request.passRoot);
-    if (!sameDirectory(fs.lstatSync('.'), request.identity)) throw new Error('pass root changed');
-  }
+interface SurfacePrograms {
+    readonly generate: LibexecProgram
+    readonly read: LibexecProgram
+    readonly cleanup: LibexecProgram
 }
-process.stdout.write(JSON.stringify({ version: 1, jobs: summaries }) + '\n');
-`
-
-const CLEANUP_WORKER = String.raw`
-const fs = require('node:fs');
-const path = require('node:path');
-const request = JSON.parse(process.argv[1]);
-const target = request.target;
-const base = path.basename(target);
-if (path.dirname(target) !== request.parent || !base.startsWith('cockpit-surfaces-')) throw new Error('cleanup target refused');
-fs.rmSync(target, { recursive: true, force: true });
-`
 
 function diagnostic(
     code: string,
@@ -532,15 +276,20 @@ function sha256(bytes: string | Uint8Array): string {
     return createHash('sha256').update(bytes).digest('hex')
 }
 
-async function digestFile(path: string, maxBytes: number, executable = false): Promise<string | undefined> {
+// Each refusal names what differed so the unavailable diagnostic can say why authority failed.
+async function digestFile(path: string, maxBytes: number, executable = false): Promise<string> {
     let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
-        if (constants.O_NOFOLLOW === undefined) return undefined
+        if (constants.O_NOFOLLOW === undefined) throw new Error('this platform cannot open files without following symbolic links')
         const before = await lstat(path)
-        if (!before.isFile() || before.isSymbolicLink() || before.size > maxBytes || executable && (before.mode & 0o111) === 0) return undefined
+        if (!before.isFile() || before.isSymbolicLink()) throw new Error(`${path} is not a regular file`)
+        if (before.size > maxBytes) throw new Error(`${path} exceeds ${maxBytes} bytes`)
+        if (executable && (before.mode & 0o111) === 0) throw new Error(`${path} is not executable`)
         handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
         const opened = await handle.stat()
-        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > maxBytes) return undefined
+        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > maxBytes) {
+            throw new Error(`${path} changed while it was opened`)
+        }
         const hash = createHash('sha256')
         const chunk = Buffer.allocUnsafe(Math.min(maxBytes + 1, 1_048_576))
         let total = 0
@@ -548,46 +297,49 @@ async function digestFile(path: string, maxBytes: number, executable = false): P
             const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null)
             if (bytesRead === 0) break
             total += bytesRead
-            if (total > maxBytes) return undefined
+            if (total > maxBytes) throw new Error(`${path} grew past ${maxBytes} bytes while it was read`)
             hash.update(chunk.subarray(0, bytesRead))
         }
         const after = await handle.stat()
-        return total === opened.size && after.size === opened.size && after.mtimeMs === opened.mtimeMs && after.ctimeMs === opened.ctimeMs
-            ? hash.digest('hex') : undefined
-    } catch {
-        return undefined
+        if (total !== opened.size || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) {
+            throw new Error(`${path} changed while it was read`)
+        }
+        return hash.digest('hex')
     } finally {
         await handle?.close()
     }
 }
 
-async function nodeAuthority(): Promise<NodeAuthority | undefined> {
-    try {
-        const path = await realpath(process.execPath)
-        const digest = await digestFile(path, MAX_NODE_BYTES, true)
-        return digest ? Object.freeze({ path, sha256: digest }) : undefined
-    } catch {
-        return undefined
-    }
+async function nodeAuthority(): Promise<NodeAuthority> {
+    const path = await realpath(process.execPath)
+    return Object.freeze({ path, sha256: await digestFile(path, MAX_NODE_BYTES, true) })
 }
 
-async function bundleAuthority(): Promise<BundleAuthority | undefined> {
-    try {
-        const path = fileURLToPath(new URL('../../libexec/rulesync-generator.cjs', import.meta.url))
-        if (await realpath(path) !== path) return undefined
-        const digest = await digestFile(path, MAX_GENERATOR_BUNDLE_BYTES)
-        return digest === PINNED_GENERATOR_BUNDLE_SHA256
-            ? Object.freeze({ path, sha256: digest, maxBytes: MAX_GENERATOR_BUNDLE_BYTES }) : undefined
-    } catch {
-        return undefined
-    }
+async function bundleAuthority(): Promise<BundleAuthority> {
+    const path = fileURLToPath(new URL('../../libexec/rulesync-generator.cjs', import.meta.url))
+    if (await realpath(path) !== path) throw new Error(`${path} is reached through a symbolic link`)
+    const digest = await digestFile(path, MAX_GENERATOR_BUNDLE_BYTES)
+    if (digest !== PINNED_GENERATOR_BUNDLE_SHA256) throw new Error(`${path} differs from the pinned bundle digest`)
+    return Object.freeze({ path, sha256: digest, maxBytes: MAX_GENERATOR_BUNDLE_BYTES })
+}
+
+function surfacePrograms(): SurfacePrograms {
+    return Object.freeze({
+        generate: libexecProgram('surface-generator-worker.cjs'),
+        read: libexecProgram('surface-output-reader.cjs'),
+        cleanup: libexecProgram('surface-scratch-cleanup.cjs'),
+    })
+}
+
+function failureReason(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
 }
 
 function step(
     node: NodeAuthority,
     id: string,
     cwd: string,
-    script: string,
+    program: LibexecProgram,
     request: string,
     deadline: number,
     stdoutLimitBytes = MAX_WORKER_STDOUT_BYTES,
@@ -597,7 +349,8 @@ function step(
     if (remaining <= 0 || Buffer.byteLength(request) > 1_048_576) return undefined
     return snapshotExecutionStep({
         id,
-        argv: [node.path, '-e', script, request, ...authenticatedFiles.map(file => file.path)],
+        // '--' ends Node's own options, so the program path can never be read as one.
+        argv: [node.path, '--', program.path, request, ...authenticatedFiles.map(file => file.path)],
         argv0: node.path,
         cwd,
         env: { NODE_ENV: 'production' },
@@ -618,6 +371,7 @@ function step(
                 executable: true,
                 executionMode: 'verified-path',
             },
+            { path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: [2], executable: false },
             ...authenticatedFiles.map((file, index) => ({
                 path: file.path,
                 sha256: file.sha256,
@@ -931,6 +685,7 @@ async function runEstatePass(
     jobs: readonly StagedEstateJob[],
     node: NodeAuthority,
     bundle: BundleAuthority,
+    programs: SurfacePrograms,
     deadline: number,
 ): Promise<EstatePassResult> {
     const failures = (item: SurfaceGenerationDiagnostic): EstatePassResult => Object.freeze({
@@ -949,6 +704,7 @@ async function runEstatePass(
         identity,
         bundleSha256: bundle.sha256,
         bundleMaxBytes: bundle.maxBytes,
+        limits: GENERATOR_LIMITS,
         jobs: generatorJobs.map(job => ({
             id: job.id,
             target: job.generatorTarget,
@@ -966,7 +722,7 @@ async function runEstatePass(
         })),
     })
     const generationStep = step(node, `surface-estate-generate-${pass}-${randomBytes(8).toString('hex')}`, root,
-        ESTATE_GENERATOR_WORKER, generatorRequest, deadline, MAX_WORKER_STDOUT_BYTES, [bundle])
+        programs.generate, generatorRequest, deadline, MAX_WORKER_STDOUT_BYTES, [bundle])
     if (!generationStep) return failures(diagnostic('SURFACE_WORKER_TIMEOUT', 'surface generator batch deadline expired before spawn', 'timeout', pass))
     const generation = authenticatedExecutionOutcome(await executeProbe(generationStep), generationStep)
     if (!generation || generation.kind !== 'complete') {
@@ -1006,7 +762,7 @@ async function runEstatePass(
     }
     const readerJobs = jobs.filter(job => !generatedFailures.has(job.id))
     if (readerJobs.length === 0) return Object.freeze({ jobs: generatedFailures })
-    const readRequest = JSON.stringify({ version: 1, passRoot: root, identity,
+    const readRequest = JSON.stringify({ version: 1, passRoot: root, identity, limits: WORKER_OUTPUT_LIMITS,
         jobs: readerJobs.map(job => ({ id: job.id, target: job.generatorTarget,
             outputRoot: job.outputRoot, identity: job.outputIdentity,
             expected: job.expected, receiptOutput: job.readerReceipt })),
@@ -1019,7 +775,7 @@ async function runEstatePass(
         ]),
     })
     const readStep = step(node, `surface-estate-read-${pass}-${randomBytes(8).toString('hex')}`, root,
-        ESTATE_READ_WORKER, readRequest, deadline)
+        programs.read, readRequest, deadline)
     if (!readStep) return readFailures(diagnostic('SURFACE_WORKER_TIMEOUT', 'surface generator batch deadline expired before output authentication', 'timeout', pass))
     const read = authenticatedExecutionOutcome(await executeProbe(readStep), readStep)
     if (!read || read.kind !== 'complete') {
@@ -1070,12 +826,12 @@ async function runEstatePass(
     return Object.freeze({ jobs: results })
 }
 
-async function cleanupScratch(scratch: string, node: NodeAuthority): Promise<boolean> {
+async function cleanupScratch(scratch: string, node: NodeAuthority, program: LibexecProgram): Promise<boolean> {
     const cleanup = step(
         node,
         `surface-cleanup-${randomBytes(8).toString('hex')}`,
         tmpdir(),
-        CLEANUP_WORKER,
+        program,
         JSON.stringify({ target: scratch, parent: tmpdir() }),
         Date.now() + CLEANUP_TIMEOUT_MS,
         1024,
@@ -1137,17 +893,30 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             expected: bundleRequest.expectedOutputs,
         })] : [],
     ]
-    const node = await nodeAuthority()
-    if (!node) return unavailable(diagnostic('SURFACE_NODE_UNAVAILABLE', 'the Node executable could not be authenticated', 'package', process.execPath))
-    const bundle = await bundleAuthority()
-    if (!bundle) return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE', `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable`, 'package', 'rulesync-generator.cjs'))
+    let node: NodeAuthority
+    try { node = await nodeAuthority() } catch (error) {
+        return unavailable(diagnostic('SURFACE_NODE_UNAVAILABLE',
+            `the Node executable could not be authenticated: ${failureReason(error)}`, 'package', process.execPath))
+    }
+    let bundle: BundleAuthority
+    try { bundle = await bundleAuthority() } catch (error) {
+        return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE',
+            `the authenticated Rulesync ${PINNED_VERSION} generator bundle is unavailable: ${failureReason(error)} — fix: reinstall @b0dea/cockpit`,
+            'package', 'rulesync-generator.cjs'))
+    }
+    let programs: SurfacePrograms
+    try { programs = surfacePrograms() } catch (error) {
+        return unavailable(diagnostic('SURFACE_PACKAGE_UNAVAILABLE',
+            `the surface generator workers are unavailable: ${failureReason(error)}`, 'package', 'libexec'))
+    }
 
     let scratch: string
     try {
         scratch = await mkdtemp(join(tmpdir(), 'cockpit-surfaces-'))
         await chmod(scratch, 0o700)
-    } catch {
-        return unavailable(diagnostic('SURFACE_SCRATCH_UNAVAILABLE', 'private surface staging could not be created', 'package', tmpdir()))
+    } catch (error) {
+        return unavailable(diagnostic('SURFACE_SCRATCH_UNAVAILABLE',
+            `private surface staging could not be created: ${failureReason(error)}`, 'package', tmpdir()))
     }
 
     let outcome: SurfaceEstateGenerationOutcome
@@ -1162,8 +931,8 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
         const secondJobs = await stageEstatePass(secondRoot, jobs)
         if (!firstJobs || !secondJobs) throw new Error('surface estate roots could not be authenticated')
         const settled = await Promise.allSettled([
-            runEstatePass('first', firstRoot, firstJobs, node, bundle, deadline),
-            runEstatePass('second', secondRoot, secondJobs, node, bundle, deadline),
+            runEstatePass('first', firstRoot, firstJobs, node, bundle, programs, deadline),
+            runEstatePass('second', secondRoot, secondJobs, node, bundle, programs, deadline),
         ])
         const passes = settled.map((result): EstatePassResult => result.status === 'fulfilled' ? result.value : {
             preserveScratch: true,
@@ -1231,7 +1000,7 @@ export async function generateSurfaceEstate(input: unknown): Promise<SurfaceEsta
             `surface worker termination could not be confirmed; staging retained at ${scratch}; stop remaining workers before removing it`,
             'cleanup', scratch))
     }
-    if (!await cleanupScratch(scratch, node)) {
+    if (!await cleanupScratch(scratch, node, programs.cleanup)) {
         return refuse(diagnostic('SURFACE_CLEANUP_FAILED', 'surface staging cleanup did not complete within its bound', 'cleanup', scratch))
     }
     return outcome
