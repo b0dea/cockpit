@@ -14,6 +14,7 @@ import { observeClaimState } from './claims.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
     ENVIRONMENT_CODES,
+    type EnvironmentDiagnostic,
     type EnvironmentObservation,
     type ExecutionStep,
 } from './contract.js'
@@ -564,7 +565,7 @@ async function checkoutProjection(
     input: CapturedInput,
     loaded: Extract<Awaited<ReturnType<typeof loadCockpitConfig>>, { readonly kind: 'complete' }>,
     git: Extract<Awaited<ReturnType<typeof resolveGitExecutable>>, { readonly state: 'available' }>['value'],
-): Promise<ConsumedSetupCheckoutObservation | undefined> {
+): Promise<ConsumedSetupCheckoutObservation | Readonly<{ failed: EnvironmentDiagnostic }> | undefined> {
     const observedAt = new Date().toISOString()
     const observed = await observeSetupCheckout({
         source: loaded.result.source,
@@ -573,6 +574,10 @@ async function checkoutProjection(
         env: checkoutObservationEnvironment(input.env),
         gitExecutable: git,
     })
+    // The owner's reason (for example, a cockpit root that is not a Git checkout) says what to do; dropping
+    // it left preflight with only "observation source is unavailable".
+    if (observed.state === 'failed') return Object.freeze({ failed: Object.freeze({ severity: 'error' as const,
+        code: observed.code, message: observed.reason, target: loaded.result.source.path }) })
     return withSetupCheckoutProjection(observed, {
         source: loaded.result.source,
         cockpitName: loaded.result.config.cockpit.name,
@@ -598,6 +603,7 @@ export function createHealthCommandAdapters(
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return undefined
         const checkout = await checkoutProjection(input, loaded, git.value)
+        if (checkout && 'failed' in checkout) return refuse?.([checkout.failed])
         if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
         const namespace = await selectStateRoot({
             platform: process.platform,

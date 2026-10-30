@@ -345,6 +345,23 @@ else process.exit(64)
         expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
     })
 
+    it('names a cockpit root that is not a Git checkout instead of an unavailable observation', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        await rm(join(candidate.checkout, '.git'), { recursive: true, force: true })
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe)
+
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2, diagnostics: [{
+            severity: 'error', code: 'SETUP_PATH_TYPE_INVALID', target: candidate.configPath,
+            message: expect.stringContaining(`git -C ${candidate.checkout} init`),
+        }] })
+    })
+
     it('preserves a lifecycle owner refusal before observing Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true })
         const history = lifecycleHistoryAddress(candidate.namespace, candidate.stack)
