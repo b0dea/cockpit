@@ -13,6 +13,7 @@ import {
     authenticateStatePublication,
     readState,
     refreshBootstrapObservation,
+    refreshBootstrapPublication,
     resetBootstrapAnswer,
     selectBootstrapStateRoot,
     transactState,
@@ -111,6 +112,8 @@ type AppliedBootstrapOutcome =
 type ResumedBootstrapOutcome =
     | Readonly<{ kind: 'complete'; status: 0; diagnostics: readonly Diagnostic[]; result: BootstrapProjection;
         canonicalOwnership: true }>
+    | Readonly<{ kind: 'refresh'; status: 0; diagnostics: readonly Diagnostic[]; result: BootstrapProjection;
+        authority: SelectedBootstrapPublicationAuthority; canonicalOwnership: false }>
     | Readonly<{ kind: 'pending'; status: 0; diagnostics: readonly Diagnostic[]; result: null;
         canonicalOwnership: false }>
     | Readonly<{ kind: 'refusal'; status: 2; diagnostics: readonly Diagnostic[]; result: null }>
@@ -127,6 +130,8 @@ export interface InitApplicationAdapters {
         root: string
         target: SurfaceTarget
         address: BootstrapStateAddress
+        expectedRevision?: number
+        expectedCommandSha256?: string
     }>) => Promise<ResumedBootstrapOutcome>
     readonly applyBootstrap: (authority: SelectedBootstrapPublicationAuthority) => Promise<AppliedBootstrapOutcome>
     readonly document: (input: DocumentCommandInput) => Promise<DocumentOutcome>
@@ -446,11 +451,13 @@ export async function runInitApplication(
         `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run cockpit init --interactive`, 'cockpit.root')
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
-    if (current?.value.stage === 'draft-observed' || current?.value.stage === 'environment-verified') {
-        resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, address })
+    if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'
+        || current?.value.stage === 'environment-verified') {
+        resumed = await adapters.resumeBootstrap({ root: input.root, target: input.target, address,
+            expectedRevision: current.revision, expectedCommandSha256: current.value.commandSha256 })
         if (resumed.kind === 'refusal') return ownerRefusal(resumed, current.value.stage, recordedProjection(current))
     }
-    if (resumed?.kind !== 'complete') {
+    if (resumed?.kind !== 'complete' && resumed?.kind !== 'refresh') {
         prepared = await adapters.prepareBootstrap({ root: input.root, target: input.target })
         if (prepared.kind !== 'complete') {
             return ownerRefusal(prepared, current?.value.stage ?? 'surface-previewed', current === null ? {
@@ -459,16 +466,22 @@ export async function runInitApplication(
         }
     }
     let projection: BootstrapProjection
-    if (resumed?.kind === 'complete') projection = resumed.result
+    if (resumed?.kind === 'complete' || resumed?.kind === 'refresh') projection = resumed.result
     else if (prepared?.kind === 'complete') projection = prepared.result
     else return refused('INIT_BOOTSTRAP_IDENTITY_CHANGED', 'selected bootstrap projection is unavailable')
     if (projection.root !== input.root || projection.target !== input.target || !SHA256.test(projection.previewSha256)) {
         return refused('INIT_BOOTSTRAP_IDENTITY_CHANGED', 'selected bootstrap preview does not match the requested root and target')
     }
     const expectedCommand = commandDigest(boundInput)
-    if (current !== null && !evidenceMatches(current, projection, expectedCommand)) {
+    const stateMatches = current === null || resumed?.kind === 'refresh'
+        ? current === null || current.value.stage === 'surface-published' && current.value.checkoutRoot === projection.root
+            && current.value.target === projection.target && current.value.commandSha256 === expectedCommand
+        : evidenceMatches(current, projection, expectedCommand)
+    if (!stateMatches) {
         return refused('INIT_STATE_STALE', 'bootstrap state does not match the current root, target, command, sources, or preview', address.path)
     }
+    if (resumed?.kind === 'refresh' && !input.accepted) return { kind: 'pending', status: 0, artifact: null, destination: null,
+        diagnostics: [...resumed.diagnostics], result: result('surface-published', projection) }
     let appliedReset: InitResult['resetAnswer']
     if (input.resetAnswer !== undefined) {
         const reset = await resetBootstrapAnswer(namespace, address, {
@@ -506,6 +519,28 @@ export async function runInitApplication(
     }
     if (input.accepted && (!SHA256.test(input.acceptedPreviewSha256 ?? '') || input.acceptedPreviewSha256 !== projection.previewSha256)) {
         return refused('INIT_PREVIEW_CHANGED', 'selected bootstrap preview changed after acceptance', input.root)
+    }
+
+    if (resumed?.kind === 'refresh') {
+        const prior = current!
+        const applied = await adapters.applyBootstrap(resumed.authority)
+        if (applied.kind !== 'complete') return ownerRefusal(applied, prior.value.stage, projection)
+        if (applied.result.root !== projection.root || applied.result.target !== projection.target
+            || applied.result.previewSha256 !== projection.previewSha256
+            || JSON.stringify(applied.result.files) !== JSON.stringify(projection.files)) {
+            return refused('INIT_BOOTSTRAP_IDENTITY_CHANGED', 'refreshed bootstrap result does not match the accepted preview')
+        }
+        const refreshed = await refreshBootstrapPublication(namespace, address, { ownerId: bootstrapHolderId({
+            checkoutId: namespace.checkoutId, sessionId: input.sessionId,
+        }), expectedRevision: prior.revision, expectedSources: prior.value.sources,
+        expectedCommandSha256: prior.value.commandSha256, expectedPreviewSha256: prior.value.previewSha256,
+        expectedPublished: prior.value.published,
+        sources: [...projection.sources], previewSha256: projection.previewSha256, published: [...projection.files],
+        updatedAt: adapters.now() })
+        if (refreshed.kind === 'refusal' && 'reason' in refreshed) return refused('INIT_STATE_STALE',
+            `${refreshed.message}; rerun cockpit init to review the current preview`, address.path)
+        if (refreshed.kind !== 'complete') return stateFailure(refreshed)
+        current = refreshed.value
     }
 
     if (current === null) {

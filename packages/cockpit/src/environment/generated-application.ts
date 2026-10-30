@@ -178,10 +178,14 @@ export type SelectedBootstrapSurfaceOutcome = RefusalOutcome | Readonly<{
 
 export interface SelectedBootstrapResumeInput extends SelectedBootstrapSurfaceInput {
     readonly address: BootstrapStateAddress
+    readonly expectedRevision?: number
+    readonly expectedCommandSha256?: string
 }
 
 export type SelectedBootstrapResumeOutcome = RefusalOutcome
     | Readonly<{ kind: 'pending'; status: 0; diagnostics: readonly Diagnostic[]; result: null; canonicalOwnership: false }>
+    | Readonly<{ kind: 'refresh'; status: 0; diagnostics: readonly Diagnostic[];
+        result: SelectedBootstrapSurfaceResult; authority: SelectedBootstrapPublicationAuthority; canonicalOwnership: false }>
     | Readonly<{ kind: 'complete'; status: 0; diagnostics: readonly Diagnostic[];
         result: SelectedBootstrapSurfaceResult; canonicalOwnership: true }>
 
@@ -598,6 +602,7 @@ interface SelectedBootstrapRecord {
     readonly result: SelectedBootstrapSurfaceResult
     readonly plan: PublicationPlan
     readonly adapters: GeneratedEnvironmentCommandAdapters
+    readonly bootstrapState?: Readonly<{ address: BootstrapStateAddress; record: BootstrapStateRecord }>
 }
 
 const issuedSelectedBootstrapAuthorities = new WeakMap<object, SelectedBootstrapRecord>()
@@ -810,7 +815,10 @@ async function selectedBootstrapRecordCurrent(record: SelectedBootstrapRecord): 
         const reads = await readAnchoredBatches(SURFACE_ROOT, record.assets.map(asset => Object.freeze({
             path: asset.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const,
         })), record.node, record.adapters)
-        return !!reads && reads.kind === 'complete' && reads.results.length === record.assets.length
+        const state = record.bootstrapState && await readState(record.bootstrapState.address)
+        return (!record.bootstrapState || state?.kind === 'complete'
+                && JSON.stringify(state.value) === JSON.stringify(record.bootstrapState.record))
+            && !!reads && reads.kind === 'complete' && reads.results.length === record.assets.length
             && reads.results.every((read, index) => read.kind === 'complete' && read.sha256 === record.assets[index]!.sha256
                 && sourceIdentity(read.identity) === sourceIdentity(record.assets[index]!.identity))
     } catch {
@@ -904,12 +912,20 @@ export async function resumeSelectedBootstrapSurface(
         'GENERATED_OWNERSHIP_INVALID', 'bootstrap resume requires the current durable state, root and target', 'bootstrap',
     )
     const adapters = mergedAdapters(adapterOverrides)
+    let rootIdentity: DirectoryIdentity
+    try {
+        const status = await lstat(captured.root)
+        if (!status.isDirectory() || status.isSymbolicLink() || await realpath(captured.root) !== captured.root) throw new Error('root')
+        rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
+    } catch {
+        return refuse('GENERATED_INPUT_INVALID', 'selected bootstrap root is not a canonical directory', captured.root)
+    }
     const node = await nodeAuthority()
     if (!node) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume could not authenticate the node executable', 'bootstrap')
     const ownership = await readAnchoredEntry(captured.root, OWNERSHIP_PATH, MAX_OWNERSHIP_BYTES, node, adapters)
-    if (ownership.kind === 'missing') return Object.freeze({ kind: 'pending', status: 0, diagnostics: Object.freeze([]),
-        result: null, canonicalOwnership: false })
-    if (ownership.kind !== 'file') return refuse('GENERATED_OWNERSHIP_INVALID', 'bootstrap resume ownership could not be read safely', OWNERSHIP_PATH)
+    if (ownership.kind !== 'missing' && ownership.kind !== 'file') return refuse(
+        'GENERATED_OWNERSHIP_INVALID', 'bootstrap resume ownership could not be read safely', OWNERSHIP_PATH,
+    )
     const assets = await selectedBootstrapAssets(node, adapters)
     if (!assets) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume packaged assets could not be authenticated', 'bootstrap')
     const byPath = new Map(assets.map(asset => [asset.path, asset]))
@@ -927,8 +943,56 @@ export async function resumeSelectedBootstrapSurface(
     const files = Object.freeze(inspected.files.map(file => Object.freeze({ path: file.path, sha256: file.sha256 })))
     const previewSha256 = sha256(JSON.stringify({ target: captured.target, sources: sourceRows, files }))
     const state = durable.value.value
-    if (JSON.stringify(state.sources) !== JSON.stringify(sourceRows) || JSON.stringify(state.published) !== JSON.stringify(files)
-        || state.previewSha256 !== previewSha256) return refuse(
+    const sourcesCurrent = JSON.stringify(state.sources) === JSON.stringify(sourceRows)
+        && JSON.stringify(state.published) === JSON.stringify(files) && state.previewSha256 === previewSha256
+    if (ownership.kind === 'missing') {
+        if (sourcesCurrent) return Object.freeze({ kind: 'pending', status: 0, diagnostics: Object.freeze([]),
+            result: null, canonicalOwnership: false })
+        const priorPreviewSha256 = sha256(JSON.stringify({ target: captured.target, sources: state.sources, files: state.published }))
+        if (input.expectedRevision !== durable.value.revision || input.expectedCommandSha256 !== state.commandSha256
+            || priorPreviewSha256 !== state.previewSha256 || state.stage !== 'surface-published'
+            || JSON.stringify(state.published.map(row => row.path)) !== JSON.stringify(files.map(row => row.path))) return refuse(
+            'GENERATED_SOURCE_CHANGED', 'bootstrap resume package sources differ from the accepted durable preview', 'bootstrap',
+        )
+        const reads = await readAnchoredBatches(captured.root, inspected.files.map(file => Object.freeze({
+            path: file.path, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-entry' as const,
+        })), node, adapters)
+        if (!reads || reads.kind !== 'complete' || reads.results.length !== inspected.files.length) return refuse(
+            'SURFACE_STATE_CONFLICT', 'bootstrap refresh destinations could not be authenticated', captured.target,
+        )
+        const mutations: PublicationMutation[] = []
+        for (const [index, file] of inspected.files.entries()) {
+            const current = reads.results[index]!
+            const prior = state.published[index]!
+            if (current.kind !== 'file' || current.sha256 !== prior.sha256 && current.sha256 !== file.sha256) return refuse(
+                'SURFACE_STATE_CONFLICT', 'bootstrap refresh destination differs from its authenticated publication', file.path,
+            )
+            if (current.sha256 === file.sha256) continue
+            const expected = expectedState(current)
+            if (!expected) return refuse('SURFACE_STATE_CONFLICT', 'bootstrap refresh destination could not be authenticated', file.path)
+            mutations.push(Object.freeze({ path: file.path, phase: 'desired', operation: 'write-file',
+                bytes: file.bytes, sha256: file.sha256, expected }))
+        }
+        const admitted = await admitPublicationPlan({ mode: 'bootstrap', root: captured.root, rootIdentity, node, inspected,
+            mutations: Object.freeze(mutations), refresh: Object.freeze({ address: input.address,
+                revision: durable.value.revision, commandSha256: state.commandSha256 }) }, adapters)
+        if (admitted.kind !== 'complete') return admitted
+        const result: SelectedBootstrapSurfaceResult = Object.freeze({ root: captured.root, target: captured.target,
+            sources: sourceRows, files, previewSha256, changes: admitted.plan.changes })
+        const authority: SelectedBootstrapPublicationAuthority = Object.freeze({ kind: 'selected-bootstrap-publication-authority' })
+        issuedSelectedBootstrapAuthorities.set(authority, Object.freeze({ root: captured.root, rootIdentity,
+            target: captured.target, node,
+            assets: Object.freeze(assets.map(({ path, sha256: digest, identity }) => Object.freeze({ path, sha256: digest, identity }))),
+            inspected, result, plan: admitted.plan, adapters,
+            bootstrapState: Object.freeze({ address: input.address, record: durable.value }),
+        }))
+        return Object.freeze({ kind: 'refresh', status: 0, diagnostics: Object.freeze([]), result, authority,
+            canonicalOwnership: false })
+    }
+    if (ownership.kind !== 'file') return refuse(
+        'GENERATED_OWNERSHIP_INVALID', 'bootstrap resume ownership changed after classification', OWNERSHIP_PATH,
+    )
+    if (!sourcesCurrent) return refuse(
         'GENERATED_SOURCE_CHANGED', 'bootstrap resume package sources differ from the accepted durable preview', 'bootstrap',
     )
     const base = await prepare({ configPath: join(captured.root, 'cockpit.toml') }, adapters)

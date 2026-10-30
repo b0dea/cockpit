@@ -13,6 +13,7 @@ import {
     lifecycleHistoryAddress,
     readState,
     refreshBootstrapObservation,
+    refreshBootstrapPublication,
     resetBootstrapAnswer,
     inspectStateLock,
     issueStateScopedLock,
@@ -628,6 +629,45 @@ describe('bootstrap state', () => {
             ownerId: draftOwner, expectedRevision: 0, expectedSourceObservationSha256: '6'.repeat(64),
             greenfield: fresh, updatedAt: '2026-09-07T12:01:00.000Z',
         })).toMatchObject({ kind: 'refusal', reason: 'stale' })
+    })
+
+    it('refreshes only exact surface publication evidence while preserving the interview', async () => {
+        const { namespace, address } = await selectedBootstrapNamespace()
+        const ownerId = bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'publication-refresh-session' })
+        const base = bootstrapRecord(address)
+        const currentPreviewSha256 = createHash('sha256').update(JSON.stringify({ target: address.target,
+            sources: base.value.sources, files: base.value.published })).digest('hex')
+        const current: BootstrapStateRecord = { ...base, value: { ...base.value, stage: 'surface-published',
+            previewSha256: currentPreviewSha256,
+            destination: null, artifactBytes: null, artifactSha256: null,
+            greenfield: { stage: 'question-pending', classification: 'one-sibling',
+                sourceObservationSha256: '6'.repeat(64), notice: 'one runnable product was observed', questions: [{
+                    id: `question:${'5'.repeat(64)}`, field: 'sibling', source: 'configuration:current',
+                    why: 'the runnable sibling declaration is unresolved',
+                }], answers: [] },
+        } }
+        expect(await transactState(namespace, address, { ownerId }, () => current)).toMatchObject({ kind: 'complete' })
+        const sources = current.value.sources.map(row => ({ ...row, sha256: '7'.repeat(64) }))
+        const published = current.value.published.map(row => ({ ...row, sha256: '8'.repeat(64) }))
+        const previewSha256 = createHash('sha256').update(JSON.stringify({ target: address.target, sources, files: published })).digest('hex')
+        const input = { ownerId, expectedRevision: current.revision, expectedSources: current.value.sources,
+            expectedCommandSha256: current.value.commandSha256, expectedPreviewSha256: current.value.previewSha256,
+            expectedPublished: current.value.published,
+            sources, previewSha256, published, updatedAt: '2026-09-07T12:01:00.000Z' }
+        expect(await refreshBootstrapPublication(namespace, address, { ...input, expectedRevision: 1 }))
+            .toMatchObject({ kind: 'refusal', reason: 'stale' })
+        expect(await refreshBootstrapPublication(namespace, address, { ...input, expectedCommandSha256: '9'.repeat(64) }))
+            .toMatchObject({ kind: 'refusal', reason: 'stale' })
+        expect(await refreshBootstrapPublication(namespace, address, { ...input, expectedPreviewSha256: '9'.repeat(64) }))
+            .toMatchObject({ kind: 'refusal', reason: 'invalid' })
+        expect(await refreshBootstrapPublication(namespace, address, { ...input,
+            published: [{ ...published[0]!, path: 'renamed-bootstrap-output' }] }))
+            .toMatchObject({ kind: 'refusal', reason: 'invalid' })
+        const refreshed = await refreshBootstrapPublication(namespace, address, input)
+        expect(refreshed).toMatchObject({ kind: 'complete', value: { revision: 1, value: {
+            sources, previewSha256, published, greenfield: current.value.greenfield,
+        } } })
+        expect(await refreshBootstrapPublication(namespace, address, input)).toMatchObject({ kind: 'refusal', reason: 'stale' })
     })
 
     it('refuses target, root, record, owner, size and filesystem authority substitution', async () => {

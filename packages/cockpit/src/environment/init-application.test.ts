@@ -584,6 +584,69 @@ describe('init application', () => {
         expect(await readFile(path)).toEqual(before)
     })
 
+    it('requires a fresh preview before replacing bootstrap sources and preserves the current interview', async () => {
+        const f = fixture()
+        f.setPreviewSha256(createHash('sha256').update(JSON.stringify({ target: 'codexcli',
+            sources: [{ path: 'skills/cockpit-setup.skill.md', sha256: digest('1') }],
+            files: [{ path: '.agents/skills/cockpit-setup/SKILL.md', sha256: digest('2') }],
+        })).digest('hex'))
+        const baseAdapters: InitApplicationAdapters = { ...f.adapters,
+            classifyEstate: async () => estate(f.root, 'one-sibling'),
+            document: interviewDocument(f.destination) }
+        const input = { ...f.input, registry: undefined }
+        const firstPreview = await runInitApplication(input, baseAdapters)
+        if (firstPreview.kind !== 'pending' || !firstPreview.result) throw new Error('initial bootstrap preview was unavailable')
+        const accepted = { ...input, accepted: true, acceptedPreviewSha256: firstPreview.result.previewSha256 }
+        const question = await runInitApplication(accepted, baseAdapters)
+        expect(question).toMatchObject({ kind: 'pending', result: { stage: 'surface-published', question: { field: 'sibling' } } })
+
+        const selected = await selectBootstrapStateRoot({ platform: 'linux', home: f.input.home,
+            xdgStateHome: f.input.xdgStateHome, checkoutRoot: f.root, target: 'codexcli' })
+        if (selected.kind !== 'complete') throw new Error('expected selected bootstrap namespace')
+        const address = selected.value.paths.bootstrap('codexcli')
+        const before = await readState(address)
+        if (before.kind !== 'complete') throw new Error('expected persisted bootstrap interview')
+        const freshSources = Object.freeze([{ path: 'skills/cockpit-setup.skill.md', sha256: digest('4') }])
+        const freshFiles = Object.freeze(before.value.value.published.map(row => Object.freeze({ ...row, sha256: digest('5') })))
+        const freshPreviewSha256 = createHash('sha256').update(JSON.stringify({ target: 'codexcli',
+            sources: freshSources, files: freshFiles })).digest('hex')
+        const freshProjection = Object.freeze({ root: f.root, target: 'codexcli' as const,
+            sources: freshSources, files: freshFiles, previewSha256: freshPreviewSha256 })
+        const authority = Object.freeze({ kind: 'selected-bootstrap-publication-authority' as const })
+        let applications = 0
+        const adapters: InitApplicationAdapters = { ...baseAdapters,
+            resumeBootstrap: async request => {
+                expect(request).toMatchObject({ expectedRevision: before.value.revision,
+                    expectedCommandSha256: before.value.value.commandSha256 })
+                return Object.freeze({ kind: 'refresh' as const, status: 0 as const,
+                    diagnostics: Object.freeze([]), result: freshProjection, authority, canonicalOwnership: false as const })
+            },
+            applyBootstrap: async supplied => {
+                applications += 1
+                expect(supplied).toBe(authority)
+                return Object.freeze({ kind: 'complete' as const, status: 0 as const, diagnostics: Object.freeze([]),
+                    result: freshProjection, authority })
+            } }
+        const preview = await runInitApplication(input, adapters)
+        expect(preview).toMatchObject({ kind: 'pending', result: { stage: 'surface-published', previewSha256: freshPreviewSha256 } })
+        expect(await readState(address)).toEqual(before)
+        expect(applications).toBe(0)
+
+        await expect(runInitApplication(accepted, adapters)).resolves.toMatchObject({ kind: 'refusal',
+            diagnostics: [{ code: 'INIT_PREVIEW_CHANGED' }] })
+        expect(await readState(address)).toEqual(before)
+        expect(applications).toBe(0)
+
+        const refreshed = await runInitApplication({ ...accepted, acceptedPreviewSha256: freshPreviewSha256 }, adapters)
+        expect(refreshed, JSON.stringify(refreshed)).toMatchObject({ kind: 'pending', result: { stage: 'surface-published', question: { field: 'sibling' } } })
+        expect(applications).toBe(1)
+        const after = await readState(address)
+        expect(after).toMatchObject({ kind: 'complete', value: { value: {
+            sources: freshProjection.sources, published: freshProjection.files, previewSha256: freshPreviewSha256,
+            greenfield: before.value.value.greenfield,
+        } } })
+    })
+
     it('previews and accepts an exact recorded-answer reset while retaining earlier answers', async () => {
         const f = fixture()
         const fields = ['sibling', 'estate.runnable', 'ports.bases']

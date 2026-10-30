@@ -196,6 +196,11 @@ run, so consent stays bound to the exact bytes it was shown; there is no blanket
 4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one
    is refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
 
+If the installed cockpit package changes during an interrupted pre-configuration bootstrap, rerun
+the same read-only `init` preview, review its current bootstrap bytes, and accept that fresh
+`previewSha256` before continuing. A missing or edited bootstrap file is refused and left in place
+for inspection instead of being replaced.
+
 ```sh
 ./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --json
 ./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json

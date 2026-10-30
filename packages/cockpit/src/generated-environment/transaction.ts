@@ -11,6 +11,7 @@ import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../envi
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
+import { readState, type BootstrapStateAddress } from '../environment/state.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { parseOwnershipManifest, projectGeneratedPathFacts, classifyGeneratedPaths, removeSharedOwnership, renderSharedPostimage,
     type OwnershipAuthority, type OwnershipManifest, type GeneratedPathFact, type SurfaceDesiredEntry } from '../surfaces/ownership.js'
@@ -79,6 +80,7 @@ export interface PersonaSourceIdentity {
 const SHA256 = /^[a-f0-9]{64}$/
 const OWNERSHIP_PATH = '.cockpit/generated-environment-ownership.json'
 const REFERENCE_OWNERSHIP_PATH = '.cockpit/generated-reference-ownership.json'
+const BOOTSTRAP_CONFIGURATION_PATH = 'cockpit.toml'
 const REFERENCE_FILE_PATHS = Object.freeze([
     'docs/cli-reference.md',
     'docs/configuration-reference.md',
@@ -1964,6 +1966,11 @@ export interface BootstrapPublicationPlanInput {
     readonly node: ResolvedExecutable
     readonly inspected: InspectedBootstrapOutputs
     readonly mutations: readonly PublicationMutation[]
+    readonly refresh?: Readonly<{
+        readonly address: BootstrapStateAddress
+        readonly revision: number
+        readonly commandSha256: string
+    }>
 }
 
 type AdmittedPublicationPlanInput = PublicationPlanInput | BootstrapPublicationPlanInput
@@ -2178,7 +2185,10 @@ async function admitBootstrapPlan(
     adapters: PublicationAdapters,
 ): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; plan: PublicationPlan }>> {
     const supplied = ownRecord(input)
-    if (!supplied || !exactKeys(supplied, ['mode', 'root', 'rootIdentity', 'node', 'inspected', 'mutations']) || supplied.mode !== 'bootstrap'
+    const refreshInput = supplied && 'refresh' in supplied ? ownRecord(supplied.refresh) : undefined
+    if (!supplied || !exactKeys(supplied, refreshInput
+        ? ['mode', 'root', 'rootIdentity', 'node', 'inspected', 'mutations', 'refresh']
+        : ['mode', 'root', 'rootIdentity', 'node', 'inspected', 'mutations']) || supplied.mode !== 'bootstrap'
         || !isInspectedBootstrapOutputs(supplied.inspected)) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap publication input is not an exact bounded plan', 'generated-environment')
     }
@@ -2207,14 +2217,39 @@ async function admitBootstrapPlan(
     if (!portablePublicationPaths(paths) || mutations.some(row => !paths.includes(row.path))) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap publication operation is outside the selected target output set', 'generated-environment')
     }
+    let prior: readonly Readonly<{ path: string; sha256: string }>[] | undefined
+    if (refreshInput) {
+        if (!exactKeys(refreshInput, ['address', 'commandSha256', 'revision']) || !Number.isSafeInteger(refreshInput.revision)
+            || (refreshInput.revision as number) < 0 || !SHA256.test(refreshInput.commandSha256 as string)) {
+            return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap refresh authority is not exact', 'generated-environment')
+        }
+        const observed = await readState(refreshInput.address as BootstrapStateAddress)
+        const record = observed.kind === 'complete' ? observed.value : undefined
+        if (!record) return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap refresh state could not be authenticated', 'generated-environment')
+        const priorPreviewSha256 = sha256(JSON.stringify({ target: record.target, sources: record.value.sources,
+            files: record.value.published }))
+        if (record.revision !== refreshInput.revision || record.value.commandSha256 !== refreshInput.commandSha256
+            || record.value.previewSha256 !== priorPreviewSha256 || record.value.stage !== 'surface-published'
+            || record.value.checkoutRoot !== serializable.root
+            || record.target !== inspected.target || record.value.target !== inspected.target
+            || JSON.stringify(record.value.published.map(row => row.path)) !== JSON.stringify(paths)) {
+            return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap refresh authority does not match the fixed output set', 'generated-environment')
+        }
+        prior = record.value.published
+    }
     const reads = await readAnchoredBatches(serializable.root,
         [...paths.map(path => ({ path, action: 'read-entry' as const, maxBytes: MAX_GENERATED_BYTES })),
-            { path: OWNERSHIP_PATH, action: 'read-entry' as const, maxBytes: MAX_OWNERSHIP_BYTES }], node, adapters)
-    if (!reads || reads.kind !== 'complete' || reads.results.length !== paths.length + 1) {
+            { path: OWNERSHIP_PATH, action: 'read-entry' as const, maxBytes: MAX_OWNERSHIP_BYTES },
+            ...(prior ? [{ path: BOOTSTRAP_CONFIGURATION_PATH, action: 'read-entry' as const, maxBytes: MAX_GENERATED_BYTES }] : [])], node, adapters)
+    if (!reads || reads.kind !== 'complete' || reads.results.length !== paths.length + 1 + (prior ? 1 : 0)) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap destinations could not be classified safely', 'generated-environment')
     }
     const ledger = reads.results[paths.length]!
     if (ledger.kind !== 'missing') return refuse('GENERATED_OWNERSHIP_INVALID', 'bootstrap publication cannot replace ownership metadata', OWNERSHIP_PATH)
+    const configuration = prior && reads.results[paths.length + 1]!
+    if (configuration && configuration.kind !== 'missing') return refuse(
+        'GENERATED_PUBLICATION_FAILED', 'bootstrap refresh requires configuration to remain absent', BOOTSTRAP_CONFIGURATION_PATH,
+    )
     const checks: PublicationCheck[] = []
     for (const [index, entry] of desired.entries()) {
         if (entry.kind !== 'file') return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap output is not a whole file', entry.path)
@@ -2228,13 +2263,21 @@ async function admitBootstrapPlan(
         if (mutation && (!sameExpected(expected, mutation.expected) || mutation.bytes !== entry.bytes || mutation.sha256 !== entry.sha256)) {
             return refuse('GENERATED_SOURCE_CHANGED', 'bootstrap destination or postimage changed after classification', entry.path)
         }
-        if (current.kind === 'missing' ? !mutation : current.kind !== 'file' || current.sha256 !== entry.sha256 || mutation !== undefined) {
+        const priorEntry = prior?.[index]
+        const refreshCurrent = priorEntry?.path === entry.path && current.kind === 'file'
+            && (current.sha256 === priorEntry.sha256 || current.sha256 === entry.sha256)
+        const refreshMutation = refreshCurrent && current.sha256 === priorEntry.sha256 && priorEntry.sha256 !== entry.sha256
+        if (prior
+            ? !refreshCurrent || refreshMutation !== (mutation !== undefined)
+            : current.kind === 'missing' ? !mutation : current.kind !== 'file' || current.sha256 !== entry.sha256 || mutation !== undefined) {
             return refuse('GENERATED_PUBLICATION_FAILED', 'bootstrap plan must write each missing output and preserve each exact output', entry.path)
         }
         checks.push(Object.freeze({ path: entry.path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1,
             ...(current.kind === 'file' ? { identity: current.identity } : {}) }))
     }
     checks.push(Object.freeze({ path: OWNERSHIP_PATH, expected: Object.freeze({ kind: 'missing' as const }), maxBytes: 1 }))
+    if (prior) checks.push(Object.freeze({ path: BOOTSTRAP_CONFIGURATION_PATH,
+        expected: Object.freeze({ kind: 'missing' as const }), maxBytes: 1 }))
     const groups = groupMutations(mutations)
     const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0
     if (!groups || count > desired.length || count * PUBLICATION_HELPER_CALLS_PER_GROUP * PUBLICATION_HELPER_SLOT_MS > TRANSACTION_TIMEOUT_MS) {

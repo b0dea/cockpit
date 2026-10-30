@@ -26,7 +26,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'refreshBootstrapPublication', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -41,6 +41,7 @@ const issuedBootstrapNamespaces = new WeakSet<object>()
 const issuedScopedLocks = new WeakMap<object, Readonly<{ namespace: StateNamespace; path: string }>>()
 const issuedBootstrapAnswerResets = new WeakSet<object>()
 const issuedBootstrapObservationRefreshes = new WeakSet<object>()
+const issuedBootstrapPublicationRefreshes = new WeakSet<object>()
 
 function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
     const snapshot = snapshotEnvironmentObservation(value)
@@ -1233,10 +1234,12 @@ function validateRecordForAddress(
                 })()
         const authorizedReset = currentBootstrap !== null
             && (issuedBootstrapAnswerResets.has(value as object) || issuedBootstrapObservationRefreshes.has(value as object))
+        const authorizedPublicationRefresh = currentBootstrap !== null && issuedBootstrapPublicationRefreshes.has(value as object)
         return record.checkoutId === address.checkoutId && record.target === address.target
             && record.value.checkoutRoot === address.checkoutRoot && record.value.target === address.target
-            && record.revision === expectedRevision && immutableEvidenceMatches && stageAdvances
-            && publishedEvidenceMatches && draftEvidenceMatches && (greenfieldEvidenceMatches || authorizedReset) ? record : undefined
+            && record.revision === expectedRevision && stageAdvances
+            && (immutableEvidenceMatches && publishedEvidenceMatches || authorizedPublicationRefresh)
+            && draftEvidenceMatches && (greenfieldEvidenceMatches || authorizedReset) ? record : undefined
     }
     const validated = StateRecordSchema.safeParse(value)
     if (!validated.success) return undefined
@@ -1397,6 +1400,85 @@ export async function refreshBootstrapObservation(
         return record
     })
     if ('aborted' in outcome) return outcome.value as BootstrapObservationRefreshRefusal
+    return outcome
+}
+
+type BootstrapPublicationRefreshRefusal = Readonly<{
+    kind: 'refusal'
+    reason: 'invalid' | 'stale'
+    message: string
+}>
+
+export type BootstrapPublicationRefreshResult = StateResult<BootstrapStateRecord> | BootstrapPublicationRefreshRefusal
+
+function publicationRefreshRefusal(
+    reason: BootstrapPublicationRefreshRefusal['reason'],
+    message: string,
+): BootstrapPublicationRefreshRefusal {
+    return Object.freeze({ kind: 'refusal', reason, message })
+}
+
+export async function refreshBootstrapPublication(
+    namespace: BootstrapStateNamespace,
+    address: BootstrapStateAddress,
+    input: Readonly<{
+        ownerId: BootstrapLockOwnerId
+        expectedRevision: number
+        expectedSources: BootstrapStateRecord['value']['sources']
+        expectedCommandSha256: string
+        expectedPreviewSha256: string
+        expectedPublished: BootstrapStateRecord['value']['published']
+        sources: BootstrapStateRecord['value']['sources']
+        previewSha256: string
+        published: BootstrapStateRecord['value']['published']
+        updatedAt: string
+    }>,
+): Promise<BootstrapPublicationRefreshResult> {
+    let stableInput: typeof input
+    try {
+        const expectedSources = BootstrapDigestRowSchema.array().min(1).max(16).safeParse(input.expectedSources)
+        const expectedPublished = BootstrapDigestRowSchema.array().max(3).safeParse(input.expectedPublished)
+        const sources = BootstrapDigestRowSchema.array().min(1).max(16).safeParse(input.sources)
+        const published = BootstrapDigestRowSchema.array().max(3).safeParse(input.published)
+        if (!expectedSources.success || !expectedPublished.success || !sources.success || !published.success
+            || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0
+            || !digest.test(input.expectedCommandSha256) || !digest.test(input.expectedPreviewSha256) || !digest.test(input.previewSha256)
+            || !isCanonicalTimestamp(input.updatedAt)
+            || JSON.stringify(expectedPublished.data.map(row => row.path)) !== JSON.stringify(published.data.map(row => row.path))
+            || createHash('sha256').update(JSON.stringify({ target: address.target, sources: expectedSources.data,
+                files: expectedPublished.data })).digest('hex') !== input.expectedPreviewSha256
+            || createHash('sha256').update(JSON.stringify({ target: address.target, sources: sources.data, files: published.data })).digest('hex')
+                !== input.previewSha256
+            || input.expectedPreviewSha256 === input.previewSha256
+                && JSON.stringify(expectedSources.data) === JSON.stringify(sources.data)
+                && JSON.stringify(expectedPublished.data) === JSON.stringify(published.data)) {
+            return publicationRefreshRefusal('invalid', 'bootstrap publication refresh evidence is malformed')
+        }
+        stableInput = Object.freeze({ ownerId: input.ownerId, expectedRevision: input.expectedRevision,
+            expectedSources: expectedSources.data, expectedPreviewSha256: input.expectedPreviewSha256,
+            expectedCommandSha256: input.expectedCommandSha256,
+            expectedPublished: expectedPublished.data, sources: sources.data,
+            previewSha256: input.previewSha256, published: published.data, updatedAt: input.updatedAt })
+    } catch {
+        return publicationRefreshRefusal('invalid', 'bootstrap publication refresh evidence could not be read safely')
+    }
+    const outcome = await transactState(namespace, address, { ownerId: stableInput.ownerId }, current => {
+        if (current === null || current.revision !== stableInput.expectedRevision
+            || current.value.stage !== 'surface-published'
+            || current.value.commandSha256 !== stableInput.expectedCommandSha256
+            || current.value.previewSha256 !== stableInput.expectedPreviewSha256
+            || JSON.stringify(current.value.sources) !== JSON.stringify(stableInput.expectedSources)
+            || JSON.stringify(current.value.published) !== JSON.stringify(stableInput.expectedPublished)) {
+            return abortStateTransaction(publicationRefreshRefusal('stale',
+                'bootstrap publication no longer matches the exact accepted preview'))
+        }
+        const record: BootstrapStateRecord = { ...current, revision: current.revision + 1, updatedAt: stableInput.updatedAt,
+            value: { ...current.value, sources: stableInput.sources, previewSha256: stableInput.previewSha256,
+                published: stableInput.published } }
+        issuedBootstrapPublicationRefreshes.add(record)
+        return record
+    })
+    if ('aborted' in outcome) return outcome.value as BootstrapPublicationRefreshRefusal
     return outcome
 }
 

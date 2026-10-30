@@ -316,6 +316,107 @@ describe('selected bootstrap target', () => {
         expect(await prepareSelectedBootstrapSurface({ ...prepared.result, target: 'codexcli' } as never)).toMatchObject({ kind: 'refusal' })
     }, 120_000)
 
+    it('refreshes exact surface-published bootstrap bytes through one fresh authority', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-setup-refresh-')))
+        roots.push(root)
+        const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })
+        if (prepared.kind !== 'complete') throw new Error('bootstrap preparation was refused')
+        const applied = await applySelectedBootstrapSurface(prepared.authority)
+        if (applied.kind !== 'complete') throw new Error('bootstrap publication was refused')
+        const priorPath = prepared.result.files.find(row => row.path.endsWith('/procedures/onboarding.md'))?.path
+        if (!priorPath) throw new Error('bootstrap onboarding output was unavailable')
+        const currentBytes = await readFile(join(root, priorPath), 'utf8')
+        const priorBytes = `${currentBytes}\nPrior packaged onboarding bytes.\n`
+        await writeFile(join(root, priorPath), priorBytes)
+        const priorFiles = prepared.result.files.map(row => row.path === priorPath ? { ...row, sha256: digest(priorBytes) } : { ...row })
+        const priorPreviewSha256 = digest(JSON.stringify({ target: 'codexcli', sources: prepared.result.sources, files: priorFiles }))
+
+        const stateHome = await mkdtemp(join(tmpdir(), 'cockpit-setup-refresh-state-'))
+        roots.push(stateHome)
+        const selected = await selectBootstrapStateRoot({ platform: 'linux', home: stateHome, checkoutRoot: root, target: 'codexcli' })
+        if (selected.kind !== 'complete') throw new Error('bootstrap state selection was refused')
+        const address = selected.value.paths.bootstrap('codexcli')
+        const record: BootstrapStateRecord = {
+            format: 'cockpit-state/v1', kind: 'bootstrap', checkoutId: address.checkoutId, target: 'codexcli', revision: 0,
+            updatedAt: '2026-10-25T12:00:00.000Z', value: {
+                stage: 'surface-published', checkoutRoot: root, target: 'codexcli',
+                sources: prepared.result.sources.map(row => ({ ...row })),
+                commandSha256: digest('cockpit init'), previewSha256: priorPreviewSha256,
+                published: priorFiles, destination: null, artifactBytes: null, artifactSha256: null,
+            },
+        }
+        const publication = await transactState(selected.value, address, {
+            ownerId: bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'refresh' }),
+        }, () => record)
+        if (publication.kind !== 'complete') throw new Error('bootstrap state publication was refused')
+
+        const malformedHome = await mkdtemp(join(tmpdir(), 'cockpit-setup-refresh-malformed-state-'))
+        roots.push(malformedHome)
+        const malformedSelected = await selectBootstrapStateRoot({ platform: 'linux', home: malformedHome,
+            checkoutRoot: root, target: 'codexcli' })
+        if (malformedSelected.kind !== 'complete') throw new Error('malformed bootstrap state selection was refused')
+        const malformedAddress = malformedSelected.value.paths.bootstrap('codexcli')
+        const malformedRecord: BootstrapStateRecord = { ...record, checkoutId: malformedAddress.checkoutId,
+            value: { ...record.value, previewSha256: digest('malformed prior preview') } }
+        const malformedPublication = await transactState(malformedSelected.value, malformedAddress, {
+            ownerId: bootstrapHolderId({ checkoutId: malformedAddress.checkoutId, sessionId: 'malformed-refresh' }),
+        }, () => malformedRecord)
+        if (malformedPublication.kind !== 'complete') throw new Error('malformed bootstrap state publication was refused')
+        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address: malformedAddress,
+            expectedRevision: malformedPublication.value.revision, expectedCommandSha256: record.value.commandSha256 }))
+            .resolves.toMatchObject({ kind: 'refusal' })
+        expect(await readFile(join(root, priorPath), 'utf8')).toBe(priorBytes)
+
+        let currentRevision = publication.value.revision
+        const resume = () => generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address,
+            expectedRevision: currentRevision, expectedCommandSha256: record.value.commandSha256 })
+        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address,
+            expectedRevision: currentRevision, expectedCommandSha256: digest('wrong command') }))
+            .resolves.toMatchObject({ kind: 'refusal' })
+        const refreshed = await resume()
+        expect(refreshed, JSON.stringify(refreshed)).toMatchObject({ kind: 'refresh', canonicalOwnership: false,
+            result: { files: prepared.result.files.map(row => ({ path: row.path, sha256: row.sha256 })) } })
+        expect(refreshed.result?.previewSha256).toBe(prepared.result.previewSha256)
+        if (!('authority' in refreshed)) throw new Error('bootstrap refresh authority was not issued')
+        const advanced = await transactState(selected.value, address, {
+            ownerId: bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'refresh-race' }),
+        }, current => ({ ...current!, revision: current!.revision + 1, updatedAt: '2026-10-25T12:01:00.000Z',
+            value: { ...current!.value, greenfield: { mode: 'registry' as const, stage: 'resolved' as const,
+                sourceObservationSha256: digest('registry'), questions: [], answers: [] } } }))
+        if (advanced.kind !== 'complete') throw new Error('bootstrap race state advance was refused')
+        currentRevision = advanced.value.revision
+        expect(await applySelectedBootstrapSurface(refreshed.authority)).toMatchObject({ kind: 'refusal' })
+        expect(await readFile(join(root, priorPath), 'utf8')).toBe(priorBytes)
+        const raced = await resume()
+        if (!('authority' in raced)) throw new Error('bootstrap refresh authority was not reissued after the state race')
+        await writeFile(join(root, priorPath), 'changed after refresh preparation\n')
+        expect(await applySelectedBootstrapSurface(raced.authority)).toMatchObject({ kind: 'refusal' })
+        await writeFile(join(root, priorPath), priorBytes)
+        const publishable = await resume()
+        if (!('authority' in publishable)) throw new Error('bootstrap refresh authority was not reissued')
+        expect(await applySelectedBootstrapSurface({ ...publishable.authority })).toMatchObject({ kind: 'refusal' })
+        expect(await applySelectedBootstrapSurface(publishable.authority)).toMatchObject({ kind: 'complete' })
+        expect(await applySelectedBootstrapSurface(publishable.authority)).toMatchObject({ kind: 'refusal' })
+
+        await expect(generatedCommands.resumeSelectedBootstrapSurface({ root, target: 'codexcli', address,
+            expectedRevision: currentRevision + 1, expectedCommandSha256: record.value.commandSha256 }))
+            .resolves.toMatchObject({ kind: 'refusal' })
+        await writeFile(join(root, 'cockpit.toml'), 'name = "not-yet-owned"\n')
+        await expect(resume()).resolves.toMatchObject({ kind: 'refusal' })
+        await rm(join(root, 'cockpit.toml'))
+        for (const disposition of ['missing', 'edited', 'symlink'] as const) {
+            await rm(join(root, priorPath))
+            if (disposition === 'edited') await writeFile(join(root, priorPath), 'operator-edited bootstrap bytes\n')
+            if (disposition === 'symlink') await symlink('foreign-onboarding.md', join(root, priorPath))
+            await expect(resume()).resolves.toMatchObject({ kind: 'refusal' })
+            await rm(join(root, priorPath), { force: true })
+            await writeFile(join(root, priorPath), currentBytes)
+        }
+
+        // A crash after publication but before the state CAS is recoverable without deleting exact new bytes.
+        expect(await resume()).toMatchObject({ kind: 'refresh', canonicalOwnership: false, result: { changes: [] } })
+    })
+
     it('adopts only the exact state publication and anchored bootstrap outputs during first sync', async () => {
         const { root, configPath } = await consumer('bootstrap-adoption')
         const prepared = await prepareSelectedBootstrapSurface({ root, target: 'codexcli' })

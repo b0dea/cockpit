@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from '../environment/executable.js'
+import { bootstrapHolderId } from '../environment/identity.js'
+import { selectBootstrapStateRoot, transactState, type BootstrapStateRecord } from '../environment/state.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
@@ -352,6 +354,49 @@ describe('bootstrap publication', () => {
         await expect(admitPublicationPlan({ mode: 'bootstrap', root: fixture.root, inspected: fixture.inspected,
             node: fixture.node, rootIdentity: fixture.rootIdentity, mutations: incomplete }, { execute: executeProbe })).resolves.toMatchObject({ kind: 'refusal' })
     }, 120_000)
+
+    it('replaces exact prior bootstrap bytes only with a matching durable surface publication', async () => {
+        const fixture = await bootstrapPublication()
+        const prior = fixture.desired.map(row => ({ path: row.path, bytes: `${row.bytes}\nPrior bootstrap bytes.\n` }))
+        for (const row of prior) {
+            await mkdir(dirname(join(fixture.root, row.path)), { recursive: true })
+            await writeFile(join(fixture.root, row.path), row.bytes)
+        }
+        const mutations = await Promise.all(fixture.desired.map(async (row, index) => {
+            const status = await lstat(join(fixture.root, row.path))
+            return { path: row.path, phase: 'desired' as const, operation: 'write-file' as const,
+                bytes: row.bytes, sha256: row.sha256, expected: { kind: 'file' as const,
+                    sha256: digest(prior[index]!.bytes), identity: { dev: status.dev, ino: status.ino } } }
+        }))
+        const input = { mode: 'bootstrap' as const, root: fixture.root, inspected: fixture.inspected, node: fixture.node,
+            rootIdentity: fixture.rootIdentity, mutations }
+        await expect(admitPublicationPlan(input, { execute: executeProbe })).resolves.toMatchObject({ kind: 'refusal' })
+
+        const stateHome = await mkdtemp(join(tmpdir(), 'cockpit-bootstrap-transaction-state-'))
+        roots.push(stateHome)
+        const selected = await selectBootstrapStateRoot({ platform: 'linux', home: stateHome,
+            checkoutRoot: fixture.root, target: fixture.inspected.target })
+        if (selected.kind !== 'complete') throw new Error('bootstrap state selection was refused')
+        const address = selected.value.paths.bootstrap(fixture.inspected.target)
+        const published = prior.map(row => ({ path: row.path, sha256: digest(row.bytes) }))
+        const sources = [{ path: 'synthetic', sha256: digest('synthetic') }]
+        const commandSha256 = digest('cockpit init')
+        const previewSha256 = digest(JSON.stringify({ target: fixture.inspected.target, sources, files: published }))
+        const record: BootstrapStateRecord = { format: 'cockpit-state/v1', kind: 'bootstrap', checkoutId: address.checkoutId,
+            target: fixture.inspected.target, revision: 0, updatedAt: '2026-10-25T12:00:00.000Z', value: {
+                stage: 'surface-published', checkoutRoot: fixture.root, target: fixture.inspected.target,
+                sources, commandSha256, previewSha256, published, destination: null, artifactBytes: null, artifactSha256: null,
+            } }
+        const persisted = await transactState(selected.value, address, {
+            ownerId: bootstrapHolderId({ checkoutId: address.checkoutId, sessionId: 'bootstrap-refresh' }),
+        }, () => record)
+        if (persisted.kind !== 'complete') throw new Error('bootstrap state publication was refused')
+        const admitted = await admitPublicationPlan({ ...input, refresh: { address, revision: persisted.value.revision,
+            commandSha256 } }, { execute: executeProbe })
+        expect(admitted).toMatchObject({ kind: 'complete', plan: {
+            changes: fixture.desired.map(row => ({ operation: 'write', path: row.path })),
+        } })
+    })
 })
 
 async function publication() {
