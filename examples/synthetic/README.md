@@ -1,9 +1,10 @@
 # Synthetic cockpit
 
+This example uses two synthetic working repositories and one local bare remote.
+
 <!-- cockpit:verified version=0.0.0 -->
 
-This example uses two synthetic working repositories and one local bare remote. From this
-directory, [install the exact project-local cockpit package](../../docs/getting-started.md#install-cockpit):
+From this directory, [install the exact project-local cockpit package](../../docs/getting-started.md#install-cockpit):
 
 ```sh human-only:package-install
 npm init --yes
