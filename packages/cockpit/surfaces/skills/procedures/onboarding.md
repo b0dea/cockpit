@@ -98,8 +98,9 @@ guesses. So derive each value from what the repository shows, record it as infer
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
    the check exits 0. Where a runtime is declared, measure it with
-   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write`, using an image
-   already on this machine because the probe never pulls. Then start the stack with
+   `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write`,
+   using an image already on this machine because the probe never pulls; it refuses a
+   `DOCKER_CONTEXT` override because it measures the context Docker has selected. Then start the stack with
    `./node_modules/.bin/cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
    Report the actual result. Done when the stack reports healthy, or you have named what stopped it.
 
@@ -200,7 +201,7 @@ source, redacted status, trusted child injection and unavailable same-user read 
 
 ## Fix
 
-Before creating files, ask cockpit which route applies and whether there is capacity (`npx cockpit work-intake`).
+Before creating files, ask cockpit which route applies and whether there is capacity (`cockpit work-intake`).
 Start from the task, issue, specification, decision record or next programme item; do not require an
 empty work-order template. Independent certification, work that must carry on in a later session, or a programme requires the
 work-order lane. A fix result creates zero work-order files. Re-evaluate the route when scope
@@ -213,7 +214,7 @@ selection, chosen source, applicability and reason in the source audit, with the
 output sources. Record explicit absence when no applicable skill is available; absence never skips
 the required source audit. A generated skill inventory or a file hash alone proves no applicability.
 
-Only after the route and capacity check pass, prepare a draft with `npx cockpit work-intake`. Link the
+Only after the route and capacity check pass, prepare a draft with `cockpit work-intake`. Link the
 upstream file in the draft's Authority list, audit its sources and unresolved gaps, and validate the canonical
 contract. Keep programme intent in its ordered ledger; prepare only its next item that capacity allows
 against the estate that exists now. A person must still accept the draft as a separate step.

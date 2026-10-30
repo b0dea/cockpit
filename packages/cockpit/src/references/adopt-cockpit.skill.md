@@ -21,7 +21,7 @@ with invented values in it is the failure it is built to prevent. Work under fiv
 
 1. Ask the human before writing into a product repository, creating a Git remote or hosted
    repository, running a destructive command (`down`, `reset`, approving removals), running
-   `npx cockpit sync --adopt`, or accepting an `init` digest.
+   `cockpit sync --adopt`, or accepting an `init` digest.
 2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
    `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or
@@ -93,8 +93,8 @@ the guide section with the detail.
 - **Committed `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json`.** `sync`
   refuses with `SURFACE_STATE_CONFLICT`. With the human's yes, run
   `./node_modules/.bin/cockpit sync --config cockpit.toml --adopt <path> --json`. Guide: *Existing agent settings*.
-- **A repository joins or leaves an existing cockpit.** Run `npx cockpit sibling add` or
-  `npx cockpit sibling remove`, then the `sync --dry-run`, `sync` and `check` sequence.
+- **A repository joins or leaves an existing cockpit.** Run `cockpit sibling add` or
+  `cockpit sibling remove`, then the `sync --dry-run`, `sync` and `check` sequence.
   Guide: *Add a repository*, *Remove a repository*.
 - **A sibling has a `.env.schema`.** Follow **Secret handling** below.
 
@@ -104,13 +104,16 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes.
 
 - Before the first `up`, measure the runtime with
-  `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
-  guide's *Measure the runtime* says which runtimes are recognised. A measurement takes a few
-  minutes with no progress output, and `--write` makes `npx cockpit check` fail and the guard hold
-  tool calls until a human runs `npx cockpit sync --config cockpit.toml`.
+  `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`;
+  the probe refuses a `DOCKER_CONTEXT` override. The guide's *Measure the runtime* says which
+  runtimes are recognised. A measurement takes a few
+  minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check` fail and the guard hold
+  tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
-  `./node_modules/.bin/cockpit down` removes its runtime, so ask first.
+  `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`
+  removes its runtime, so ask first; `down` refuses unless `DOCKER_CONTEXT` names the daemon it
+  deletes from.
 - Upgrade: install the new version, then run `./node_modules/.bin/cockpit check`,
   `./node_modules/.bin/cockpit sync --dry-run` and `./node_modules/.bin/cockpit sync`. The guard
   trusts only the CLI it was generated for, so after an upgrade the human may need to run

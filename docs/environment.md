@@ -52,9 +52,9 @@ In compose-first mode, `check` reads your Compose topology with `docker compose 
 interpolation. If Docker cannot produce it, `check` refuses with `COMPOSE_TOPOLOGY_UNAVAILABLE`.
 It also checks three things:
 
-- a published host port not written as a `[ports.bases]` variable, such as `"127.0.0.1:${API_HOST_PORT}:3000"`,
+- a published host port not written as a `[ports.bases]` variable, such as `"127.0.0.1:4200:3000"`,
   fails with `COMPOSE_PORT_NOT_LEASED`, because the same number collides across worktrees and
-  parallel stacks;
+  parallel stacks; write it as `"127.0.0.1:${API_HOST_PORT}:3000"` instead;
 - a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
   is then treated as ready;
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
@@ -255,8 +255,9 @@ and 130 when you cancel it.
 
 Each `sleep` and `down` stops containers with a stop grace: Docker sends SIGTERM and waits ten
 seconds before killing. A service whose PID 1 ignores SIGTERM, as `node` does unless the program
-handles it, pays the whole grace at every stop. Add `init: true` to such a Compose service, or
-handle SIGTERM in the program, so the stop takes a moment instead.
+handles it, pays the whole grace at every stop. Generated services already run under
+`init: true`. In your own Compose file, add `init: true` to such a service, or handle SIGTERM in
+the program, so the stop takes a moment instead.
 
 `down` removes only the resources that cockpit's runtime, checkout and ownership records show it
 owns: it lists only containers, networks and images that carry this stack's ownership label, and a
@@ -272,12 +273,8 @@ declarations, then `cockpit sync --config cockpit.toml` and `cockpit up --config
 `reset` first shows an exact preview of the generated volumes and declared generated host paths
 it would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at
 a terminal outside CI; the approval stays with the process that showed the preview, which checks
-everything again before it acts. For destructive commands, set `DOCKER_CONTEXT` explicitly, or a
-local `DOCKER_HOST` with `DOCKER_CONTEXT` unset, so discovery and deletion address the same Docker
-daemon. A `DOCKER_HOST` endpoint must be an absolute `unix://` socket path; TCP, SSH and other
-transports are refused because a remote daemon could receive the deletion. Conflicting selections
-are refused. Socket paths keep literal spaces and punctuation, and cockpit uses the exact spelling
-when it binds the context and runs discovery or deletion. A TLS override is refused.
+everything again before it acts. `down` and `reset` need an explicit Docker daemon; see
+[Choose the Docker daemon](#choose-the-docker-daemon).
 
 Every destructive action is recorded durably before it starts. If cockpit itself is interrupted, a
 detached supervisor process keeps track of that exact attempt. The next `sleep`, `down` or approved
@@ -288,6 +285,40 @@ action complete without repeating it. `DRAIN_ATTEMPT_REPAIR_REQUIRED` means the 
 supervisor identity, control socket or stop confirmation did not match; cockpit then keeps the
 attempt and refuses any overlapping cleanup. Do not remove its state or runtime resources by hand,
 because that destroys the records cockpit needs to repair it safely.
+
+## Choose the Docker daemon
+
+Two commands read the Docker daemon selection strictly, and in opposite directions. This is the
+one statement of both rules:
+
+| Command | `DOCKER_CONTEXT` | Why |
+|---|---|---|
+| `down`, `reset` | must be set, or unset with a local `DOCKER_HOST` | they delete, so they name the daemon they delete from instead of trusting whichever context happens to be current; with neither set they refuse with `CLI_USAGE_INVALID` |
+| `runtime measure` | must be unset | the probe authenticates the context Docker itself has selected, and an override would measure a daemon other than the one it records; it refuses with `RUNTIME_UNAVAILABLE` |
+| every other command | either | they use whatever daemon Docker selects |
+
+```sh
+DOCKER_CONTEXT="$(docker context show)" npx cockpit down --config cockpit.toml
+env -u DOCKER_CONTEXT npx cockpit runtime measure --config cockpit.toml --image node:22-alpine --write
+```
+
+For `down` and `reset`, discovery and deletion then address the same daemon. A `DOCKER_HOST`
+endpoint must be an absolute `unix://` socket path; TCP, SSH and other transports are refused
+because a remote daemon could receive the deletion. Conflicting selections are refused. Socket
+paths keep literal spaces and punctuation, and cockpit uses the exact spelling when it binds the
+context and runs discovery or deletion. A TLS override is refused. For `runtime measure`, select
+the context with `docker context use <name>` first.
+
+## Compose project name
+
+Every command that runs Docker Compose passes `--project-name` with `cockpit.name`, in both
+compose-first and generated mode. Containers, networks and named volumes therefore carry that
+name: a cockpit named `shop-cockpit` runs containers such as `shop-cockpit-api-1` and a volume
+`shop-cockpit_dependencies`. The generated Compose file names the same project in its `name:`
+field, so nothing that reads the file sees a different project than the one running. In
+compose-first mode your own file's `name:` is overridden. To look at the stack with Docker
+directly, name the project: `docker compose --project-name shop-cockpit ps`. Renaming
+`cockpit.name` addresses a different project, so run `down` before renaming.
 
 ## Measure the container runtime
 
@@ -324,8 +355,8 @@ one row was added. It also refuses when the runtime already has a row or the fil
 the probe ran. A failed measurement writes nothing.
 
 The probe runs only from an installed `@b0dea/cockpit` package and only against a local runtime:
-the selected Docker context or `DOCKER_HOST` must pass the [local endpoint rules](#lifecycle-and-ownership),
-and `DOCKER_CONTEXT` must be unset (select the context with `docker context use`).
+the selected Docker context or `DOCKER_HOST` must pass the
+[local endpoint rules](#choose-the-docker-daemon), and `DOCKER_CONTEXT` must be unset.
 
 ## Secret sources and environment schemas
 
@@ -410,6 +441,13 @@ Outputs include the declared environment paths and the configured harness surfac
 number varies. The repository's synthetic example shows a Compose file, a generated copy of a
 secrets template,
 <!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md`, and generated persona files.
+
+Each generated service runs under `init: true`, so its command gets signals forwarded and exits
+promptly on stop. A pinned-image service with exactly one bind mount of its checkout
+(`source = "."`) runs from that mount's target, because the image itself knows nothing about the
+checkout and a relative command such as `node server.js` would otherwise run from `/`. A built
+service keeps the `WORKDIR` its Dockerfile declares. The generated file names its Compose project
+as described in [Compose project name](#compose-project-name).
 
 Before using a running generated stack, cockpit checks that it matches the stack ID, configuration
 and source digests, generation, Compose project and Compose files. For installed dependencies it

@@ -54,10 +54,13 @@ to identify the pending decision.
 Done when `cockpit --help` lists the commands.
 
 Follow [Install cockpit](getting-started.md#install-cockpit) for the project-local dependency,
-source-package fallback and supported Node releases. For an existing product, install cockpit in a
-dedicated cockpit directory beside the product repositories, not in a product repository: the
-product stays untouched unless the human agrees to a change in it. Show the human which directory
-will receive the dependency and lockfile before installing. Installing a local dependency does not
+source-package fallback and supported Node releases. For an existing product, cockpit is installed
+in a dedicated cockpit directory beside the product repositories, not in a product repository: the
+product stays untouched unless the human agrees to a change in it. That directory does not exist
+yet: run the first `init` from inside the product repository with the temporary executable from
+[Bootstrap an existing product](getting-started.md#bootstrap-an-existing-product), and follow
+[Inside a product repository](#inside-a-product-repository); `init` creates the directory. Show
+the human which directory will receive the dependency and lockfile before installing. Installing a local dependency does not
 put its binary on a normal terminal's PATH. Run every `./node_modules/.bin/cockpit` command below
 from the cockpit directory.
 
@@ -414,17 +417,19 @@ Done when `cockpit.toml` holds an `[[environment.runtime_measurements]]` row for
 Before the first `up`, measure the local container runtime and record it:
 
 ```sh
-./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json
+env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json
 ```
 
-Name an image already on the machine; the probe never pulls. The probe runs only from an installed
+`DOCKER_CONTEXT` must be unset here, because the probe measures the context Docker has selected;
+[Choose the Docker daemon](environment.md#choose-the-docker-daemon) has both daemon rules. Name an
+image already on the machine; the probe never pulls. The probe runs only from an installed
 `@b0dea/cockpit` package, not from a linked source checkout. The supported runtime identities
 and the checks a measurement must pass are in
 [Measure the container runtime](environment.md#measure-the-container-runtime).
 
 A measurement takes a few minutes and prints no progress, so wait for it to finish. `--write`
 rewrites configuration that cockpit generated, so afterwards `cockpit check` fails and the guard
-holds agent tool calls until a human runs `cockpit sync --config cockpit.toml` in a terminal.
+holds agent tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal.
 
 ## Daily loop
 
@@ -432,12 +437,15 @@ Done when the agent command has exited and `session` has released the stack.
 
 ```sh
 ./node_modules/.bin/cockpit session --config cockpit.toml -- claude
+./node_modules/.bin/cockpit sleep --config cockpit.toml --json
+DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml --json
 ```
 
 `session` starts or resumes the stack, keeps it while the agent command after `--` runs, and
-releases it afterwards. `cockpit sleep --config cockpit.toml --json` releases this checkout's hold
-and stops the stack only when no other checkout holds it. `cockpit down --config cockpit.toml --json`
-removes this checkout's runtime; it is destructive, so ask first. Details are in
+releases it afterwards. `sleep` releases this checkout's hold and stops the stack only when no
+other checkout holds it. `down` removes this checkout's runtime; it is destructive, so ask first.
+It refuses unless `DOCKER_CONTEXT` names the daemon it deletes from
+([Choose the Docker daemon](environment.md#choose-the-docker-daemon)). Details are in
 [Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment)
 and [Environment lifecycle](environment.md#lifecycle-and-ownership).
 

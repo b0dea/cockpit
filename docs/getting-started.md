@@ -16,12 +16,17 @@ local runtime that has passed `cockpit runtime measure`. The
 are the one record of supported runtimes. Configuration, generation and surfaces-only `setup` and
 `check` work without a container runtime; validating declared Compose files requires Docker Compose.
 
-For an existing product, make a dedicated cockpit directory beside the product repositories (for
-example `shop-cockpit` next to `shop`) and install cockpit there, not in a product repository. The
-product stays untouched unless you agree to a change in it. Create the directory and follow
-[Bootstrap without a project manifest](#bootstrap-without-a-project-manifest) for the first
-`init`; it explains why the first install is temporary. Once the cockpit directory has its own
-`package.json`, install cockpit in it:
+For an existing product, the cockpit lives in a dedicated directory beside the product
+repositories (for example `shop-cockpit` next to `shop`), not in a product repository, so the
+product stays untouched unless you agree to a change in it. Do not create that directory yourself:
+run the first `init` from inside the product repository with a temporary installation, as
+[Bootstrap an existing product](#bootstrap-an-existing-product) shows, and `init` creates it with
+the product repository as its first sibling. An `init` run in an empty directory you made beside
+the product sees nothing to run there and builds a cockpit that does not know the product. For an
+empty directory or a new product, follow
+[Bootstrap without a project manifest](#bootstrap-without-a-project-manifest) instead; it explains
+why the first install is temporary. Once the cockpit directory has its own `package.json`, install
+cockpit in it:
 
 ```sh
 npm install --save-dev --save-exact @b0dea/cockpit
@@ -59,21 +64,10 @@ archive with `rm -r "$COCKPIT_PACKAGE_DIR"`. If `npm pack` or `npm install` fail
 does not show that the package users receive works. When bootstrapping a directory without a
 product manifest, install this same archive in the temporary tool directory described below.
 
-Check the install:
-
-<!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
-```console
-$ ./node_modules/.bin/cockpit --help
-Usage: cockpit <command> [options]
-
-Commands:
-  init                   Preview or accept one explicit bootstrap target in an existing checkout
-  ...
-  session                Keep the environment available for one command, then release it
-  ...
-```
-
-The [CLI reference](cli-reference.md) lists every command and flag.
+Check the install with `./node_modules/.bin/cockpit --help`: it prints `Usage: cockpit <command>
+[options]` and the command list. The [command list](command-list.md) and the
+[CLI reference](cli-reference.md) are generated from the same CLI, so they match the installed
+version, flag for flag.
 
 ### Bootstrap without a project manifest
 
@@ -110,11 +104,35 @@ through the [hand-written configuration route](#choose-a-starting-point) and pre
 start from an actual product repository and choose a dedicated cockpit. Do not delete package
 files or classify a library as tooling just to change discovery.
 
+### Bootstrap an existing product
+
+From inside the product repository, install the same temporary executable and preview:
+
+```sh
+COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
+npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/cockpit
+"$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target codexcli --json
+```
+
+The preview first asks for the cockpit root (`cockpit.root`). Answer `"dedicated"`, the
+recommendation: `init` then creates `../<repo>-cockpit`, initialises it as a local Git
+repository, and declares the product repository as its first sibling with `siblings_root = ".."`.
+Keep running the same `init` command from the product repository, with the same answers file;
+`result.root` names the new cockpit, and later commands take `--config <result.root>/cockpit.toml`.
+[Inside a product repository](agent-adoption.md#inside-a-product-repository) walks through each
+answer, and [Where the cockpit lives](concepts.md#where-the-cockpit-lives) explains the choice.
+Then install cockpit in the new directory and remove the temporary installation as above.
+
+A Compose file inside the product repository stays outside a dedicated cockpit, and Compose files
+must sit inside the cockpit root, so a dedicated cockpit declares a generated environment instead;
+[Existing Compose file](agent-adoption.md#existing-compose-file) covers the alternatives.
+
 ## Choose a starting point
 
 | Your situation | Start with |
 |---|---|
-| A product with no cockpit yet | `cockpit init`, below |
+| An existing product repository with no cockpit yet | [Bootstrap an existing product](#bootstrap-an-existing-product) |
+| A new product, or an empty directory | `cockpit init`, below |
 | An existing cockpit driven by a shell registry | [Incremental adoption](adoption.md) |
 | You would rather write the configuration by hand | The annotated example in the [tutorial](tutorial.md#read-the-configuration) |
 
@@ -380,6 +398,16 @@ stopped, `session` calls `sleep`, which shuts the stack down only if no other ch
 holds it. Interrupting `session` stops only the process group it started. A second
 `cockpit session` inside the first is refused.
 Use plain `up` only when the stack should outlive one command.
+
+To remove the stack and its containers, run `down` with the Docker context it deletes from named
+explicitly; it refuses otherwise, so a deletion never lands on a daemon you did not choose:
+
+```sh
+DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml
+```
+
+`runtime measure` needs the opposite, `DOCKER_CONTEXT` unset;
+[Choose the Docker daemon](environment.md#choose-the-docker-daemon) states both rules.
 
 ## Next steps
 
