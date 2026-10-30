@@ -11,15 +11,20 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
+  # The supported Node range's upper edge gets its full suite once a week instead of on every
+  # change: a Node-version regression is rare and a week is an acceptable time to find it.
+  schedule:
+    - cron: '17 4 * * 1'
 
 # Nothing here publishes, comments, or writes back to the repository. The default grants
 # nothing; each job that checks out code asks for contents: read and no more.
 permissions: {}
 
 # A superseded pull request push has nothing left to prove. A push to main is never cancelled,
-# so the post-merge record is complete for every commit.
+# so the post-merge record is complete for every commit. The event name keeps the weekly run
+# out of the push queue, where a newer pending run would replace an older one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -48,8 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" != pull_request ]]; then
-            # main always runs everything: a push can carry several commits, and the post-merge
-            # record must not depend on a filter.
+            # main and the weekly run always test: a push can carry several commits, and the
+            # post-merge record must not depend on a filter.
             printf '%s\n' code=true lockfile=true release=false changeset=false >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -127,13 +132,20 @@ jobs:
       # what this matrix exists to find.
       fail-fast: false
       matrix:
-        # Full behavior runs at the supported range edges. Pull requests pay for one macOS
-        # cell (macOS minutes cost ten times Linux minutes) and the whole matrix runs on main,
-        # so a platform-specific regression is still caught within one merge.
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"macos-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"full"},{"os":"macos-latest","node":"26","gate":"full"}]') }}
+        # Three lists, chosen by event, because macOS minutes cost ten times Linux minutes while
+        # the repository is private and the full suite takes most of an hour.
+        # - pull request: the full suite on Linux at the supported floor, plus macOS running
+        #   only the tests adjacent to the change (`changed`).
+        # - weekly: the full suite at the upper edge of the supported Node range.
+        # - push to main: the full suite on Linux and on macOS at the floor, and the
+        #   launcher-level compatibility subset on the other supported Node lines, so a
+        #   platform or Node regression a pull request missed is caught within one merge.
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"changed"}]' || github.event_name == 'schedule' && '[{"os":"ubuntu-latest","node":"26","gate":"full"}]' || '[{"os":"ubuntu-latest","node":"22.22.0","gate":"full","extras":true},{"os":"macos-latest","node":"22.22.0","gate":"full"},{"os":"ubuntu-latest","node":"24","gate":"compatibility"},{"os":"ubuntu-latest","node":"26","gate":"compatibility"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The merge commit and its base parent, so the `changed` gate can diff against it.
+          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -152,6 +164,19 @@ jobs:
       - if: matrix.gate == 'full'
         timeout-minutes: 65
         run: npm test
+      # The adjacent-owner selection refuses a change it cannot map to owner tests (a launcher,
+      # a libexec helper, a hook). A refusal widens this cell to the full suite rather than
+      # testing nothing; a selection error never narrows what runs.
+      - if: matrix.gate == 'changed'
+        timeout-minutes: 65
+        run: |
+          set -euo pipefail
+          if npm run --silent test:changed -- HEAD^1 --list >/dev/null; then
+            npm run test:changed -- HEAD^1
+          else
+            echo '::notice::adjacent-owner selection refused this change (reason above); running the full suite'
+            npm test
+          fi
       - if: matrix.gate == 'compatibility'
         timeout-minutes: 15
         run: npm test -- packages/cockpit/src/launcher.test.ts packages/cockpit/src/package-metadata.test.ts packages/cockpit/src/environment/runtime-probe.test.ts
@@ -173,6 +198,8 @@ jobs:
 
   test-protection:
     name: test protection
+    # The weekly run has no change to compare.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -6113,32 +6113,40 @@ describe('clean-checkout controls', () => {
         expect(manifest.scripts?.['lint:docs']).toBe('node scripts/docs-lint.mjs')
     })
 
-    it('keeps four min/max full cells, two Node 24 compatibility cells and the separate Node 20 negative control', () => {
+    it('runs one full Linux cell and adjacent macOS tests per pull request, full platforms on main, the Node upper edge weekly, and the Node 20 negative control', () => {
         const workflow = readFileSync(resolve(ROOT, '.github/workflows/ci.yml'), 'utf8')
-        const supportedJob = /\n  test:\n(?<body>[\s\S]*?)(?=\n  runtime-floor-negative:)/.exec(workflow)?.groups?.body ?? ''
+        const supportedJob = /\n  test:\n(?<body>[\s\S]*?)(?=\n  test-protection:)/.exec(workflow)?.groups?.body ?? ''
         const hygieneJob = /\n  hygiene:\n(?<body>[\s\S]*?)(?=\n  test:)/.exec(workflow)?.groups?.body ?? ''
         const floorJob = /\n  runtime-floor-negative:\n(?<body>[\s\S]*)/.exec(workflow)?.groups?.body ?? ''
 
-        // The matrix is one fromJSON expression with a pull-request list and a main list, so each
-        // list is read as data rather than matched line by line.
-        const [pullRequestCells, mainCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
+        // The matrix is one fromJSON expression with a pull-request, a weekly and a main list, so
+        // each list is read as data rather than matched line by line.
+        const [pullRequestCells, weeklyCells, mainCells] = [...supportedJob.matchAll(/'(\[\{[^']*\}\])'/g)]
             .map((match) => (JSON.parse(match[1]) as { os: string; node: string; gate: string }[])
                 .map(({ os, node, gate }) => ({ os, node, gate })))
+        expect(supportedJob).toContain("github.event_name == 'pull_request' && '[")
+        expect(supportedJob).toContain("github.event_name == 'schedule' && '[")
+        expect(workflow).toMatch(/\n  schedule:\n    - cron: '[^']+'\n/)
+        // macOS minutes cost ten times Linux minutes, so a pull request runs only the tests
+        // adjacent to its change there.
+        expect(pullRequestCells).toEqual([
+            { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
+            { os: 'macos-latest', node: '22.22.0', gate: 'changed' },
+        ])
+        expect(weeklyCells).toEqual([
+            { os: 'ubuntu-latest', node: '26', gate: 'full' },
+        ])
         expect(mainCells).toEqual([
             { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
             { os: 'macos-latest', node: '22.22.0', gate: 'full' },
             { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
-            { os: 'macos-latest', node: '24', gate: 'compatibility' },
-            { os: 'ubuntu-latest', node: '26', gate: 'full' },
-            { os: 'macos-latest', node: '26', gate: 'full' },
+            { os: 'ubuntu-latest', node: '26', gate: 'compatibility' },
         ])
-        // Pull requests keep both Node range edges and the Node 24 cell but pay for one macOS cell.
-        expect(pullRequestCells).toEqual([
-            { os: 'ubuntu-latest', node: '22.22.0', gate: 'full' },
-            { os: 'macos-latest', node: '22.22.0', gate: 'full' },
-            { os: 'ubuntu-latest', node: '24', gate: 'compatibility' },
-            { os: 'ubuntu-latest', node: '26', gate: 'full' },
-        ])
+        // A refused adjacent selection widens the cell to the full suite; it never runs nothing.
+        expect(supportedJob).toContain("if: matrix.gate == 'changed'")
+        expect(supportedJob).toContain('if npm run --silent test:changed -- HEAD^1 --list >/dev/null; then\n            npm run test:changed -- HEAD^1\n          else')
+        expect(supportedJob).toMatch(/else\n[^\n]*\n {12}npm test\n {10}fi/)
+        expect(supportedJob).toContain('fetch-depth: 2')
         expect(workflow).toContain('runtime-floor-negative:')
         expect(supportedJob).toContain('npm run build')
         expect(supportedJob).toContain("if: matrix.gate == 'full'")
