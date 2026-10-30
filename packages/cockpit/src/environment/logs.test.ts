@@ -9,7 +9,7 @@ import { stackId, cockpitId, checkoutId } from './identity.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { projectGeneratedComposeArtifactAuthority, renderGeneratedEnvironment } from './generated-stack.js'
 import { authenticateStabilityCapture, captureRuntimeEvidence, createStabilityCapturePlan, type CapturedRuntimeEvidence } from './evidence.js'
-import { admitFailureLogs, collectLogs, planFailureLogs, planLogs, type LogRequest } from './logs.js'
+import { admitFailureLogs, collectLogs, failureLogExcerpt, planFailureLogs, planLogs, type FailureLogRecord, type LogRequest } from './logs.js'
 import {
     admitRuntimeServiceHealth,
     admitRuntimeServicePlanFailure,
@@ -635,6 +635,16 @@ describe('runtime logs', () => {
 })
 
 describe('authenticated failure logs', () => {
+    // A restart policy replays one crash per start: the excerpt showed the same line four times, and
+    // labelled Compose's merged output as stdout.
+    it('shows each distinct failure line once with its count and claims a stream only when one was observed', () => {
+        const line = (stream: FailureLogRecord['stream'], message: string) => ({ stream, message }) as FailureLogRecord
+        const crash = [line('stdout', 'listening'), ...Array.from({ length: 4 }, () => line('stderr', 'Error: boom'))]
+        expect(failureLogExcerpt('api', crash)).toBe('service api wrote 5 log lines before it failed: stdout: listening | stderr: Error: boom (4 times)')
+        expect(failureLogExcerpt('api', [line('combined', 'Error: boom'), line('combined', 'Error: boom')]))
+            .toBe('service api wrote 2 log lines before it failed: Error: boom (2 times)')
+    })
+
     const bounds = { tail: 50, timeoutMs: 5_000, outputLimitBytes: 4_096 }
 
     it('targets one full admitted container with explicit finite bounds', async () => {
@@ -719,7 +729,7 @@ describe('authenticated failure logs', () => {
         const admitted = admitFailureLogs({ plan, outcome: await executeProbe(plan.step) })
         expect(admitted).toEqual({
             kind: 'complete',
-            records: [expect.objectContaining({ containerId: null, service: 'api', message: 'startup failed' })],
+            records: [expect.objectContaining({ containerId: null, service: 'api', stream: 'combined', message: 'startup failed' })],
         })
     })
 

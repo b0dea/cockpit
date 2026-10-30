@@ -160,7 +160,7 @@ import {
     type RuntimeServiceObservation,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
-import { admitFailureLogs, planFailureLogs } from './logs.js'
+import { admitFailureLogs, failureLogExcerpt, planFailureLogs } from './logs.js'
 import {
     finalizeDrainOutcome,
     discardDrainReservationAuthority,
@@ -2304,9 +2304,6 @@ async function startPlannedService(
     return healthPlan.kind === 'planned' ? inspectService(healthPlan, adapters) : { kind: 'failure' }
 }
 
-const FAILURE_LOG_EXCERPT_LINES = 10
-const FAILURE_LOG_LINE_CHARACTERS = 240
-
 // Failure evidence for a service that did not become healthy: its bounded logs as one diagnostic,
 // read before anything else touches the container. When this `up` started the service, `stop` then
 // stops it: under a restart policy a failed service otherwise restarted until `down`. The
@@ -2356,16 +2353,7 @@ async function collectFailureLogs(
             'bounded failure logs contained no records',
             service,
         )]
-        const excerpt = records.slice(-FAILURE_LOG_EXCERPT_LINES).map(({ stream, message }) => {
-            const characters = [...message]
-            return `${stream}: ${characters.slice(0, FAILURE_LOG_LINE_CHARACTERS).join('')}${characters.length > FAILURE_LOG_LINE_CHARACTERS ? '…' : ''}`
-        })
-        const count = `${records.length} log line${records.length === 1 ? '' : 's'}`
-        return [ownerDiagnostic(
-            ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-            `service ${service} wrote ${count} before it failed${records.length > excerpt.length ? `; the last ${excerpt.length}` : ''}: ${excerpt.join(' | ')}`,
-            service,
-        )]
+        return [ownerDiagnostic(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, failureLogExcerpt(service, records), service)]
     }
     return [ownerDiagnostic(
         'code' in admitted ? admitted.code : ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,

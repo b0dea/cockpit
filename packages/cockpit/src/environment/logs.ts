@@ -10,7 +10,7 @@ import { isResolvedDockerExecutable, type ResolvedExecutable } from './executabl
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { inspectPortLeaseProjection, type PortLeaseProjection } from './ports.js'
 
-export const mechanism = { id: 'runtime-logs', module: 'packages/cockpit/src/environment/logs.ts', exports: ['planLogs', 'collectLogs', 'planFailureLogs', 'admitFailureLogs'] } as const
+export const mechanism = { id: 'runtime-logs', module: 'packages/cockpit/src/environment/logs.ts', exports: ['planLogs', 'collectLogs', 'planFailureLogs', 'admitFailureLogs', 'failureLogExcerpt'] } as const
 
 export interface LogRequest {
     runtime: 'docker-compose'
@@ -331,7 +331,9 @@ export type LogRecord = Readonly<{
     restart: boolean
 }>
 
-export type EarlyFailureLogRecord = Readonly<Omit<LogRecord, 'containerId'> & { containerId: null }>
+// Early-failure logs come from `docker compose logs`, which writes a container's stdout and stderr
+// to one stream, so which one a line came from is not observable and is not claimed.
+export type EarlyFailureLogRecord = Readonly<Omit<LogRecord, 'containerId' | 'stream'> & { containerId: null; stream: 'combined' }>
 export type FailureLogRecord = LogRecord | EarlyFailureLogRecord
 
 export type FailureLogAdmission =
@@ -393,9 +395,9 @@ export function admitFailureLogs(input: {
                     executableSha256: contract.evidence.executableSha256,
                     timestamp: match[1],
                     message,
-                    stream,
+                    stream: contract.evidence.containerId === null ? 'combined' : stream,
                     restart: false,
-                }))
+                } as FailureLogRecord))
             }
         }
         records.sort((left, right) => compareInstants(left.timestamp, right.timestamp)
@@ -404,6 +406,33 @@ export function admitFailureLogs(input: {
     } catch {
         return unavailable()
     }
+}
+
+const FAILURE_LOG_EXCERPT_LINES = 10
+const FAILURE_LOG_LINE_CHARACTERS = 240
+
+/**
+ * The bounded message a failed service's diagnostic carries. A restart policy replays the same crash
+ * on every start, which filled the excerpt with one line repeated; each distinct line is shown once,
+ * where it last occurred, with its count. A line is labelled with its stream only when the runtime
+ * reported which stream it was.
+ */
+export function failureLogExcerpt(service: string, records: readonly FailureLogRecord[]): string {
+    const distinct = new Map<string, { stream: FailureLogRecord['stream']; message: string; count: number }>()
+    for (const { stream, message } of records) {
+        const key = `${stream}\0${message}`
+        const seen = distinct.get(key)
+        distinct.delete(key)
+        distinct.set(key, { stream, message, count: (seen?.count ?? 0) + 1 })
+    }
+    const lines = [...distinct.values()]
+    const shown = lines.slice(-FAILURE_LOG_EXCERPT_LINES).map(({ stream, message, count }) => {
+        const characters = [...message]
+        const text = `${characters.slice(0, FAILURE_LOG_LINE_CHARACTERS).join('')}${characters.length > FAILURE_LOG_LINE_CHARACTERS ? '…' : ''}`
+        return `${stream === 'combined' ? '' : `${stream}: `}${text}${count > 1 ? ` (${count} times)` : ''}`
+    })
+    const count = `${records.length} log line${records.length === 1 ? '' : 's'}`
+    return `service ${service} wrote ${count} before it failed${lines.length > shown.length ? `; the last ${shown.length} distinct` : ''}: ${shown.join(' | ')}`
 }
 
 export interface RestartWindow { readonly before: CapturedRuntimeEvidence; readonly after: CapturedRuntimeEvidence }
