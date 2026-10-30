@@ -145,7 +145,8 @@ section.
 
 Claude Code, Codex CLI and OpenCode are the fully supported targets. cockpit also writes Cursor
 and Grok Build files, which the capability matrix marks `generated`: nobody has confirmed those
-tools load them, and cockpit installs no guard for them.
+tools load them, and cockpit installs no guard for them. Any other agent tool that reads
+`AGENTS.md` gets the same instructions, without skills, hooks or permissions.
 
 | Harness | Target name | Where cockpit writes its surfaces |
 |---|---|---|
