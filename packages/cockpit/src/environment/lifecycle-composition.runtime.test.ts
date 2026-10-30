@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
@@ -361,7 +362,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(message).toContain('Runtime docker-desktop is not supported by a complete measurement row')
         expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"')
         expect(message).toContain('measured rows: docker-desktop (unmeasured)')
-        expect(message).toMatch(/cockpit runtime measure --config <cockpit\.toml> --image <local-image> --write$/)
+        expect(message).toMatch(/Measure it with: npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image> --write$/)
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
     })
 
@@ -889,7 +890,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const before = await readFile(configPath, 'utf8')
         const add = () => runSiblingAdd({ configPath, slug: 'docs', create: false, env,
             remote: 'https://git.invalid/docs.git', purpose: 'Synthetic docs' }, { execute: executeProbe })
-        const fix = `fix: run \`cockpit down --config ${first.context.source.path}\`, then rerun this command`
+        const fix = `fix: run \`${cockpitCommand('down', { config: first.context.source.path })}\`, then rerun this command`
 
         for (const refused of [await add(), await runSiblingRemove({ configPath, slug: 'app', env })]) {
             expect(refused).toMatchObject({ status: 2, diagnostics: [{ code: 'SIBLING_STACK_RECORDED' }] })
@@ -926,7 +927,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
 
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `the recorded stack was started from a different cockpit.toml, and cockpit removes a stack only under the exact configuration that started it — fix: restore the previous cockpit.toml, run \`cockpit sync --config ${path}\` then \`cockpit down --config ${path}\`, restore the intended cockpit.toml, then run \`cockpit sync --config ${path}\` and \`cockpit up --config ${path}\``,
+            message: `the recorded stack was started from a different cockpit.toml, and cockpit removes a stack only under the exact configuration that started it — fix: restore the previous cockpit.toml, run \`${cockpitCommand('sync', { config: path })}\` then \`${cockpitCommand('down', { config: path })}\`, restore the intended cockpit.toml, then run \`${cockpitCommand('sync', { config: path })}\` and \`${cockpitCommand('up', { config: path })}\``,
         }] })
         // Follow the recovery exactly as printed: it must remove the old stack and start the new one.
         await writeFile(input.configPath, previous)

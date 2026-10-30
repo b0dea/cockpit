@@ -26,7 +26,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/getting-started.md', [packageInstall, packageInstall, packageInstall, operator, packageInstall, operator, operator, operator, operator, runtime, operator, operator, operator, runtime, runtime]],
     ['docs/harness-surfaces.md', [operator]],
     ['docs/joining-a-team.md', [packageInstall, operator, operator]],
-    ['docs/contributing/releasing.md', [operator, developer, developer]],
+    ['docs/contributing/releasing.md', [operator, operator, developer, developer]],
     ['docs/release-policy.md', [operator]],
     ['docs/troubleshooting.md', [operator, operator]],
     ['docs/contributing/testing.md', [developer, developer]],
@@ -243,9 +243,9 @@ describe('the public synthetic cockpit', () => {
         // Facts come from cockpit.toml: the cockpit name and each sibling's directory, purpose and acquire mode.
         expect(guide).toContain('`tinya` cockpit')
         expect(guide).toContain('| `api` | Tiny api | none: already on disk |')
-        expect(guide).toContain('npx --no cockpit session -- <command>')
-        expect(guide).toContain('npx --no cockpit sync --dry-run')
-        expect(guide).toContain('npx --no cockpit test-run --select <kind>:<value>')
+        expect(guide).toContain('npx --no cockpit session --config cockpit.toml -- <command>')
+        expect(guide).toContain('npx --no cockpit sync --config cockpit.toml --dry-run')
+        expect(guide).toContain('npx --no cockpit test-run --config cockpit.toml --select <kind>:<value>')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
         // Sync refuses a hand edit rather than replacing it, so the guide must not promise an overwrite.
