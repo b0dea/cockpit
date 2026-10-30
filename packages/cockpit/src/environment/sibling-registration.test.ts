@@ -213,6 +213,35 @@ describe('sibling add', () => {
         expect((await loaded(configPath)).sibling.map((row) => [row.slug, row.dir])).toEqual([['genesis', '.'], ['api', 'api']])
     })
 
+    it('records a compose-first sibling as mount none unless --mount says otherwise', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-sibling-mount-')))
+        roots.push(root)
+        const configPath = join(root, 'cockpit.toml')
+        await writeFile(configPath, [
+            '[cockpit]', 'name = "compose-mounts"', 'siblings_root = "."', '',
+            '[[sibling]]', 'slug = "api"', 'dir = "api"', 'mount = "always"', 'acquire = "none"', 'var = "API_DIR"', 'purpose = "Synthetic API"', '',
+            '[ports.bases]', 'API_HOST_PORT = 4100', '',
+            '[environment]', 'compose_files = ["compose.yml"]', '',
+        ].join('\n'))
+
+        const defaulted = await add({ configPath, slug: 'worker', create: true, purpose: 'Synthetic worker' })
+
+        expect(defaulted).toMatchObject({ status: 0, diagnostics: [], result: { sibling: { mount: 'none' } } })
+        expect((defaulted.result as { sources: { mount: string } }).sources.mount).toContain('compose-first')
+        expect(defaulted.artifact).toContain('--mount always')
+        expect((await loaded(configPath)).sibling.find(({ slug }) => slug === 'worker')?.mount).toBe('none')
+
+        const explicit = await add({ configPath, slug: 'queue', create: true, purpose: 'Synthetic queue', mount: 'profile:jobs' })
+        expect(explicit).toMatchObject({ status: 0, result: { sibling: { mount: 'profile:jobs' }, sources: { mount: '--mount' } } })
+
+        const before = await readFile(configPath, 'utf8')
+        for (const [mount, message] of [['sometimes', 'always, none or profile:<name>'], ['host', 'host_reason']] as const) {
+            expect(await add({ configPath, slug: 'cache', create: true, purpose: 'Synthetic cache', mount })).toMatchObject({
+                status: 2, diagnostics: [{ code: 'CLI_USAGE_INVALID', target: '--mount', message: expect.stringContaining(message) }] })
+        }
+        expect(await readFile(configPath, 'utf8')).toBe(before)
+    })
+
     it('records an explicitly approved instruction pointer for setup to fulfill', async () => {
         const { configPath, siblings } = await estate()
         await mkdir(join(siblings, 'worker'))

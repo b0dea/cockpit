@@ -19,7 +19,7 @@ import { loadCockpitConfig, readBoundedInput } from '../config/load.js'
 import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type SiblingEdit, type SiblingTableRow } from '../config/sibling-toml.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { CockpitConfig, deriveSiblingVariable, Sibling } from '../schema.js'
+import { CockpitConfig, deriveSiblingVariable, Mount, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
 import { declaredRuntime } from './declaration.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
@@ -43,6 +43,8 @@ export interface SiblingAddInput {
     readonly dir?: string
     readonly purpose?: string
     readonly varName?: string
+    /** How the stack uses the checkout; defaulted from the declared runtime when absent. */
+    readonly mount?: string
     readonly instructionPointer?: boolean
     readonly env: Readonly<Record<string, string | undefined>>
 }
@@ -350,6 +352,8 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     if (!Sibling.shape.var.safeParse(varName).success) {
         return usage(`variable ${JSON.stringify(varName)} must be uppercase and must not control Docker, Compose or the host process; use a sibling-specific name such as ${deriveSiblingVariable(slug.data)}`, '--var')
     }
+    const mount = siblingMount(input.mount, config)
+    if ('diagnostics' in mount) return mount
     for (const sibling of config.sibling) {
         if (sibling.dir === dir) return refused('SIBLING_DIR_DUPLICATE', `dir "${dir}" is already used by sibling "${sibling.slug}"; choose another with --dir`, '--dir')
         if (sibling.var === varName) return refused('SIBLING_VAR_DUPLICATE', `variable ${varName} is already exported by sibling "${sibling.slug}"; choose another with --var`, '--var')
@@ -397,7 +401,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     }
 
     const acquire = remote === undefined ? 'none' : 'auto'
-    const row: SiblingTableRow = { slug: slug.data, dir, ...(remote === undefined ? {} : { remote }), mount: 'always', acquire, var: varName,
+    const row: SiblingTableRow = { slug: slug.data, dir, ...(remote === undefined ? {} : { remote }), mount: mount.value, acquire, var: varName,
         toolchain: 'none', ...(input.instructionPointer === true ? { instruction_pointer: true } : {}), purpose }
     const original = await sourceText(configPath, loaded.result.source.sha256)
     if (typeof original !== 'string') return original
@@ -421,6 +425,7 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     const sources = {
         dir: input.dir === undefined ? 'defaulted to the slug' : '--dir',
         var: input.varName === undefined ? 'derived from the slug' : '--var',
+        mount: mount.source,
         purpose: '--purpose',
     }
     // Creating a hosted repository is outward-facing, so cockpit only hands the commands over. The
@@ -439,8 +444,33 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
             : mode === 'remote'
                 ? `recorded sibling "${slug.data}" with remote ${remote} (acquire "auto") in ${configPath}; \`npx --no cockpit setup\` clones it to ${target}.`
                 : `recorded the existing directory ${target} as sibling "${slug.data}" (acquire "none") in ${configPath}.`
-    return success(mode === 'create' ? 'created' : 'added', configPath, added, sources, note, { path: target,
+    const mountNote = input.mount === undefined && mount.value === 'none'
+        ? `\nIt is recorded as mount "none" because ${mount.source}. Once a service in ${config.environment.compose_files.join(', ')} bind-mounts \${${varName}}, `
+          + 'change this row to mount = "always" so cockpit checks that mount and grants agents the checkout (pass --mount always when adding a sibling that is already mounted).'
+        : ''
+    return success(mode === 'create' ? 'created' : 'added', configPath, added, sources, `${note}${mountNote}`, { path: target,
         ...(source === undefined ? {} : { from: source }), ...(mode === 'create' ? { publish } : {}) })
+}
+
+type MountChoice = Readonly<{ value: Mount; source: string }>
+
+/**
+ * A compose-first cockpit's own Compose files decide what is mounted, and cockpit cannot add a bind
+ * mount to them, so a new row there starts as "none": declaring "always" for a checkout no service
+ * mounts made `check` pass and every later `up`, `sleep` and `down` refuse the runtime topology.
+ */
+function siblingMount(requested: string | undefined, config: CockpitConfig): MountChoice | SiblingOutcome {
+    if (requested === undefined) {
+        return declaredRuntime(config.environment) === 'compose'
+            ? { value: 'none', source: 'this is a compose-first cockpit, and its own Compose files must bind-mount a mount = "always" sibling' }
+            : { value: 'always', source: 'defaulted to always' }
+    }
+    if (requested === 'host') {
+        return usage('--mount host needs a host_reason, which sibling add does not record; add the sibling with --mount none, then set mount = "host" and host_reason in cockpit.toml by hand', '--mount')
+    }
+    const parsed = Mount.safeParse(requested)
+    if (!parsed.success) return usage(`--mount ${JSON.stringify(requested)} must be always, none or profile:<name> (lowercase letters, digits and hyphens)`, '--mount')
+    return { value: parsed.data, source: '--mount' }
 }
 
 function success(action: string, configPath: string, row: unknown, sources: Record<string, string>, note: string, extra: Record<string, unknown> = {}): SiblingOutcome {

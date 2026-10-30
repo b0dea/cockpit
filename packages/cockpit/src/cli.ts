@@ -1082,15 +1082,15 @@ async function decodeRequest(
     }
 
     if (handler === 'sibling') {
-        const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; 'instruction-pointer'?: boolean }
+        const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; mount?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
-        const shape = 'npx --no cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--instruction-pointer], or npx --no cockpit sibling remove <slug> --config <file>'
+        const shape = 'npx --no cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--mount <always|none|profile:NAME>] [--instruction-pointer], or npx --no cockpit sibling remove <slug> --config <file>'
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
         }
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (operation === 'remove') {
-            const stray = ['create', 'from', 'remote', 'dir', 'var', 'purpose', 'instruction-pointer'].find((name) => (values as Record<string, unknown>)[name] !== undefined && (values as Record<string, unknown>)[name] !== false)
+            const stray = ['create', 'from', 'remote', 'dir', 'var', 'purpose', 'mount', 'instruction-pointer'].find((name) => (values as Record<string, unknown>)[name] !== undefined && (values as Record<string, unknown>)[name] !== false)
             if (stray) return usageOutcome('CLI_USAGE_INVALID', `sibling remove takes only --config and --json; --${stray} belongs to sibling add`, `--${stray}`)
             return { handler, input: { operation, input: { configPath: values.config, slug } } }
         }
@@ -1099,6 +1099,7 @@ async function decodeRequest(
             ...(values.from === undefined ? {} : { from: values.from }), ...(values.remote === undefined ? {} : { remote: values.remote }),
             ...(values.dir === undefined ? {} : { dir: values.dir }), ...(values.var === undefined ? {} : { varName: values.var }),
             ...(values.purpose === undefined ? {} : { purpose: values.purpose }),
+            ...(values.mount === undefined ? {} : { mount: values.mount }),
             ...(values['instruction-pointer'] === true ? { instructionPointer: true } : {}),
         } } }
     }

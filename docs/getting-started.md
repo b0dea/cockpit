@@ -345,6 +345,10 @@ would begin with a Docker, Compose or host-process control prefix gets `SIBLING_
 cockpit refuses an explicit control variable because handing it to Compose could change the
 runtime plan. `--purpose "<text>"` says what the repository is for; it is required
 for a new sibling and never defaulted.
+`--mount <always|none|profile:NAME>` says how the stack uses the checkout. In a compose-first
+cockpit it defaults to `none`, because cockpit never edits your Compose files and `check` and `up`
+refuse a `mount = "always"` sibling that no service bind-mounts; pass `--mount always` once a
+service in your Compose file mounts the sibling's variable. Elsewhere it defaults to `always`.
 `--instruction-pointer` opts a separate sibling into a marked link from its **AGENTS.md** to the
 cockpit instructions. This changes what agents in that repository load, so setup first reports the
 proposal without writing it:
