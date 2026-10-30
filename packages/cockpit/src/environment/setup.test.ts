@@ -228,14 +228,18 @@ describe('setup planner', () => {
         }))
     })
 
-    it.each(['absent', 'directory', 'repository'] as const)('preserves and reports none observation %s', async (kind) => {
+    it.each([
+        { kind: 'absent', message: 'acquire = "none", so setup leaves this path alone: nothing exists there yet' },
+        { kind: 'directory', message: 'acquire = "none", so setup leaves this path alone: it is a plain directory, not a Git checkout' },
+        { kind: 'repository', message: 'acquire = "none", so setup leaves this path alone: it is an existing Git checkout' },
+    ] as const)('preserves and reports none observation $kind', async ({ kind, message }) => {
         const outcome = await planSetup({
             siblingsRoot: root(), sibling: sibling({ acquire: 'none', remote: undefined }), observation: observed({ kind }), env,
         })
 
         expect(outcome).toEqual(expect.objectContaining({
             kind: 'complete',
-            diagnostics: [expect.objectContaining({ code: `SETUP_NONE_${kind.toUpperCase()}` })],
+            diagnostics: [expect.objectContaining({ code: `SETUP_NONE_${kind.toUpperCase()}`, message })],
             result: expect.objectContaining({ action: 'report', observed: kind }),
         }))
     })

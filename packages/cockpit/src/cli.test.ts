@@ -1117,7 +1117,7 @@ describe('setup process contract', () => {
             diagnostics: [{
                 severity: 'info',
                 code: 'SETUP_NONE_ABSENT',
-                message: 'non-repository path is absent',
+                message: 'acquire = "none", so setup leaves this path alone: nothing exists there yet',
                 target: join(canonicalDirectory, 'assets'),
             }],
         })
@@ -1591,9 +1591,9 @@ describe('setup process contract', () => {
         const result = setupOutcome().result
         const diagnostics = [
             { severity: 'warning', code: 'SETUP_MANUAL_MISSING', message: 'manual checkout is absent', target: '/tmp/manual' },
-            { severity: 'info', code: 'SETUP_NONE_ABSENT', message: 'non-repository path is absent', target: '/tmp/absent' },
-            { severity: 'info', code: 'SETUP_NONE_DIRECTORY', message: 'non-repository path is a directory', target: '/tmp/directory' },
-            { severity: 'info', code: 'SETUP_NONE_REPOSITORY', message: 'non-repository path is a repository', target: '/tmp/repository' },
+            { severity: 'info', code: 'SETUP_NONE_ABSENT', message: 'acquire = "none", so setup leaves this path alone: nothing exists there yet', target: '/tmp/absent' },
+            { severity: 'info', code: 'SETUP_NONE_DIRECTORY', message: 'acquire = "none", so setup leaves this path alone: it is a plain directory, not a Git checkout', target: '/tmp/directory' },
+            { severity: 'info', code: 'SETUP_NONE_REPOSITORY', message: 'acquire = "none", so setup leaves this path alone: it is an existing Git checkout', target: '/tmp/repository' },
         ] as const
         const capture = captureIo()
 

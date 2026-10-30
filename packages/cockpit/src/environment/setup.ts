@@ -55,11 +55,11 @@ const APPROVED_GIT_ENVIRONMENT = [
     'PATH', 'HOME', 'SSH_AUTH_SOCK', 'TMPDIR', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT',
 ] as const
 
-const NONE_POSTURE_CODES = {
-    absent: ENVIRONMENT_CODES.SETUP_NONE_ABSENT,
-    directory: ENVIRONMENT_CODES.SETUP_NONE_DIRECTORY,
-    repository: ENVIRONMENT_CODES.SETUP_NONE_REPOSITORY,
-} as const satisfies Record<Exclude<ObservedPathKind, 'symlink'>, string>
+const NONE_POSTURE = {
+    absent: { code: ENVIRONMENT_CODES.SETUP_NONE_ABSENT, found: 'nothing exists there yet' },
+    directory: { code: ENVIRONMENT_CODES.SETUP_NONE_DIRECTORY, found: 'it is a plain directory, not a Git checkout' },
+    repository: { code: ENVIRONMENT_CODES.SETUP_NONE_REPOSITORY, found: 'it is an existing Git checkout' },
+} as const satisfies Record<Exclude<ObservedPathKind, 'symlink'>, Readonly<{ code: string; found: string }>>
 
 export function gitEnvironment(ambient: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
     const approved: Record<string, string> = {}
@@ -153,8 +153,8 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
             status: 0,
             diagnostics: [{
                 severity: 'info',
-                code: NONE_POSTURE_CODES[observation.kind],
-                message: `non-repository path is ${observation.kind}`,
+                code: NONE_POSTURE[observation.kind].code,
+                message: `acquire = "none", so setup leaves this path alone: ${NONE_POSTURE[observation.kind].found}`,
                 target,
             }],
             result: result('report', false),
