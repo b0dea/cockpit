@@ -22,7 +22,7 @@ describe('public surface publication transaction', () => {
             let preparations = 0
             const result = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
                 execute: async step => {
-                    if (step.labels.action === 'prepare') preparations += 1
+                    if (step.labels.action === 'prepare-batch') preparations += 1
                     return executeProbe(step)
                 },
             })
@@ -62,23 +62,27 @@ describe('public surface publication transaction', () => {
             let advanced: number | undefined
             const clock = vi.spyOn(Date, 'now').mockImplementation(() => advanced ?? realNow())
             const prepareDeadlines: number[] = []
+            let preparedGroups = 0
             let rollbacks = 0
             let published = false
             try {
                 const result = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
                     execute: async step => {
                         const outcome = await executeProbe(step)
-                        if (step.labels.action === 'prepare') {
+                        if (step.labels.action === 'prepare-batch') {
                             if (!step.spawnNotAfter) throw new Error('publication preparation deadline is missing')
                             prepareDeadlines.push(Date.parse(step.spawnNotAfter))
+                            preparedGroups += publicationGroups(step, 'prepare').length
                         }
                         if (step.labels.action === 'rollback') rollbacks += 1
                         if (!published && publicationGroups(step, 'publish').length > 0) {
                             if (!step.spawnNotAfter) throw new Error('publication deadline is missing')
-                            expect(prepareDeadlines.length).toBeGreaterThan(1)
-                            const interval = prepareDeadlines[1]! - prepareDeadlines[0]!
-                            advanced = Date.parse(step.spawnNotAfter)
-                                + (3 * prepareDeadlines.length - publicationGroups(step, 'publish').length) * interval + 1
+                            // These few groups prepare in one call and publish in one call that spends
+                            // the same number of forward slots as the commit call still ahead of it. So
+                            // the forward cutoff lies as far after this deadline as preparation lay before it.
+                            expect(prepareDeadlines).toHaveLength(1)
+                            const publishDeadline = Date.parse(step.spawnNotAfter)
+                            advanced = 2 * publishDeadline - prepareDeadlines[0]! + 1
                             published = true
                         }
                         return outcome
@@ -86,7 +90,7 @@ describe('public surface publication transaction', () => {
                 })
                 expect(published).toBe(true)
                 expect(result).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })] })
-                expect(rollbacks).toBe(prepareDeadlines.length)
+                expect(rollbacks).toBe(preparedGroups)
                 expect(await bytes(fixture.root, initial.result.paths)).toEqual(before)
                 expect(await readFile(ledgerPath)).toEqual(ledger)
             } finally {
@@ -120,7 +124,7 @@ describe('public surface publication transaction', () => {
                 let preparations = 0
                 const result = await syncGeneratedEnvironment({ configPath: fixture.configPath }, {
                     execute: async step => {
-                        if (step.labels.action === 'prepare') preparations += 1
+                        if (step.labels.action === 'prepare-batch') preparations += 1
                         return executeProbe(step)
                     },
                 })

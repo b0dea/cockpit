@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from '../generated-environment/command.js'
+import { publicationRequestGroups, stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 
 const fixture = resolve('fixtures/registries/generated-environment.toml')
 const roots: string[] = []
@@ -71,10 +72,8 @@ describe('generated publication batching', () => {
             execute: async (step) => {
                 const action = step.labels.action
                 if (action) actions.push(action)
-                if (action === 'prepare') {
-                    const request = JSON.parse(step.argv[3]!) as { entries: Array<{ name: string }> }
-                    prepared.push({ parent: step.labels.parent!, names: request.entries.map(entry => entry.name) })
-                }
+                prepared.push(...publicationRequestGroups(step, 'prepare')
+                    .map(group => ({ parent: group.parent, names: group.entries.map(entry => String(entry.name)) })))
                 if (action === 'publish-batch' || action === 'verify-batch' || action === 'commit-batch') {
                     const requestBytes = step.argv[3]!
                     batches.push({ action, bytes: Buffer.byteLength(requestBytes), request: JSON.parse(requestBytes) })
@@ -84,6 +83,7 @@ describe('generated publication batching', () => {
         })
 
         expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete' })
+        // More groups than one request holds, so every group is checked before any is published or committed.
         expect(prepared.length).toBeGreaterThan(8)
         expect(actions).not.toContain('publish')
         expect(actions).not.toContain('verify')
@@ -94,13 +94,14 @@ describe('generated publication batching', () => {
             expect(selected.length).toBeLessThan(prepared.length)
             expect(selected.flatMap(batch => rows(batch.request))).toEqual(prepared)
         }
+        expect(actions.lastIndexOf('validate-batch')).toBeLessThan(actions.indexOf('publish-batch'))
         expect(actions.lastIndexOf('verify-batch')).toBeLessThan(actions.indexOf('commit-batch'))
         expect(batches.every(({ bytes, request }) => bytes <= 65_536
             && request.groups.length >= 1 && request.groups.length <= 8)).toBe(true)
         const rootIdentities = new Set(batches.map(({ request }) => JSON.stringify(request.identity)))
         expect(rootIdentities.size).toBe(1)
         for (const { action, request } of batches) {
-            expect(Object.keys(request).sort()).toEqual(['action', 'groups', 'identity', 'nonce', 'version'])
+            expect(Object.keys(request).sort()).toEqual(['action', 'groups', 'identity', 'limits', 'nonce', 'version'])
             expect(request).toMatchObject({ version: 1, action })
             expect(request.nonce).toMatch(/^[a-f0-9]{32}$/)
             expect(new Set(request.groups.map(group => group.nonce)).size).toBe(request.groups.length)
@@ -127,8 +128,8 @@ describe('generated publication batching', () => {
         let completed = false
         const syncing = syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
-                if (!stagedInput && step.labels.action === 'prepare') {
-                    stagedInput = step.consumedFiles.find(file => !file.executable)?.path
+                if (!stagedInput) {
+                    stagedInput = stagedPublicationInputs(step)[0]
                     if (stagedInput) roots.push(dirname(stagedInput))
                 }
                 if (step.labels.action !== 'commit-batch') return executeProbe(step)
@@ -182,8 +183,8 @@ describe('generated publication batching', () => {
         try {
             result = await syncGeneratedEnvironment({ configPath }, {
                 execute: async step => {
-                    if (!stagedInput && step.labels.action === 'prepare') {
-                        stagedInput = step.consumedFiles.find(file => !file.executable)?.path
+                    if (!stagedInput) {
+                        stagedInput = stagedPublicationInputs(step)[0]
                         if (stagedInput) roots.push(dirname(stagedInput))
                     }
                     if (step.labels.action === 'publish-batch') {

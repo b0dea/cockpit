@@ -13,6 +13,7 @@ import { resolveGitExecutable } from '../environment/executable.js'
 import { bootstrapHolderId } from '../environment/identity.js'
 import { selectBootstrapStateRoot, transactState, type BootstrapStateRecord } from '../environment/state.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
+import { stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
 import { admitPublicationPlan, authorizePublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
@@ -157,7 +158,7 @@ describe('anchored file relocation', () => {
         await writeFile(preloadPath, `
             const fs = require('node:fs')
             const path = require('node:path')
-            const request = JSON.parse(process.argv[1])
+            const request = JSON.parse(process.argv[2])
             if (request.action === 'relocate-file') {
                 const original = fs.lstatSync
                 let destinationChecks = 0
@@ -207,7 +208,7 @@ describe('anchored file relocation', () => {
         await writeFile(preloadPath, `
             const fs = require('node:fs')
             const path = require('node:path')
-            const request = JSON.parse(process.argv[1])
+            const request = JSON.parse(process.argv[2])
             if (request.action === 'relocate-file') {
                 const originalLstat = fs.lstatSync
                 const originalUnlink = fs.unlinkSync
@@ -684,7 +685,8 @@ describe('generated publication transaction', () => {
         const result = await runPublicationPlan(interruptedPlan.plan, { revalidate: async () => true,
             execute: async step => {
                 actions.push(step.labels.action!)
-                if (!damaged && step.labels.action === 'verify-batch') {
+                // One compact unit commits in one call, which verifies every group before retiring any backup.
+                if (!damaged && step.labels.action === 'commit-batch') {
                     damaged = true
                     await writeFile(join(interrupted.root, interrupted.files[0]!.path), 'damaged\n')
                 }
@@ -822,8 +824,8 @@ describe('generated publication transaction', () => {
             revalidate: async () => true,
             authorizeStaleRemoval: approve,
             execute: async step => {
-                if (!stagedInput && step.labels.action === 'prepare') {
-                    stagedInput = step.consumedFiles.find(file => !file.executable)?.path
+                if (!stagedInput) {
+                    stagedInput = stagedPublicationInputs(step)[0]
                     if (stagedInput) roots.push(dirname(stagedInput))
                 }
                 if (step.labels.action === 'rollback') rollbacks += 1
@@ -848,7 +850,9 @@ describe('generated publication transaction', () => {
         })
 
         expect(injected).toBe(true)
-        expect(rollbacks).toBe(0)
+        // Commit verified the corrupted backup before retiring any, so it tried a rollback, and the
+        // rollback refused before restoring anything because that backup no longer matches.
+        expect(rollbacks).toBe(1)
         expect(result).toMatchObject({
             kind: 'refusal',
             diagnostics: [expect.objectContaining({ code: 'GENERATED_COMPENSATION_FAILED' })],
@@ -1390,7 +1394,7 @@ describe('generated publication transaction', () => {
             },
             execute: async step => { actions.push(step.labels.action!); return executeProbe(step) } })
         expect(result.kind).toBe('refusal')
-        expect(actions).not.toContain('prepare')
+        expect(actions).not.toContain('prepare-batch')
         expect(await readFile(join(root, 'a-stale.txt'), 'utf8')).toBe('old')
         expect(await readFile(join(root, 'held-original.txt'), 'utf8')).toBe('old')
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(prior.bytes)
@@ -1403,25 +1407,23 @@ describe('generated publication transaction', () => {
         expect(plan, JSON.stringify(plan)).toMatchObject({ kind: 'complete' })
         if (plan.kind !== 'complete') return
         let damaged = false
-        let stage: string | undefined
-        let published = false
+        let publishedBeforeRollback: string | undefined
         const result = await runPublicationPlan(plan.plan, { revalidate: async () => true, authorizeStaleRemoval: approve,
             execute: async step => {
-                if (step.labels.action === 'publish-batch') published = true
                 const outcome = await executeProbe(step)
-                if (step.labels.action === 'prepare' && step.labels.parent === 'nested' && outcome.kind === 'complete') {
-                    const receipt = JSON.parse(new TextDecoder().decode(outcome.stdout))
-                    stage = join(root, 'nested', receipt.entries[0].stage)
-                }
-                if (!damaged && step.labels.action === 'prepare' && step.labels.parent === '.cockpit') {
+                if (!damaged && step.labels.action === 'prepare-batch' && outcome.kind === 'complete') {
+                    const receipt = JSON.parse(new TextDecoder().decode(outcome.stdout)) as { groups: Array<{ entries: Array<{ name: string; stage: string | null }> }> }
+                    const stage = receipt.groups.flatMap(group => group.entries).find(entry => entry.name === 'new.txt')?.stage
                     if (!stage) throw new Error('the synthetic write stage was not prepared')
                     damaged = true
-                    await writeFile(stage, 'damaged')
+                    await writeFile(join(root, 'nested', stage), 'damaged')
                 }
+                // The shared file is published first, so any write before validation would show here.
+                if (step.labels.action === 'publish-batch') publishedBeforeRollback = await readFile(join(root, 'z-shared.md'), 'utf8')
                 return outcome
             } })
         expect(damaged).toBe(true)
-        expect(published).toBe(false)
+        expect(publishedBeforeRollback).toBe(before)
         expect(result.kind).toBe('refusal')
         expect(await readFile(join(root, 'a-stale.txt'), 'utf8')).toBe('old')
         expect(await readFile(join(root, 'z-shared.md'), 'utf8')).toBe(before)
@@ -1437,16 +1439,26 @@ describe('generated publication transaction', () => {
         const plan = await admitPublicationPlan(input, { execute: executeProbe })
         expect(plan, JSON.stringify(plan)).toMatchObject({ kind: 'complete' })
         if (plan.kind !== 'complete') return
+        // Publication validates every stage before its first rename, so the failure is injected into
+        // the rename itself: the helper publishes each earlier entry and then fails at this leaf.
+        const preloadPath = join(root, 'fail-publication-rename.cjs')
+        await writeFile(preloadPath, `
+            const fs = require('node:fs')
+            if (JSON.parse(process.argv[2]).action === 'publish-batch') {
+                const rename = fs.renameSync
+                fs.renameSync = (from, to) => {
+                    if (to === ${JSON.stringify(leaf)}) throw Object.assign(new Error('synthetic publication failure'), { code: 'EIO' })
+                    return rename(from, to)
+                }
+            }
+        `)
         let injected = false
         let sourceAtFailure: boolean | undefined
         const result = await runPublicationPlan(plan.plan, { revalidate: async () => true, authorizeStaleRemoval: approve,
             execute: async step => {
                 if (!injected && step.labels.action === 'publish-batch') {
-                    const request = JSON.parse(step.argv[3]!)
-                    for (const group of request.groups) {
-                        const entry = group.entries.find((row: { name: string }) => row.name === leaf)
-                        if (entry) { injected = true; await writeFile(join(root, group.parent, entry.stage), 'damaged') }
-                    }
+                    injected = true
+                    step = { ...step, env: { ...step.env, NODE_OPTIONS: `--require=${preloadPath}` } }
                 }
                 const outcome = await executeProbe(step)
                 if (injected && step.labels.action === 'publish-batch') {

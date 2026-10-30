@@ -510,7 +510,7 @@ sources = [{ path = "subagents/synthetic-agent.md", bytes = ${JSON.stringify(`\u
         if (preview.kind !== 'complete') return
         expect(preview.result.changes.at(-1)).toEqual({ operation: 'write', path: '.cockpit/generated-environment-ownership.json' })
         expect(preview.result.changes.map(change => change.path)).toEqual([...new Set(preview.result.changes.map(change => change.path))])
-        expect(actions).not.toContain('prepare')
+        expect(actions).not.toContain('prepare-batch')
         expect(actions).not.toContain('publish')
         expect(actions).not.toContain('commit')
         expect(actions).not.toContain('publish-batch')

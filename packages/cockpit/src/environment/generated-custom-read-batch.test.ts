@@ -111,13 +111,13 @@ describe('custom surface output authentication batching', () => {
                 const action = step.labels.action
                 const request = (action ? JSON.parse(step.argv[3]!) : {}) as {
                     name?: string
-                    entries?: Array<{ name: string; expected: unknown }>
+                    groups?: Array<{ entries: Array<{ name: string; expected: unknown }> }>
                 }
                 if (step.cwd === root && action === 'read-entry'
                     && request.name === 'generated-environment-ownership.json') admissionReads += 1
-                if (action === 'prepare') {
+                if (action === 'prepare-batch') {
                     prepared += 1
-                    const ledger = request.entries?.find(entry => entry.name === 'generated-environment-ownership.json')
+                    const ledger = request.groups?.flatMap(group => group.entries).find(entry => entry.name === 'generated-environment-ownership.json')
                     if (ledger) expectedLedger = ledger.expected
                 }
                 if (action === 'rollback') rollbacks += 1
@@ -172,7 +172,7 @@ describe('custom surface output authentication batching', () => {
             execute: async step => {
                 const action = step.labels.action
                 const request = (action ? JSON.parse(step.argv[3]!) : {}) as { name?: string }
-                if (action === 'prepare') prepared += 1
+                if (action === 'prepare-batch') prepared += 1
                 if (action === 'publish-batch') publications += 1
                 if (action === 'rollback') rollbacks += 1
                 const outcome = await executeProbe(step)

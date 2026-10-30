@@ -117,7 +117,7 @@ describe('generated environment command', () => {
         let preparations = 0
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
-                if (step.labels.action === 'prepare') preparations += 1
+                if (step.labels.action === 'prepare-batch') preparations += 1
                 return executeProbe(step)
             },
         })
@@ -162,7 +162,7 @@ describe('generated environment command', () => {
         let preparations = 0
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
-                if (step.labels.action === 'prepare') preparations += 1
+                if (step.labels.action === 'prepare-batch') preparations += 1
                 return executeProbe(step)
             },
         })
@@ -233,7 +233,7 @@ describe('generated environment command', () => {
             try {
                 const result = await syncGeneratedEnvironment({ configPath }, {
                     execute: async step => {
-                        if (step.labels.action === 'prepare') preparations += 1
+                        if (step.labels.action === 'prepare-batch') preparations += 1
                         return executeProbe(step)
                     },
                 })
@@ -264,7 +264,7 @@ describe('generated environment command', () => {
             execute: async step => {
                 const outcome = await executeProbe(step)
                 publications += publicationGroups(step, 'publish').length
-                if (!appeared && step.labels.action === 'prepare' && step.labels.parent === '.cockpit') {
+                if (!appeared && publicationGroups(step, 'prepare').some(group => group.parent === '.cockpit')) {
                     appeared = true
                     await writeFile(join(root, 'app/AGENTS.md'), 'New synthetic guide.\n')
                 }
@@ -291,11 +291,10 @@ describe('generated environment command', () => {
         let replaced = false
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
-                if (replaced && step.labels.action === 'prepare' && step.labels.parent === '.cockpit') {
-                    return executeProbe(Object.freeze({ ...step, cwd: root }))
-                }
                 const outcome = await executeProbe(step)
-                if (!replaced && step.labels.action === 'prepare' && step.labels.parent === 'fixtures') {
+                // Replaced after its backup was taken: the next identity check refuses publication, and
+                // rollback must not overwrite a preimage it never backed up.
+                if (!replaced && publicationGroups(step, 'prepare').some(group => group.parent === 'fixtures')) {
                     replaced = true
                     await rename(target, join(root, 'fixtures/personas-held.ts'))
                     await writeFile(target, before, { mode: 0o400 })

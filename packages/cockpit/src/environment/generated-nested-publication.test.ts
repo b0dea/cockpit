@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
+import { publicationRequestGroups, stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 
 const fixture = resolve('fixtures/registries/generated-environment.toml')
 const roots: string[] = []
@@ -35,12 +36,10 @@ describe('nested generated publication', () => {
 
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
-                if (step.labels.action === 'prepare') {
-                    parents.push(step.labels.parent)
-                    const request = JSON.parse(step.argv[3]!) as {
-                        entries: Array<{ chain?: Array<{ name: string }>; name: string; segments?: string[] }>
-                    }
-                    preparedPaths.push(...request.entries.map(entry => [step.labels.parent === '.' ? '' : step.labels.parent,
+                for (const group of publicationRequestGroups(step, 'prepare')) {
+                    parents.push(group.parent)
+                    const entries = group.entries as Array<{ chain?: Array<{ name: string }>; name: string; segments?: string[] }>
+                    preparedPaths.push(...entries.map(entry => [group.parent === '.' ? '' : group.parent,
                         ...(entry.chain ?? []).map(row => row.name), ...(entry.segments ?? []), entry.name].filter(Boolean).join('/')))
                 }
                 if (step.labels.action === 'commit-batch') {
@@ -79,7 +78,7 @@ describe('nested generated publication', () => {
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
                 const outcome = await executeProbe(step)
-                if (!replaced && step.labels.action === 'prepare' && step.labels.parent === '.cockpit') {
+                if (!replaced && publicationRequestGroups(step, 'prepare').some(group => group.parent === '.cockpit')) {
                     await rename(replacement, held)
                     await mkdir(replacement)
                     await writeFile(join(replacement, 'sentinel'), 'replacement\n')
@@ -100,11 +99,11 @@ describe('nested generated publication', () => {
 
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
-                if (!corrupted && step.labels.action === 'prepare' && step.labels.parent === '.agents') {
-                    const request = JSON.parse(step.argv[3]!) as { entries: Array<{ input: number | null }> }
-                    const input = [...request.entries].reverse().find(entry => entry.input !== null)?.input
-                    if (input !== undefined && input !== null) {
-                        await writeFile(step.argv[4 + input]!, 'corrupted\n')
+                const group = publicationRequestGroups(step, 'prepare').find(row => row.parent === '.agents')
+                if (!corrupted && group) {
+                    const input = [...group.entries].reverse().find(entry => entry.input !== null)?.input
+                    if (typeof input === 'number') {
+                        await writeFile(stagedPublicationInputs(step)[input]!, 'corrupted\n')
                         corrupted = true
                     }
                 }
@@ -125,10 +124,10 @@ describe('nested generated publication', () => {
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async step => {
                 if (step.labels.action === 'publish-batch') publishes += 1
-                if (!forged && step.labels.action === 'prepare' && step.labels.parent === '.agents') {
+                if (!forged && publicationRequestGroups(step, 'prepare').some(group => group.parent === '.agents')) {
                     const argv = [...step.argv]
-                    const request = JSON.parse(argv[3]!) as { entries: Array<{ segments: string[] }> }
-                    const nested = request.entries.find(entry => entry.segments.length > 0)?.segments
+                    const request = JSON.parse(argv[3]!) as { groups: Array<{ parent: string; entries: Array<{ segments: string[] }> }> }
+                    const nested = request.groups.find(group => group.parent === '.agents')?.entries.find(entry => entry.segments.length > 0)?.segments
                     if (nested) {
                         nested[0] = '..'
                         argv[3] = JSON.stringify(request)

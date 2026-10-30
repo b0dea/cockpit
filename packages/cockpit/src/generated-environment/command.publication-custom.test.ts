@@ -588,9 +588,10 @@ ${replacementSources.map(source => `  { path = ${JSON.stringify(source.path)}, b
                 execute: async (step) => {
                     const outcome = await executeProbe(step)
                     publishAttempts += publicationGroups(step, 'publish').length
-                    if (step.labels.action === 'prepare') {
-                        preparedParents.push(step.labels.parent)
-                        if (!replaced && step.labels.parent === '.cockpit') {
+                    const prepared = publicationGroups(step, 'prepare').map(group => group.parent)
+                    if (prepared.length > 0) {
+                        preparedParents.push(...prepared)
+                        if (!replaced && prepared.includes('.cockpit')) {
                             replaced = true
                             const guide = await readFile(guidePath)
                             await rename(guidePath, heldGuidePath)

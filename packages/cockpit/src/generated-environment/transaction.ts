@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 import { snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
@@ -275,456 +276,26 @@ function confined(root: string, path: string): string | undefined {
     return offset !== '' && offset !== '..' && !offset.startsWith(`..${sep}`) && !isAbsolute(offset) ? target : undefined
 }
 
-const FILESYSTEM_HELPER = String.raw`
-const fs = require("node:fs");
-const crypto = require("node:crypto");
-const path = require("node:path");
-const c = fs.constants;
-const limit = 16777216;
-const request = JSON.parse(process.argv[1]);
-const anchoredName = value => {
-  if (typeof value !== "string" || value.length === 0 || value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("\0")) throw new Error("name");
-  return value;
-};
-const name = value => {
-  if (typeof value !== "string" || value.length === 0 || value.length > 255 || Buffer.byteLength(value, "utf8") > 255 || /[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) || /[. ]$/.test(value) || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)) throw new Error("nonportable-name");
-  return value;
-};
-const safeSegments = (value, validate = name) => {
-  if (!Array.isArray(value)) throw new Error("segments");
-  return value.map(validate);
-};
-const same = (actual, expected) => actual.isDirectory() && !actual.isSymbolicLink() && actual.dev === expected.dev && actual.ino === expected.ino;
-const identity = () => { const value = fs.lstatSync("."); if (!same(value, request.identity)) throw new Error("identity"); return value; };
-const currentDirectory = () => { const value = fs.lstatSync("."); if (!value.isDirectory() || value.isSymbolicLink()) throw new Error("directory"); return value; };
-const syncDirectory = () => { const fd = fs.openSync(".", c.O_RDONLY); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } };
-const digest = value => crypto.createHash("sha256").update(value).digest("hex");
-const readLimit = value => {
-  if (!Number.isSafeInteger(value) || value < 1 || value > limit) throw new Error("limit");
-  return value;
-};
-const read = (path, maxBytes = limit, expected) => {
-  maxBytes = readLimit(maxBytes);
-  if (c.O_NOFOLLOW === undefined) throw new Error("no-follow");
-  const fd = fs.openSync(path, c.O_RDONLY | c.O_NOFOLLOW | c.O_NONBLOCK);
-  try {
-    const status = fs.fstatSync(fd);
-    if (!status.isFile() || status.size > maxBytes || expected && (status.dev !== expected.dev || status.ino !== expected.ino)) throw new Error("file");
-    const chunks = []; let total = 0; const chunk = Buffer.allocUnsafe(65536);
-    while (true) {
-      const length = fs.readSync(fd, chunk, 0, Math.min(chunk.length, maxBytes - total + 1), null);
-      if (length === 0) break;
-      total += length; if (total > maxBytes) throw new Error("limit");
-      chunks.push(Buffer.from(chunk.subarray(0, length)));
-    }
-    const after = fs.fstatSync(fd);
-    if (total !== status.size || after.dev !== status.dev || after.ino !== status.ino || after.size !== status.size || after.mtimeMs !== status.mtimeMs || after.ctimeMs !== status.ctimeMs) throw new Error("changed");
-    return { bytes: Buffer.concat(chunks, total), status };
-  }
-  finally { fs.closeSync(fd); }
-};
-const copy = (source, target, expected) => {
-  const value = read(source); if (digest(value.bytes) !== expected) throw new Error("digest");
-  const fd = fs.openSync(name(target), c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW || 0), 0o600);
-  try { fs.writeFileSync(fd, value.bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-};
-const hash = (path, validate = name) => digest(read(validate(path)).bytes);
-const walk = (segments, chain = [], validate = name) => {
-  for (const raw of segments) {
-    const segment = validate(raw); let created = false; let before;
-    try { before = fs.lstatSync(segment); }
-    catch (error) { if (error.code !== "ENOENT") throw error; fs.mkdirSync(segment, { mode: 0o700 }); syncDirectory(); created = true; before = fs.lstatSync(segment); }
-    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("directory");
-    process.chdir(segment); const after = fs.lstatSync(".");
-    if (after.dev !== before.dev || after.ino !== before.ino || !after.isDirectory() || after.isSymbolicLink()) throw new Error("walk");
-    chain.push({ name: segment, dev: after.dev, ino: after.ino, created });
-  }
-  return chain;
-};
-const walkMissing = (segments, chain = []) => {
-  for (const raw of segments) {
-    const segment = name(raw);
-    try { fs.lstatSync(segment); throw new Error("expected-missing"); }
-    catch (error) { if (error.code !== "ENOENT") throw error; }
-    fs.mkdirSync(segment, { mode: 0o700 });
-    const after = fs.lstatSync(segment); if (!after.isDirectory() || after.isSymbolicLink()) throw new Error("created-directory");
-    chain.push({ name: segment, dev: after.dev, ino: after.ino, created: true }); syncDirectory();
-    process.chdir(segment); const current = fs.lstatSync("."); if (!same(current, after)) throw new Error("created-walk");
-  }
-  return chain;
-};
-const walkNested = (expected, segments, created, chain) => {
-  chain.push(...walkExpected(expected)); const names = chain.map(entry => entry.name);
-  for (const raw of segments) {
-    const segment = name(raw); names.push(segment); const key = names.join("/"); let before; let owned = false;
-    try {
-      before = fs.lstatSync(segment); const issued = created.get(key);
-      if (!issued || !same(before, issued)) throw new Error("unexpected-directory");
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      fs.mkdirSync(segment, { mode: 0o700 }); before = fs.lstatSync(segment); owned = true;
-      if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("created-directory");
-      created.set(key, { dev: before.dev, ino: before.ino });
-      chain.push({ name: segment, dev: before.dev, ino: before.ino, created: true }); syncDirectory();
-    }
-    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("nested-directory");
-    if (!owned) chain.push({ name: segment, dev: before.dev, ino: before.ino, created: false });
-    process.chdir(segment); const after = fs.lstatSync("."); if (!same(after, before)) throw new Error("nested-walk");
-  }
-  return chain;
-};
-const walkSource = (segments, chain = []) => {
-  for (const raw of segments) {
-    const segment = anchoredName(raw); const before = fs.lstatSync(segment);
-    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("directory");
-    process.chdir(segment); const after = fs.lstatSync(".");
-    if (!same(after, before)) throw new Error("walk");
-    chain.push({ name: segment, dev: after.dev, ino: after.ino });
-  }
-  return chain;
-};
-const walkExpected = (chain, validate = name) => {
-  const walked = [];
-  for (const expected of chain) {
-    const segment = validate(expected.name); const before = fs.lstatSync(segment);
-    if (!same(before, expected)) throw new Error("directory-identity");
-    process.chdir(segment); const after = fs.lstatSync(".");
-    if (!same(after, expected)) throw new Error("walk-identity");
-    walked.push({ name: segment, dev: after.dev, ino: after.ino, created: false });
-  }
-  return walked;
-};
-const verifySourceChain = (chain, start = request.identity) => {
-  for (let index = chain.length - 1; index >= 0; index--) {
-    process.chdir("..");
-    const parent = fs.lstatSync("."); const expected = index === 0 ? start : chain[index - 1];
-    if (!same(parent, expected)) throw new Error("parent-identity");
-    const child = fs.lstatSync(anchoredName(chain[index].name));
-    if (!same(child, chain[index])) throw new Error("child-identity");
-  }
-  const current = fs.lstatSync("."); if (!same(current, start)) throw new Error("start-identity");
-};
-const removeCreatedChain = (chain, start, validate = name) => {
-  for (let index = chain.length - 1; index >= 0; index--) {
-    process.chdir("..");
-    const parent = fs.lstatSync("."); const expected = index === 0 ? start : chain[index - 1];
-    if (!same(parent, expected)) throw new Error("parent-identity");
-    const child = fs.lstatSync(validate(chain[index].name));
-    if (!same(child, chain[index])) throw new Error("child-identity");
-    if (chain[index].created) { try { fs.rmdirSync(validate(chain[index].name)); syncDirectory(); } catch (error) { if (error.code !== "ENOTEMPTY") throw error; } }
-  }
-  const current = fs.lstatSync("."); if (!same(current, start)) throw new Error("start-identity");
-};
-const removeCreatedDirectories = (entries, start) => {
-  const base = process.cwd(); const created = new Map();
-  for (const entry of entries) {
-    const names = [];
-    for (const [index, directory] of entry.chain.entries()) {
-      names.push(directory.name);
-      if (directory.created) created.set(names.join("/"), entry.chain.slice(0, index + 1));
-    }
-  }
-  const chains = [...created.values()].sort((left, right) => right.length - left.length);
-  for (const chain of chains) {
-    process.chdir(base); const parents = walkExpected(chain.slice(0, -1)); const child = chain[chain.length - 1];
-    const current = fs.lstatSync(name(child.name)); if (!same(current, child)) throw new Error("created-identity");
-    try { fs.rmdirSync(name(child.name)); syncDirectory(); } catch (error) { if (error.code !== "ENOTEMPTY") throw error; }
-    verifySourceChain(parents, start);
-  }
-  process.chdir(base); const current = fs.lstatSync("."); if (!same(current, start)) throw new Error("start-identity");
-};
-const state = target => {
-  try {
-    const status = fs.lstatSync(target);
-    if (status.isSymbolicLink()) return { kind: "symlink", target: fs.readlinkSync(target), identity: { dev: status.dev, ino: status.ino } };
-    if (status.isFile()) return { kind: "file", sha256: hash(target), mode: status.mode & 511, identity: { dev: status.dev, ino: status.ino } };
-    return { kind: "other" };
-  } catch (error) { if (error.code === "ENOENT") return { kind: "missing" }; throw error; }
-};
-const matches = (actual, expected) => actual.kind === expected.kind
-  && (actual.kind !== "file" || actual.sha256 === expected.sha256)
-  && (actual.kind !== "file" || expected.mode === undefined || actual.mode === expected.mode)
-  && (actual.kind !== "symlink" || actual.target === expected.target)
-  && (actual.kind === "missing" || !expected.identity || actual.identity.dev === expected.identity.dev && actual.identity.ino === expected.identity.ino);
-const publishEntries = (entries, start = currentDirectory()) => {
-  for (const entry of entries) {
-    const chain = walkExpected(entry.chain);
-    name(entry.name); if (!matches(state(entry.name), { kind: entry.priorKind, sha256: entry.priorSha256, target: entry.priorTarget, mode: entry.priorMode, identity: entry.priorIdentity })) throw new Error("prior-state");
-    if (entry.backup !== null && hash(entry.backup) !== entry.priorSha256) throw new Error("backup-digest");
-    if (entry.operation === "write-file") { name(entry.stage); if (hash(entry.stage) !== entry.sha256) throw new Error("stage-digest"); fs.renameSync(entry.stage, entry.name); }
-    else if (entry.operation === "write-symlink") { name(entry.stage); if (fs.readlinkSync(entry.stage) !== entry.target) throw new Error("stage-target"); fs.renameSync(entry.stage, entry.name); }
-    else fs.unlinkSync(entry.name);
-    syncDirectory();
-    verifySourceChain(chain, start);
-  }
-};
-const validateEntries = (entries, start = currentDirectory()) => {
-  for (const entry of entries) {
-    const chain = walkExpected(entry.chain);
-    name(entry.name);
-    if (!matches(state(entry.name), { kind: entry.priorKind, sha256: entry.priorSha256, target: entry.priorTarget, mode: entry.priorMode, identity: entry.priorIdentity })) throw new Error("prior-state");
-    if (entry.backup !== null && hash(entry.backup) !== entry.priorSha256) throw new Error("backup-digest");
-    if (entry.operation === "write-file" && hash(name(entry.stage)) !== entry.sha256) throw new Error("stage-digest");
-    if (entry.operation === "write-symlink" && fs.readlinkSync(name(entry.stage)) !== entry.target) throw new Error("stage-target");
-    verifySourceChain(chain, start);
-  }
-};
-const verifyEntries = (entries, start = currentDirectory()) => {
-  for (const entry of entries) {
-    const chain = walkExpected(entry.chain);
-    name(entry.name); const expected = entry.operation === "write-file" ? { kind: "file", sha256: entry.sha256 }
-      : entry.operation === "write-symlink" ? { kind: "symlink", target: entry.target } : { kind: "missing" };
-    if (!matches(state(entry.name), expected)) throw new Error("target-state");
-    if (entry.backup !== null && hash(entry.backup) !== entry.priorSha256) throw new Error("backup-digest");
-    verifySourceChain(chain, start);
-  }
-};
-const respond = value => process.stdout.write(JSON.stringify({ version: 1, nonce: request.nonce, action: request.action, ...value }) + "\n");
-const readSource = entry => {
-  const chain = []; let before; const filename = anchoredName(entry.name);
-  try { walkSource(entry.segments, chain); before = fs.lstatSync(filename); }
-  catch (error) { if (entry.action !== "read-persona" && error.code === "ENOENT") { verifySourceChain(chain); return { kind: "missing" }; } throw error; }
-  if (entry.action === "read-entry" && before.isSymbolicLink()) {
-    const target = fs.readlinkSync(filename); const current = fs.lstatSync(filename);
-    if (!current.isSymbolicLink() || current.dev !== before.dev || current.ino !== before.ino) throw new Error("source-changed");
-    verifySourceChain(chain); return { kind: "symlink", target, identity: { dev: before.dev, ino: before.ino } };
-  }
-  if (entry.action === "read-entry" && !before.isFile()) { verifySourceChain(chain); return { kind: "other" }; }
-  if (!before.isFile() || before.isSymbolicLink()) throw new Error("source");
-  const value = read(filename, entry.maxBytes);
-  if (value.status.dev !== before.dev || value.status.ino !== before.ino) throw new Error("source-identity");
-  const current = fs.lstatSync(filename);
-  if (!current.isFile() || current.isSymbolicLink() || current.dev !== before.dev || current.ino !== before.ino) throw new Error("source-changed");
-  verifySourceChain(chain);
-  const output = fs.openSync(entry.output, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_NOFOLLOW, 0o600);
-  try { fs.writeFileSync(output, value.bytes); } finally { fs.closeSync(output); }
-  return { kind: entry.action === "read-entry" ? "file" : "complete", identity: { root: request.identity, chain: chain.map(({ dev, ino }) => ({ dev, ino })), file: { dev: before.dev, ino: before.ino } }, ...(entry.action === "read-entry" ? { mode: before.mode & 511 } : {}), sha256: digest(value.bytes) };
-};
-try {
-  identity();
-  if (request.action === "read-batch") {
-    if (!Array.isArray(request.entries) || request.entries.length < 1 || request.entries.length > ${MAX_AUTHENTICATED_READ_BATCH}) throw new Error("batch");
-    const requestedBytes = request.entries.reduce((total, entry) => total + readLimit(entry.maxBytes), 0);
-    if (!Number.isSafeInteger(requestedBytes) || requestedBytes > 67108864) throw new Error("batch-limit");
-    const entries = [];
-    for (const entry of request.entries) {
-      if (!entry || typeof entry !== "object" || typeof entry.nonce !== "string"
-        || !["read-persona", "read-file", "read-entry"].includes(entry.action)) throw new Error("batch-entry");
-      try {
-        const result = readSource(entry);
-        if (Buffer.byteLength(JSON.stringify({ version: 1, nonce: entry.nonce, action: entry.action, ...result }) + "\n") > 65536) throw new Error("entry-frame");
-        entries.push({ nonce: entry.nonce, action: entry.action, segments: entry.segments, name: entry.name, maxBytes: entry.maxBytes, ...result });
-      }
-      catch { respond({ kind: "refusal", failedNonce: entry.nonce }); process.exit(0); }
-    }
-    const receipt = Buffer.from(JSON.stringify({ version: 1, nonce: request.nonce, action: request.action, kind: "complete", entries }) + "\n");
-    if (receipt.length > ${MAX_AUTHENTICATED_READ_BATCH_RECEIPT_BYTES}) throw new Error("receipt-limit");
-    const output = fs.openSync(request.receiptOutput, c.O_WRONLY | c.O_CREAT | c.O_EXCL | c.O_NOFOLLOW, 0o600);
-    try { fs.writeFileSync(output, receipt); } finally { fs.closeSync(output); }
-    respond({ kind: "complete", receiptBytes: receipt.length, receiptSha256: digest(receipt) });
-  } else if (request.action === "read-persona" || request.action === "read-file" || request.action === "read-entry") {
-    respond(readSource(request));
-  } else if (request.action === "relocate-file" || request.action === "restore-file") {
-    const base = process.cwd(); const destinationChain = []; const sourceCapture = name(".cockpit-adopt-source-" + request.nonce); const destinationCapture = name(".cockpit-adopt-destination-" + request.nonce);
-    const destinationPolicy = request.action === "restore-file" ? anchoredName : name;
-    let sourceCapturePath; let sourceMode; let sourceCaptured = false; let sourceRestored = false; let originalRetired = false; let destinationCreated = false; let destinationQuarantined = false; let destinationIdentity;
-    const restoreSource = () => {
-      process.chdir(base); const chain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name);
-      if (state(sourceName).kind !== "missing") throw new Error("source-recovery-occupied");
-      fs.linkSync(sourceCapture, sourceName); const restored = fs.lstatSync(sourceName); const captured = fs.lstatSync(sourceCapture);
-      if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error("source-recovery-identity");
-      sourceRestored = true; syncDirectory(); verifySourceChain(chain);
-    };
-    const retireSourceCapture = (requireRestored, retired = () => {}) => {
-      process.chdir(base); const chain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name); const captured = fs.lstatSync(sourceCapture);
-      if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== request.source.file.dev || captured.ino !== request.source.file.ino) throw new Error("source-retirement-identity");
-      if (requireRestored) {
-        const restored = fs.lstatSync(sourceName);
-        if (!restored.isFile() || restored.isSymbolicLink() || restored.dev !== captured.dev || restored.ino !== captured.ino) throw new Error("source-retirement-public-identity");
-      }
-      fs.unlinkSync(sourceCapture); sourceCaptured = false; retired(); syncDirectory(); verifySourceChain(chain);
-    };
-    const removeDestination = () => {
-      process.chdir(base); const chain = walkExpected(destinationChain, destinationPolicy); const destinationName = destinationPolicy(request.destination.name);
-      if (state(destinationCapture).kind !== "missing") throw new Error("destination-recovery-capture");
-      fs.renameSync(destinationName, destinationCapture); destinationQuarantined = true; const captured = fs.lstatSync(destinationCapture);
-      if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== destinationIdentity.dev || captured.ino !== destinationIdentity.ino) {
-        fs.linkSync(destinationCapture, destinationName); fs.unlinkSync(destinationCapture); destinationQuarantined = false; syncDirectory();
-        throw new Error("destination-recovery-identity");
-      }
-      fs.unlinkSync(destinationCapture); destinationQuarantined = false; destinationCreated = false; syncDirectory(); verifySourceChain(chain);
-    };
-    try {
-      const sourceChain = walkExpected(request.source.chain, anchoredName); const sourceName = anchoredName(request.source.name);
-      const sourceBefore = fs.lstatSync(sourceName);
-      if (!sourceBefore.isFile() || sourceBefore.isSymbolicLink() || sourceBefore.dev !== request.source.file.dev || sourceBefore.ino !== request.source.file.ino) throw new Error("source-identity");
-      if (state(sourceCapture).kind !== "missing") throw new Error("source-capture");
-      sourceCapturePath = path.join(process.cwd(), sourceCapture);
-      fs.renameSync(sourceName, sourceCapture); sourceCaptured = true; syncDirectory();
-      const captured = fs.lstatSync(sourceCapture);
-      if (!captured.isFile() || captured.isSymbolicLink() || captured.dev !== request.source.file.dev || captured.ino !== request.source.file.ino) throw new Error("source-captured-identity");
-      const source = read(sourceCapture, request.source.maxBytes, request.source.file);
-      if (source.status.dev !== captured.dev || source.status.ino !== captured.ino || digest(source.bytes) !== request.source.sha256) throw new Error("source-digest");
-      sourceMode = source.status.mode & 511; verifySourceChain(sourceChain);
+// Every anchored read and publication step runs in libexec/generated-filesystem.cjs, which
+// explains why that work needs its own process. The helper enforces these bounds; each request
+// carries them so they keep one owner here.
+const HELPER_PROGRAM = 'generated-filesystem.cjs'
+const HELPER_LIMITS = Object.freeze({
+    fileBytes: MAX_GENERATED_BYTES,
+    frameBytes: MAX_HELPER_FRAME_BYTES,
+    readBatchEntries: MAX_AUTHENTICATED_READ_BATCH,
+    readBatchBytes: MAX_AUTHENTICATED_READ_BATCH_BYTES,
+    readBatchReceiptBytes: MAX_AUTHENTICATED_READ_BATCH_RECEIPT_BYTES,
+    publicationGroups: MAX_PUBLICATION_BATCH_GROUPS,
+})
 
-      process.chdir(base); walk(safeSegments(request.destination.segments, destinationPolicy), destinationChain, destinationPolicy);
-      const destinationName = destinationPolicy(request.destination.name);
-      if (state(destinationName).kind !== "missing") throw new Error("destination-state");
-      process.chdir(base); const linkSourceChain = walkExpected(request.source.chain, anchoredName); const currentCapture = read(sourceCapturePath, request.source.maxBytes, request.source.file);
-      if (currentCapture.status.dev !== request.source.file.dev || currentCapture.status.ino !== request.source.file.ino
-        || digest(currentCapture.bytes) !== request.source.sha256 || (currentCapture.status.mode & 511) !== sourceMode) throw new Error("source-capture-changed");
-      verifySourceChain(linkSourceChain);
-      process.chdir(base); walkExpected(destinationChain, destinationPolicy);
-      fs.linkSync(sourceCapturePath, destinationName); destinationCreated = true; destinationIdentity = { ...request.source.file };
-      const destination = fs.lstatSync(destinationName);
-      if (!destination.isFile() || destination.isSymbolicLink() || destination.dev !== destinationIdentity.dev || destination.ino !== destinationIdentity.ino) throw new Error("destination-linked-identity");
-      process.chdir(base); const linkedSourceChain = walkExpected(request.source.chain, anchoredName); const linkedCapture = fs.lstatSync(sourceCapture);
-      if (!linkedCapture.isFile() || linkedCapture.isSymbolicLink() || linkedCapture.dev !== destinationIdentity.dev || linkedCapture.ino !== destinationIdentity.ino) throw new Error("source-linked-identity");
-      verifySourceChain(linkedSourceChain);
-      process.chdir(base); walkExpected(destinationChain, destinationPolicy);
-      if (hash(destinationName, destinationPolicy) !== request.source.sha256 || (destination.mode & 511) !== sourceMode) throw new Error("destination-postimage");
-      syncDirectory(); verifySourceChain(destinationChain);
+function helperFrame(request: object): string {
+    return JSON.stringify({ ...request, limits: HELPER_LIMITS })
+}
 
-      process.chdir(base); const currentSourceChain = walkExpected(request.source.chain, anchoredName);
-      if (state(sourceName).kind !== "missing") throw new Error("source-postimage");
-      const finalCapture = fs.lstatSync(sourceCapture);
-      if (!finalCapture.isFile() || finalCapture.isSymbolicLink() || finalCapture.dev !== destinationIdentity.dev || finalCapture.ino !== destinationIdentity.ino) throw new Error("source-capture-identity");
-      verifySourceChain(currentSourceChain);
-
-      process.chdir(base); const currentDestinationChain = walkExpected(destinationChain, destinationPolicy);
-      const currentDestination = fs.lstatSync(destinationName);
-      if (!currentDestination.isFile() || currentDestination.isSymbolicLink() || currentDestination.dev !== destinationIdentity.dev
-        || currentDestination.ino !== destinationIdentity.ino || hash(destinationName, destinationPolicy) !== request.source.sha256
-        || (currentDestination.mode & 511) !== sourceMode) throw new Error("destination-changed");
-      verifySourceChain(currentDestinationChain); process.chdir(base); identity();
-      retireSourceCapture(false, () => { originalRetired = true; });
-    } catch (error) {
-      const failure = error instanceof Error ? error.message : String(error); const recoveryFailures = [];
-      if (sourceCaptured) try { restoreSource(); } catch (recoveryError) { recoveryFailures.push("source:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
-      if (destinationCreated && !originalRetired) try { removeDestination(); } catch (recoveryError) { recoveryFailures.push("destination:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
-      if (sourceCaptured && sourceRestored && !destinationCreated) try { retireSourceCapture(true); } catch (recoveryError) { recoveryFailures.push("source-retirement:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
-      if (originalRetired) recoveryFailures.push("source:original-retired");
-      if (destinationChain.length > 0) try { process.chdir(base); walkExpected(destinationChain, destinationPolicy); removeCreatedChain(destinationChain, request.identity, destinationPolicy); } catch (recoveryError) { recoveryFailures.push("directories:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
-      try { process.chdir(base); identity(); } catch (recoveryError) { recoveryFailures.push("root:" + (recoveryError instanceof Error ? recoveryError.message : String(recoveryError))); }
-      if (recoveryFailures.length > 0) {
-        const retained = [];
-        if (sourceCaptured) retained.push([...request.source.chain.map(entry => entry.name), sourceCapture].join("/"));
-        if (destinationQuarantined) retained.push([...request.destination.segments, destinationCapture].join("/"));
-        else if (destinationCreated) retained.push([...request.destination.segments, request.destination.name].join("/"));
-        respond({ kind: "refusal", reason: "relocate-recovery-failed", failure, recoveryFailures, retained }); process.exit(0);
-      }
-      respond({ kind: "refusal", reason: "relocate-failed", failure }); process.exit(0);
-    }
-    respond({ kind: "complete", sha256: request.source.sha256 });
-  } else if (request.action === "prepare") {
-    const base = process.cwd(); let chain = []; let final; let groupPath; const prepared = []; const attempted = []; const createdNested = new Map();
-    try {
-      walkMissing(safeSegments(request.segments), chain); final = fs.lstatSync("."); groupPath = process.cwd();
-      for (const [index, entry] of request.entries.entries()) {
-        process.chdir(groupPath); const nested = []; attempted.push({ index, chain: nested });
-        walkNested(entry.chain, safeSegments(entry.segments), createdNested, nested);
-        const target = name(entry.name); const stage = name(".cockpit-stage-" + request.nonce + "-" + index); const backup = name(".cockpit-backup-" + request.nonce + "-" + index);
-        const prior = state(target); if (!matches(prior, entry.expected)) throw new Error("prestate");
-        let stageName = null;
-        if (entry.operation === "write-file") { copy(process.argv[2 + entry.input], stage, entry.sha256); stageName = stage; }
-        else if (entry.operation === "write-symlink") { fs.symlinkSync(entry.target, stage); stageName = stage; }
-        else if (entry.operation !== "remove-file" && entry.operation !== "remove-symlink") throw new Error("operation");
-        let backupName = null;
-        if (prior.kind === "file") { copy(target, backup, prior.sha256); backupName = backup; }
-        prepared.push({ chain: nested, name: target, operation: entry.operation, sha256: entry.sha256 ?? null, target: entry.target ?? null,
-          stage: stageName, backup: backupName, priorKind: prior.kind, priorSha256: prior.sha256 ?? null,
-          priorTarget: prior.target ?? null, priorMode: prior.mode ?? null, priorIdentity: prior.identity ?? null });
-        verifySourceChain(nested, final);
-      }
-    } catch (error) {
-      try {
-        if (groupPath && final) for (const item of [...attempted].reverse()) {
-          process.chdir(groupPath); walkExpected(item.chain);
-          fs.rmSync(name(".cockpit-stage-" + request.nonce + "-" + item.index), { force: true });
-          fs.rmSync(name(".cockpit-backup-" + request.nonce + "-" + item.index), { force: true });
-          syncDirectory(); removeCreatedChain(item.chain, final);
-        }
-        process.chdir(base);
-        if (chain.length > 0) { walkExpected(chain); removeCreatedChain(chain, request.identity); }
-        identity();
-      } catch { respond({ kind: "refusal", reason: "prepare-cleanup-failed" }); process.exit(0); }
-      respond({ kind: "refusal", reason: "prepare-failed" }); process.exit(0);
-    }
-    process.chdir(groupPath); syncDirectory();
-    verifySourceChain(chain, request.identity);
-    respond({ kind: "complete", identity: { dev: final.dev, ino: final.ino }, chain, entries: prepared });
-  } else if (request.action === "publish") {
-    publishEntries(request.entries, request.identity);
-    respond({ kind: "complete" });
-  } else if (request.action === "validate-batch" || request.action === "publish-batch" || request.action === "verify-batch" || request.action === "commit-batch") {
-    if (!Array.isArray(request.groups) || request.groups.length < 1 || request.groups.length > 8) throw new Error("batch");
-    const groups = [];
-    for (const group of request.groups) {
-      if (!group || typeof group !== "object" || typeof group.nonce !== "string" || typeof group.parent !== "string"
-        || !Array.isArray(group.chain) || !Array.isArray(group.entries)) throw new Error("batch-group");
-      const chain = walkExpected(group.chain);
-      const final = fs.lstatSync("."); if (!same(final, group.identity)) throw new Error("group-identity");
-      if (request.action === "publish-batch") publishEntries(group.entries);
-      else if (request.action === "validate-batch") validateEntries(group.entries);
-      else verifyEntries(group.entries);
-      verifySourceChain(chain);
-      groups.push({ nonce: group.nonce, parent: group.parent, kind: "complete" });
-    }
-    if (request.action === "commit-batch") {
-      for (const group of request.groups) {
-        const chain = walkExpected(group.chain);
-        const final = fs.lstatSync("."); if (!same(final, group.identity)) throw new Error("group-identity");
-        for (const entry of group.entries) {
-          verifyEntries([entry], group.identity);
-          const nested = walkExpected(entry.chain);
-          if (entry.backup !== null) fs.unlinkSync(name(entry.backup));
-          syncDirectory(); verifySourceChain(nested, group.identity);
-        }
-        verifySourceChain(chain);
-      }
-    }
-    respond({ kind: "complete", groups });
-  } else {
-    if (request.action === "rollback") {
-      const groupPath = process.cwd();
-      for (const entry of request.entries) {
-        process.chdir(groupPath); const nested = walkExpected(entry.chain);
-        name(entry.name); if (entry.stage !== null) name(entry.stage);
-        const current = state(entry.name); const post = entry.operation === "write-file" ? { kind: "file", sha256: entry.sha256 }
-          : entry.operation === "write-symlink" ? { kind: "symlink", target: entry.target } : { kind: "missing" };
-        const prior = { kind: entry.priorKind, sha256: entry.priorSha256, target: entry.priorTarget, mode: entry.priorMode, identity: entry.priorIdentity };
-        if (!matches(current, post) && !matches(current, prior) || entry.backup !== null && hash(entry.backup) !== entry.priorSha256) throw new Error("recovery-state");
-        verifySourceChain(nested, request.identity);
-      }
-      for (const entry of [...request.entries].reverse()) {
-        process.chdir(groupPath); const nested = walkExpected(entry.chain);
-        const current = state(entry.name); const post = entry.operation === "write-file" ? { kind: "file", sha256: entry.sha256 }
-          : entry.operation === "write-symlink" ? { kind: "symlink", target: entry.target } : { kind: "missing" };
-        if (matches(current, post)) {
-          if (current.kind !== "missing") fs.unlinkSync(entry.name);
-          if (entry.priorKind === "file") { fs.renameSync(entry.backup, entry.name); fs.chmodSync(entry.name, entry.priorMode); }
-          else if (entry.priorKind === "symlink") fs.symlinkSync(entry.priorTarget, entry.name);
-        } else if (entry.backup !== null) fs.unlinkSync(entry.backup);
-        if (entry.stage !== null) fs.rmSync(entry.stage, { force: true });
-        syncDirectory(); verifySourceChain(nested, request.identity);
-      }
-      process.chdir(groupPath);
-      removeCreatedDirectories(request.entries, request.identity);
-      for (let index = request.chain.length - 1; index >= 0; index--) {
-        const child = request.chain[index]; process.chdir("..");
-        const parent = fs.lstatSync("."); const expected = index === 0 ? request.start : request.chain[index - 1];
-        if (!same(parent, expected)) throw new Error("parent-identity");
-        const childStatus = fs.lstatSync(name(child.name)); if (!same(childStatus, child)) throw new Error("child-identity");
-        if (child.created) { try { fs.rmdirSync(name(child.name)); syncDirectory(); } catch (error) { if (error.code !== "ENOTEMPTY") throw error; } }
-      }
-    } else {
-      verifyEntries(request.entries, request.identity);
-      if (request.action !== "verify") throw new Error("action");
-    }
-    respond({ kind: "complete" });
-  }
-} catch (error) { respond({ kind: "refusal", reason: "operation-refused" }); }
-`
+function helperFrameBytes(request: object): number {
+    return Buffer.byteLength(helperFrame(request))
+}
 
 type NodeAuthority = ResolvedExecutable
 
@@ -785,6 +356,28 @@ interface PublicationBatchRequest {
     readonly groups: readonly PublicationBatchRow[]
 }
 
+interface PrepareGroupRequest {
+    readonly nonce: string
+    readonly parent: string
+    readonly anchor: PublicationAnchor['chain']
+    readonly identity: DirectoryIdentity
+    readonly segments: readonly string[]
+    readonly entries: readonly PrepareFileEntry[]
+}
+
+interface PrepareBatchRow {
+    readonly group: PublicationGroup
+    readonly anchor: PublicationAnchor
+    readonly path: string
+    readonly request: PrepareGroupRequest
+}
+
+interface PrepareBatch {
+    readonly request: Readonly<{ version: 1; nonce: string; action: 'prepare-batch'; identity: DirectoryIdentity; groups: readonly PrepareGroupRequest[] }>
+    readonly rows: readonly PrepareBatchRow[]
+    readonly inputs: readonly Readonly<{ path: string; sha256: string }>[]
+}
+
 async function digestFile(path: string, maxBytes: number): Promise<string | undefined> {
     let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
@@ -833,27 +426,37 @@ export async function nodeAuthority(): Promise<NodeAuthority | undefined> {
     }
 }
 
-async function publicationAnchor(root: string, parent: string): Promise<{ path: string; identity: DirectoryIdentity; segments: readonly string[] } | undefined> {
+interface PublicationAnchor {
+    readonly path: string
+    readonly identity: DirectoryIdentity
+    // Existing directories from the transaction root down to the anchor, then the missing rest.
+    readonly chain: readonly Readonly<DirectoryIdentity & { readonly name: string }>[]
+    readonly segments: readonly string[]
+}
+
+async function publicationAnchor(root: string, parent: string): Promise<PublicationAnchor | undefined> {
     let path = root
     const segments = parent === '.' ? [] : parent.split('/')
+    const chain: Array<Readonly<DirectoryIdentity & { readonly name: string }>> = []
+    const anchored = async (missing: readonly string[]): Promise<PublicationAnchor | undefined> => {
+        const status = await lstat(path)
+        return status.isDirectory() && !status.isSymbolicLink()
+            ? Object.freeze({ path, identity: Object.freeze({ dev: status.dev, ino: status.ino }), chain: Object.freeze(chain), segments: Object.freeze(missing) })
+            : undefined
+    }
     for (const [index, segment] of segments.entries()) {
         const candidate = join(path, segment)
         try {
             const status = await lstat(candidate)
             if (!status.isDirectory() || status.isSymbolicLink()) return undefined
             path = candidate
+            chain.push(Object.freeze({ name: segment, dev: status.dev, ino: status.ino }))
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined
-            const anchor = await lstat(path)
-            return anchor.isDirectory() && !anchor.isSymbolicLink()
-                ? Object.freeze({ path, identity: Object.freeze({ dev: anchor.dev, ino: anchor.ino }), segments: Object.freeze(segments.slice(index)) })
-                : undefined
+            return anchored(segments.slice(index))
         }
     }
-    const status = await lstat(path)
-    return status.isDirectory() && !status.isSymbolicLink()
-        ? Object.freeze({ path, identity: Object.freeze({ dev: status.dev, ino: status.ino }), segments: Object.freeze([]) })
-        : undefined
+    return anchored([])
 }
 
 async function nestedPublicationAuthority(
@@ -886,20 +489,25 @@ function helperStep(
     request: object,
     inputs: readonly Readonly<{ path: string; sha256: string }>[],
     deadline: number,
+    stdoutLimitBytes = MAX_HELPER_FRAME_BYTES,
 ): ExecutionStep | undefined {
     const remaining = deadline - Date.now()
     if (remaining <= 0) return undefined
-    const requestBytes = JSON.stringify(request)
-    if (Buffer.byteLength(requestBytes) > 65_536) return undefined
+    const requestBytes = helperFrame(request)
+    if (Buffer.byteLength(requestBytes) > MAX_HELPER_FRAME_BYTES) return undefined
+    // An unauthenticated program is one more unavailable step: the caller refuses or compensates,
+    // and a transaction that has started keeps its recovery inputs.
+    let program: ReturnType<typeof libexecProgram>
+    try { program = libexecProgram(HELPER_PROGRAM) } catch { return undefined }
     return Object.freeze({
         id: `generated-filesystem-${(request as { action: string }).action}-${(request as { nonce: string }).nonce}`,
-        argv: Object.freeze([node.canonicalPath, '-e', FILESYSTEM_HELPER, requestBytes, ...inputs.map(({ path }) => path)]) as readonly [string, ...string[]],
+        argv: Object.freeze([node.canonicalPath, '--', program.path, requestBytes, ...inputs.map(({ path }) => path)]) as readonly [string, ...string[]],
         argv0: node.invocationPath,
         cwd,
         env: Object.freeze({}),
         timeoutMs: Math.min(HELPER_TIMEOUT_MS, remaining),
         spawnNotAfter: new Date(deadline).toISOString(),
-        stdoutLimitBytes: 65_536,
+        stdoutLimitBytes,
         stderrLimitBytes: 16_384,
         paths: Object.freeze([cwd]),
         ports: Object.freeze([]),
@@ -907,6 +515,7 @@ function helperStep(
         expected: Object.freeze([]),
         consumedFiles: Object.freeze([
             Object.freeze({ path: node.canonicalPath, sha256: node.sha256, maxBytes: MAX_EXECUTABLE_BYTES, argvIndexes: Object.freeze([0]), executable: true as const, executionMode: node.executionMode }),
+            Object.freeze({ path: program.path, sha256: program.sha256, maxBytes: program.maxBytes, argvIndexes: Object.freeze([2]), executable: false as const }),
             ...inputs.map(({ path, sha256: digest }, index) => Object.freeze({ path, sha256: digest, maxBytes: MAX_GENERATED_BYTES, argvIndexes: Object.freeze([4 + index]), executable: false as const })),
         ]),
         filesystemChecks: Object.freeze([Object.freeze({ path: cwd, expected: 'directory' as const })]),
@@ -1288,7 +897,7 @@ async function readAnchoredBatch(
             entries: Object.freeze(entries),
             receiptOutput,
         })
-        if (Buffer.byteLength(JSON.stringify(request)) > MAX_HELPER_FRAME_BYTES) return Object.freeze({ kind: 'split' })
+        if (helperFrameBytes(request) > MAX_HELPER_FRAME_BYTES) return Object.freeze({ kind: 'split' })
         const helperDeadline = Math.min(Date.now() + HELPER_TIMEOUT_MS, deadline ?? Number.MAX_SAFE_INTEGER)
         const raw = await runHelper(adapters, helperStep(node, root, '.', request, [], helperDeadline))
         const refusal = helperRecord(raw, ['version', 'nonce', 'action', 'kind', 'failedNonce'])
@@ -1452,81 +1061,137 @@ function helperChain(value: unknown): readonly HelperChainEntry[] | undefined {
     return Object.freeze(chain)
 }
 
-function preparedEntryChainsValid(entries: readonly HelperFileEntry[], requests: readonly PrepareFileEntry[]): boolean {
-    const createdPrefixes = new Map<string, DirectoryIdentity>()
-    for (const [entryIndex, entry] of entries.entries()) {
-        const request = requests[entryIndex]
-        if (!request || entry.chain.length !== request.chain.length + request.segments.length) return false
-        const names: string[] = []
-        for (const [chainIndex, directory] of entry.chain.entries()) {
-            names.push(directory.name)
-            const prefix = names.join('/')
-            if (chainIndex < request.chain.length) {
-                const expected = request.chain[chainIndex]
-                if (!expected || directory.name !== expected.name || directory.dev !== expected.dev
-                    || directory.ino !== expected.ino || directory.created) return false
-                continue
-            }
-            if (directory.name !== request.segments[chainIndex - request.chain.length]) return false
-            const created = createdPrefixes.get(prefix)
-            if (created) {
-                if (directory.created || directory.dev !== created.dev || directory.ino !== created.ino) return false
-            } else {
-                if (!directory.created) return false
-                createdPrefixes.set(prefix, Object.freeze({ dev: directory.dev, ino: directory.ino }))
-            }
+// Directories a prepare batch created, keyed by their path from the transaction root. The first row
+// naming a missing directory must report creating it; a later group or entry that walks through it
+// must report the same inode as already present.
+function createdRowsValid(prefix: readonly string[], rows: readonly HelperChainEntry[], created: Map<string, DirectoryIdentity>): boolean {
+    const names = [...prefix]
+    for (const row of rows) {
+        names.push(row.name)
+        const key = names.join('/')
+        const prior = created.get(key)
+        if (prior) {
+            if (row.created || row.dev !== prior.dev || row.ino !== prior.ino) return false
+        } else {
+            if (!row.created) return false
+            created.set(key, Object.freeze({ dev: row.dev, ino: row.ino }))
         }
     }
     return true
 }
 
-function parsePrepareReceipt(
-    value: unknown,
-    nonce: string,
+function preparedEntryChainsValid(
+    entries: readonly HelperFileEntry[],
     requests: readonly PrepareFileEntry[],
-): Omit<AppliedGroup, 'parent' | 'path' | 'start' | 'logicalWeight'> | undefined {
-    const receipt = helperRecord(value, ['version', 'nonce', 'action', 'kind', 'identity', 'chain', 'entries'])
-    if (!receipt || receipt.version !== 1 || receipt.nonce !== nonce || receipt.action !== 'prepare' || receipt.kind !== 'complete'
-        || !Array.isArray(receipt.chain) || !Array.isArray(receipt.entries)) return undefined
+    prefix: readonly string[],
+    created: Map<string, DirectoryIdentity>,
+): boolean {
+    for (const [entryIndex, entry] of entries.entries()) {
+        const request = requests[entryIndex]
+        if (!request || entry.chain.length !== request.chain.length + request.segments.length) return false
+        const existing = entry.chain.slice(0, request.chain.length)
+        const missing = entry.chain.slice(request.chain.length)
+        if (existing.some((directory, index) => directory.name !== request.chain[index]!.name || directory.dev !== request.chain[index]!.dev
+            || directory.ino !== request.chain[index]!.ino || directory.created)
+            || missing.some((directory, index) => directory.name !== request.segments[index])
+            || !createdRowsValid([...prefix, ...existing.map(directory => directory.name)], missing, created)) return false
+    }
+    return true
+}
+
+function parsePreparedGroup(
+    value: unknown,
+    row: PrepareBatchRow,
+    created: Map<string, DirectoryIdentity>,
+): AppliedGroup | undefined {
+    const receipt = helperRecord(value, ['nonce', 'identity', 'chain', 'entries'])
+    if (!receipt || receipt.nonce !== row.request.nonce || !Array.isArray(receipt.entries)) return undefined
     const identity = directoryIdentity(receipt.identity)
     const chain = helperChain(receipt.chain)
-    if (!chain) return undefined
+    const final = chain?.at(-1) ?? row.anchor.identity
+    if (!identity || !chain || chain.length !== row.anchor.segments.length
+        || chain.some((directory, index) => directory.name !== row.anchor.segments[index])
+        || !createdRowsValid(row.anchor.chain.map(directory => directory.name), chain, created)
+        || final.dev !== identity.dev || final.ino !== identity.ino
+        || receipt.entries.length !== row.group.mutations.length) return undefined
+    const requests = row.request.entries
     const entries: HelperFileEntry[] = []
     for (const [index, item] of receipt.entries.entries()) {
-        const row = helperRecord(item, ['chain', 'name', 'operation', 'sha256', 'target', 'stage', 'backup', 'priorKind', 'priorSha256', 'priorTarget', 'priorMode', 'priorIdentity'])
-        const priorIdentity = row ? row.priorIdentity === null ? null : directoryIdentity(row.priorIdentity) : undefined
-        const entryChain = row ? helperChain(row.chain) : undefined
+        const entry = helperRecord(item, ['chain', 'name', 'operation', 'sha256', 'target', 'stage', 'backup', 'priorKind', 'priorSha256', 'priorTarget', 'priorMode', 'priorIdentity'])
+        const priorIdentity = entry ? entry.priorIdentity === null ? null : directoryIdentity(entry.priorIdentity) : undefined
+        const entryChain = entry ? helperChain(entry.chain) : undefined
         const request = requests[index]
-        const expectedStage = `.cockpit-stage-${nonce}-${index}`
-        const expectedBackup = `.cockpit-backup-${nonce}-${index}`
-        if (!row || !request || !entryChain || !safePublicationSegment(row.name) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(String(row.operation))
-            || row.stage !== null && typeof row.stage !== 'string' || row.sha256 !== null && (typeof row.sha256 !== 'string' || !SHA256.test(row.sha256))
-            || row.target !== null && typeof row.target !== 'string'
-            || row.backup !== null && typeof row.backup !== 'string'
-            || !['missing', 'file', 'symlink'].includes(String(row.priorKind))
-            || row.priorSha256 !== null && (typeof row.priorSha256 !== 'string' || !SHA256.test(row.priorSha256))
-            || row.priorTarget !== null && typeof row.priorTarget !== 'string'
-            || row.priorMode !== null && (!Number.isSafeInteger(row.priorMode) || (row.priorMode as number) < 0 || (row.priorMode as number) > 0o777)
-            || priorIdentity === undefined || (row.priorKind === 'missing') !== (priorIdentity === null)
-            || (row.priorKind === 'file') !== (row.priorSha256 !== null) || (row.priorKind === 'file') !== (row.priorMode !== null)
-            || (row.priorKind === 'file') !== (row.backup !== null) || (row.priorKind === 'symlink') !== (row.priorTarget !== null)
-            || row.stage !== (request.operation === 'write-file' || request.operation === 'write-symlink' ? expectedStage : null)
-            || row.backup !== (row.priorKind === 'file' ? expectedBackup : null)) return undefined
-        entries.push(Object.freeze({ ...row, chain: entryChain, priorIdentity }) as unknown as HelperFileEntry)
+        const mutation = row.group.mutations[index]
+        const expectedStage = `.cockpit-stage-${row.request.nonce}-${index}`
+        const expectedBackup = `.cockpit-backup-${row.request.nonce}-${index}`
+        if (!entry || !request || !mutation || !entryChain || !safePublicationSegment(entry.name) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(String(entry.operation))
+            || entry.stage !== null && typeof entry.stage !== 'string' || entry.sha256 !== null && (typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256))
+            || entry.target !== null && typeof entry.target !== 'string'
+            || entry.backup !== null && typeof entry.backup !== 'string'
+            || !['missing', 'file', 'symlink'].includes(String(entry.priorKind))
+            || entry.priorSha256 !== null && (typeof entry.priorSha256 !== 'string' || !SHA256.test(entry.priorSha256))
+            || entry.priorTarget !== null && typeof entry.priorTarget !== 'string'
+            || entry.priorMode !== null && (!Number.isSafeInteger(entry.priorMode) || (entry.priorMode as number) < 0 || (entry.priorMode as number) > 0o777)
+            || priorIdentity === undefined || (entry.priorKind === 'missing') !== (priorIdentity === null)
+            || (entry.priorKind === 'file') !== (entry.priorSha256 !== null) || (entry.priorKind === 'file') !== (entry.priorMode !== null)
+            || (entry.priorKind === 'file') !== (entry.backup !== null) || (entry.priorKind === 'symlink') !== (entry.priorTarget !== null)
+            || entry.stage !== (request.operation === 'write-file' || request.operation === 'write-symlink' ? expectedStage : null)
+            || entry.backup !== (entry.priorKind === 'file' ? expectedBackup : null)
+            || entry.name !== basename(mutation.path) || entry.operation !== mutation.operation
+            || entry.sha256 !== (mutation.sha256 ?? null) || entry.target !== (mutation.target ?? null)) return undefined
+        entries.push(Object.freeze({ ...entry, chain: entryChain, priorIdentity }) as unknown as HelperFileEntry)
     }
-    return identity && preparedEntryChainsValid(entries, requests)
-        ? Object.freeze({ identity, chain, entries: Object.freeze(entries) }) : undefined
+    const parent = row.group.parent === '.' ? [] : row.group.parent.split('/')
+    if (new Set(entries.map(entry => [...entry.chain.map(directory => directory.name), entry.name].join('/'))).size !== entries.length
+        || !preparedEntryChainsValid(entries, requests, parent, created)) return undefined
+    return Object.freeze({
+        parent: row.group.parent,
+        path: row.path,
+        start: row.anchor.identity,
+        identity,
+        chain,
+        entries: Object.freeze(entries),
+        logicalWeight: row.group.logicalWeight,
+    })
 }
 
-function parseSimpleReceipt(value: unknown, nonce: string, action: 'publish' | 'verify' | 'rollback'): boolean {
+// A refusal still lists the groups prepared before it, so the caller can roll those back.
+function parsePrepareBatchReceipt(
+    value: unknown,
+    batch: PrepareBatch,
+): Readonly<{ complete: boolean; groups: readonly AppliedGroup[] }> | undefined {
+    const receipt = ownRecord(value)
+    if (!receipt || receipt.version !== 1 || receipt.nonce !== batch.request.nonce || receipt.action !== 'prepare-batch'
+        || !Array.isArray(receipt.groups)) return undefined
+    const complete = receipt.kind === 'complete' && exactKeys(receipt, ['version', 'nonce', 'action', 'kind', 'groups'])
+        && receipt.groups.length === batch.rows.length
+    const refused = receipt.kind === 'refusal' && exactKeys(receipt, ['version', 'nonce', 'action', 'kind', 'reason', 'groups'])
+        && (receipt.reason === 'prepare-failed' || receipt.reason === 'prepare-cleanup-failed') && receipt.groups.length < batch.rows.length
+    if (!complete && !refused) return undefined
+    const created = new Map<string, DirectoryIdentity>()
+    const groups: AppliedGroup[] = []
+    for (const [index, item] of receipt.groups.entries()) {
+        const group = parsePreparedGroup(item, batch.rows[index]!, created)
+        if (!group) return undefined
+        groups.push(group)
+    }
+    return Object.freeze({ complete, groups: Object.freeze(groups) })
+}
+
+function parseRollbackReceipt(value: unknown, nonce: string): boolean {
     const receipt = helperRecord(value, ['version', 'nonce', 'action', 'kind'])
-    return receipt?.version === 1 && receipt.nonce === nonce && receipt.action === action && receipt.kind === 'complete'
+    return receipt?.version === 1 && receipt.nonce === nonce && receipt.action === 'rollback' && receipt.kind === 'complete'
 }
 
-function parsePublicationBatchReceipt(value: unknown, request: PublicationBatchRequest): boolean {
+type PublicationBatchOutcome = 'complete' | 'verify-failed' | 'failed'
+
+function parsePublicationBatchReceipt(value: unknown, request: PublicationBatchRequest): PublicationBatchOutcome {
+    const refusal = helperRecord(value, ['version', 'nonce', 'action', 'kind', 'reason'])
+    if (request.action === 'commit-batch' && refusal?.version === 1 && refusal.nonce === request.nonce && refusal.action === request.action
+        && refusal.kind === 'refusal' && refusal.reason === 'verify-failed') return 'verify-failed'
     const receipt = helperRecord(value, ['version', 'nonce', 'action', 'kind', 'groups'])
     if (!receipt || receipt.version !== 1 || receipt.nonce !== request.nonce || receipt.action !== request.action
-        || receipt.kind !== 'complete' || !Array.isArray(receipt.groups) || receipt.groups.length !== request.groups.length) return false
+        || receipt.kind !== 'complete' || !Array.isArray(receipt.groups) || receipt.groups.length !== request.groups.length) return 'failed'
     const nonces = new Set<string>()
     return receipt.groups.every((value, index) => {
         const row = helperRecord(value, ['nonce', 'parent', 'kind'])
@@ -1534,7 +1199,7 @@ function parsePublicationBatchReceipt(value: unknown, request: PublicationBatchR
         if (!row || !expected || typeof row.nonce !== 'string' || nonces.has(row.nonce)) return false
         nonces.add(row.nonce)
         return row.nonce === expected.nonce && row.parent === expected.parent && row.kind === 'complete'
-    })
+    }) ? 'complete' : 'failed'
 }
 
 async function publicationBatchRequest(
@@ -1570,7 +1235,7 @@ async function publicationBatchRequest(
             entries: group.entries,
         })
         const candidate = Object.freeze({ version: 1 as const, nonce, action, identity: rootIdentity, groups: Object.freeze([...rows, row]) })
-        if (Buffer.byteLength(JSON.stringify(candidate)) > MAX_HELPER_FRAME_BYTES) break
+        if (helperFrameBytes(candidate) > MAX_HELPER_FRAME_BYTES) break
         rows.push(row)
     }
     return rows.length > 0
@@ -1578,6 +1243,8 @@ async function publicationBatchRequest(
         : undefined
 }
 
+// `verify-failed` is reported only while no request of this run has completed, so it means that
+// nothing this run would change has changed.
 async function runPublicationBatches(
     action: PublicationBatchRequest['action'],
     root: string,
@@ -1586,19 +1253,48 @@ async function runPublicationBatches(
     node: NodeAuthority,
     adapters: PublicationAdapters,
     nextForwardDeadline: (calls: number) => number | undefined,
-): Promise<boolean> {
+    callsPerGroup = 1,
+    first?: PublicationBatchRequest,
+): Promise<PublicationBatchOutcome> {
     let offset = 0
     while (offset < groups.length) {
-        const request = await publicationBatchRequest(root, rootIdentity, groups.slice(offset), action)
-        if (!request) return false
-        const logicalWeight = request.groups.reduce((count, _row, index) => count + groups[offset + index]!.logicalWeight, 0)
-        const deadline = nextForwardDeadline(logicalWeight)
-        if (deadline === undefined) return false
+        const request = offset === 0 && first ? first : await publicationBatchRequest(root, rootIdentity, groups.slice(offset), action)
+        const logicalWeight = request?.groups.reduce((count, _row, index) => count + groups[offset + index]!.logicalWeight, 0)
+        const deadline = logicalWeight === undefined ? undefined : nextForwardDeadline(callsPerGroup * logicalWeight)
+        if (!request || deadline === undefined) return offset === 0 ? 'verify-failed' : 'failed'
         const receipt = await runHelper(adapters, helperStep(node, root, 'generated-environment', request, [], deadline))
-        if (!parsePublicationBatchReceipt(receipt, request)) return false
+        const outcome = parsePublicationBatchReceipt(receipt, request)
+        if (outcome !== 'complete') return outcome === 'verify-failed' && offset === 0 ? 'verify-failed' : 'failed'
         offset += request.groups.length
     }
-    return true
+    return 'complete'
+}
+
+// publish-batch validates every group in its request before it publishes any, and commit-batch
+// verifies every group before it retires any backup. A transaction that fits one request therefore
+// needs one helper call per stage; a larger one first checks every group across separate requests,
+// so no request publishes or commits while a later group is unchecked. Either way the stage spends
+// two forward slots per group. `verify-failed` means no backup was retired.
+async function runPublicationStage(
+    stage: 'publish' | 'commit',
+    root: string,
+    rootIdentity: DirectoryIdentity,
+    groups: readonly AppliedGroup[],
+    node: NodeAuthority,
+    adapters: PublicationAdapters,
+    nextForwardDeadline: (calls: number) => number | undefined,
+): Promise<PublicationBatchOutcome> {
+    const check = stage === 'publish' ? 'validate-batch' : 'verify-batch'
+    const action = stage === 'publish' ? 'publish-batch' : 'commit-batch'
+    const single = await publicationBatchRequest(root, rootIdentity, groups, action)
+    if (!single) return 'verify-failed'
+    // The request that decided this path is the one sent, so it cannot split after the decision.
+    if (single.groups.length === groups.length) {
+        return runPublicationBatches(action, root, rootIdentity, groups, node, adapters, nextForwardDeadline, 2, single)
+    }
+    const checked = await runPublicationBatches(check, root, rootIdentity, groups, node, adapters, nextForwardDeadline)
+    if (checked !== 'complete') return 'verify-failed'
+    return runPublicationBatches(action, root, rootIdentity, groups, node, adapters, nextForwardDeadline)
 }
 
 async function runHelper(
@@ -1714,17 +1410,20 @@ function groupFrameBounded(parent: string, entries: readonly PublicationMutation
             backup: `.cockpit-backup-${'0'.repeat(32)}-${index}`, priorKind: entry.expected.kind,
             priorSha256: entry.expected.sha256 ?? null, priorTarget: entry.expected.target ?? null,
             priorMode: entry.expected.kind === 'file' ? 511 : null, priorIdentity: entry.expected.identity ?? null }))
-        const group = { nonce: '0'.repeat(32), parent, identity, chain, entries: receiptEntries }
-        const frames = [
-            { version: 1, nonce: '0'.repeat(32), action: 'prepare', identity, segments: parent === '.' ? [] : parent.split('/'), entries: requestEntries },
-            { version: 1, nonce: '0'.repeat(32), action: 'prepare', kind: 'complete', identity, chain, entries: receiptEntries },
-            { version: 1, nonce: '0'.repeat(32), action: 'validate-batch', identity, groups: [group] },
-            { version: 1, nonce: '0'.repeat(32), action: 'publish-batch', identity, groups: [group] },
-            { version: 1, nonce: '0'.repeat(32), action: 'verify-batch', identity, groups: [group] },
-            { version: 1, nonce: '0'.repeat(32), action: 'rollback', identity, start: identity, chain, entries: receiptEntries },
-            { version: 1, nonce: '0'.repeat(32), action: 'commit-batch', identity, groups: [group] },
+        const nonce = '0'.repeat(32)
+        const group = { nonce, parent, identity, chain, entries: receiptEntries }
+        const anchor = chain.map(({ created: _created, ...row }) => row)
+        const requests = [
+            { version: 1, nonce, action: 'prepare-batch', identity, groups: [{ nonce, parent, anchor, identity, segments: [], entries: requestEntries }] },
+            { version: 1, nonce, action: 'validate-batch', identity, groups: [group] },
+            { version: 1, nonce, action: 'publish-batch', identity, groups: [group] },
+            { version: 1, nonce, action: 'verify-batch', identity, groups: [group] },
+            { version: 1, nonce, action: 'rollback', identity, start: identity, chain, entries: receiptEntries },
+            { version: 1, nonce, action: 'commit-batch', identity, groups: [group] },
         ]
-        return frames.every(frame => Buffer.byteLength(JSON.stringify(frame)) + 1 <= MAX_HELPER_FRAME_BYTES)
+        const receipt = { version: 1, nonce, action: 'prepare-batch', kind: 'complete', groups: [{ nonce, identity, chain, entries: receiptEntries }] }
+        return requests.every(frame => helperFrameBytes(frame) + 1 <= MAX_HELPER_FRAME_BYTES)
+            && Buffer.byteLength(JSON.stringify(receipt)) + 1 <= MAX_HELPER_FRAME_BYTES
 }
 
 function groupMutations(mutations: readonly PublicationMutation[]): readonly PublicationGroup[] | undefined {
@@ -1794,6 +1493,51 @@ function groupMutations(mutations: readonly PublicationMutation[]): readonly Pub
     return Object.freeze(merged.map(({ phase: _phase, ...group }) => Object.freeze(group)))
 }
 
+async function prepareBatch(
+    root: string,
+    rootIdentity: DirectoryIdentity,
+    groups: readonly PublicationGroup[],
+    files: readonly OwnedBytes[],
+    staged: readonly Readonly<{ path: string; sha256: string }>[],
+): Promise<PrepareBatch | undefined> {
+    const nonce = randomBytes(16).toString('hex')
+    const rows: PrepareBatchRow[] = []
+    let inputs: Array<Readonly<{ path: string; sha256: string }>> = []
+    for (const group of groups.slice(0, MAX_PUBLICATION_BATCH_GROUPS)) {
+        const anchor = await publicationAnchor(root, group.parent)
+        if (!anchor) return undefined
+        const path = group.parent === '.' ? root : resolve(root, group.parent)
+        const groupInputs = [...inputs]
+        const entries: PrepareFileEntry[] = []
+        for (const mutation of group.mutations) {
+            const segments = publicationEntrySegments(group.parent, mutation.path)
+            const nested = segments && await nestedPublicationAuthority(path, anchor.segments.length === 0, segments)
+            if (!nested) return undefined
+            let input: number | null = null
+            if (mutation.operation === 'write-file') {
+                input = groupInputs.length
+                groupInputs.push(staged[files.findIndex(file => file.path === mutation.path)]!)
+            }
+            entries.push(Object.freeze({ chain: nested.chain, segments: nested.segments,
+                name: basename(mutation.path), operation: mutation.operation, expected: mutation.expected,
+                sha256: mutation.sha256 ?? null, target: mutation.target ?? null, input }))
+        }
+        const request = Object.freeze({ nonce: randomBytes(16).toString('hex'), parent: group.parent, anchor: anchor.chain,
+            identity: anchor.identity, segments: anchor.segments, entries: Object.freeze(entries) })
+        const candidate = Object.freeze({ version: 1 as const, nonce, action: 'prepare-batch' as const, identity: rootIdentity,
+            groups: Object.freeze([...rows.map(row => row.request), request]) })
+        if (helperFrameBytes(candidate) > MAX_HELPER_FRAME_BYTES) break
+        rows.push(Object.freeze({ group, anchor, path, request }))
+        inputs = groupInputs
+    }
+    return rows.length > 0 ? Object.freeze({
+        request: Object.freeze({ version: 1 as const, nonce, action: 'prepare-batch' as const, identity: rootIdentity,
+            groups: Object.freeze(rows.map(row => row.request)) }),
+        rows: Object.freeze(rows),
+        inputs: Object.freeze(inputs),
+    }) : undefined
+}
+
 async function compensate(
     groups: readonly AppliedGroup[],
     node: NodeAuthority,
@@ -1808,7 +1552,7 @@ async function compensate(
         remainingWeight -= group.logicalWeight
         const deadline = transactionDeadline - remainingWeight * PUBLICATION_HELPER_SLOT_MS
         const receipt = await runHelper(adapters, helperStep(node, group.path, group.parent, request, [], deadline))
-        if (!parseSimpleReceipt(receipt, nonce, 'rollback')) return false
+        if (!parseRollbackReceipt(receipt, nonce)) return false
     }
     return true
 }
@@ -2575,61 +2319,23 @@ async function applyPrepared(
         for (const mutation of publicationMutations) if (!confined(prepared.root, mutation.path)) {
             return refuse('GENERATED_PATH_UNSAFE', 'generated destination is not confined', mutation.path)
         }
-        for (const group of groups) {
+        // One helper call prepares as many groups as one request frame holds. Prepare never changes a
+        // target, so a run interrupted inside a batch leaves only stage and backup files beside them.
+        for (let next = 0; next < groups.length;) {
             if (!await transactionRootCurrent()) throw new Error('generated transaction root changed')
-            const anchor = await publicationAnchor(prepared.root, group.parent)
-            if (!anchor) throw new Error('generated destination parent is unsafe')
-            const nonce = randomBytes(16).toString('hex')
-            const inputs: Array<Readonly<{ path: string; sha256: string }>> = []
-            const entries: PrepareFileEntry[] = []
-            for (const mutation of group.mutations) {
-                const segments = publicationEntrySegments(group.parent, mutation.path)
-                if (!segments) throw new Error('generated destination nesting is unsafe')
-                const nested = await nestedPublicationAuthority(
-                    group.parent === '.' ? prepared.root : resolve(prepared.root, group.parent),
-                    anchor.segments.length === 0,
-                    segments,
-                )
-                if (!nested) throw new Error('generated destination ancestor is unsafe')
-                let input: number | null = null
-                if (mutation.operation === 'write-file') {
-                    const fileIndex = publicationFiles.findIndex(file => file.path === mutation.path)
-                    input = inputs.length
-                    inputs.push(staged.inputs[fileIndex]!)
-                }
-                entries.push(Object.freeze({ chain: nested.chain, segments: nested.segments,
-                    name: basename(mutation.path), operation: mutation.operation, expected: mutation.expected,
-                    sha256: mutation.sha256 ?? null, target: mutation.target ?? null, input }))
+            const batch = await prepareBatch(prepared.root, transactionRootIdentity, groups.slice(next), publicationFiles, staged.inputs)
+            const deadline = batch && nextForwardDeadline(batch.rows.reduce((count, row) => count + row.group.logicalWeight, 0))
+            if (!batch || deadline === undefined) throw new Error('generated destination parent is unsafe or its helper schedule is exhausted')
+            const raw = await runHelper(adapters, helperStep(node, prepared.root, 'generated-environment', batch.request, batch.inputs, deadline,
+                MAX_HELPER_FRAME_BYTES * (batch.rows.length + 1)))
+            const receipt = parsePrepareBatchReceipt(raw, batch)
+            if (receipt && receipt.groups.length > 0) {
+                applied.push(...receipt.groups)
+                if (!await recordRecovery(staged.directory, applied)) throw new Error('generated recovery record could not be persisted')
             }
-            const request = Object.freeze({
-                version: 1, nonce, action: 'prepare', identity: anchor.identity, segments: anchor.segments,
-                entries: Object.freeze(entries),
-            })
-            const deadline = nextForwardDeadline(group.logicalWeight)
-            if (deadline === undefined) throw new Error('generated helper schedule exhausted')
-            const raw = await runHelper(adapters, helperStep(node, anchor.path, group.parent, request, inputs, deadline))
-            const receipt = parsePrepareReceipt(raw, nonce, entries)
-            const receiptFinal = receipt?.chain.at(-1) ?? anchor.identity
-            if (!receipt || receipt.entries.length !== group.mutations.length
-                || receipt.chain.length !== anchor.segments.length
-                || receipt.chain.some((row, index) => row.name !== anchor.segments[index] || !row.created)
-                || receiptFinal.dev !== receipt.identity.dev || receiptFinal.ino !== receipt.identity.ino
-                || new Set(receipt.entries.map(entry => [...entry.chain.map(row => row.name), entry.name].join('/'))).size !== receipt.entries.length
-                || receipt.entries.some((entry, index) => entry.name !== basename(group.mutations[index]!.path)
-                    || entry.operation !== group.mutations[index]!.operation || entry.sha256 !== (group.mutations[index]!.sha256 ?? null)
-                    || entry.target !== (group.mutations[index]!.target ?? null))) {
-                throw new Error('generated filesystem helper refused publication')
-            }
-            const current = Object.freeze({
-                parent: group.parent,
-                path: group.parent === '.' ? prepared.root : resolve(prepared.root, group.parent),
-                start: anchor.identity,
-                logicalWeight: group.logicalWeight,
-                ...receipt,
-            })
-            applied.push(current)
-            if (!await recordRecovery(staged.directory, applied)) throw new Error('generated recovery record could not be persisted')
+            if (!receipt?.complete) throw new Error('generated filesystem helper refused publication')
             if (!await transactionRootCurrent()) throw new Error('generated transaction root changed')
+            next += batch.rows.length
         }
         if (Date.now() >= forwardCutoff) throw new Error('generated helper schedule exhausted')
         const inputsCurrent = await adapters.revalidate(forwardCutoff, 'before-publish')
@@ -2644,20 +2350,18 @@ async function applyPrepared(
             }
             return typeof inputsCurrent === 'object' ? inputsCurrent : refuse('GENERATED_SOURCE_CHANGED', 'a generated input changed immediately before publication', 'generated-environment')
         }
-        if (!await runPublicationBatches('validate-batch', prepared.root, transactionRootIdentity, applied,
-            node, adapters, nextForwardDeadline)) throw new Error('generated staged identities failed validation')
-        if (!await runPublicationBatches('publish-batch', prepared.root, transactionRootIdentity, applied,
-            node, adapters, nextForwardDeadline)) throw new Error('generated filesystem helper did not confirm publication')
+        if (await runPublicationStage('publish', prepared.root, transactionRootIdentity, applied,
+            node, adapters, nextForwardDeadline) !== 'complete') throw new Error('generated filesystem helper did not confirm publication')
         if (Date.now() >= forwardCutoff) throw new Error('generated helper schedule exhausted')
         if (await adapters.revalidate(forwardCutoff, 'after-publish') !== true || !await planCurrent(prepared, adapters, forwardCutoff, true)) {
             throw new Error('generated input or unchanged target changed during publication')
         }
-        if (!await runPublicationBatches('verify-batch', prepared.root, transactionRootIdentity, applied,
-            node, adapters, nextForwardDeadline)) throw new Error('generated postcheck failed')
-        // Backup retirement can be partial, so finalization failures retain recovery instead of rolling back.
-        const finalized = await runPublicationBatches('commit-batch', prepared.root, transactionRootIdentity, applied,
-            node, adapters, nextForwardDeadline).catch(() => false)
-        if (!finalized || forwardCallsRemaining !== 0) {
+        // A postcheck failure before any backup was retired still rolls back. Retirement can be
+        // partial, so any later or unknown failure retains recovery instead of rolling back.
+        const finalized = await runPublicationStage('commit', prepared.root, transactionRootIdentity, applied,
+            node, adapters, nextForwardDeadline).catch(() => 'failed' as const)
+        if (finalized === 'verify-failed') throw new Error('generated postcheck failed')
+        if (finalized !== 'complete' || forwardCallsRemaining !== 0) {
             retainInputs = true
             return refuse(
                 'GENERATED_COMPENSATION_FAILED',

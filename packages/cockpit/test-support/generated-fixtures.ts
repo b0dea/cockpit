@@ -21,6 +21,20 @@ import {
 } from '../src/environment/generated-application.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
 
+/** The groups one publication helper step carries; empty for any other step. */
+export function publicationRequestGroups(step: ExecutionStep, action: 'prepare' | 'publish' | 'commit'): readonly {
+    readonly parent: string
+    readonly entries: readonly Record<string, unknown>[]
+}[] {
+    if (step.labels.action !== `${action}-batch`) return []
+    return (JSON.parse(step.argv[3]!) as { groups: readonly { parent: string; entries: readonly Record<string, unknown>[] }[] }).groups
+}
+
+/** The staged input files a prepare step copies into its stages, in request input order. */
+export function stagedPublicationInputs(step: ExecutionStep): readonly string[] {
+    return step.labels.action === 'prepare-batch' ? step.argv.slice(4) : []
+}
+
 export function createGeneratedCommandFixture() {
     const fixture = resolve('fixtures/registries/generated-environment.toml')
     const roots: string[] = []
@@ -41,19 +55,11 @@ export function createGeneratedCommandFixture() {
         return undefined
     }
 
-    function publicationGroups(step: ExecutionStep, action: 'publish' | 'verify'): readonly {
+    function publicationGroups(step: ExecutionStep, action: 'prepare' | 'publish' | 'commit'): readonly {
         parent: string
         entries: readonly { stage: string | null }[]
     }[] {
-        if (step.labels.action === action) {
-            const request = JSON.parse(step.argv[3]!) as { entries: readonly { stage: string | null }[] }
-            return [{ parent: step.labels.parent, entries: request.entries }]
-        }
-        if (step.labels.action !== `${action}-batch`) return []
-        const request = JSON.parse(step.argv[3]!) as {
-            groups: readonly { parent: string; entries: readonly { stage: string | null }[] }[]
-        }
-        return request.groups
+        return publicationRequestGroups(step, action) as readonly { parent: string; entries: readonly { stage: string | null }[] }[]
     }
 
     async function cleanup() {

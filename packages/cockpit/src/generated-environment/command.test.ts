@@ -20,7 +20,7 @@ import * as publicationTransaction from './transaction.js'
 import * as generatedCommands from './command.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 
-import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
+import { createGeneratedCommandFixture, stagedPublicationInputs } from '../../test-support/generated-fixtures.js'
 
 const { roots, cleanup, canonicalOutputRead, publicationGroups, consumer, surfaceConsumer, digest,
     staleRemovalAuthority, bytes } = createGeneratedCommandFixture()
@@ -619,7 +619,7 @@ it('keeps the installed guard untouched when replacement handler authentication 
     let preparations = 0
     const moduleDirectory = fileURLToPath(new URL('../../dist/', import.meta.url)).replace(/\/$/, '')
     const result = await syncGeneratedEnvironment({ configPath }, { execute: async step => {
-        if (step.labels.action === 'prepare') preparations += 1
+        if (step.labels.action === 'prepare-batch') preparations += 1
         if (!refused && step.cwd === moduleDirectory && step.labels.action === 'read-file') {
             refused = true
             return executeProbe({ ...step, cwd: join(root, 'missing-handler-directory') })
@@ -714,17 +714,21 @@ describe('generated environment command', () => {
         if (initial.kind !== 'complete') return
         const original = await bytes(partial.root, initial.result.paths)
         await writeFile(join(partial.root, 'fixtures/personas.json'), '[{"id":"changed"}]\n')
-        let publications = 0
+        let changedInput = false
         const adapters: Partial<GeneratedEnvironmentCommandAdapters> = {
             execute: async (step) => {
-                if (step.labels.action === 'prepare' && ++publications === 2) {
-                    const input = step.consumedFiles.find((file) => !file.executable)
-                    if (input) await writeFile(input.path, 'changed before execution\n')
+                // The last staged input belongs to a later group, so earlier groups are already prepared
+                // when the helper refuses it and must be compensated.
+                const input = stagedPublicationInputs(step).at(-1)
+                if (!changedInput && input && publicationGroups(step, 'prepare').length > 1) {
+                    changedInput = true
+                    await writeFile(input, 'changed before execution\n')
                 }
                 return executeProbe(step)
             },
         }
         const failed = await syncGeneratedEnvironment({ configPath: partial.configPath }, adapters)
+        expect(changedInput).toBe(true)
         expect(failed).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_PUBLICATION_FAILED' })] })
         expect(await bytes(partial.root, initial.result.paths)).toEqual(original)
         expect(await readFile(join(partial.root, 'app/.env.example'), 'utf8')).toBe(original['app/.env.example'])
@@ -762,7 +766,7 @@ describe('generated environment command', () => {
             { configPath: consumerRoot.configPath },
             {
                 execute: async (step) => {
-                    if (!swapped && step.labels.action === 'prepare' && step.labels.parent === 'docs/cockpit') {
+                    if (!swapped && publicationGroups(step, 'prepare').some(group => group.parent === 'docs/cockpit')) {
                         swapped = true
                         await rename(join(consumerRoot.root, 'docs/cockpit'), held)
                         await mkdir(join(consumerRoot.root, 'docs/cockpit'))

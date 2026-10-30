@@ -192,7 +192,7 @@ describe('sync --adopt', () => {
         await writeFile(preloadPath, `
             const fs = require('node:fs')
             const path = require('node:path')
-            const request = JSON.parse(process.argv[1])
+            const request = JSON.parse(process.argv[2])
             if (request.action === 'relocate-file') {
                 const originalLstat = fs.lstatSync
                 const originalUnlink = fs.unlinkSync
