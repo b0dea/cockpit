@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { win32 } from 'node:path'
@@ -556,6 +556,22 @@ describe('generated environment process contract', () => {
         expect(readFileSync(join(directory, 'package.json'), 'utf8')).toBe(packageBytes)
         expect(readFileSync(join(directory, 'package-lock.json'), 'utf8')).toBe('{"lockfileVersion":3,"canary":"unchanged"}\n')
         expect(readFileSync(join(directory, '.gitignore'), 'utf8')).toBe(ignoreBytes)
+    })
+
+    it.each([[['--dry-run']], [[]]])('names the invalid configuration field when sync %j refuses before writing', async (flags) => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-sync-invalid-config-')))
+        scratch.push(directory)
+        const configPath = join(directory, 'cockpit.toml')
+        writeFileSync(configPath, readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
+            .replace('dir = "app"', 'dir = "../escape"'))
+        const capture = captureIo()
+
+        expect(await runCli(['sync', '--config', configPath, '--json', ...flags], capture.io)).toBe(2)
+
+        expect(JSON.parse(capture.output().stdout).diagnostics).toEqual([expect.objectContaining({
+            severity: 'error', code: 'CONFIG_SCHEMA_INVALID', target: configPath, message: expect.stringContaining('sibling.0.dir:'),
+        })])
+        expect(readdirSync(directory)).toEqual(['cockpit.toml'])
     })
 
     it('binds doctor freshness only after CI and NO_UPDATE_NOTIFIER transport admissions', async () => {

@@ -4,7 +4,7 @@ import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
-import { ENVIRONMENT_CODES } from './environment/contract.js'
+import { ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './environment/contract.js'
 import { installedPackageMetadata } from './package-metadata.js'
 
 export const mechanism = {
@@ -30,11 +30,19 @@ export interface TeamMetadataChange {
 }
 
 export type TeamMetadataResult = Readonly<{ kind: 'complete'; changed: boolean; changes: readonly TeamMetadataChange[] }>
-    | Readonly<{ kind: 'refusal'; code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH; message: string; target: string }>
+    | Readonly<{ kind: 'refusal'; code: EnvironmentDiagnostic['code']; message: string; target: string; fix?: string }>
 
 function refuse(code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH,
     message: string, target: string): Extract<TeamMetadataResult, { kind: 'refusal' }> {
     return { kind: 'refusal', code, message, target }
+}
+
+// The loader already names the failing key and reason; replacing it with a generic refusal left
+// sync reporting "cockpit.toml must be valid" for every malformed configuration.
+function configRefusal(loaded: Awaited<ReturnType<typeof loadCockpitConfig>>, configPath: string): Extract<TeamMetadataResult, { kind: 'refusal' }> {
+    const reason = loaded.diagnostics.find(diagnostic => diagnostic.severity === 'error')
+    if (!reason) return refuse('TEAM_METADATA_UNAVAILABLE', 'cockpit.toml could not be loaded and the loader gave no reason', configPath)
+    return { kind: 'refusal', code: reason.code, message: reason.message, target: reason.target ?? configPath, ...(reason.fix ? { fix: reason.fix } : {}) }
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -265,7 +273,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const authority = await captureRoot(root)
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
-        if (loaded.kind !== 'complete') return refuse('TEAM_METADATA_UNAVAILABLE', 'cockpit.toml must be valid before team metadata can be written', configPath)
+        if (loaded.kind !== 'complete') return configRefusal(loaded, configPath)
         const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
@@ -303,7 +311,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
 
 export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promise<TeamMetadataResult> {
     const record = issuedMetadata.get(prepared)
-    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'team metadata authority is unknown or already consumed; run cockpit sync again', 'team-metadata')
+    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'this team metadata update was already applied or was never prepared; run cockpit sync again', 'team-metadata')
     issuedMetadata.delete(prepared)
     const { authority, sourceInstall, files } = record
     try {
@@ -346,7 +354,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         }
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
-        if (loaded.kind !== 'complete') return refuse('TEAM_METADATA_UNAVAILABLE', 'cockpit.toml is invalid', configPath)
+        if (loaded.kind !== 'complete') return configRefusal(loaded, configPath)
         const block = ignoreBlock(root, loaded.result.config.cockpit.siblings_root)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
@@ -360,6 +368,6 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             `the cockpit-owned .gitignore block is missing, stale or edited; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
         return { kind: 'complete', changed: false, changes: Object.freeze([]) }
     } catch (error) {
-        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be authenticated (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
     }
 }
