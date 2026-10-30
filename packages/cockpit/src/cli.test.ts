@@ -393,44 +393,44 @@ describe('CLI help', () => {
         expect(result.stdout).toBe(
             'Usage: cockpit <command> [options]\n\n' +
             'Commands:\n' +
-            '  init                   Preview or accept one explicit bootstrap target in an existing checkout\n' +
-            '  document               Describe an existing cockpit as attributed cockpit.toml content\n' +
-            '  registry-resolve       Resolve a validated legacy registry into sourceable shell data\n' +
-            '  setup                  Acquire and wire declared sibling repositories\n' +
-            '  sync                   Synchronize canonical generated environment files\n' +
-            '  check                  Check canonical generated environment files for drift\n' +
-            '  selftest               Probe generated harness controls with explicit measured specifications\n' +
-            '  upgrade                Inspect a reviewable upgrade sequence without applying changes (experimental)\n' +
+            '  init                   Preview, then accept, a first cockpit setup for one agent tool\n' +
+            '  document               Draft cockpit.toml from an existing cockpit, marking every inferred value\n' +
+            '  registry-resolve       Turn a validated shell registry into data shell scripts can source\n' +
+            '  setup                  Clone or locate the declared sibling repositories and link them\n' +
+            '  sync                   Write the generated stack and agent files from cockpit.toml\n' +
+            '  check                  Report generated files that no longer match cockpit.toml\n' +
+            '  selftest               Test whether agent tools enforce the generated controls\n' +
+            '  upgrade                Show the steps to upgrade cockpit without applying them (experimental)\n' +
             '  up                     Start or resume the declared environment\n' +
-            '  sleep                  Release this holder and stop an unshared environment\n' +
+            '  sleep                  Release this checkout and stop the stack if no other holder remains\n' +
             '  session                Keep the environment available for one command, then release it\n' +
-            '  down                   Remove the selected generated runtime\n' +
-            '  reset                  Preview or interactively approve an exact reset\n' +
-            '  runtime                Measure the local container runtime (runtime measure) and record its support row\n' +
+            '  down                   Stop and remove the stack\n' +
+            '  reset                  Preview a reset, or approve that exact preview interactively\n' +
+            '  runtime                Measure the local container runtime (runtime measure) and record the result\n' +
             '  sibling                Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
-            '  preflight              Evaluate the authenticated environment gate\n' +
-            '  doctor                 Report read-only environment diagnostics\n' +
-            '  logs                   Collect bounded logs for one declared service\n' +
+            '  preflight              Check that the environment is healthy and ready for work\n' +
+            '  doctor                 Report environment problems without changing anything\n' +
+            '  logs                   Show recent logs for one declared service\n' +
             '  baseline-record        Record an explicitly confirmed environment baseline (experimental)\n' +
-            '  work-intake            Prepare a source-bound work order (experimental)\n' +
+            '  work-intake            Prepare a work order from its source document (experimental)\n' +
             '  work-status            Report current work-order state (experimental)\n' +
             '  work-accept            Interactively accept the exact current work order (experimental)\n' +
             '  work-renew             Interactively renew a changed work-order contract (experimental)\n' +
             '  work-resume            Resume the next executable step of the single active work order (experimental)\n' +
             '  work-recover           Inspect or explicitly recover one interrupted work lock (experimental)\n' +
-            '  work-execute           Execute one admitted work-order step (experimental)\n' +
+            '  work-execute           Execute one accepted work-order step (experimental)\n' +
             '  work-record            Persist current work-order progress (experimental)\n' +
             '  work-review            Review the current accepted work order (experimental)\n' +
             '  work-sweep             Inspect or apply a reversible work-order sweep (experimental)\n' +
-            '  work-reverse           Reverse an authenticated work-order sweep (experimental)\n' +
+            '  work-reverse           Reverse a recorded work-order sweep (experimental)\n' +
             '  work-programme-mint    Mint the next declared programme work order (experimental)\n' +
-            '  work-metrics           Report attributed work-order metrics (experimental)\n' +
+            '  work-metrics           Report work-order metrics (experimental)\n' +
             '  work-grade             Independently grade the current accepted work order (experimental)\n' +
             '  browser-drive          Drive the declared application browser surfaces (experimental)\n' +
-            '  browser-accessibility  Collect bounded application accessibility observations (experimental)\n' +
+            '  browser-accessibility  Collect accessibility observations from the application (experimental)\n' +
             '  browser-screenshot     Capture the declared application surfaces (experimental)\n' +
             '  browser-debugger       Prepare an explicitly requested browser debugger (experimental)\n' +
-            '  test-run               Run a declared product gate with honest selection\n',
+            '  test-run               Run a declared product test gate and report which tests it selected\n',
         )
         expect(humanStderr(result.stderr)).toBe('')
     })
