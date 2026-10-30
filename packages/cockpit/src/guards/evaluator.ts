@@ -699,8 +699,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             const writeCwd = git && ['archive', 'mv'].includes(git.verb) ? git.cwd : invocation.cwd
             for (const path of writes.paths) {
                 pathCount++
-                if (git?.verb === 'archive') inspectRemoval(path, writeCwd)
                 inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
+                if (git?.verb === 'archive' || invocation.executable !== null && posix.basename(invocation.executable) === 'truncate') inspectRemoval(path, writeCwd)
             }
             if (writes.reads?.length && !inspectReadOnly({ cwd: invocation.cwd, reads: writes.reads, trees: [], listings: [] })) {
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))

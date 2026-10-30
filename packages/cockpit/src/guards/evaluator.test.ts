@@ -582,14 +582,34 @@ describe('cockpit structure protection', () => {
         }
         expect(patch('*** Delete File: cockpit.toml')).toEqual({ decision: 'deny', reason: removal })
         expect(patch('*** Update File: cockpit.toml\n*** Move to: old.toml\n@@\n-a\n+b')).toEqual({ decision: 'deny', reason: removal })
+        for (const command of [
+            'truncate -s 0 cockpit.toml', 'truncate --size 0 ./COCKPIT.TOML', 'truncate --size=0 subdir/../cockpit.toml',
+            `truncate -s0 ${root}/cockpit.toml`, 'truncate -s=0 cockpit.toml', 'truncate -c -s 0 -- cockpit.toml', 'truncate -cs0 cockpit.toml',
+            'truncate --no-create --size=0 cockpit.toml', 'truncate -o -s 0 cockpit.toml', 'truncate --io-blocks --size=0 cockpit.toml',
+            'truncate -r reference cockpit.toml', 'truncate -rreference cockpit.toml', 'truncate --reference reference cockpit.toml', 'truncate --reference=reference cockpit.toml',
+            '/usr/bin/truncate -s 0 cockpit.toml', 'truncate -s 0 .cockpit/generated-environment-ownership.json',
+        ]) {
+            const configured = policy()
+            configured.declaredAllows.push({ argv: command.split(' '), reason: 'Repository file resizing is declared safe.' })
+            expect(decide(command, configured), command).toEqual({ decision: 'deny', reason: removal })
+        }
+        const nested = policy()
+        nested.declaredAllows.push({ argv: ['truncate', '-s', '0', '../cockpit.toml'], cwd: `${root}/subdir`, reason: 'Repository file resizing is declared safe.' })
+        expect(decide('truncate -s 0 ../cockpit.toml', nested, `${root}/subdir`)).toEqual({ decision: 'deny', reason: removal })
         // The same identity under another spelling, such as a hard link, is the same file.
         const linked = policy()
         linked.protectedIdentities = protectedIdentities([{ path: instance }], { [`${root}/cockpit.toml`]: { identity: '7:5', ancestors: ['7:1'] } })
         const facts = ({ path, cwd }: { path: string; cwd: string }) => {
             const resolved = posix.resolve(cwd, path)
-            return { status: 'resolved', path: resolved, symlink: false, identity: resolved.endsWith('/alias.toml') ? '7:5' : null, ancestors: [] }
+            return { status: 'resolved', path: resolved, symlink: false,
+                identity: resolved.endsWith('/alias.toml') ? '7:5' : resolved.endsWith('/archive') ? '7:1' : null, ancestors: [] }
         }
         expect(evaluateGuard(parseGuardInput(shellPayload('rm alias.toml')), linked, facts)).toEqual({ decision: 'deny', reason: removal })
+        for (const path of ['alias.toml', 'archive']) {
+            const command = `truncate -s 0 ${path}`
+            linked.declaredAllows.push({ argv: command.split(' '), reason: 'Repository file resizing is declared safe.' })
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), linked, facts), command).toEqual({ decision: 'deny', reason: removal })
+        }
     })
 
     it('denies removal of every guard control file and directory despite declared command grants', () => {
@@ -877,5 +897,8 @@ describe('cockpit structure protection', () => {
         for (const command of ['rm src/a.ts', 'mv old.toml cockpit.toml', 'rm -rf /tmp/scratch', 'printf x >> cockpit.toml']) {
             expect(decide(command).decision, command).toBe('ask')
         }
+        const configured = policy()
+        configured.declaredAllows.push({ argv: ['truncate', '-s', '0', 'notes.txt'], reason: 'Repository file resizing is declared safe.' })
+        expect(decide('truncate -s 0 notes.txt', configured)).toEqual({ decision: 'allow', reason: 'Repository file resizing is declared safe.' })
     })
 })
