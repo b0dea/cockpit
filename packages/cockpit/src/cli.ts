@@ -960,7 +960,7 @@ async function decodeRequest(
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID', 'provide --probe-specifications <file>', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
-            'selftest executable search inputs must be bounded own string or undefined values; supply PATH without accessors and run npx cockpit selftest --help to retry')
+            'selftest executable search inputs must be bounded own string or undefined values; supply PATH without accessors and run npx --no cockpit selftest --help to retry')
         const env: Record<string, string | undefined> = {}
         try {
             if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
@@ -1074,7 +1074,7 @@ async function decodeRequest(
         const values = parsed.values as { config?: string; image?: string; write?: boolean }
         const [operation, ...extra] = parsed.positionals
         if (operation !== 'measure' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx cockpit runtime measure --config <file> --image <local-image>')
+            return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx --no cockpit runtime measure --config <file> --image <local-image>')
         }
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
@@ -1084,7 +1084,7 @@ async function decodeRequest(
     if (handler === 'sibling') {
         const values = parsed.values as { config?: string; create?: boolean; from?: string; remote?: string; dir?: string; var?: string; purpose?: string; 'instruction-pointer'?: boolean }
         const [operation, slug, ...extra] = parsed.positionals
-        const shape = 'npx cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--instruction-pointer], or npx cockpit sibling remove <slug> --config <file>'
+        const shape = 'npx --no cockpit sibling add <slug> --config <file> [--create | --from <path> | --remote <url>] [--dir <relative dir>] [--var <NAME>] [--purpose "<text>"] [--instruction-pointer], or npx --no cockpit sibling remove <slug> --config <file>'
         if ((operation !== 'add' && operation !== 'remove') || !slug || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', `sibling requires an operation and one slug: ${shape}`)
         }

@@ -480,7 +480,7 @@ export function renderGeneratedEnvironment(input: GeneratedEnvironmentInput): Ge
             || !safeSiblingInputDirectory(safeInput.siblingDirectories[service.sibling]!)))
     if (invalidInput) {
         return Object.freeze({ kind: 'refusal', code: 'GENERATED_INPUT_INVALID',
-            reason: `${invalidInput.build ? 'built' : 'generated'} service ${invalidInput.id} names sibling ${invalidInput.sibling} without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run npx cockpit sync` })
+            reason: `${invalidInput.build ? 'built' : 'generated'} service ${invalidInput.id} names sibling ${invalidInput.sibling} without a valid relative checkout directory; fix: correct its sibling dir under cockpit.siblings_root, then run npx --no cockpit sync` })
     }
     const hostInputDirectories = Object.freeze(Object.fromEntries(hostServices.map(service =>
         [service.id, service.id === browserService ? '.' : safeInput.siblingDirectories[service.sibling]!])))

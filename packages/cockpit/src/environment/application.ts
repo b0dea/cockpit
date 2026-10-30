@@ -271,7 +271,7 @@ export interface GuardEvaluationApplicationAdapters {
     readonly execute?: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }
 
-// `cockpit logs --service <id>` is an ordinary invocation only for a declared service. A generated
+// `npx --no cockpit logs --service <id>` is an ordinary invocation only for a declared service. A generated
 // stack declares its services; a compose-first cockpit's services are whatever its own Compose files
 // resolve to, so they are read from Compose rather than guessed, and an unreadable topology refuses.
 async function guardServiceIds(
@@ -306,10 +306,10 @@ export interface GuardEvaluationApplicationResult {
 // could loosen its guard.
 type GuardFix = { readonly kind: 'sync' } | { readonly kind: 'restore'; readonly path: string }
 function guardHeld(identity: GuardHandlerIdentity, what: string, why: string, fix: GuardFix): string {
-    const sync = `\`${formatShellCommand(['cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
+    const sync = `\`${formatShellCommand(['npx', '--no', 'cockpit', 'sync', '--config', identity.configPath])}\` in a terminal, outside the agent`
     const action = fix.kind === 'sync' ? `a human must run ${sync}, then commit any regenerated files`
         : `a human must restore it with \`${formatShellCommand(['git', '-C', identity.root, 'restore', '--', fix.path])}\` (it is committed), or run ${sync}`
-    return `${what}; ${why}, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: ${action}.`
+    return `${what}; ${why}, so every tool call is held, including \`npx --no cockpit sync\` run through this agent. Fix: ${action}.`
 }
 
 const GUARD_RESTORABLE = new Set(['.cockpit/generated-environment-ownership.json', '.cockpit/guards/bash-guard.sh',
@@ -1809,7 +1809,7 @@ export async function runSetup(
                 code: ENVIRONMENT_CODES.SETUP_INSTRUCTION_POINTER_OFFERED,
                 message: 'the declared sibling has no cockpit instruction pointer',
                 target: pointer.path,
-                fix: 'review the proposed AGENTS.md block, then run cockpit setup --config <file> --write-instruction-pointers',
+                fix: 'review the proposed AGENTS.md block, then run npx --no cockpit setup --config <file> --write-instruction-pointers',
             })
             mutationMayHaveOccurred ||= pointer.kind === 'written'
         }
@@ -4265,7 +4265,7 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
         code: 'GUARD_HOSTS_UNDECLARED' satisfies typeof ENVIRONMENT_CODES.GUARD_HOSTS_UNDECLARED,
         message: 'guards.hosted_db_hosts and guards.vendor_endpoint_hosts are both empty, so the guard denies no agent command by host even though this cockpit declares a runtime',
         target: 'guards',
-        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
+        fix: 'list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards]',
     })])
 }
 

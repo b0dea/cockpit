@@ -245,7 +245,7 @@ function refused(code: string, message: string, target?: string): InitApplicatio
 
 export function unsupportedInitPlatformOutcome(platform: string): InitApplicationOutcome {
     return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-        `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host`)
+        `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run npx --no cockpit init on a supported macOS or Linux host`)
 }
 
 function ownerRefusal(outcome: OwnerOutcome, stage: BootstrapStateRecord['value']['stage'], projection: BootstrapProjection): InitApplicationOutcome {
@@ -446,7 +446,7 @@ export async function runInitApplication(
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
         try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
         catch (error) {
-            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun cockpit init`, input.root)
+            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun npx --no cockpit init`, input.root)
         }
         if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
     }
@@ -454,7 +454,7 @@ export async function runInitApplication(
     // --accept-preview and --accept-defaults consent to bytes, never to a location. Every durable
     // bootstrap stage follows accepted placement, which init-created files must not reopen on resume.
     if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
-        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run cockpit init --interactive`, 'cockpit.root')
+        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run npx --no cockpit init --interactive`, 'cockpit.root')
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'
@@ -544,7 +544,7 @@ export async function runInitApplication(
         sources: [...projection.sources], previewSha256: projection.previewSha256, published: [...projection.files],
         updatedAt: adapters.now() })
         if (refreshed.kind === 'refusal' && 'reason' in refreshed) return refused('INIT_STATE_STALE',
-            `${refreshed.message}; rerun cockpit init to review the current preview`, address.path)
+            `${refreshed.message}; rerun npx --no cockpit init to review the current preview`, address.path)
         if (refreshed.kind !== 'complete') return stateFailure(refreshed)
         current = refreshed.value
     }

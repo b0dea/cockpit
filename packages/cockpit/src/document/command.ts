@@ -194,7 +194,7 @@ class EstateSourceObservationError extends Error {
     constructor(target: string, message: string) {
         super(message)
         this.target = target
-        this.fix = 'replace it with one readable regular file under the repository, then rerun the same npx cockpit init command'
+        this.fix = 'replace it with one readable regular file under the repository, then rerun the same npx --no cockpit init command'
     }
 }
 
@@ -558,7 +558,7 @@ export async function classifyEstateObservation(
         classification,
         sourceObservationSha256: sourceObservationSha256(root, rows),
         notice: classification === 'one-sibling'
-            ? 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with npx cockpit sibling add'
+            ? 'one repository gets the full cockpit: agent instructions, guards, harness settings and its stack; grow it with npx --no cockpit sibling add'
             : classification === 'no-runnable-product'
                 ? 'build enough product to run before scaffolding a cockpit environment'
                 : classification === 'incomplete-multi-repository'
@@ -1214,10 +1214,10 @@ function completeConfigurationDocument(
     const diagnostics = diagnosticsFor(attributions, [])
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${NO_GUARD_HOSTS_DECISION}, so the guard denies no command by host`,
-        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx cockpit sync once a non-local environment exists' })
+        fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync once a non-local environment exists' })
     if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
-        fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run npx cockpit sync' })
+        fix: 'once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync' })
     if (!destination) diagnostics.unshift({ severity: 'info', code: 'DOCUMENT_STDOUT_TARGET',
         message: 'stdout bytes are intended for the canonical cockpit.toml location; arbitrary redirection has no schema-location guarantee',
         target: '<cockpit-root>/cockpit.toml' })
@@ -1248,7 +1248,7 @@ async function documentCommandOwned(
         if (code === 'ENOENT') {
             return refusal('REGISTRY_NOT_FOUND',
                 'the registry file does not exist; document inventories an existing shell-registry cockpit (env/lib/instance.sh)',
-                registry, 'for a new product run: npx cockpit init <root> --target <harness>; otherwise check the cockpit root or registry path')
+                registry, 'for a new product run: npx --no cockpit init <root> --target <harness>; otherwise check the cockpit root or registry path')
         }
         return refusal('REGISTRY_UNREADABLE', `the registry file could not be read (${code ?? 'unknown I/O error'})`, registry)
     }
@@ -1289,7 +1289,7 @@ async function documentCommandOwned(
             parsed.found ? 'the registry contains no usable rows'
                 : 'the file contains no sibling registry; document inventories an existing shell-registry cockpit',
             registry,
-            parsed.found ? undefined : 'for a new product run: npx cockpit init <root> --target <harness>',
+            parsed.found ? undefined : 'for a new product run: npx --no cockpit init <root> --target <harness>',
         )
     }
 

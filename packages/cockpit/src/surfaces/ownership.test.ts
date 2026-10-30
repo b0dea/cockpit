@@ -288,7 +288,7 @@ describe('confined generated ownership', () => {
         const observe = (row: unknown) => classifyGeneratedPaths(projected.facts, [row])
         expect(observe({ path: 'raw.bin', kind: 'file', bytes, confinement: 'confined', identity: 'inode' })).toMatchObject({ kind: 'complete', paths: [{ state: 'unchanged' }] })
         expect(observe({ path: 'raw.bin', kind: 'file', bytes: Uint8Array.of(0xff), confinement: 'confined', identity: 'inode' })).toMatchObject({ kind: 'complete', paths: [{ state: 'modified', diagnostics: [
-            expect.objectContaining({ message: expect.stringContaining('undo the edit or delete the file, then rerun npx cockpit sync') }),
+            expect.objectContaining({ message: expect.stringContaining('undo the edit or delete the file, then rerun npx --no cockpit sync') }),
         ] }] })
         expect(observe({ path: 'raw.bin', kind: 'missing', confinement: 'confined' })).toMatchObject({ kind: 'complete', paths: [{ state: 'missing', diagnostics: [] }] })
         for (const confinement of ['escaping', 'dangling', 'unknown']) {

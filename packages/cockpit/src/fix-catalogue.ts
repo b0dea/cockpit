@@ -16,7 +16,7 @@ export interface FixContext {
 
 export interface ExecutableFix {
     // npx resolves the project's own cockpit bin; a dev-dependency install puts no `cockpit` on PATH.
-    readonly argv: readonly ['npx', 'cockpit', 'sync', '--config', string]
+    readonly argv: readonly ['npx', '--no', 'cockpit', 'sync', '--config', string]
     readonly command: string
 }
 
@@ -36,12 +36,12 @@ function safeTarget(target: string): boolean {
 
 export function admitDiagnosticFix(diagnostic: Diagnostic, context?: FixContext): ExecutableFix | undefined {
     if (diagnostic.severity !== 'error' || diagnostic.code !== 'GENERATED_ARTIFACT_DRIFT'
-        || diagnostic.fix !== 'run npx cockpit sync --config <file>' || !diagnostic.target || !context) return undefined
+        || diagnostic.fix !== 'run npx --no cockpit sync --config <file>' || !diagnostic.target || !context) return undefined
     const path = context.resolvedConfigPath
     if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || dirname(path) === path
         || unsafeControl.test(path) || !safeTarget(diagnostic.target)
         || !context.generatedTargets.includes(diagnostic.target)) return undefined
-    const argv = Object.freeze(['npx', 'cockpit', 'sync', '--config', path] as const)
+    const argv = Object.freeze(['npx', '--no', 'cockpit', 'sync', '--config', path] as const)
     const command = formatShellCommand(argv)
     return Object.freeze({ argv, command })
 }

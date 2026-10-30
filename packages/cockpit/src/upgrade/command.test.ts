@@ -64,9 +64,9 @@ describe('reviewable upgrade plan', () => {
                 candidate: discovered.candidate,
                 affectedOverrideOriginals: discovered.affectedOverrideOriginals,
                 commands: [
-                    "npx cockpit sync --config 'cockpit.toml' --dry-run",
-                    "npx cockpit sync --config 'cockpit.toml'",
-                    "npx cockpit preflight --config 'cockpit.toml'",
+                    "npx --no cockpit sync --config 'cockpit.toml' --dry-run",
+                    "npx --no cockpit sync --config 'cockpit.toml'",
+                    "npx --no cockpit preflight --config 'cockpit.toml'",
                 ],
             },
             diagnostics: [],
@@ -89,9 +89,9 @@ describe('reviewable upgrade plan', () => {
         expect(outcome.kind).toBe('complete')
         if (outcome.kind !== 'complete') throw new Error('expected a complete upgrade plan')
         expect(outcome.result.commands).toEqual([
-            `npx cockpit sync --config 'configs/review path;$(touch escaped)'"'"'s.toml' --dry-run`,
-            `npx cockpit sync --config 'configs/review path;$(touch escaped)'"'"'s.toml'`,
-            `npx cockpit preflight --config 'configs/review path;$(touch escaped)'"'"'s.toml'`,
+            `npx --no cockpit sync --config 'configs/review path;$(touch escaped)'"'"'s.toml' --dry-run`,
+            `npx --no cockpit sync --config 'configs/review path;$(touch escaped)'"'"'s.toml'`,
+            `npx --no cockpit preflight --config 'configs/review path;$(touch escaped)'"'"'s.toml'`,
         ])
     })
 

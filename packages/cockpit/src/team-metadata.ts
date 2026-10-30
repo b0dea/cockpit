@@ -149,7 +149,7 @@ function packageDependencySlots(manifest: Record<string, unknown>): PackageDepen
 }
 
 function misplacedDependencyMessage(sections: readonly string[]): string {
-    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run cockpit sync again`
+    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run npx --no cockpit sync again`
 }
 
 function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string): Readonly<{
@@ -303,7 +303,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const block = await ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
-                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
+                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run npx --no cockpit init again',
                 'cockpit.siblings_root')
         }
         const packagePath = join(root, 'package.json')
@@ -312,12 +312,12 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(candidate.misplaced), packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run cockpit init again`, packagePath)
+            `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run npx --no cockpit init again`, packagePath)
         const ignorePath = join(root, '.gitignore')
         const ignoreBefore = await readOptional(authority, ignorePath)
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
+            `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run npx --no cockpit init again`, ignorePath)
         const files = [
             { path: packagePath, before: packageBefore, bytes: candidate.bytes },
             { path: ignorePath, before: ignoreBefore, bytes: nextIgnore },
@@ -335,7 +335,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
 
 export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promise<TeamMetadataResult> {
     const record = issuedMetadata.get(prepared)
-    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'this team metadata update was already applied or was never prepared; run cockpit sync again', 'team-metadata')
+    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'this team metadata update was already applied or was never prepared; run npx --no cockpit sync again', 'team-metadata')
     issuedMetadata.delete(prepared)
     const { authority, files } = record
     try {
@@ -362,7 +362,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         try { parsed = current ? JSON.parse(current.bytes) : undefined } catch { parsed = undefined }
         const slots = object(parsed) ? packageDependencySlots(parsed) : undefined
         if (object(parsed) && !slots) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'package.json direct npm dependency sections must be objects; repair package.json, then run cockpit sync again', packagePath)
+            'package.json direct npm dependency sections must be objects; repair package.json, then run npx --no cockpit sync again', packagePath)
         if (slots?.misplaced.length) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(slots.misplaced), packagePath)
         const pinned = slots?.devDependencies[PACKAGE]
@@ -373,7 +373,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, packagePath)
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
         if (!scripts || Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== command)) {
-            return refuse('TEAM_METADATA_UNAVAILABLE', 'package.json does not contain the exact cockpit:* scripts written by cockpit init; run cockpit init again', packagePath)
+            return refuse('TEAM_METADATA_UNAVAILABLE', 'package.json does not contain the exact cockpit:* scripts written by cockpit init; run npx --no cockpit init again', packagePath)
         }
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
@@ -381,16 +381,16 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const block = await ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
-                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
+                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run npx --no cockpit init again',
                 'cockpit.siblings_root')
         }
         const ignorePath = join(root, '.gitignore')
         const ignore = await readOptional(authority, ignorePath)
         const expected = ignoreCandidate(ignore?.bytes ?? '', block)
         if (expected === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `the cockpit-owned .gitignore block was edited; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit sync again`, ignorePath)
+            `the cockpit-owned .gitignore block was edited; restore it exactly, or remove the whole ${START} through ${END} region and run npx --no cockpit sync again`, ignorePath)
         if (!ignore || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run cockpit sync to rewrite it', ignorePath)
+            'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run npx --no cockpit sync to rewrite it', ignorePath)
         return { kind: 'complete', changed: false, changes: Object.freeze([]) }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)

@@ -62,7 +62,7 @@ describe('sync --adopt', () => {
         const refused = await syncGeneratedEnvironment({ configPath })
         expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
             code: 'SURFACE_STATE_CONFLICT', target: '.claude/settings.json',
-            message: expect.stringContaining('npx cockpit sync --config <file> --adopt .claude/settings.json'),
+            message: expect.stringContaining('npx --no cockpit sync --config <file> --adopt .claude/settings.json'),
         })] })
     })
 

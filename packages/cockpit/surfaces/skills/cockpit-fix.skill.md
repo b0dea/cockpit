@@ -31,7 +31,7 @@ opencode:
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Fix**.
-Route through `npx cockpit doctor`, `npx cockpit logs`, and `npx cockpit check` as the defect requires. Use `npx cockpit up` only for behavior that depends on a live process or integration.
+Route through `npx --no cockpit doctor`, `npx --no cockpit logs`, and `npx --no cockpit check` as the defect requires. Use `npx --no cockpit up` only for behavior that depends on a live process or integration.
 
 This is the direct-fix door. It changes only the repository that owns a reproduced defect.
 It does not scaffold a cockpit or copy the environment, tier, or proof decisions that the CLI makes.

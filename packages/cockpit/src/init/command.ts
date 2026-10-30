@@ -266,7 +266,7 @@ async function drive(
     else outcome = preview
     for (let answered = 0; outcome.kind === 'pending' && outcome.result?.question !== undefined; answered += 1) {
         if (answered >= MAX_INTERVIEW_ANSWERS) return refusal('INIT_INTERVIEW_LIMIT_EXCEEDED',
-            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun cockpit init to resume from the persisted answers`)
+            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun npx --no cockpit init to resume from the persisted answers`)
         const question = outcome.result.question
         let bytes: string | undefined
         if (unattended && supplied) {

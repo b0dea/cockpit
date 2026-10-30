@@ -99,14 +99,14 @@ async function candidate(
     const path = requested as AdoptableSurfacePath
     const destinationPath = adoptedCopyPath(path)
     if (adopted.has(path)) {
-        return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. Delete the duplicate ${path} and run npx cockpit sync; its settings are kept in ${destinationPath}`, path)
+        return refused('SURFACE_ADOPTION_REFUSED', `${path} is already adopted from ${destinationPath}. Delete the duplicate ${path} and run npx --no cockpit sync; its settings are kept in ${destinationPath}`, path)
     }
     if (owned.has(path)) return refused('SURFACE_ADOPTION_REFUSED', `${path} is cockpit's own published output, not a team file; nothing to adopt`, path)
     const target = path
     const source = await readAnchoredFile(root, target, SURFACE_FILE_MAX_BYTES, node, adapters)
     if (source.kind === 'missing') return refused('SURFACE_ADOPTION_REFUSED', `${path} does not exist; there is nothing to adopt`, path)
     if (source.kind !== 'complete') {
-        return refused('SURFACE_ADOPTION_REFUSED', `${path} could not be read as one stable regular file no larger than ${SURFACE_FILE_MAX_BYTES} bytes. Replace links, special files, or oversized content with the plain settings file inside the cockpit root, then re-run npx cockpit sync --adopt ${path}`, path)
+        return refused('SURFACE_ADOPTION_REFUSED', `${path} could not be read as one stable regular file no larger than ${SURFACE_FILE_MAX_BYTES} bytes. Replace links, special files, or oversized content with the plain settings file inside the cockpit root, then re-run npx --no cockpit sync --adopt ${path}`, path)
     }
     let text: string
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(source.bytes) } catch {
@@ -115,7 +115,7 @@ async function candidate(
     const inspected = inspectAdoptedSettings(path, text, path)
     if (inspected.kind !== 'complete') return refused(inspected.diagnostic.code, inspected.diagnostic.message, inspected.diagnostic.target)
     const destination = await readAnchoredEntry(root, destinationPath, SURFACE_FILE_MAX_BYTES, node, adapters)
-    if (destination.kind === 'invalid') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} could not be confirmed missing through plain directories inside the cockpit root. Remove links, special files, oversized files, or unstable entries on that path, then re-run npx cockpit sync --adopt ${path}`, path)
+    if (destination.kind === 'invalid') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} could not be confirmed missing through plain directories inside the cockpit root. Remove links, special files, oversized files, or unstable entries on that path, then re-run npx --no cockpit sync --adopt ${path}`, path)
     if (destination.kind !== 'missing') return refused('SURFACE_ADOPTION_REFUSED', `${destinationPath} already exists; move it aside before adopting ${path}`, destinationPath)
     return { path, target, destination: destinationPath, sha256: source.sha256 }
 }
@@ -263,8 +263,8 @@ export async function runSyncAdoption(
             edit: () => nextText,
             isExactChange: (value) => canonical(value) === canonical(expected),
             messages: {
-                changedBefore: 'cockpit.toml changed since it was read; re-run npx cockpit sync --adopt',
-                changedDuring: 'cockpit.toml changed while the adoption was being recorded; re-run npx cockpit sync --adopt',
+                changedBefore: 'cockpit.toml changed since it was read; re-run npx --no cockpit sync --adopt',
+                changedDuring: 'cockpit.toml changed while the adoption was being recorded; re-run npx --no cockpit sync --adopt',
                 invalid: (detail) => `recording the adoption would leave cockpit.toml invalid (${detail})`,
                 notExact: 'recording the adoption would change more than the [[surfaces.adopted]] rows; add the rows by hand',
                 writtenMismatch: 'the adoption was recorded, but re-reading cockpit.toml shows a further change; inspect it before running sync',

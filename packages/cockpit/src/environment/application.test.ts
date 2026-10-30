@@ -308,8 +308,8 @@ describe('guard policy construction', () => {
         })
         const command = /run `([^`]+)` in a terminal/.exec(result.decision.reason)?.[1]
         expect(command, result.decision.reason).toBeDefined()
-        const captured = spawnSync('/bin/bash', ['-c', `cockpit() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
-        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<sync>\n<--config>\n<${configPath}>\n` })
+        const captured = spawnSync('/bin/bash', ['-c', `npx() { printf '<%s>\\n' "$@"; }; ${command}`], { encoding: 'utf8' })
+        expect(captured).toMatchObject({ status: 0, stderr: '', stdout: `<--no>\n<cockpit>\n<sync>\n<--config>\n<${configPath}>\n` })
     })
 
     it('delimits a dash-prefixed configuration filename in application restore guidance', async () => {
@@ -515,7 +515,7 @@ describe('guard policy construction', () => {
         })
         expect(result).toMatchObject({ decision: { decision: 'unavailable', reason: expect.stringContaining(
             change === 'changed' ? 'publication changed during evaluation'
-                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
+                : change === 'missing' ? `.cockpit/guards/bash-guard.sh is missing; it authenticates the guard and the hook that launches it, so every tool call is held, including \`npx --no cockpit sync\` run through this agent. Fix: a human must restore it with \`git -C ${root} restore -- .cockpit/guards/bash-guard.sh\``
                     : 'could not be read or revalidated',
         ) } })
         expect(observeCheckout).toHaveBeenCalledTimes(change === 'changed' ? 1 : 0)
@@ -537,8 +537,8 @@ describe('guard policy construction', () => {
             expect(decision.decision).toBe('unavailable')
             expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so every tool call is held`)
             expect(decision.reason).toContain(restorable
-                ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed), or run \`cockpit sync --config ${configPath}\``
-                : `Fix: a human must run \`cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
+                ? `Fix: a human must restore it with \`git -C ${root} restore -- ${file}\` (it is committed), or run \`npx --no cockpit sync --config ${configPath}\``
+                : `Fix: a human must run \`npx --no cockpit sync --config ${configPath}\` in a terminal, outside the agent`)
         } finally { renameSync(join(root, `${file}.away`), join(root, file)) }
     }, 120_000)
 
@@ -674,7 +674,7 @@ describe('guard policy construction', () => {
         // An edited configuration holds every call until a human regenerates, and the reason says which file and how.
         const canonicalConfig = realpathSync(configPath)
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'unavailable', reason:
-            `${canonicalConfig} changed since the guards were generated; guard policy comes from it and an edit takes effect only once a human approves it, so every tool call is held, including \`cockpit sync\` run through this agent. Fix: a human must run \`cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
+            `${canonicalConfig} changed since the guards were generated; guard policy comes from it and an edit takes effect only once a human approves it, so every tool call is held, including \`npx --no cockpit sync\` run through this agent. Fix: a human must run \`npx --no cockpit sync --config ${canonicalConfig}\` in a terminal, outside the agent, then commit any regenerated files.` } })
     }, 120_000)
 
     it('carries distinct declared vendor and database authority with authenticated roots and exact instance paths', async () => {

@@ -877,7 +877,7 @@ export function createLifecycleCommandAdapters(
             const sources = await projectGeneratedApplicationMountSources(generatedApplication)
             if (!sources) return undefined
             if ('kind' in sources) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `generated host input must be an ordinary ${sources.expectedType} without symbolic-link components; missing, unreadable or wrong-type inputs cannot be handed to Docker; restore or create the declared input, then rerun npx cockpit up --config cockpit.toml`,
+                `generated host input must be an ordinary ${sources.expectedType} without symbolic-link components; missing, unreadable or wrong-type inputs cannot be handed to Docker; restore or create the declared input, then rerun npx --no cockpit up --config cockpit.toml`,
                 sources.path))
             expectedMountSources = sources
         } else {
@@ -894,7 +894,7 @@ export function createLifecycleCommandAdapters(
             const override = await composeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
                 createHash('sha256').update(ownership.bytes).digest('hex'))
             if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
-                `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run npx cockpit sync`,
+                `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run npx --no cockpit sync`,
                 COMPOSE_OWNERSHIP_FILE))
             artifacts = Object.freeze([...declared, override])
             expectedMountSources = Object.freeze([...new Set([

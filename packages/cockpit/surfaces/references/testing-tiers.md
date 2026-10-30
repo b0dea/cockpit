@@ -12,7 +12,7 @@ Choose the narrowest product-owned gate that proves the change.
 
 Extend an existing behavior test at the nearest public boundary when it can prove the change; add a test only when no existing test owns that behavior. Each test must fail when that behavior regresses. Do not duplicate proof already supplied by a stronger test.
 
-Run a gate with `npx cockpit test-run --gate <id>`. Narrow it with `npx cockpit test-run --select <kind>:<value>`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.
+Run a gate with `npx --no cockpit test-run --gate <id>`. Narrow it with `npx --no cockpit test-run --select <kind>:<value>`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.
 
 Use the targeted gate while iterating. If the declared tier is Full, run the complete gate once after implementation and review stabilize. A targeted tier ends with its declared targeted gate.
 

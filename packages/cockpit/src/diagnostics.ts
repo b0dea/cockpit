@@ -13,35 +13,35 @@ export const mechanism = {
 const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; fix: string }>>> = Object.freeze({
     INIT_CANONICAL_OWNERSHIP_MISSING: Object.freeze({
         why: 'init cannot safely resume when its recorded bootstrap state and generated ownership disagree',
-        fix: 'restore the committed ownership metadata, then rerun npx cockpit init',
+        fix: 'restore the committed ownership metadata, then rerun npx --no cockpit init',
     }),
     SURFACE_SOURCE_UNAVAILABLE: Object.freeze({
         why: 'generated instructions cannot be trusted without the declared sibling source',
-        fix: 'restore the named sibling checkout at its declared path, then rerun npx cockpit sync',
+        fix: 'restore the named sibling checkout at its declared path, then rerun npx --no cockpit sync',
     }),
     SURFACE_OWNERSHIP_INVALID: Object.freeze({
         why: 'cockpit cannot prove which generated settings it is allowed to replace',
-        fix: 'restore the last committed generated ownership metadata, then rerun npx cockpit sync',
+        fix: 'restore the last committed generated ownership metadata, then rerun npx --no cockpit sync',
     }),
     SURFACE_STATE_CONFLICT: Object.freeze({
         why: 'sync would overwrite content that cockpit did not write',
-        fix: 'for a generated file you edited, move the change into cockpit.toml or a surface overlay, then undo the edit or delete the file and rerun npx cockpit sync; for the team\'s own .claude/settings.json, .codex/config.toml or .codex/hooks.json, have a human approve npx cockpit sync --adopt <path>',
+        fix: 'for a generated file you edited, move the change into cockpit.toml or a surface overlay, then undo the edit or delete the file and rerun npx --no cockpit sync; for the team\'s own .claude/settings.json, .codex/config.toml or .codex/hooks.json, have a human approve npx --no cockpit sync --adopt <path>',
     }),
     GENERATED_ARTIFACT_DRIFT: Object.freeze({
         why: 'generated files no longer match the canonical cockpit configuration',
-        fix: 'run npx cockpit sync with the same configuration file, then retry',
+        fix: 'run npx --no cockpit sync with the same configuration file, then retry',
     }),
     GENERATED_OWNERSHIP_INVALID: Object.freeze({
         why: 'publication cannot safely update files without authenticated ownership metadata',
-        fix: 'restore the committed ownership metadata and rerun npx cockpit sync',
+        fix: 'restore the committed ownership metadata and rerun npx --no cockpit sync',
     }),
     GUARD_AUTHORITY_UNAVAILABLE: Object.freeze({
         why: 'the guard cannot make a safe allow or deny decision without current generated authority',
-        fix: 'restore cockpit.toml and the generated guard files, then have a human run npx cockpit sync',
+        fix: 'restore cockpit.toml and the generated guard files, then have a human run npx --no cockpit sync',
     }),
     GUARD_REFUSED: Object.freeze({
         why: 'the requested command is outside the current cockpit guard policy',
-        fix: 'follow the refusal reason or ask a human to change cockpit.toml and run npx cockpit sync',
+        fix: 'follow the refusal reason or ask a human to change cockpit.toml and run npx --no cockpit sync',
     }),
     RUNTIME_UNAVAILABLE: Object.freeze({
         why: 'cockpit cannot start or inspect the declared environment without a reachable container runtime',
@@ -49,11 +49,11 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     RUNTIME_UNMEASURED: Object.freeze({
         why: 'the current runtime has no measured support row, so its timing and capability bounds are unknown',
-        fix: 'run npx cockpit runtime measure --image <ref> --write, review the change, then retry',
+        fix: 'run npx --no cockpit runtime measure --image <ref> --write, review the change, then retry',
     }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',
-        fix: 'for a failed up attempt, run npx cockpit up to resume or npx cockpit down to release; otherwise have every owning session run npx cockpit sleep, then retry',
+        fix: 'for a failed up attempt, run npx --no cockpit up to resume or npx --no cockpit down to release; otherwise have every owning session run npx --no cockpit sleep, then retry',
     }),
     PORT_FAMILY_COLLISION: Object.freeze({
         why: 'one or more ports selected for this stack are already in use',
@@ -65,11 +65,11 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     SETUP_MANUAL_MISSING: Object.freeze({
         why: 'a manually managed sibling must already exist before cockpit can wire it',
-        fix: 'create the named checkout at its declared path, then run npx cockpit setup again',
+        fix: 'create the named checkout at its declared path, then run npx --no cockpit setup again',
     }),
     SETUP_REMOTE_MISMATCH: Object.freeze({
         why: 'rewiring an existing checkout to a different repository could replace the wrong source',
-        fix: 'correct the checkout remote or the sibling declaration, then run npx cockpit setup again',
+        fix: 'correct the checkout remote or the sibling declaration, then run npx --no cockpit setup again',
     }),
 })
 

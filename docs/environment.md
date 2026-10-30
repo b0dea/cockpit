@@ -298,8 +298,8 @@ one statement of both rules:
 | every other command | either | they use whatever daemon Docker selects |
 
 ```sh
-DOCKER_CONTEXT="$(docker context show)" npx cockpit down --config cockpit.toml
-env -u DOCKER_CONTEXT npx cockpit runtime measure --config cockpit.toml --image node:22-alpine --write
+DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml
+env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine --write
 ```
 
 For `down` and `reset`, discovery and deletion then address the same daemon. A `DOCKER_HOST`

@@ -271,7 +271,7 @@ function producers(input: {
         surfaces: async () => {
             const application = await checkedApplication
             const observations = application && observeGeneratedApplicationSurfaces(application)
-            if (!observations) throw new TypeError('surface health needs a current checked generated publication; run npx cockpit sync --config cockpit.toml')
+            if (!observations) throw new TypeError('surface health needs a current checked generated publication; run npx --no cockpit sync --config cockpit.toml')
             return observations
         },
         generated: async () => {

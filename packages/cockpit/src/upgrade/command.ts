@@ -220,9 +220,9 @@ function shellQuote(value: string): string {
 function reviewCommands(configPath: string): readonly [string, string, string] {
     const config = shellQuote(configPath)
     return Object.freeze([
-        `npx cockpit sync --config ${config} --dry-run`,
-        `npx cockpit sync --config ${config}`,
-        `npx cockpit preflight --config ${config}`,
+        `npx --no cockpit sync --config ${config} --dry-run`,
+        `npx --no cockpit sync --config ${config}`,
+        `npx --no cockpit preflight --config ${config}`,
     ])
 }
 

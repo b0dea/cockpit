@@ -126,7 +126,7 @@ echo "# edited by hand" >> compose.generated.yml
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
 $ cockpit check --config cockpit.toml
-ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]: owned generated artifact differs from canonical bytes Fix: npx cockpit sync --config '…/cockpit-demo/cockpit.toml'
+ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]: owned generated artifact differs from canonical bytes Fix: npx --no cockpit sync --config '…/cockpit-demo/cockpit.toml'
 ...
 ```
 

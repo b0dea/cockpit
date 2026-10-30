@@ -1180,7 +1180,7 @@ export function observeGeneratedApplicationSurfaces(
             observed: { state: 'available', value: { manifestSha256: record.surfaceSelftest.manifestSha256,
                 harnesses: record.surfaceSelftest.configuredHarnesses, entries: record.surfaceSelftest.entries.length }, observedAt },
             expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
-            remedy: 'run npx cockpit sync --config <file>, then rerun npx cockpit preflight',
+            remedy: 'run npx --no cockpit sync --config <file>, then rerun npx --no cockpit preflight',
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
@@ -1191,14 +1191,14 @@ export function observeGeneratedApplicationSurfaces(
                 ? required('directory-grants')
                 : { state: 'not-applicable', posture: 'directory-grants', reason: 'the active sibling projection declares no directory grants' },
             freshness: { state: 'current' },
-            remedy: 'run npx cockpit sync --config <file>, then rerun npx cockpit preflight',
+            remedy: 'run npx --no cockpit sync --config <file>, then rerun npx --no cockpit preflight',
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED, owner: mechanism.id, stackId: record.stackId,
             source: `surface-guide-costs:${record.surfaceSelftest.manifestSha256}`,
             observed: { state: 'available', value: guideValue, observedAt }, expectation: { kind: 'maximum', value: guideCap },
             applicability: required('environment'), freshness: { state: 'current' },
-            remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run npx cockpit sync --config <file>',
+            remedy: 'move conditional guidance behind its scoped or pull-loaded surface, then run npx --no cockpit sync --config <file>',
         }),
         snapshotEnvironmentObservation({
             code: ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, owner: mechanism.id, stackId: record.stackId,
@@ -1207,7 +1207,7 @@ export function observeGeneratedApplicationSurfaces(
                 inventorySha256: record.surfaceHealth.skillInventorySha256, inventory: record.surfaceHealth.skillInventory, skills: record.surfaceHealth.skills,
                 costs: record.surfaceHealth.skillCosts.map(({ target, metric, value, cap }) => ({ target, metric, value, cap })) }, observedAt },
             expectation: { kind: 'present' }, applicability: required('environment'), freshness: { state: 'current' },
-            remedy: 'move skill procedure text out of always-loaded entry points, then run npx cockpit sync --config <file>',
+            remedy: 'move skill procedure text out of always-loaded entry points, then run npx --no cockpit sync --config <file>',
         }),
     ]
     if (!observations.every((observation): observation is EnvironmentObservation => observation !== undefined)) return undefined
@@ -1501,7 +1501,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             env: process.env }) : undefined
     if (runtimeCheckout?.state === 'failed') return refuse('GENERATED_INPUT_INVALID',
         `generated checkout identity is unavailable: ${runtimeCheckout.reason}`, loaded.result.source.path,
-        'restore the configuration checkout and Git installation, then run npx cockpit sync --config <file>')
+        'restore the configuration checkout and Git installation, then run npx --no cockpit sync --config <file>')
     const currentCockpit = runtimeCheckout?.cockpitId ?? cockpitId({ name: config.cockpit.name, mainCheckoutPath: root })
     const publishedCockpit = publicationCockpitId({ name: config.cockpit.name })
     const currentCheckout = runtimeCheckout?.checkoutId ?? checkoutId({ checkoutPath: root })
@@ -2585,7 +2585,7 @@ async function prepareSurfaces(
     // Only a fingerprint this process hashed to the authenticated digest may stand in for a re-hash.
     const nodeFingerprint = fileFingerprint(prepared.node.canonicalPath, await lstat(prepared.node.canonicalPath))
     if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
-        'the Node executable changed while sync was running', 'guard', 'run `npx cockpit sync` again in a terminal')
+        'the Node executable changed while sync was running', 'guard', 'run `npx --no cockpit sync` again in a terminal')
     const guardHandler: GuardHandlerIdentity = Object.freeze({ root: prepared.root,
         rootDevice: String(rootStat.dev), rootInode: String(rootStat.ino),
         configPath: prepared.configPath, configSha256: prepared.sourceSha256,
@@ -3237,7 +3237,7 @@ function surfacePlanRefusal(prepared: PreparedEnvironment, diagnostic: Readonly<
     const adopted = diagnostic.code === 'SURFACE_STATE_CONFLICT'
         ? prepared.registry.config.surfaces.adopted.find(row => row.path === diagnostic.target) : undefined
     return refuse(diagnostic.code, adopted
-        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, delete ${adopted.path}, and run npx cockpit sync --config <file>`
+        ? `${diagnostic.message}; ${adopted.path} is merged from ${adopted.source}: make the change there, delete ${adopted.path}, and run npx --no cockpit sync --config <file>`
         : diagnostic.message, diagnostic.target)
 }
 
@@ -3480,10 +3480,10 @@ async function prepareGeneratedEnvironmentSync(
         const destination = metadataChanges.find(change => generatedPaths.some(path => path === change.path || path.startsWith(`${change.path}/`))
             || !portablePublicationPaths([...generatedPaths, change.path]))
         if (destination) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'a pending team metadata write overlaps a generated destination; move the generated output to a separate path, then run npx cockpit sync again', destination.path)
+            'a pending team metadata write overlaps a generated destination; move the generated output to a separate path, then run npx --no cockpit sync again', destination.path)
         const overlap = await ownedInputOverlap(publication.prepared, metadataChanges)
         if (overlap.kind === 'invalid' || overlap.path) return refuse('TEAM_METADATA_UNAVAILABLE',
-            'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run npx cockpit sync again',
+            'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run npx --no cockpit sync again',
             overlap.kind === 'complete' ? overlap.path : 'team-metadata')
     }
     const authority = issueRepairAuthority({ prepared: publication.prepared, plan: publication.plan, adapters })
@@ -3553,7 +3553,7 @@ export async function applyGeneratedEnvironmentRepair(
         const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler)
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses every agent tool call until it exists`,
-            GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx cockpit sync` again in a terminal')
+            GUARD_LOCAL_PATHS.identity, 'fix the path, then run `npx --no cockpit sync` again in a terminal')
     }
     return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun ? outcome.staleRemoval : undefined)
 }
@@ -3572,7 +3572,7 @@ async function checkCanonicalGeneratedEnvironment(
     if (ownership.kind !== 'complete') return refuse(
         ownership.kind === 'missing' ? 'GENERATED_OWNERSHIP_MISSING' : 'GENERATED_OWNERSHIP_INVALID',
         'durable generated ownership metadata is missing or invalid', OWNERSHIP_PATH,
-        'restore trusted ownership metadata or run npx cockpit sync --config <file>',
+        'restore trusted ownership metadata or run npx --no cockpit sync --config <file>',
     )
     const priorSurfaces = ownership.manifest.entries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row)
     const prepared = seed?.surfaceSelftest ? seed : await prepareSurfaces(base, priorSurfaces, adapters, ownership.manifest)
@@ -3580,11 +3580,11 @@ async function checkCanonicalGeneratedEnvironment(
     const ownedInput = await ownedInputOverlap(prepared, ownership.manifest.entries)
     if (ownedInput.kind === 'invalid') return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'authenticated input identity could not be compared with generated ownership metadata', OWNERSHIP_PATH,
-        'restore trusted ownership metadata or run npx cockpit sync --config <file>',
+        'restore trusted ownership metadata or run npx --no cockpit sync --config <file>',
     )
     if (ownedInput.path) return refuse(
         'GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata overlaps an authenticated input', ownedInput.path,
-        'restore trusted ownership metadata or run npx cockpit sync --config <file>',
+        'restore trusted ownership metadata or run npx --no cockpit sync --config <file>',
     )
     const surfaceState = await observeSurfaceState(prepared, priorSurfaces, adapters)
     if (!surfaceState) return refuse('SURFACE_STATE_CONFLICT', 'surface state could not be observed safely', 'surfaces')
@@ -3597,7 +3597,7 @@ async function checkCanonicalGeneratedEnvironment(
     const staleEnvironment = ownership.manifest.entries.filter(row => !('harnesses' in row) && !surfacePaths.has(row.path)
         && !prepared.owned.some(file => file.path === row.path))
     if (staleEnvironment.length > 0) return refuse('GENERATED_STALE_ARTIFACT', 'a formerly owned generated artifact remains in durable ownership metadata', staleEnvironment[0]!.path,
-        'run npx cockpit sync --config <file>')
+        'run npx --no cockpit sync --config <file>')
     const generatedCandidates: Array<{ path: string; bytes: string }> = []
     const required = generatedPathFacts(prepared, 'required-after-sync')
     if (required.kind !== 'complete') return refuse(required.diagnostic.code, required.diagnostic.message, required.diagnostic.target)
@@ -3617,16 +3617,16 @@ async function checkCanonicalGeneratedEnvironment(
             const classification = classifyGeneratedPaths([fact], [{ path: file.path, kind: 'file', bytes: read.bytes,
                 confinement: 'confined', identity: sourceIdentity(read.identity) }])
             if (classification.kind !== 'complete' || classification.paths[0]?.state === 'unknown') return refuse(
-                'GENERATED_ARTIFACT_MISSING', 'owned generated artifact could not be classified safely', file.path, 'run npx cockpit sync --config <file>',
+                'GENERATED_ARTIFACT_MISSING', 'owned generated artifact could not be classified safely', file.path, 'run npx --no cockpit sync --config <file>',
             )
             generatedCandidates.push({ path: file.path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) })
         } catch {
-            return refuse('GENERATED_ARTIFACT_MISSING', 'owned generated artifact became unreadable', file.path, 'run npx cockpit sync --config <file>')
+            return refuse('GENERATED_ARTIFACT_MISSING', 'owned generated artifact became unreadable', file.path, 'run npx --no cockpit sync --config <file>')
         }
     }
     const inspected = prepared.rendered
         && inspectGeneratedEnvironment({ rendered: prepared.rendered, candidates: generatedCandidates, now: prepared.now })
-    if (inspected && inspected.kind !== 'passed') return refuse(inspected.code, inspected.reason, inspected.target, 'run npx cockpit sync --config <file>')
+    if (inspected && inspected.kind !== 'passed') return refuse(inspected.code, inspected.reason, inspected.target, 'run npx --no cockpit sync --config <file>')
     for (const [personaIndex, file] of prepared.persona.entries()) {
         const index = prepared.generated.length + personaIndex
         const read = canonicalReads?.kind === 'complete' ? canonicalReads.results[index]
@@ -3634,22 +3634,22 @@ async function checkCanonicalGeneratedEnvironment(
                 ? await readAnchoredFile(prepared.root, file.path, MAX_GENERATED_BYTES, prepared.node, adapters)
                 : undefined
         if (!read || read.kind !== 'complete') {
-            return refuse('GENERATED_ARTIFACT_MISSING', 'owned persona artifact became unreadable', file.path, 'run npx cockpit sync --config <file>')
+            return refuse('GENERATED_ARTIFACT_MISSING', 'owned persona artifact became unreadable', file.path, 'run npx --no cockpit sync --config <file>')
         }
         const fact = required.facts.find(fact => fact.path === file.path)!
         const classification = classifyGeneratedPaths([fact], [{ path: file.path, kind: 'file', bytes: read.bytes,
             confinement: 'confined', identity: sourceIdentity(read.identity) }])
         if (classification.kind !== 'complete' || classification.paths[0]?.state !== 'unchanged') {
-            return refuse('GENERATED_ARTIFACT_DRIFT', 'owned persona artifact differs from canonical bytes', file.path, 'run npx cockpit sync --config <file>')
+            return refuse('GENERATED_ARTIFACT_DRIFT', 'owned persona artifact differs from canonical bytes', file.path, 'run npx --no cockpit sync --config <file>')
         }
     }
     const comparison = planObservedSurfaces(prepared, effectivePriorSurfaces, surfaceState)
     if (comparison.kind !== 'complete') return surfacePlanRefusal(prepared, comparison.diagnostic)
     const drift = comparison.actions.map(action => action.path)
-    if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run npx cockpit sync --config <file>')
+    if (drift.length > 0) return refuse('GENERATED_ARTIFACT_DRIFT', 'owned surface state differs from the canonical model', drift[0]!, 'run npx --no cockpit sync --config <file>')
     if (ownership.bytes !== encodeOwnershipManifest(prepared).bytes) return refuse(
         'GENERATED_OWNERSHIP_DRIFT', 'generated ownership metadata differs from the current canonical manifest', OWNERSHIP_PATH,
-        'run npx cockpit sync --config <file>',
+        'run npx --no cockpit sync --config <file>',
     )
     const source = await observeConfigSource(prepared.configPath)
     if (source.state !== 'available' || source.sha256 !== prepared.sourceSha256

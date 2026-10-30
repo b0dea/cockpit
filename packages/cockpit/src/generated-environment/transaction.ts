@@ -2113,14 +2113,14 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     const references = captured.references ?? []
     if (!Array.isArray(references) || references.length !== 0) return refuse('GENERATED_PUBLICATION_FAILED', 'consumer publication cannot declare maintainer reference destinations', 'references')
     const mutations = [...captured.mutations]
-    if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx cockpit sync --dry-run', 'generated-environment')
+    if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx --no cockpit sync --dry-run', 'generated-environment')
     if (new Set(mutations.map(row => row.path)).size !== mutations.length
         || mutations.some(row => !exactPath(authority.root, row.path) || row.path === OWNERSHIP_PATH || row.phase === 'ledger'
             || !['desired', 'stale'].includes(row.phase) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(row.operation))) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'publication contains an undeclared or non-exact operation', 'generated-environment')
     }
     const paths = [...new Set([...(prior?.entries ?? []).map(row => row.path), ...next.entries.map(row => row.path)])].sort(compareCodeUnits)
-    if (!portablePublicationPaths(paths)) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx cockpit sync --dry-run', 'generated-environment')
+    if (!portablePublicationPaths(paths)) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun npx --no cockpit sync --dry-run', 'generated-environment')
     if (mutations.some(row => !paths.includes(row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'publication operation is absent from both ownership ledgers', 'generated-environment')
     // Sizes allocate bounded batches; anchored reads still authenticate every target and refuse growth.
     const maxBytes = await Promise.all(paths.map(async path => {

@@ -29,6 +29,6 @@ opencode:
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Explain**.
-Choose only the question-relevant read-only command: `npx cockpit doctor`, `npx cockpit check`, or `npx cockpit preflight`.
+Choose only the question-relevant read-only command: `npx --no cockpit doctor`, `npx --no cockpit check`, or `npx --no cockpit preflight`.
 
 This skill changes nothing.

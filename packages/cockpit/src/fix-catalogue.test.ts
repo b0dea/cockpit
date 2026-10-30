@@ -15,7 +15,7 @@ afterEach(async () => {
 
 describe('executable remedy catalogue', () => {
     const diagnostic = { severity: 'error' as const, code: 'GENERATED_ARTIFACT_DRIFT', message: 'Owned artifact differs',
-        target: 'fixtures/personas.generated.ts', fix: 'run npx cockpit sync --config <file>' }
+        target: 'fixtures/personas.generated.ts', fix: 'run npx --no cockpit sync --config <file>' }
     const context = { resolvedConfigPath: '/workspace/cockpit.toml', generatedTargets: [diagnostic.target] }
 
     it('refuses unregistered guidance and unbound or unsafe command inputs', () => {
@@ -44,8 +44,8 @@ describe('executable remedy catalogue', () => {
         const admitted = admitDiagnosticFix(diagnostic, { ...context,
             resolvedConfigPath: "/workspace/a'$(echo injected);`id` config.toml" })
         expect(admitted).toEqual({
-            argv: ['npx', 'cockpit', 'sync', '--config', "/workspace/a'$(echo injected);`id` config.toml"],
-            command: "npx cockpit sync --config '/workspace/a'\"'\"'$(echo injected);`id` config.toml'",
+            argv: ['npx', '--no', 'cockpit', 'sync', '--config', "/workspace/a'$(echo injected);`id` config.toml"],
+            command: "npx --no cockpit sync --config '/workspace/a'\"'\"'$(echo injected);`id` config.toml'",
         })
         expect(Object.isFrozen(admitted)).toBe(true)
         expect(Object.isFrozen(admitted?.argv)).toBe(true)
@@ -90,7 +90,7 @@ describe('executable remedy catalogue', () => {
         const failure = before.diagnostics.find(row => row.code === 'GENERATED_ARTIFACT_DRIFT')
         if (!failure) throw new Error('Synthetic fixture did not produce generated drift')
         const admitted = admitDiagnosticFix(failure, { resolvedConfigPath: configPath, generatedTargets: synced.result.paths })
-        expect(admitted?.argv).toEqual(['npx', 'cockpit', 'sync', '--config', configPath])
+        expect(admitted?.argv).toEqual(['npx', '--no', 'cockpit', 'sync', '--config', configPath])
         if (!admitted) throw new Error('Catalogue did not admit the generated drift remedy')
 
         const bin = join(root, 'bin')
@@ -103,7 +103,7 @@ describe('executable remedy catalogue', () => {
         // The remedy runs through npx; this stand-in resolves only the cockpit bin, as npx does for a
         // project that installs cockpit, without consulting the npm registry.
         const npx = join(bin, 'npx')
-        await writeFile(npx, `#!/bin/sh\ntest "$1" = cockpit || exit 64\nshift\nexec ${JSON.stringify(launcher)} "$@"\n`)
+        await writeFile(npx, `#!/bin/sh\ntest "$1" = --no && test "$2" = cockpit || exit 64\nshift 2\nexec ${JSON.stringify(launcher)} "$@"\n`)
         await chmod(npx, 0o755)
         const [executable, ...args] = admitted.argv
         const executed = spawnSync(executable, args, { shell: false, cwd: resolve('.'), encoding: 'utf8',
