@@ -1071,7 +1071,7 @@ function hasDecisionSyntax(source: string): boolean {
                         exitCode, resolvedConfigPath })
                     io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
                 }
-                return exitCode
+                return verb === 'session' && Number.isInteger(status) && status > 0 && status < 256 ? status : exitCode
             }`.replace(/\s/g, '')
     let violation = false
     const inspect = (root: ts.Node, allowedCalls: ReadonlySet<string>, minimumPosition = root.getStart(sourceFile)): void => {
@@ -5521,7 +5521,7 @@ describe('product architecture contract', () => {
         if (!source) throw new Error('CLI owner is missing')
         expect(boundaryViolations(sources)).toEqual([])
         for (const [from, to] of [
-            ['return exitCode', 'parseRegistry(outcome); return exitCode'],
+            ["return verb === 'session'", "parseRegistry(outcome); return verb === 'session'"],
             ['finish(outcome!.status, outcome!)', 'finish(0, outcome!)'],
             ['finish(outcome!.status)', 'finish(0)'],
         ]) {

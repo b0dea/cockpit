@@ -1314,6 +1314,7 @@ export async function runCli(
             : commandArgs.length === 0 && commandName === '--version' ? 'version' : 'unknown')
     let resolvedConfigPath: string | null = null
     // The invocation record is part of the --json envelope on stdout; human-mode runs publish no record.
+    // session has no JSON mode and exits with its supervised command's own status, which scripts branch on.
     const finish = (status: number, outcome?: CommandOutcome): number => {
         const exitCode = status === EXIT_CODES.success ? EXIT_CODES.success
             : status === EXIT_CODES.cancelled ? EXIT_CODES.cancelled : EXIT_CODES.failure
@@ -1322,7 +1323,7 @@ export async function runCli(
                 exitCode, resolvedConfigPath })
             io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
         }
-        return exitCode
+        return verb === 'session' && Number.isInteger(status) && status > 0 && status < 256 ? status : exitCode
     }
     // One refusal here instead of per-command checks: process ownership, filesystem publication and
     // the shell guards assume POSIX semantics, so a native Windows run could fail part-way through a

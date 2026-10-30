@@ -182,6 +182,9 @@ Human-mode runs print no record; the process exit code is the status:
 | `2` | Failure. |
 | `130` | Clean interactive cancellation. |
 
+`session` is the exception: once cleanup completes it exits with its command's own status, as
+[the lifecycle guide](environment.md#lifecycle-and-ownership) describes.
+
 These CLI completion statuses are separate from native adapter decision encoding. The
 [CLI application](../packages/cockpit/src/cli.ts) measures elapsed time;
 [invocation records](../packages/cockpit/src/invocation.ts) validate the common completion fields.

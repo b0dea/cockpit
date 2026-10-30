@@ -882,11 +882,12 @@ export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{
 }>>
 
 export type SessionCommandResult =
-    | Readonly<{ kind: 'complete'; status: 0; diagnostics: readonly EnvironmentDiagnostic[]; result: Readonly<{
+    // A completed session exits with the supervised command's own status (128 plus the signal number
+    // when a signal ended it); a refused one exits 2, or 130 when cancelled.
+    | Readonly<{ kind: 'complete'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: Readonly<{
         child: Readonly<{ exitCode: number; signal: NodeJS.Signals | null }>
         sleep: Extract<SleepCommandResult, { kind: 'complete' }>['result']
     }> }>
-    // A refused session exits 2, 130 when cancelled, or the supervised command's own status.
     | Readonly<{ kind: 'refusal'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
 
 const issuedLifecycleRuns = new WeakSet<object>()
@@ -3149,24 +3150,24 @@ export async function runSession(
 
     const sleep = await adapters.sleep({ configPath: input.configPath })
     const cleanup = sleep.kind === 'complete' ? `; environment cleanup ${sleep.result.change}` : ''
-    // A wrapper that exits 2 for every failing command hides the command's own status from the
-    // scripts and agents that branch on it, so a completed cleanup passes that status through,
-    // with the shell convention of 128 plus the signal number for a signalled command.
+    // A command that exits nonzero is a normal end of the session, not a cockpit failure: a wrapper
+    // that exits 2 for it hides the command's own status from the scripts and agents that branch on
+    // it. So a completed cleanup passes that status through, with the shell convention of 128 plus
+    // the signal number for a signalled command, and only a failed cleanup exits 2.
     const signalNumber = child.kind === 'complete' && child.signal ? osConstants.signals[child.signal] : undefined
-    const childStatus = child.kind !== 'complete' ? undefined
-        : signalNumber !== undefined ? 128 + signalNumber : child.exitCode === 0 ? undefined : child.exitCode
+    const childStatus = child.kind !== 'complete' ? 2
+        : signalNumber !== undefined ? 128 + signalNumber : child.exitCode
     const childDiagnostic = child.kind === 'refusal'
         ? { severity: 'error' as const, code: child.code,
             message: `the supervised session process failed${cleanup}`, target: input.argv[0] }
-        : childStatus === undefined ? undefined : {
+        : childStatus === 0 ? undefined : {
             severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
             message: `the supervised session process ${child.signal ? `was terminated by ${child.signal}` : `exited with status ${child.exitCode}`}${cleanup}`,
             target: input.argv[0],
         }
-    if (sleep.kind !== 'complete' || childDiagnostic) return {
-        kind: 'refusal', status: sleep.kind !== 'complete' ? 2
-            : child.kind === 'refusal' ? child.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? 130 : 2
-                : childStatus ?? 2, result: null,
+    if (sleep.kind !== 'complete' || child.kind === 'refusal') return {
+        kind: 'refusal', status: sleep.kind === 'complete' && child.kind === 'refusal'
+            && child.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? 130 : 2, result: null,
         diagnostics: Object.freeze([
             ...(childDiagnostic ? [childDiagnostic] : []),
             ...sleep.diagnostics,
@@ -3174,7 +3175,7 @@ export async function runSession(
     }
     return Object.freeze({
         kind: 'complete' as const,
-        status: 0 as const,
+        status: childStatus,
         diagnostics: Object.freeze([...up.diagnostics, ...sleep.diagnostics]),
         result: Object.freeze({
             child: Object.freeze({ exitCode: child.exitCode, signal: child.signal }),

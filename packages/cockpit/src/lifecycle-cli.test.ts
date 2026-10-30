@@ -131,6 +131,12 @@ describe('lifecycle CLI composition', () => {
         ], captureIo().io, { session })).toBe(2)
     })
 
+    it.each([7, 143])('exits with the supervised command status %i that the session ended with', async (status) => {
+        const session = vi.fn(async () => ({ ...complete('stopped'), status }))
+        expect(await runCli(['session', '--config', '/synthetic/cockpit.toml', '--', 'synthetic-agent'],
+            captureIo().io, { session })).toBe(status)
+    })
+
     it('refuses a malformed inherited lifecycle session instead of leaking a default holder', async () => {
         const capture = captureIo()
         expect(await runCli(['up', '--config', '/synthetic/cockpit.toml'], capture.io, {}, {

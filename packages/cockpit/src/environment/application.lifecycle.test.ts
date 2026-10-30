@@ -6,7 +6,8 @@ import { dirname, join, resolve } from 'node:path'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
-import { executeProbe } from '../environment-exec/execute.js'
+import { executeForegroundProcess, executeProbe } from '../environment-exec/execute.js'
+import { resolveExecutable } from './executable.js'
 import { evaluateGuard } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
@@ -328,27 +329,27 @@ describe('lifecycle application contracts', () => {
     })
 
     it.each([
-        ['a nonzero exit', { exitCode: 7, signal: null }, 7, 'exited with status 7'],
-        ['a signal', { exitCode: 0, signal: 'SIGTERM' }, 143, 'was terminated by SIGTERM'],
-    ] as const)('exits with the supervised command status after %s once cleanup completes', async (_case, child, status, message) => {
+        ['a nonzero exit', 'exit 7', 7, { exitCode: 7, signal: null }],
+        ['a signal', 'kill -TERM $$', 143, { signal: 'SIGTERM' }],
+    ] as const)('ends normally with the supervised command status after %s', async (_case, script, status, child) => {
         const stack = `stack:${'7'.repeat(64)}` as StackId
+        const sleep = vi.fn(async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [],
+            result: { stackId: stack, change: 'stopped' as const } }))
+        const env = { PATH: '/usr/bin:/bin' }
         const outcome = await runSession({
-            configPath: '/synthetic/cockpit.toml', argv: ['synthetic-agent'], cwd: '/synthetic', env: { PATH: '/synthetic/bin' },
+            configPath: '/synthetic/cockpit.toml', argv: ['sh', '-c', script], cwd: tmpdir(), env,
         }, {
             up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
                 stackId: stack, change: 'started', entrypoints: [],
             } }),
-            resolveExecutable: async () => ({ state: 'available', value: {
-                canonicalPath: '/synthetic/bin/synthetic-agent', invocationPath: '/synthetic/bin/synthetic-agent',
-                sha256: '8'.repeat(64), executionMode: 'verified-path',
-            } }),
-            executeForeground: async () => ({ kind: 'complete', ...child, terminationConfirmed: true }),
-            sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { stackId: stack, change: 'retained' } }),
+            resolveExecutable: (name) => resolveExecutable(name, env),
+            executeForeground: executeForegroundProcess,
+            sleep,
         })
 
-        expect(outcome).toMatchObject({ kind: 'refusal', status, diagnostics: [{
-            code: 'EXECUTION_STEP_FAILED', message: `the supervised session process ${message}; environment cleanup retained`,
-        }] })
+        expect(sleep).toHaveBeenCalledOnce()
+        expect(outcome).toMatchObject({ kind: 'complete', status, diagnostics: [],
+            result: { child, sleep: { change: 'stopped' } } })
     })
 
     it('preserves lifecycle ownership when the owned session process group cannot be confirmed stopped', async () => {
