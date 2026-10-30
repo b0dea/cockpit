@@ -12,7 +12,7 @@ import { deriveInferredFacts } from '../init/derive.js'
 import { runInitOperatorCommand, type InitCommandIo } from '../init/command.js'
 import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
-import { cockpitCommand } from '../fix-catalogue.js'
+import { cockpitCommand, initCommand } from '../fix-catalogue.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
@@ -573,7 +573,8 @@ describe('init application', () => {
             questionId: id, bytes: '[]', provenance: 'operator-confirmed',
         } }, adapters)
         expect(staleAnswer).toMatchObject({ kind: 'refusal', diagnostics: [{
-            code: 'GREENFIELD_ANSWER_INVALID', message: expect.stringContaining('same cockpit init command'),
+            code: 'GREENFIELD_ANSWER_INVALID',
+            message: expect.stringContaining(`rerun ${initCommand({ root: accepted.root, target: accepted.target })} to review the fresh observation`),
         }] })
         expect(await readState(address)).toEqual(before)
 
@@ -1058,7 +1059,7 @@ it.each([
     // refuses again, so the remedy names both ways out.
     await writeFile(join(f.root, 'compose.yml'), composeBytes.replace('web:1', 'web:2'))
     for (let rerun = 0; rerun < 2; rerun += 1) expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal',
-        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun the same cockpit init command; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })}, then ${cockpitCommand('check', { config: f.destination })}` }] })
+        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: f.root, target: f.input.target, args: `--accept-preview ${accepted.acceptedPreviewSha256}` })}; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })}, then ${cockpitCommand('check', { config: f.destination })}` }] })
     await writeFile(join(f.root, 'compose.yml'), composeBytes)
 
     preflight = f.adapters.preflight

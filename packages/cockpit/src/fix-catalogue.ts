@@ -4,7 +4,7 @@ import type { Diagnostic } from './environment/contract.js'
 export const mechanism = {
     id: 'executable-remedy-catalogue',
     module: 'packages/cockpit/src/fix-catalogue.ts',
-    exports: ['admitDiagnosticFix', 'formatShellCommand', 'cockpitCommand', 'bindConfigPath'],
+    exports: ['admitDiagnosticFix', 'formatShellCommand', 'cockpitCommand', 'initCommand', 'bindConfigPath'],
 } as const
 
 // A printed command has to run as printed. Every configured command refuses without --config, so a
@@ -54,6 +54,16 @@ export function cockpitCommand(command: ConfiguredCommand,
         : command === 'runtime measure' ? `${DAEMON_UNSET} ` : ''
     const operand = options.operand === undefined ? '' : ` ${formatShellCommand([options.operand])}`
     return `${daemon}npx --no cockpit ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
+}
+
+/**
+ * The runnable spelling of init, which takes its root operand and --target instead of --config.
+ * A root or target the producer does not know prints as a placeholder for the reader to fill in.
+ */
+export function initCommand(options: Readonly<{ root?: string; target?: string; args?: string }> = {}): string {
+    const root = options.root === undefined ? '<cockpit root>' : formatShellCommand([options.root])
+    const target = options.target === undefined ? '<target>' : formatShellCommand([options.target])
+    return `npx --no cockpit init ${root} --target ${target}${options.args === undefined ? '' : ` ${options.args}`}`
 }
 
 function bindablePath(path: string | null | undefined): path is string {

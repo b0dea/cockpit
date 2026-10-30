@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { initCommand } from '../fix-catalogue.js'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -261,7 +262,7 @@ describe('public estate observation', () => {
                 code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID',
                 message: expect.stringContaining('symbolic link'),
                 target: join(canonical, 'app/compose.yml'),
-                fix: expect.stringContaining('rerun the same npx --no cockpit init command'),
+                fix: expect.stringContaining(`rerun ${initCommand()} with the root, target and options you ran it with`),
             }] })
         expect(await classifyEstateObservation({ root: canonical }, { observe: async () => {
             throw new Error('api_token=raw-secret-shaped-value')
@@ -550,7 +551,7 @@ describe('document source classification', () => {
         expect(missing.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_NOT_FOUND'])
         expect(missing.diagnostics[0]).toMatchObject({
             message: expect.stringContaining('document inventories an existing shell-registry cockpit'),
-            fix: expect.stringContaining('npx --no cockpit init <root> --target <harness>'),
+            fix: expect.stringContaining(`for a new product run: ${initCommand()}`),
         })
         expect(unreadable.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_UNREADABLE'])
         expect(empty.diagnostics.map((item) => item.code)).toEqual(['REGISTRY_EMPTY'])

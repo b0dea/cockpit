@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { initCommand } from '../fix-catalogue.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import {
     runInitApplication,
@@ -274,7 +275,7 @@ async function drive(
     else outcome = preview
     for (let answered = 0; outcome.kind === 'pending' && outcome.result?.question !== undefined; answered += 1) {
         if (answered >= MAX_INTERVIEW_ANSWERS) return refusal('INIT_INTERVIEW_LIMIT_EXCEEDED',
-            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun npx --no cockpit init to resume from the persisted answers`)
+            `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun ${initCommand({ root: input.root, target: input.target })} with the same options to resume from the persisted answers`)
         const question = outcome.result.question
         let bytes: string | undefined
         if (unattended && supplied) {

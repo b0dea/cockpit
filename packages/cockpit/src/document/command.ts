@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
+import { initCommand } from '../fix-catalogue.js'
 import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { snapshotJson } from '../environment/contract.js'
@@ -195,7 +196,7 @@ class EstateSourceObservationError extends Error {
     constructor(target: string, message: string) {
         super(message)
         this.target = target
-        this.fix = 'replace it with one readable regular file under the repository, then rerun the same npx --no cockpit init command'
+        this.fix = `replace it with one readable regular file under the repository, then rerun ${initCommand()} with the root, target and options you ran it with`
     }
 }
 
@@ -1275,7 +1276,7 @@ async function documentCommandOwned(
         if (code === 'ENOENT') {
             return refusal('REGISTRY_NOT_FOUND',
                 'the registry file does not exist; document inventories an existing shell-registry cockpit (env/lib/instance.sh)',
-                registry, 'for a new product run: npx --no cockpit init <root> --target <harness>; otherwise check the cockpit root or registry path')
+                registry, `for a new product run: ${initCommand()}; otherwise check the cockpit root or registry path`)
         }
         return refusal('REGISTRY_UNREADABLE', `the registry file could not be read (${code ?? 'unknown I/O error'})`, registry)
     }
@@ -1316,7 +1317,7 @@ async function documentCommandOwned(
             parsed.found ? 'the registry contains no usable rows'
                 : 'the file contains no sibling registry; document inventories an existing shell-registry cockpit',
             registry,
-            parsed.found ? undefined : 'for a new product run: npx --no cockpit init <root> --target <harness>',
+            parsed.found ? undefined : `for a new product run: ${initCommand()}`,
         )
     }
 

@@ -324,7 +324,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const block = await ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
-                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run npx --no cockpit init again',
+                `cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run ${cockpitCommand('sync', { config: configPath })}`,
                 'cockpit.siblings_root')
         }
         const packagePath = join(root, 'package.json')
@@ -333,12 +333,12 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(candidate.misplaced), packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run npx --no cockpit init again`, packagePath)
+            `package.json conflicts with cockpit's exact ${PACKAGE} pin or cockpit:* scripts; resolve the conflict and run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         const ignorePath = join(root, '.gitignore')
         const ignoreBefore = await readOptional(authority, ignorePath)
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run npx --no cockpit init again`, ignorePath)
+            `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run ${cockpitCommand('sync', { config: configPath })}`, ignorePath)
         const files = [
             { path: packagePath, before: packageBefore, bytes: candidate.bytes },
             { path: ignorePath, before: ignoreBefore, bytes: nextIgnore },
@@ -394,7 +394,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, packagePath)
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
         if (!scripts || Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== command)) {
-            return refuse('TEAM_METADATA_UNAVAILABLE', 'package.json does not contain the exact cockpit:* scripts written by cockpit init; run npx --no cockpit init again', packagePath)
+            return refuse('TEAM_METADATA_UNAVAILABLE', `package.json does not contain the exact cockpit:* scripts that sync writes; run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         }
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
@@ -402,7 +402,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const block = await ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
-                'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run npx --no cockpit init again',
+                `cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run ${cockpitCommand('sync', { config: configPath })}`,
                 'cockpit.siblings_root')
         }
         const ignorePath = join(root, '.gitignore')

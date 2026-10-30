@@ -132,8 +132,12 @@ describe('printed cockpit commands', () => {
     const bare = new RegExp(`\\b(?:run|rerun|re-run)\\s+\`?cockpit (?:${VERBS})(?![\\w-])`, 'gi')
     // A command ends at its closing quote or the prose around it.
     const commandEnd = /[`'";,)|\\]| then | to | and | or /
+    // init takes no --config: it refuses without its root operand and --target, and a bare
+    // `cockpit init <root>` is not on PATH for a dev-dependency install.
+    const runnableInit = /(?:npx --no |\.\/node_modules\/\.bin\/)cockpit init(?![\w-])/g
+    const bareInit = /(?<!npx --no |\.bin\/)\bcockpit init (?=[./<$])/g
 
-    it('name the configuration everywhere a diagnostic, instruction or skill spells one, and the daemon for down and reset', () => {
+    it('name the configuration everywhere a diagnostic, instruction or skill spells one, the daemon for down and reset, and the root and target for init', () => {
         const paths = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard',
             'packages/cockpit/src', 'packages/cockpit/surfaces'], { encoding: 'utf8' }).split('\0')
             .filter(path => /\.(?:ts|md|sh|json|cjs|mjs)$/.test(path) && !path.endsWith('.test.ts'))
@@ -151,6 +155,13 @@ describe('printed cockpit commands', () => {
                         && !line.slice(0, match.index).endsWith('DOCKER_CONTEXT="$(docker context show)" ')) unrunnable.push(`${at}: ${match[0]} without DOCKER_CONTEXT`)
                 }
                 for (const match of line.matchAll(bare)) unrunnable.push(`${at}: bare ${match[0]}`)
+                for (const match of line.matchAll(runnableInit)) {
+                    const rest = line.slice(match.index + match[0].length).replace(/"[^"]*"|'[^']*'/g, 'quoted')
+                    if (!/^ (?!--)\S+ (?:.* )?--target \S/.test(rest.split(commandEnd)[0]!)) {
+                        unrunnable.push(`${at}: ${match[0]} without its root and --target`)
+                    }
+                }
+                for (const match of line.matchAll(bareInit)) unrunnable.push(`${at}: bare ${match[0]}`)
             })
         }
         expect(unrunnable).toEqual([])

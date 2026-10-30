@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
-import { cockpitCommand } from '../fix-catalogue.js'
+import { cockpitCommand, initCommand } from '../fix-catalogue.js'
 import {
     plannedGreenfieldQuestions,
     type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
@@ -248,7 +248,7 @@ function refused(code: string, message: string, target?: string): InitApplicatio
 
 export function unsupportedInitPlatformOutcome(platform: string): InitApplicationOutcome {
     return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-        `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run npx --no cockpit init on a supported macOS or Linux host`)
+        `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run ${initCommand()} on a supported macOS or Linux host`)
 }
 
 function ownerRefusal(outcome: OwnerOutcome, stage: BootstrapStateRecord['value']['stage'], projection: BootstrapProjection): InitApplicationOutcome {
@@ -450,7 +450,7 @@ export async function runInitApplication(
         let observed: Awaited<ReturnType<NonNullable<InitApplicationAdapters['observeRoot']>>>
         try { observed = await adapters.observeRoot(Object.freeze({ root: input.root })) }
         catch (error) {
-            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun npx --no cockpit init`, input.root)
+            return refused('INIT_ROOT_OBSERVATION_FAILED', `whether ${input.root} is a product repository could not be observed (${error instanceof Error ? error.message : 'unknown error'}); fix the named file and rerun ${initCommand({ root: input.root, target: input.target })}`, input.root)
         }
         if (observed === 'product-repository') rootQuestion = cockpitRootQuestion(input.root)
     }
@@ -458,7 +458,7 @@ export async function runInitApplication(
     // --accept-preview and --accept-defaults consent to bytes, never to a location. Every durable
     // bootstrap stage follows accepted placement, which init-created files must not reopen on resume.
     if (rootQuestion && input.accepted) return refused('INIT_COCKPIT_ROOT_REQUIRED',
-        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run npx --no cockpit init --interactive`, 'cockpit.root')
+        `${input.root} is a product repository, so where the cockpit lives decides where init writes and is never chosen by default: add cockpit.root = "dedicated" (recommended: creates ${rootQuestion.options[0]!.root}) or cockpit.root = "in-repo" to the --answers file, or run ${initCommand({ root: input.root, target: input.target, args: '--interactive' })}`, 'cockpit.root')
     let prepared: PreparedBootstrapOutcome | undefined
     let resumed: ResumedBootstrapOutcome | undefined
     if (current?.value.stage === 'surface-published' || current?.value.stage === 'draft-observed'
@@ -556,7 +556,7 @@ export async function runInitApplication(
         sources: [...projection.sources], previewSha256: projection.previewSha256, published: [...projection.files],
         updatedAt: adapters.now() })
         if (refreshed.kind === 'refusal' && 'reason' in refreshed) return refused('INIT_STATE_STALE',
-            `${refreshed.message}; rerun npx --no cockpit init to review the current preview`, address.path)
+            `${refreshed.message}; rerun ${initCommand({ root: input.root, target: input.target })} to review the current preview`, address.path)
         if (refreshed.kind !== 'complete') return stateFailure(refreshed)
         current = refreshed.value
     }
@@ -613,11 +613,11 @@ export async function runInitApplication(
             }
             if (state.sourceObservationSha256 === sourceObservationSha256) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED',
-                    'configuration classification changed while its source observation digest stayed the same; rerun the same cockpit init command to re-observe the current interview, and report the invariant failure if it persists', address.path)
+                    `configuration classification changed while its source observation digest stayed the same; rerun ${initCommand({ root: input.root, target: input.target })} to re-observe the current interview, and report the invariant failure if it persists`, address.path)
             }
             if (input.greenfieldAnswer !== undefined) {
                 return refused('GREENFIELD_ANSWER_INVALID',
-                    'configuration source changed, so the answer for the earlier pending question was not applied; rerun the same cockpit init command to review the fresh observation before answering again', address.path)
+                    `configuration source changed, so the answer for the earlier pending question was not applied; rerun ${initCommand({ root: input.root, target: input.target })} to review the fresh observation before answering again`, address.path)
             }
             staleSourceObservationSha256 = state.sourceObservationSha256
             state = undefined
@@ -642,7 +642,7 @@ export async function runInitApplication(
             }
             return ownerRefusal(documented, current.value.stage, projection)
         }
-        const draftRemedy = `shorten the answers; for a saved answer, from the cockpit root, preview its reset with cockpit init . --target ${input.target} --reset-answer <field> --json, then repeat with --accept-reset <previewSha256> before answering again`
+        const draftRemedy = `shorten the answers; for a saved answer, from the cockpit root, preview its reset with ${initCommand({ root: input.root, target: input.target, args: '--reset-answer <field> --json' })}, then repeat with --accept-reset <previewSha256> before answering again`
         if (Buffer.byteLength(documented.artifact, 'utf8') > DRAFT_BYTE_LIMIT) {
             return refused('INIT_DRAFT_INVALID', `cockpit.toml exceeds the draft byte limit and cannot be offered for confirmation; ${draftRemedy}`, destination)
         }
@@ -680,7 +680,7 @@ export async function runInitApplication(
                 })
             if (recorded.kind === 'refusal' && 'reason' in recorded) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED',
-                    `${recorded.message}; rerun the same cockpit init command to review the fresh observation before answering again`, address.path)
+                    `${recorded.message}; rerun ${initCommand({ root: input.root, target: input.target })} to review the fresh observation before answering again`, address.path)
             }
             if (recorded.kind !== 'complete') return stateFailure(recorded)
             return { kind: 'pending', status: 0, artifact: null, destination: null,
@@ -710,7 +710,7 @@ export async function runInitApplication(
             })
             if (refreshed.kind === 'refusal' && 'reason' in refreshed) {
                 return refused('GREENFIELD_OBSERVATION_CHANGED',
-                    `${refreshed.message}; rerun the same cockpit init command to review the fresh observation before answering again`, address.path)
+                    `${refreshed.message}; rerun ${initCommand({ root: input.root, target: input.target })} to review the fresh observation before answering again`, address.path)
             }
             if (refreshed.kind !== 'complete') return stateFailure(refreshed)
             current = refreshed.value
@@ -737,7 +737,8 @@ export async function runInitApplication(
         // The answers are bound to the estate init observed; a product edit after the draft breaks
         // that binding, and replaying the same answers cannot rebind it, so a bare rerun refuses again.
         const observed = current.value.stage !== 'draft-prepared'
-        const fix = `restore the product files changed since init drafted cockpit.toml, then rerun the same cockpit init command${observed
+        const fix = `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: input.root, target: input.target,
+            args: `--accept-preview ${projection.previewSha256}` })}${observed
             ? `; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: destination })}, then ${cockpitCommand('check', { config: destination })}` : ''}`
         return ownerRefusal({ ...currentDocument, diagnostics: currentDocument.diagnostics.map(row =>
             row.code === 'DOCUMENT_ESTATE_OBSERVATION_CHANGED' ? { ...row, fix,

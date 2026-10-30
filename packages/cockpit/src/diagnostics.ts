@@ -1,6 +1,6 @@
 import { snapshotJson, type Diagnostic, type SetupRefusalEvidence } from './environment/contract.js'
 import type { InvocationRecord } from './invocation.js'
-import { admitDiagnosticFix, bindConfigPath, cockpitCommand, type FixContext } from './fix-catalogue.js'
+import { admitDiagnosticFix, bindConfigPath, cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
 
 export type { Diagnostic } from './environment/contract.js'
 
@@ -13,7 +13,7 @@ export const mechanism = {
 const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; fix: string }>>> = Object.freeze({
     INIT_CANONICAL_OWNERSHIP_MISSING: Object.freeze({
         why: 'init cannot safely resume when its recorded bootstrap state and generated ownership disagree',
-        fix: 'restore the committed ownership metadata, then rerun the same npx --no cockpit init command',
+        fix: `restore the committed ownership metadata, then rerun ${initCommand()} with the root, target and options you ran it with`,
     }),
     SURFACE_SOURCE_UNAVAILABLE: Object.freeze({
         why: 'generated instructions cannot be trusted without the declared sibling source',

@@ -2534,11 +2534,13 @@ function initBoundaryViolations(sources: Sources): string[] {
         if (source === undefined) { violations.add('ARCH_INIT_APPLICATION_BOUNDARY'); continue }
         for (const specifier of importSpecifiers(source)) {
             const target = canonicalModulePath(resolveImport(owner, specifier, sources) ?? specifier)
+            // fix-catalogue.ts is the leaf that spells runnable remedies, init's own command among them.
             const allowedCommand = target === application || target === 'node:crypto'
-                || target === 'packages/cockpit/src/surfaces/contract.ts'
+                || target === 'packages/cockpit/src/surfaces/contract.ts' || target === 'packages/cockpit/src/fix-catalogue.ts'
             const allowedApplication = new Set([
                 'node:crypto', 'node:path',
                 'packages/cockpit/src/diagnostics.ts',
+                'packages/cockpit/src/fix-catalogue.ts',
                 'packages/cockpit/src/document/command.ts',
                 'packages/cockpit/src/surfaces/contract.ts',
                 'packages/cockpit/src/environment/contract.ts',

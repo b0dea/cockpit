@@ -9,6 +9,7 @@ import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'no
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
 import { bindHolder, composeBindPath, splitComposeShort } from '../environment/compose-topology.js'
+import { initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable } from '../schema.js'
 
 export const mechanism = {
@@ -345,7 +346,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             if (document !== undefined) {
                 if (source === '..' || source.startsWith('../') || isAbsolute(source)) {
                     skipped.push({ source,
-                        reason: 'is outside the cockpit root, so environment.compose_files cannot represent it; choose generated environment configuration, or place a reviewed Compose file inside the cockpit root and rerun the same cockpit init command' })
+                        reason: `is outside the cockpit root, so environment.compose_files cannot represent it; choose generated environment configuration, or place a reviewed Compose file inside the cockpit root and rerun ${initCommand({ root: configurationRoot })} with the options you ran it with` })
                 } else composeFiles.push({ source, document })
             }
             break
