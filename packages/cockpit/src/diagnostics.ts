@@ -165,6 +165,43 @@ function projectDiagnostics(input: readonly Diagnostic[], context?: FixContext):
     return { diagnostics: [...diagnostics.values()], guidance: [...guidance.values()] }
 }
 
+// What each lifecycle `change` means to the person who ran the command; `--json` keeps the raw value.
+const LIFECYCLE_CHANGES: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+    up: Object.freeze({ started: 'Stack started', resumed: 'Stack resumed', unchanged: 'Stack already running' }),
+    sleep: Object.freeze({
+        stopped: 'Stack stopped',
+        retained: "Released this checkout's hold; another holder keeps the stack running",
+        unchanged: 'Nothing to stop: no session holds the stack',
+    }),
+    down: Object.freeze({ removed: 'Stack removed' }),
+})
+
+// A successful up, sleep, down or preflight printed nothing in human mode, so a person could not
+// tell success from a command that never ran. One line says what happened; anything outside the
+// known result shape prints nothing rather than a guess.
+function lifecycleSummary(command: string, result: Readonly<Record<string, unknown>>): string {
+    if (command === 'preflight') {
+        if (typeof result.verdict !== 'string' || !Array.isArray(result.checks)) return ''
+        const counts = new Map<string, number>()
+        for (const check of result.checks as readonly { verdict?: unknown }[]) {
+            const verdict = String(check?.verdict).replaceAll('-', ' ')
+            counts.set(verdict, (counts.get(verdict) ?? 0) + 1)
+        }
+        const tally = [...counts].map(([verdict, count]) => `${count} ${verdict === 'pass' ? count === 1 ? 'check passes' : 'checks pass' : verdict}`)
+        return escapeForTerminal(`Preflight ${result.verdict === 'pass' ? 'passed' : result.verdict}: ${tally.join(', ') || 'no checks'}.`) + '\n'
+    }
+    const headline = Object.hasOwn(LIFECYCLE_CHANGES, command) && typeof result.change === 'string'
+        && Object.hasOwn(LIFECYCLE_CHANGES[command]!, result.change) ? LIFECYCLE_CHANGES[command]![result.change] : undefined
+    if (headline === undefined || typeof result.stackId !== 'string') return ''
+    const cold = result.coldStart as Readonly<{ measuredMillis?: unknown; limitMillis?: unknown }> | undefined
+    const timing = typeof cold?.measuredMillis === 'number' && typeof cold.limitMillis === 'number'
+        ? `; cold start ${(cold.measuredMillis / 1000).toFixed(1)}s of the ${Math.round(cold.limitMillis / 1000)}s limit` : ''
+    const entrypoints = Array.isArray(result.entrypoints) ? (result.entrypoints as readonly { name?: unknown; value?: unknown }[])
+        .filter(({ name, value }) => typeof name === 'string' && typeof value === 'string')
+        .map(({ name, value }) => `  ${escapeForTerminal(String(name))}: ${escapeForTerminal(String(value))}\n`) : []
+    return `${escapeForTerminal(`${headline} (${result.stackId})${timing}.`)}\n${entrypoints.join('')}`
+}
+
 export function renderHumanDiagnostics(
     diagnostics: readonly Diagnostic[],
     review?: HumanReviewContext,
@@ -190,7 +227,7 @@ export function renderHumanDiagnostics(
         if (command === 'selftest' || command === 'upgrade' || command === 'doctor' || command === 'init') {
             return renderHumanValue(outcome.result)
         }
-        return ''
+        return command === undefined ? '' : lifecycleSummary(command, outcome.result as Readonly<Record<string, unknown>>)
     }
     if (diagnostics.length === 0) return ''
     const projected = projectDiagnostics(diagnostics, fixContext)

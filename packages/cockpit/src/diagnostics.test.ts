@@ -26,6 +26,25 @@ describe('diagnostic envelope', () => {
             .toContain('Fix: run env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config /synthetic/cockpit.toml --image <ref> --write, review the change, then retry\n')
     })
 
+    it('summarises a successful lifecycle command and preflight in one readable line', () => {
+        const stackId = `stack:${'a'.repeat(64)}`
+        const review = (command: string, result: unknown) => renderHumanDiagnostics([], { command, outcome: { status: 0, result } })
+
+        expect(review('up', { stackId, change: 'started', coldStart: { measuredMillis: 5_813, limitMillis: 120_000, headroomMillis: 114_187 },
+            entrypoints: [{ name: 'api-host-port', kind: 'entrypoint', port: 'API_HOST_PORT', value: 'http://127.0.0.1:4200/' }] }))
+            .toBe(`Stack started (${stackId}); cold start 5.8s of the 120s limit.\n  api-host-port: http://127.0.0.1:4200/\n`)
+        expect(review('up', { stackId, change: 'unchanged', entrypoints: [] })).toBe(`Stack already running (${stackId}).\n`)
+        expect(review('preflight', { verdict: 'pass', revision: 'r', comparisons: [],
+            checks: [{ verdict: 'pass' }, { verdict: 'pass' }, { verdict: 'not-applicable' }] }))
+            .toBe('Preflight passed: 2 checks pass, 1 not applicable.\n')
+        expect(review('sleep', { stackId, change: 'retained' }))
+            .toBe(`Released this checkout's hold; another holder keeps the stack running (${stackId}).\n`)
+        expect(review('sleep', { stackId, change: 'stopped' })).toBe(`Stack stopped (${stackId}).\n`)
+        expect(review('down', { stackId, change: 'removed' })).toBe(`Stack removed (${stackId}).\n`)
+        // A result outside the known shape prints nothing rather than a guess.
+        expect(review('up', { stackId, change: 'invented' })).toBe('')
+    })
+
     it.each(['constructor', 'toString'])('treats inherited object keys such as %s as unregistered diagnostics', (code) => {
         expect(renderHumanDiagnostics([{ severity: 'error', code, message: 'synthetic failure' }]))
             .toBe(`ERROR ${code}: synthetic failure\n`)
