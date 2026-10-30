@@ -575,7 +575,7 @@ it('consumes vendor and exact build/test authority through installed hook regist
     const original = await readFile(configPath, 'utf8')
     await writeFile(configPath, original.replace('api.vendor.example.test', 'replacement.vendor.example.test')
         .replace('build = [ "npm", "run", "build" ]\n', '').replace('test = [ "npm", "test", "--", "unit.test.ts" ]\n', ''))
-    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining(`Fix: a human must run \`cockpit sync --config ${await realpath(configPath)}\` in a terminal`) })
+    expect(invoke('npm run build')).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining(`Fix: a human must run \`npx --no cockpit sync --config ${await realpath(configPath)}\` in a terminal`) })
     expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
     expect(invoke('npm run build').stdout).toContain('permissionDecision":"ask')
     expect(invoke('npm test -- unit.test.ts').stdout).toContain('permissionDecision":"ask')

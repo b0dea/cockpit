@@ -124,7 +124,9 @@ The automation above needs these settings, done once by the maintainer:
 - **Package:** remove `"private": true` from the package manifest and set `access` to `public` in
   the Changesets configuration.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`
-  check on main, and create the `no-changeset` label.
+  check on main, and create the `no-changeset` label. Once the repository is public, enable secret
+  scanning with push protection and CodeQL default setup; the dependency-review job in CI starts
+  running on its own.
 - **Reporting channels:** enable private vulnerability reporting, then change the
   `private-reporting-channel` marker in [SECURITY.md](../../SECURITY.md) from `pending` together
   with the ownership test that pins it. Publish a private conduct contact in

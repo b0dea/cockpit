@@ -37,6 +37,10 @@ survive a change of session. Either true selects a work order. `programme` is `n
 a programme also selects a work order. With both booleans false and `programme: null`, intake
 returns the fix route without reading a candidate or creating work-order files.
 
+Spec tools such as OpenSpec or spec-kit already produce that file: point a `spec` intent's
+`reference` at the change's proposal or spec (for example `openspec/changes/<name>/proposal.md`),
+and cockpit reads it like any other upstream request.
+
 Create the referenced upstream file before running the command. These examples adapt an existing
 product: each `read` source must already exist and have been inspected. Replace the synthetic cache
 facts and paths with inspected product facts, and each verification argument array with that

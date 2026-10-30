@@ -125,7 +125,7 @@ describe('maintainer reference boundary', () => {
                 expect([...inventory.owners.get(code) ?? []].sort()).toEqual([...owners].sort())
             }
         } finally {
-            rmSync(root, { recursive: true, force: true })
+            rmSync(root, { recursive: true, force: true, maxRetries: 5 })
         }
     }, 240_000)
 
@@ -178,7 +178,7 @@ describe('maintainer reference boundary', () => {
             expect(deriveDocumentationInventory({ root, expectedFixedPoint: fixedPoint, candidate: 'HEAD' }).errors.join('\n'))
                 .toContain('DOCEV015_INVENTORY_FAILED')
         } finally {
-            rmSync(root, { recursive: true, force: true })
+            rmSync(root, { recursive: true, force: true, maxRetries: 5 })
         }
     }, 240_000)
 
@@ -233,7 +233,7 @@ describe('maintainer reference boundary', () => {
             ])
             expect(readdirSync(root)).toEqual(before)
         } finally {
-            rmSync(root, { recursive: true, force: true })
+            rmSync(root, { recursive: true, force: true, maxRetries: 5 })
         }
     })
 
@@ -297,7 +297,7 @@ describe('maintainer reference boundary', () => {
             })
             writeFileSync(builtPath, builtBytes)
         } finally {
-            rmSync(root, { recursive: true, force: true })
+            rmSync(root, { recursive: true, force: true, maxRetries: 5 })
         }
     }, 240_000)
 
@@ -332,7 +332,7 @@ describe('maintainer reference boundary', () => {
         } finally {
             if (priorPath === undefined) delete process.env.PATH
             else process.env.PATH = priorPath
-            rmSync(root, { recursive: true, force: true })
+            rmSync(root, { recursive: true, force: true, maxRetries: 5 })
         }
     }, 240_000)
 })
