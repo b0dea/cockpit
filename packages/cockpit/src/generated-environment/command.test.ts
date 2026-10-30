@@ -520,6 +520,21 @@ it('names a deleted generated file and ignores a re-created identical configurat
     await writeFile(join(root, 'AGENTS.md'), guide)
 }, 120_000)
 
+it('recreates deleted shared-region outputs with only the cockpit region', async () => {
+    const { root, configPath } = await surfaceConsumer('recreated-shared')
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    const shared = ['AGENTS.md', 'opencode.jsonc']
+    const originals = await Promise.all(shared.map(path => readFile(join(root, path), 'utf8')))
+    await Promise.all(shared.map(path => rm(join(root, path))))
+    await rm(join(root, 'compose.generated.yml'))
+    const recreated = await syncGeneratedEnvironment({ configPath })
+    expect(recreated, JSON.stringify(recreated.diagnostics)).toMatchObject({ kind: 'complete' })
+    expect(await Promise.all(shared.map(path => readFile(join(root, path), 'utf8')))).toEqual(originals)
+    await expect(stat(join(root, 'compose.generated.yml'))).resolves.toBeDefined()
+    expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+}, 120_000)
+
 it('consumes vendor and exact build/test authority through installed hook registrations', async () => {
     const { root, configPath } = await surfaceConsumer('installed-authority')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)

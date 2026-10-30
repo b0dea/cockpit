@@ -2440,8 +2440,10 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
                 if (desired.kind === 'shared-region') {
                     const before = current.kind === 'file' ? new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) : desired.region.format === 'opencode-json-root-properties' ? '{}' : ''
                     const action = captured.surfaceActions?.find(row => row.path === path)
-                    if (!action || action.kind !== 'write' || action.desired.kind !== 'shared-region') return refuse('GENERATED_PUBLICATION_FAILED', 'shared write requires its admitted surface action', path)
-                    const rendered = renderSharedPostimage(before, action.desired, previous)
+                    if (!action || action.kind !== 'write' || action.desired.kind !== 'shared-region') return refuse('GENERATED_PUBLICATION_FAILED', 'shared write has no matching planned surface write', path)
+                    // A deleted shared file has no foreign bytes left to protect, so it is recreated from an
+                    // empty base exactly as the surface planner did; the prior region would demand bytes that are gone.
+                    const rendered = renderSharedPostimage(before, action.desired, current.kind === 'missing' ? undefined : previous)
                     if (rendered.kind !== 'complete' || rendered.bytes !== mutation.bytes || action.postimage !== mutation.bytes) return refuse('GENERATED_PUBLICATION_FAILED', 'shared write would change foreign bytes', path)
                 }
             }
