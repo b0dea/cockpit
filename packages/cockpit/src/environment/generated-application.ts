@@ -1820,24 +1820,31 @@ function readSurfaceAsset(
 
 /**
  * Claude Code's native Read, Grep and Glob tools never reach the guard hook, so the read denial the
- * hook applies to shell commands is restated as Claude `Read` deny rules. Siblings sit outside the
- * project root, where neither `./`, `/..` nor `../` rules match and an absolute path would differ
- * per clone, so each rule is anchored with `//**` on the sibling-relative suffix. Measured on Claude
- * Code 2.1.314, 2026-10-30, with an unruled control file beside them: `//**` rules refused Read and
- * Grep of sibling instances and of nested `.secrets` files while the control stayed readable.
- * Over-matching a deny is safe; glob metacharacters in a path become `?` so a literal bracket
- * cannot narrow the rule.
+ * hook applies to shell commands is restated as Claude `Read` deny rules for every declared
+ * instance, mounted or not: an instance is readable by the native tools whether or not a directory
+ * grant names its sibling, and an earlier rule set that followed grants left host-mounted and root
+ * instances readable. Siblings sit outside the project root, where neither `./`, `/..` nor `../`
+ * rules match and an absolute path would differ per clone, so each rule is anchored with `//**` on
+ * the sibling-relative suffix; an instance in the cockpit root itself is anchored at the project
+ * root with `/`. Measured on Claude Code 2.1.314, 2026-10-30, with an unruled control file beside
+ * them: `//**` rules refused Read and Grep of sibling instances and of nested `.secrets` files, and
+ * `/` rules refused root files, while the control stayed readable. Over-matching a deny is safe;
+ * glob metacharacters in a path become `?` so a literal bracket cannot narrow the rule.
  */
 function claudeReadDenials(
-    grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
+    siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
 ): readonly string[] {
     const literal = (path: string) => path.replace(/[*?[\]\\!#()]/g, '?')
     const rules = ['//**/.secrets/**']
     for (const instance of instances) {
-        const grant = grants.find(row => row.target === 'claudecode' && row.slug === instance.slug)
-        if (!grant) continue
-        const suffix = [...grant.path.split('/'), ...instance.path.split('/')].filter(part => part !== '..' && part !== '.' && part !== '')
+        const sibling = siblings.find(row => row.slug === instance.slug)
+        if (!sibling) throw new Error(`declared instance ${instance.path} names sibling ${instance.slug}, whose directory was not authenticated`)
+        if (sibling.path === '') {
+            rules.push(`/${literal(instance.path)}`)
+            continue
+        }
+        const suffix = [...sibling.path.split('/'), ...instance.path.split('/')].filter(part => part !== '..' && part !== '.' && part !== '')
         rules.push(`//**/${literal(suffix.join('/'))}`)
     }
     return [...new Set(rules)].sort(compareCodeUnits)
@@ -1846,6 +1853,7 @@ function claudeReadDenials(
 function nativeSources(
     mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
     grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
+    siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
 ): readonly SurfaceSourceFile[] {
     const sources: SurfaceSourceFile[] = []
@@ -1868,7 +1876,7 @@ function nativeSources(
     sources.push(Object.freeze({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
         permission: {},
         claudecode: {
-            permission: { read: Object.fromEntries(claudeReadDenials(grants, instances).map(rule => [rule, 'deny'])) },
+            permission: { read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])) },
             permissions: { additionalDirectories: paths('claudecode') },
             enabledMcpjsonServers,
         },
@@ -2496,7 +2504,9 @@ async function prepareSurfaces(
         bytes: source.path.startsWith('rules/') && !source.bytes.startsWith('---\n')
             ? `---\nroot: true\ntargets: ["*"]\n---\n${source.bytes}` : source.bytes,
     }))
-    const generatedNativeSources = nativeSources(mcp, projection.grants, prepared.registry.secretPaths)
+    // Every sibling directory relative to the cockpit root, whether or not a grant names it.
+    const siblingDirectories = [...prepared.siblingRoots.siblings].map(([slug, sibling]) => ({ slug, path: relative(prepared.root, sibling.root) }))
+    const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths)
     const generatedSources = [...mergedSources, ...generatedNativeSources]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(generatedSources.map(source => source.path)).size !== generatedSources.length) {

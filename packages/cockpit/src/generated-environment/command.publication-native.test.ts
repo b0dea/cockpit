@@ -147,6 +147,36 @@ describe('public surface publication transaction', () => {
             })
         })
 
+        it('denies native reads of every declared instance whatever its mount, including one in the cockpit root', async () => {
+            const estate = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-read-denial-estate-')))
+            roots.push(estate)
+            const fixture = await surfaceConsumer('read-denials', { parentDirectory: estate })
+            const hosted = join(estate, 'hosted')
+            await mkdir(hosted)
+            await writeFile(join(hosted, '.env.example'), 'SYNTHETIC_TOKEN=\n')
+            await writeFile(join(fixture.root, 'local[1].env.example'), 'SYNTHETIC_TOKEN=\n')
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            await writeFile(join(fixture.root, 'app/package-lock.json'), '{}\n')
+            const declaration = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            declaration.cockpit.siblings_root = estate
+            declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
+            declaration.environment.generated!.vendors = []
+            declaration.environment.generated!.decisions.entries = declaration.environment.generated!.decisions.entries
+                .filter(entry => entry.subject !== 'vendor')
+            // A host-mounted sibling has no directory grant, and the root sibling is the cockpit checkout itself.
+            declaration.sibling.push(CockpitConfig.shape.sibling.element.parse({ slug: 'hosted', dir: 'hosted', mount: 'host', host_reason: 'Synthetic host-only service', gate: 'operator', acquire: 'none',
+                var: 'HOSTED_DIR', purpose: 'Synthetic host-mounted service', environment_files: [{ template: '.env.example', instance: '.env' }] }))
+            declaration.sibling.push(CockpitConfig.shape.sibling.element.parse({ slug: 'self', dir: relative(estate, fixture.root), mount: 'none', acquire: 'none',
+                var: 'SELF_DIR', purpose: 'The cockpit checkout itself', environment_files: [{ template: 'local[1].env.example', instance: 'local[1].env' }] }))
+            await writeFile(fixture.configPath, stringifyToml(CockpitConfig.parse(declaration)))
+
+            const synchronized = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synchronized, JSON.stringify(synchronized.diagnostics)).toMatchObject({ kind: 'complete' })
+            const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as { permissions: { deny?: string[] } }
+            // `/` anchors a rule at the project root; measured on Claude Code 2.1.314, 2026-10-30, with an unruled control beside it.
+            expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/hosted/.env)', 'Read(/local?1?.env)'])
+        })
+
         it.each([
             { name: 'preapproved remote in a nested configuration', layout: 'nested', remote: true, preapproved: true, serialized: false, openCode: true },
             { name: 'remote without preapproval in a linked worktree', layout: 'worktree', remote: true, preapproved: false, serialized: true, openCode: false },
