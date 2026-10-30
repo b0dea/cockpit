@@ -57,7 +57,10 @@ describe('generated browser runner rendering', () => {
                 siblingDirectories: { api: directory } })
             expect(rendered, directory).toMatchObject({ kind: 'complete' })
             if (rendered.kind !== 'complete') throw new Error('declared sibling build unavailable')
-            expect(parse(rendered.compose).services.api.build).toEqual({ context: expected, dockerfile: 'Dockerfile' })
+            // The built image carries the ownership labels, so down can remove what the stack built.
+            expect(parse(rendered.compose).services.api.build).toEqual({ context: expected, dockerfile: 'Dockerfile',
+                labels: expect.objectContaining({ 'dev.b0dea.cockpit.stack-id': expect.any(String), 'dev.b0dea.cockpit.owner-id': expect.any(String),
+                    'dev.b0dea.cockpit.config-sha256': 'a'.repeat(64) }) })
             // A built image keeps the WORKDIR its Dockerfile declares.
             expect(parse(rendered.compose).services.api.working_dir).toBeUndefined()
             expect(rendered.manifest.map(file => file.path)).toEqual(['compose.generated.yml', 'docs/cockpit/environment-decisions.md'])

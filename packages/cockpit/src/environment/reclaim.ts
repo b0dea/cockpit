@@ -51,7 +51,7 @@ export const mechanism = {
         'createImageInspectionSteps', 'admitImageInspections', 'createVolumeInspectionSteps',
         'admitVolumeInspections', 'createNetworkInspectionSteps', 'admitNetworkInspections',
         'combineReclaimDiscoveries', 'inspectionOverflow',
-        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
+        'planReset', 'planTeardown', 'projectResetActionTargets', 'projectRecoveredResetActionTargets', 'projectTeardownActionTargets', 'keptTeardownResources', 'consumeReclaimTargetProjection', 'redeemAbsentReclaimAction', 'reconcileAbsentReclaimAction', 'redeemReclaimAction', 'redeemTeardownAction', 'reconcileReclaimAction', 'admitReclaimFailure', 'consumeReclaimFailure', 'consumeReclaimCompleted', 'reconcileTeardown',
     ],
 } as const
 
@@ -459,11 +459,11 @@ function labelOwnership(
     if (stack !== input.stackId || owner !== input.cockpitId) {
         return { ownership: 'foreign', evidence: [`stack=${stack}`, `owner=${owner}`], reason: 'the labels identify another stack or cockpit' }
     }
-    if (config !== input.configSha256) {
-        return { ownership: 'stale-config', evidence: [`config=${config}`, `current=${input.configSha256}`], reason: 'the labels belong to an earlier configuration' }
-    }
     if (!positiveState) {
         return { ownership: 'unknown', evidence: ['exact labels matched; coordinated state evidence absent'], reason: 'labels alone do not grant ownership' }
+    }
+    if (config !== input.configSha256) {
+        return { ownership: 'stale-config', evidence: [`config=${config}`, `current=${input.configSha256}`], reason: 'this stack started the resource under an earlier configuration' }
     }
     return { ownership: 'current', evidence: ['exact stack, owner, and configuration labels matched coordinated state'], reason: 'positive labels and state identify the current stack' }
 }
@@ -501,9 +501,14 @@ export function classifyReclaim(rawInput: ClassifyReclaimInput): ReclaimResult {
         const reverse = reversibility(resource, input.declaredCacheIds)
         const exactUnknownCache = (resource.kind === 'build-cache' || resource.kind === 'cache') && evidence.ownership === 'unknown'
             && reverse === 'regenerable-cache' && !resource.referenced
+        // The stack and owner labels are the stack's stable identity; the configuration label only
+        // records which cockpit.toml started the resource. Keeping a container or network an earlier
+        // configuration started made `down` after an edited cockpit.toml report the stack removed
+        // while it stayed. Its data stays out of reach: reset admits only the current generation.
         const action: ReclaimAction = resource.referenced ? 'report-only' : evidence.ownership === 'current'
             ? reverse === 'data-bearing' ? 'reset-required'
                 : reverse === 'regenerable-cache' ? 'reclaim' : 'teardown'
+            : evidence.ownership === 'stale-config' && reverse === 'runtime' ? 'teardown'
             : exactUnknownCache ? 'reclaim' : 'report-only'
         return Object.freeze({
             ...resource,
@@ -516,6 +521,33 @@ export function classifyReclaim(rawInput: ClassifyReclaimInput): ReclaimResult {
         })
     }).sort((left, right) => lexical(left.id, right.id))
     return Object.freeze({ kind: 'complete', noop: resources.length === 0, resources: Object.freeze(resources) })
+}
+
+export interface KeptTeardownResource {
+    readonly kind: ReclaimResourceKind
+    readonly id: string
+    readonly name: string
+    readonly reason: string
+}
+
+/**
+ * The resources a finished `down` leaves behind although this stack's labels and coordinated state
+ * show they are its own, each with the reason teardown may not remove it. Volumes are left out:
+ * `down` keeps data by design, and only `reset` deletes it.
+ */
+export function keptTeardownResources(input: ClassifyReclaimInput): readonly KeptTeardownResource[] | undefined {
+    const classified = classifyReclaim(reclaimInput(input))
+    if (classified.kind !== 'complete') return undefined
+    return Object.freeze(classified.resources
+        .filter(({ kind, ownership, action }) => kind !== 'volume' && action === 'report-only'
+            && (ownership === 'current' || ownership === 'stale-config'))
+        .map(({ kind, id, name, referenced, reason }) => Object.freeze({
+            kind, id, name,
+            reason: !referenced ? reason
+                : kind === 'network' ? 'a container outside this stack is still attached to it'
+                    : kind === 'image' ? 'it is tagged under more than one name, so another name may still need it'
+                        : 'something outside this stack still uses it',
+        })))
 }
 
 export interface ReclaimDiscoveryPlanInput {
@@ -653,8 +685,7 @@ function discoveryFormat(kind: Exclude<ReclaimResourceKind, 'build-cache'>): str
     const bytes = kind === 'network' || kind === 'container' ? 'null' : '{{json .Size}}'
     const labels = kind === 'image' ? '{}'
         : `{"${REQUIRED_LABELS.stack}":${label(REQUIRED_LABELS.stack)},"${REQUIRED_LABELS.config}":${label(REQUIRED_LABELS.config)},"${REQUIRED_LABELS.owner}":${label(REQUIRED_LABELS.owner)}}`
-    const referenced = kind === 'image' ? '{{json (not (and (eq .Repository "<none>") (eq .Tag "<none>")))}}' : 'false'
-    return `{"id":${id},"name":${name},"labels":${labels},"referenced":${referenced},"bytes":${bytes}}`
+    return `{"id":${id},"name":${name},"labels":${labels},"referenced":false,"bytes":${bytes}}`
 }
 
 function dockerLabels(value: unknown): Readonly<Record<string, string>> | undefined {
@@ -1129,10 +1160,15 @@ export function admitReclaimDiscovery(
             if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
             const owned = dockerResource(parsed, kind)
             if (owned === undefined) return undefined
+            // An image prints one row per tag. The one tag Compose gives an image it builds is this
+            // stack's own name for it, so that image is removable; a second tag means some other name
+            // was given to it, and that name may still be needed. Treating any tag as a reference
+            // kept every image the stack built. A container still using an image keeps it by
+            // Docker's own refusal to remove it.
             const duplicate = resources.find(({ id }) => id === owned.id)
             if (duplicate !== undefined && kind === 'image') {
-                if (duplicate.referenced !== owned.referenced || duplicate.bytes !== owned.bytes) return undefined
-                resources.splice(resources.indexOf(duplicate), 1, Object.freeze({ ...duplicate, name: [duplicate.name, owned.name].sort(lexical)[0]! }))
+                if (duplicate.bytes !== owned.bytes) return undefined
+                resources.splice(resources.indexOf(duplicate), 1, Object.freeze({ ...duplicate, referenced: true, name: [duplicate.name, owned.name].sort(lexical)[0]! }))
                 continue
             }
             resources.push(owned)

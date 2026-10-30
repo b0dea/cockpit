@@ -1676,7 +1676,8 @@ fi
         // start includes the build, so the start is held to the declared cold start, not the command budget.
         // Either start may first stop a container whose configuration changed, so both add its stop grace.
         const { image: _pinned, ...unpinned } = topology.services.api
-        const built = { ...topology, services: { api: { ...unpinned, build: { context: directory, dockerfile: 'Dockerfile' } } } }
+        // Compose prints the ownership labels the generated file gives the built image under build.
+        const built = { ...topology, services: { api: { ...unpinned, build: { context: directory, dockerfile: 'Dockerfile', labels: unpinned.labels } } } }
         const builtEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 60_000 })).admitted
         if (builtEvidence.kind !== 'complete') throw new Error(builtEvidence.reason)
         expect(builtEvidence.topology.services[0]).toMatchObject({ id: 'api', image: null, generation })

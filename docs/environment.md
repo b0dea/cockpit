@@ -271,7 +271,13 @@ the program, so the stop takes a moment instead.
 
 `down` removes only the resources that cockpit's runtime, checkout and ownership records show it
 owns: it lists only containers, networks and images that carry this stack's ownership label, and a
-resource it cannot show is this stack's is reported and kept. It clears startup progress only after
+resource it cannot show is this stack's is reported and kept. Ownership is the stack's identity,
+not the configuration, so a container or network that an earlier `cockpit.toml` started is removed
+too. An image the stack built carries the same label and is removed, unless it also has a second
+tag. Volumes stay, because only `reset` deletes data. When one of the stack's own resources has to
+stay, such as a network another container is still attached to or an image tagged under a second
+name, `down` refuses with `DOWN_RESOURCES_KEPT` and names each resource and the reason, rather than
+reporting a stack removed that is still there. It clears startup progress only after
 confirming those removals, which lets the next `up` use a new generated identity. `down` also
 retires a stack that `sleep` or an ended `session` left stopped: with no holder left, it claims the
 stack for this checkout without starting anything and removes it, so you do not have to run `up`
@@ -807,6 +813,8 @@ as described in [Environment modes](#environment-modes).
 `RESET_CO_TENANT` means another holder shares the stack, so reset stays blocked.
 `RECLAIM_LABEL_ESCAPE` and `RECLAIM_ACCOUNTING_MISMATCH` mean the resources cockpit would remove go
 beyond, or contradict, its ownership records; stop and inspect the reported labels and accounting.
+`DOWN_RESOURCES_KEPT` means `down` removed everything it could but some of the stack's own
+resources are still in use; release each one as its reason says, then run `down` again.
 
 `EVIDENCE_BASELINE_MISSING` means no baseline has been recorded. `EVIDENCE_UNAVAILABLE` means the
 current snapshot or runtime results are incomplete. Get the runtime healthy, review the exact

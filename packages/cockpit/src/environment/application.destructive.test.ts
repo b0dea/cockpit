@@ -7,6 +7,7 @@ import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application.js'
 import { executeProbe } from '../environment-exec/execute.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { evaluateGuard } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
@@ -41,7 +42,7 @@ type ClaimsOverrides = Partial<Pick<typeof import('./claims.js'),
 type ReclaimOverrides = Partial<Pick<typeof import('./reclaim.js'),
     'planReset' | 'planTeardown' | 'projectResetActionTargets' | 'projectRecoveredResetActionTargets' | 'projectTeardownActionTargets'
     | 'redeemReclaimAction' | 'reconcileReclaimAction' | 'admitReclaimFailure'
-    | 'consumeReclaimFailure' | 'consumeReclaimCompleted'>>
+    | 'consumeReclaimFailure' | 'consumeReclaimCompleted' | 'keptTeardownResources'>>
 type StateOverrides = Partial<Pick<typeof import('./state.js'), 'readState'>>
 type RegistryDerivationOverrides = Partial<Pick<typeof import('../registry-derivation.js'), 'deriveRegistry'>>
 const applicationOwners = vi.hoisted(() => ({
@@ -141,6 +142,7 @@ vi.mock('./reclaim.js', async (importOriginal) => {
         admitReclaimFailure: (...args: Parameters<typeof actual.admitReclaimFailure>) => applicationOwners.reclaim.admitReclaimFailure?.(...args) ?? actual.admitReclaimFailure(...args),
         consumeReclaimFailure: (...args: Parameters<typeof actual.consumeReclaimFailure>) => applicationOwners.reclaim.consumeReclaimFailure?.(...args) ?? actual.consumeReclaimFailure(...args),
         consumeReclaimCompleted: (...args: Parameters<typeof actual.consumeReclaimCompleted>) => applicationOwners.reclaim.consumeReclaimCompleted?.(...args) ?? actual.consumeReclaimCompleted(...args),
+        keptTeardownResources: (...args: Parameters<typeof actual.keptTeardownResources>) => applicationOwners.reclaim.keptTeardownResources?.(...args) ?? actual.keptTeardownResources(...args),
     }
 })
 vi.mock('./state.js', async (importOriginal) => {
@@ -692,6 +694,8 @@ describe('destructive application contracts', () => {
             } as never
         }
         applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
+        // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
+        applicationOwners.reclaim.keptTeardownResources = () => []
         const recoveredRequest = persistedDrainRequest(context, failedRecord)
         const request = { ...recoveredRequest, expectedCoordinationRevision: failedRecord.revision }
         const planDown = vi.fn(() => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never)
@@ -796,6 +800,8 @@ describe('destructive application contracts', () => {
             } as never
         }
         applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
+        // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
+        applicationOwners.reclaim.keptTeardownResources = () => []
         const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
         applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
@@ -845,6 +851,8 @@ describe('destructive application contracts', () => {
             discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: null,
         }) as never
         applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
+        // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
+        applicationOwners.reclaim.keptTeardownResources = () => []
         const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
         applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
@@ -871,6 +879,52 @@ describe('destructive application contracts', () => {
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({ kind: 'missing' })
         expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))
             .toMatchObject({ kind: 'complete', authority: { stage: 'bootstrap' } })
+    })
+
+    it('refuses to report the stack removed while a resource it owns remains, and names what it kept', async () => {
+        const downWith = async (resources: (labels: Record<string, string>) => readonly object[]) => {
+            const { configPath, context, instance } = await destructiveFixture()
+            const failedRecord = persistFailedDestructiveRecord(context, 'down')
+            applicationOwners.reclaim.planTeardown = async () => ({
+                kind: 'complete', steps: [], actionAuthority: null, remaining: 0, noop: true,
+                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, continuation: null,
+            }) as never
+            applicationOwners.reclaim.projectTeardownActionTargets = () => ({}) as never
+            const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
+            applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
+            applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
+                topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
+            }) as never
+            applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', authority: {}, reservation: { completedActionCount: 1 } }) as never
+            const observed = Object.freeze({
+                stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
+                coordinationRecord: failedRecord, declaredCacheIds: [],
+                discovery: { observedAt: new Date().toISOString(), producer: 'runtime-resource-discovery', resources: resources({
+                    'dev.b0dea.cockpit.stack-id': context.stackId,
+                    'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+                    'dev.b0dea.cockpit.owner-id': context.cockpitId,
+                }) },
+            })
+            const result = await runDown({ configPath }, {
+                load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+                observe: async () => Object.freeze({ instance, runtime: {}, ports: {}, down: observed, reset: observed }) as never,
+                execute: async () => ({ kind: 'complete' }) as never,
+            })
+            return { result, context }
+        }
+        const volume = (labels: Record<string, string>) => ({ id: 'synthetic_data', name: 'synthetic_data', kind: 'volume', labels, referenced: false, bytes: null, dataBearing: true })
+        const network = (labels: Record<string, string>) => ({ id: 'network-held', name: 'synthetic_default', kind: 'network', labels, referenced: true, bytes: null })
+
+        // A volume stays for reset to remove, so it does not keep down from finishing.
+        expect((await downWith((labels) => [volume(labels)])).result).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        const { result: kept, context } = await downWith((labels) => [volume(labels), network(labels)])
+
+        expect(kept).toMatchObject({ kind: 'refusal', status: 2, result: null, diagnostics: [{
+            code: 'DOWN_RESOURCES_KEPT', target: context.stackId,
+            message: expect.stringContaining('network synthetic_default (network-held): a container outside this stack is still attached to it'),
+            fix: expect.stringContaining(cockpitCommand('down', { config: context.source.path })),
+        }] })
+        expect(kept.diagnostics[0]!.message).not.toContain('synthetic_data')
     })
 
     it('uses recovered failed-action authority without trying to recover the same epoch twice', async () => {

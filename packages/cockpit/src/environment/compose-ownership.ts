@@ -1,8 +1,8 @@
-// Renders the Compose override that gives a compose-first cockpit's own services, default network
-// and named volumes the ownership labels runtime admission and reclaim read. The cockpit's Compose
-// files stay untouched: `sync` publishes this override as an owned file and `check` drift-checks it
-// like any other, and runtime readiness passes it as the last `--file` only when its bytes equal a
-// fresh render of the current Compose files and identity. It parses YAML only to list service and
+// Renders the Compose override that gives a compose-first cockpit's own services, the images they
+// build, default network and named volumes the ownership labels runtime admission and reclaim read.
+// The cockpit's Compose files stay untouched: `sync` publishes this override as an owned file and
+// `check` drift-checks it like any other, and runtime readiness passes it as the last `--file` only
+// when its bytes equal a fresh render of the current Compose files and identity. It parses YAML only to list service and
 // volume names; what Compose resolves from the files belongs to compose-topology.ts.
 import { createHash } from 'node:crypto'
 import { parseDocument, stringify } from 'yaml'
@@ -31,6 +31,7 @@ export function renderComposeOwnership(input: Readonly<{
     configSha256: string
 }>): ComposeOwnershipRender {
     const services = new Set<string>()
+    const built = new Set<string>()
     // Each owned volume and the labels its own files already declare, as KEY -> value.
     const volumes = new Map<string, Map<string, string>>()
     for (const { reference, source } of input.sources) {
@@ -63,9 +64,11 @@ export function renderComposeOwnership(input: Readonly<{
         }
         if (record.services === undefined) continue
         if (record.services === null || typeof record.services !== 'object' || Array.isArray(record.services)) return refuse('`services` is not a mapping')
-        for (const id of Object.keys(record.services)) {
+        for (const [id, declaration] of Object.entries(record.services)) {
             if (!SERVICE_ID.test(id)) return refuse(`service name ${JSON.stringify(id)} is not a Compose service identifier`)
             services.add(id)
+            if (declaration !== null && typeof declaration === 'object' && !Array.isArray(declaration)
+                && (declaration as Record<string, unknown>).build !== undefined) built.add(id)
         }
     }
     const labels = {
@@ -83,7 +86,9 @@ export function renderComposeOwnership(input: Readonly<{
         return missing.length === 0 ? [] : [[id, { labels: Object.fromEntries(missing) }] as const]
     })
     const body = stringify({
-        services: Object.fromEntries([...services].sort().map((id) => [id, { labels }])),
+        // A built image carries the set as well, or `down` left every image the stack built. Only a
+        // service that declares `build` gets one: a build section on a pulled image makes Compose build it.
+        services: Object.fromEntries([...services].sort().map((id) => [id, built.has(id) ? { labels, build: { labels } } : { labels }])),
         // The default network carries the same set, so `down` can remove the network it created.
         networks: { default: { labels } },
         // Reset admits a data-bearing volume only with exact ownership and a generation, as a

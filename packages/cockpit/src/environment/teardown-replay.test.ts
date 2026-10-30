@@ -68,7 +68,7 @@ const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: Re
     : {
           id: kind === 'volume' ? name : id, name,
           labels: kind === 'image' ? {} : Object.fromEntries(Object.keys(labels).map((key) => [key, itemLabels[key] ?? ''])),
-          referenced: kind === 'image' ? name !== '<none>' : false,
+          referenced: false,
           bytes: kind === 'network' || kind === 'container' ? null : bytes,
       }
 const executable = {
@@ -357,33 +357,37 @@ describe('teardown replay', () => {
             const result = await planTeardown({ ...authenticated.value, declaredCacheIds: [buildCacheId] })
             expect(result.kind).toBe('complete')
             if (result.kind !== 'complete') return
-            // Containers are listed without `--size`, so their bytes stay unknown rather than zero.
+            // Containers are listed without `--size`, so their bytes stay unknown rather than zero;
+            // the image and the network an earlier configuration started are reclaimable, their bytes unknown too.
             expect(result.byteAccounting).toEqual({
                 observed: { orphans: null, images: null, buildCache: 40, staleNetworks: null },
-                reclaimable: { orphans: null, images: 0, buildCache: 40, staleNetworks: 0 },
+                reclaimable: { orphans: null, images: null, buildCache: 40, staleNetworks: null },
                 action: null,
                 actuallyReclaimed: null,
             })
         } finally { await rm(authenticated.root, { recursive: true, force: true }) }
     })
 
-    it('uses authenticated inspection to remove only a dangling current-owned image', async () => {
+    it('uses authenticated inspection to remove a current-owned image under one name and keep one tagged under several', async () => {
         const dangling = resource({ id: `sha256:${sha('dangling')}`, name: '<none>', kind: 'image', referenced: false, bytes: 30 })
-        const referenced = resource({ id: `sha256:${sha('referenced-image')}`, name: 'kept', kind: 'image', referenced: true, bytes: 40 })
-        const unusedTagged = resource({ id: `sha256:${sha('unused-tagged')}`, name: 'release', kind: 'image', referenced: false, bytes: 50 })
-        const secondTag = { ...referenced, name: 'also-kept' }
-        const initial = await authenticatedInput([dangling, referenced, secondTag, unusedTagged])
+        const multiplyTagged = resource({ id: `sha256:${sha('multiply-tagged')}`, name: 'kept', kind: 'image', referenced: false, bytes: 40 })
+        // The tag Compose gives an image it builds for this stack, which down removed nothing of.
+        const built = resource({ id: `sha256:${sha('built')}`, name: 'synthetic-api', kind: 'image', referenced: false, bytes: 50 })
+        const secondTag = { ...multiplyTagged, name: 'also-kept' }
+        const initial = await authenticatedInput([dangling, multiplyTagged, secondTag, built])
         try {
-            expect(initial.value.discovery.resources.filter(({ id }) => id === referenced.id)).toHaveLength(1)
-            expect(initial.value.discovery.resources.find(({ id }) => id === unusedTagged.id)?.referenced).toBe(true)
+            expect(initial.value.discovery.resources.filter(({ id }) => id === multiplyTagged.id)).toEqual([
+                expect.objectContaining({ name: 'also-kept', referenced: true }),
+            ])
+            expect(initial.value.discovery.resources.find(({ id }) => id === built.id)?.referenced).toBe(false)
             const preview = await planTeardown(initial.value)
-            expect(preview).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1 }))
+            expect(preview).toEqual(expect.objectContaining({ kind: 'complete', remaining: 2 }))
             if (preview.kind !== 'complete') return
-            const fresh = await authenticatedInput([dangling, referenced, secondTag, unusedTagged], initial.root)
+            const fresh = await authenticatedInput([dangling, multiplyTagged, secondTag, built], initial.root)
             const action = await planTeardown({
                 ...fresh.value, expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent ?? undefined,
             })
-            expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0 }))
+            expect(action).toEqual(expect.objectContaining({ kind: 'complete', remaining: 1 }))
             if (action.kind === 'complete') expect(action).toEqual(expect.objectContaining({ steps: [], actionAuthority: expect.any(Object) }))
         } finally { await rm(initial.root, { recursive: true, force: true }) }
     })

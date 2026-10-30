@@ -306,7 +306,9 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         const checkoutMounts = service.mounts.filter((mount) => mount.kind === 'bind' && mount.source === '.')
         const workingDir = service.image && checkoutMounts.length === 1 ? checkoutMounts[0]!.target : undefined
         services[service.id] = {
-            ...(service.image ? { image: service.image.reference } : { build: buildContext(service.build!, input.siblingDirectories[service.sibling]!) }),
+            // The built image carries the ownership labels too, or `down` left every image it built.
+            ...(service.image ? { image: service.image.reference }
+                : { build: { ...buildContext(service.build!, input.siblingDirectories[service.sibling]!), labels: { ...ownershipLabels } } }),
             ...(workingDir === undefined ? {} : { working_dir: workingDir }),
             // The entrypoint execs the product command as PID 1, which gets no default signal
             // handling: a server that ignores SIGTERM held sleep and down for the whole stop grace.

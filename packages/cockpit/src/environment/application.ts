@@ -181,6 +181,7 @@ import {
     admitReclaimFailure,
     consumeReclaimCompleted,
     consumeReclaimFailure,
+    keptTeardownResources,
     planReset,
     planTeardown,
     projectResetActionTargets,
@@ -3724,12 +3725,33 @@ async function executeRuntimeDrain(
     return Object.freeze({ authority, fence })
 }
 
+// Teardown removes only what it can prove is this stack's and unused, so a finished drain can
+// still leave the stack's own resources in place. Reporting `removed` then told the operator the
+// stack was gone while its containers and network stayed, so down refuses and names each one.
+function downKeptRefusal(
+    context: DestructiveRunContext,
+    observed: DestructiveReclaimObservation,
+): Extract<DownCommandResult, { kind: 'refusal' }> | undefined {
+    const kept = keptTeardownResources(observed.down)
+    if (kept === undefined) return lifecycleRefusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
+        'down finished its removals, but its last resource discovery could not be classified, so it cannot confirm the stack is gone; inspect the stack with docker compose ls and docker ps --all',
+        context.stackId)
+    if (kept.length === 0) return undefined
+    const listed = kept.slice(0, 8).map(({ kind, id, name, reason }) => `${kind} ${name} (${id}): ${reason}`).join('; ')
+    return destructiveRefusal(Object.freeze([Object.freeze({
+        severity: 'error' as const, code: ENVIRONMENT_CODES.DOWN_RESOURCES_KEPT, target: context.stackId,
+        message: `down removed what it could, but kept ${kept.length} of this stack's own resources: ${listed}${kept.length > 8 ? `; and ${kept.length - 8} more` : ''}`,
+        fix: `release each kept resource as its reason says (remove the image's other tag, stop the container still attached to the network), then run \`${lifecycleSuggestion(context, 'down')}\``,
+    })]))
+}
+
 async function executeDestructivePlan(
     context: DestructiveRunContext,
     adapters: DestructiveCommandAdapters,
     purpose: 'down' | 'reset',
     lifecyclePlan: ReturnType<typeof planDown>,
     firstPlan: DestructivePlan,
+    plannedFrom: DestructiveReclaimObservation,
     recoveredReservation?: Extract<Awaited<ReturnType<typeof recoverDrainReservation>>, { kind: 'complete' }>,
     recoveredRequest?: DrainReservationRequest,
 ): Promise<DownCommandResult | OperatorResetResult> {
@@ -3751,6 +3773,8 @@ async function executeDestructivePlan(
     }
 
     let plan = firstPlan
+    // The latest discovery: what the stack still holds once the last removal is reconciled.
+    let observed = plannedFrom
     while (plan.actionAuthority !== null) {
         const recovered = availableReservation ?? await recoverDrainReservation({ namespace: context.namespace, request })
         availableReservation = undefined
@@ -3761,6 +3785,7 @@ async function executeDestructivePlan(
         if (absent) {
             const postAction = await observeDestructiveReclaim(context, adapters)
             if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
+            observed = postAction
             const reconciled = await reconcileAbsentReclaimAction({ authority: absent.authority,
                 discovery: purpose === 'down' ? postAction.down.discovery : postAction.reset.discovery })
             if (reconciled.kind !== 'complete' || !reconciled.authority) return reconciled.kind === 'refusal'
@@ -3805,6 +3830,7 @@ async function executeDestructivePlan(
         }
         const postAction = await observeDestructiveReclaim(context, adapters)
         if (!postAction || 'diagnostics' in postAction) return destructiveRepairAfterObservation(context, postAction)
+        observed = postAction
         const reconciled = reconcileReclaimAction({
             authority: execution.authority,
             outcome,
@@ -3840,7 +3866,7 @@ async function executeDestructivePlan(
         plan = next
     }
     return purpose === 'down'
-        ? Object.freeze({
+        ? downKeptRefusal(context, observed) ?? Object.freeze({
             kind: 'complete' as const, status: 0 as const, diagnostics: lifecyclePlan.plan.diagnostics,
             result: Object.freeze({ stackId: context.stackId, change: 'removed' as const }),
         })
@@ -3951,7 +3977,7 @@ export async function runDown(
         })
         if (plan.kind !== 'complete') return destructiveRefusal(plan.diagnostics)
         return await executeDestructivePlan(
-            context, adapters, 'down', lifecycle, plan,
+            context, adapters, 'down', lifecycle, plan, prepared.observation,
             recovered?.kind === 'complete' ? recovered : undefined,
             persistedRequest,
         ) as DownCommandResult
@@ -4081,7 +4107,7 @@ async function continueOperatorReset(token: object, decision: 'approve' | 'decli
         if (actionablePlan.kind !== 'complete') return actionablePlan.kind === 'refusal'
             ? destructiveRefusal(actionablePlan.diagnostics) : destructiveRepairRequired(session.context)
         return await executeDestructivePlan(
-            session.context, session.adapters, 'reset', lifecycle, actionablePlan,
+            session.context, session.adapters, 'reset', lifecycle, actionablePlan, observation,
             recovered?.kind === 'complete' ? recovered : undefined,
             persistedRequest,
         ) as OperatorResetResult

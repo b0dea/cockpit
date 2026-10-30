@@ -91,7 +91,7 @@ const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: Re
     : {
           id: kind === 'volume' ? name : id, name,
           labels: kind === 'image' ? {} : Object.fromEntries(Object.keys(labels).map((key) => [key, itemLabels[key] ?? ''])),
-          referenced: kind === 'image' ? name !== '<none>' : false,
+          referenced: false,
           bytes: kind === 'network' || kind === 'container' ? null : bytes,
       }
 // The daemon applies the stack-label filter itself, so the fixture keeps both answers: every row,
@@ -386,7 +386,6 @@ describe('reclaim classification', () => {
         ['unlabelled', {}],
         ['malformed', { ...labels, 'dev.b0dea.cockpit.stack-id': '../escape' }],
         ['foreign', { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId }],
-        ['stale-config', { ...labels, 'dev.b0dea.cockpit.config-sha256': sha('stale') }],
     ] as const)('classifies %s labels without granting an action', (ownership, candidateLabels) => {
         const result = classify([resource({ labels: candidateLabels })])
         expect(result.kind).toBe('complete')
@@ -394,6 +393,27 @@ describe('reclaim classification', () => {
         expect(result.resources[0]).toEqual(expect.objectContaining({ ownership, action: 'report-only' }))
         expect(result.resources[0]?.evidence.length).toBeGreaterThan(0)
         expect(result.resources[0]?.reason.length).toBeGreaterThan(0)
+    })
+
+    it('tears down runtime resources an earlier configuration of this stack started, and keeps their data', () => {
+        const earlier = { ...labels, 'dev.b0dea.cockpit.config-sha256': sha('earlier') }
+        const resources = [
+            resource({ id: 'container-earlier', labels: earlier }),
+            resource({ id: 'network-earlier', name: 'synthetic_default', kind: 'network', labels: earlier, bytes: null }),
+            resource({ id: 'volume-earlier', name: 'session-data', kind: 'volume', labels: earlier, dataBearing: true }),
+        ]
+        const result = classify(resources)
+        if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
+        expect(result.resources.map(({ id, ownership, action }) => ({ id, ownership, action }))).toEqual([
+            { id: 'container-earlier', ownership: 'stale-config', action: 'teardown' },
+            { id: 'network-earlier', ownership: 'stale-config', action: 'teardown' },
+            { id: 'volume-earlier', ownership: 'stale-config', action: 'report-only' },
+        ])
+        // Without the stack's coordination record the labels alone grant nothing, whichever configuration they name.
+        const unrecorded = classifyReclaim({ stackId, cockpitId, configSha256, coordinationRecord: null, declaredCacheIds: [], discovery: snapshot(resources) })
+        if (unrecorded.kind !== 'complete') throw new Error(JSON.stringify(unrecorded))
+        expect(unrecorded.resources.map(({ ownership, action }) => ({ ownership, action })))
+            .toEqual(resources.map(() => ({ ownership: 'unknown', action: 'report-only' })))
     })
 
     it('uses the deliberately broken label beside a valid control', () => {

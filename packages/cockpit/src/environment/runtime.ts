@@ -1530,11 +1530,15 @@ function composeLabels(value: unknown): Readonly<Record<string, unknown>> | null
     return Object.keys(labels).length === entries.length ? labels : null
 }
 
-// Compose projects a generated build as an absolute local context with a Dockerfile name.
+// Compose projects a generated build as an absolute local context with a Dockerfile name, and the
+// ownership labels its image carries.
 function generatedBuild(value: unknown): boolean {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-    const { context, dockerfile, ...rest } = value as Record<string, unknown>
+    const { context, dockerfile, labels, ...rest } = value as Record<string, unknown>
+    const imageLabels = composeLabels(labels)
     return Object.keys(rest).length === 0 && typeof context === 'string' && isAbsolute(context)
+        && (labels === undefined || imageLabels !== null && typeof imageLabels === 'object'
+            && Object.values(imageLabels).every((label) => typeof label === 'string'))
         && normalize(context) === context && localBuildContext(context)
         && typeof dockerfile === 'string' && dockerfile.length > 0 && !dockerfile.includes('\0')
 }

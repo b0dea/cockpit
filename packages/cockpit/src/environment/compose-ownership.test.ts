@@ -21,15 +21,17 @@ describe('compose-first ownership override', () => {
             stackId: `stack:${'e'.repeat(64)}`, sources })
         expect(first).toEqual(second)
     })
-    it('labels every service of every declared file, the default network and owned volumes, and refuses what it cannot name', () => {
+    it('labels every service of every declared file, the images it builds, the default network and owned volumes, and refuses what it cannot name', () => {
         const rendered = renderComposeOwnership({ ...identity, sources: [
             { reference: 'compose.yml', source: 'services:\n  web:\n    build: ./web\n  api:\n    image: busybox\n' },
-            { reference: 'compose.worker.yml', source: 'services:\n  worker:\n    image: busybox\n' },
+            { reference: 'compose.worker.yml', source: 'services:\n  worker:\n    image: busybox\n  web:\n    environment: { MODE: dev }\n' },
         ] })
         if (rendered.kind !== 'complete') throw new Error(rendered.reason)
         expect(rendered.bytes).not.toContain('&')
+        // A built image carries the labels too, so down can remove what the stack built; a pulled
+        // image gets no build section, which would make Compose build it instead.
         expect(parse(rendered.bytes)).toEqual({
-            services: { api: { labels }, web: { labels }, worker: { labels } },
+            services: { api: { labels }, web: { labels, build: { labels } }, worker: { labels } },
             networks: { default: { labels } },
         })
 
