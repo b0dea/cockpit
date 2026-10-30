@@ -43,9 +43,12 @@ run `npm run cockpit:sync` after changing sibling declarations to regenerate the
 The root `.gitignore` has a `cockpit:ignore` region for installed dependencies, machine-local
 state, secret resolver material, and a sibling checkout directory that lives below the cockpit
 root. `init` creates that region while preserving every line outside it. The first `sync` does the
-same for a valid hand-written configuration whose compatible team metadata is missing. Later
-`sync` and `check` verify the exact region and refuse an edited or stale one instead of
-overwriting it; `sync --dry-run` reports missing metadata without writing it.
+same for a valid hand-written configuration whose compatible team metadata is missing. The start
+marker records a digest of the region, so a later `sync` rewrites a region that changed sibling
+declarations made stale and refuses one edited by hand instead of overwriting it; `check` reports
+either without writing, and `sync --dry-run` lists the write. A sibling with `acquire = "none"`
+stays visible so the cockpit can track local data, unless its directory is a Git repository, such
+as one `sibling add --create` made: that directory is ignored like a cloned checkout.
 The sibling directory is escaped as a literal Git ignore path, so wildcard-shaped names do not
 match nearby directories. A `siblings_root` containing a line break or NUL is refused before
 metadata changes because `.gitignore` cannot represent it; choose a single-line path and rerun
@@ -60,7 +63,8 @@ git status --short
 ```
 
 The command should print nothing. If it reports generated drift, first confirm `npm ci` installed
-the exact pinned version. If the `.gitignore` block alone is stale, restore the committed block.
-To deliberately regenerate it after changing the configuration, remove the whole marked region,
-run `cockpit init` for the team's existing target, review the replacement, and commit that team
-change.
+the exact pinned version. If `sync` changed only the `.gitignore` block, a declared sibling
+directory differs on this machine: a local repository without a remote is ignored only where it
+exists, because nothing can clone it here. Discard that change with `git restore .gitignore`; the
+block settles once whoever created the repository publishes it and records the remote with
+`sibling add <slug> --remote <url>`.

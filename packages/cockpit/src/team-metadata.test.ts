@@ -43,7 +43,7 @@ describe('team metadata', () => {
         expect(manifest).toEqual({ private: true, scripts: { test: 'vitest', 'cockpit:setup': 'cockpit setup --config cockpit.toml',
             'cockpit:sync': 'cockpit sync --config cockpit.toml', 'cockpit:check': 'cockpit check --config cockpit.toml' },
         devDependencies: { [installedPackageMetadata.name]: installedPackageMetadata.version } })
-        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start\n/node_modules/\n/.cockpit/local/\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n# cockpit:ignore:start sha256=3c9b045f924e82c1\n/node_modules/\n/.cockpit/local/\n/env/.secrets/*\n!/env/.secrets/.gitignore\n/repositories/\n# cockpit:ignore:end\n')
         expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: false, changes: [] })
     })
 
@@ -86,6 +86,35 @@ purpose = "Synthetic web repository"
         expect(ignored('services/other/probe.txt')).toBe(1)
         expect(ignored('app/probe.txt')).toBe(1)
         expect(ignored('cockpit.toml')).toBe(1)
+    })
+
+    it('ignores a local repository recorded without a remote, and updates an unedited block when siblings change', async () => {
+        // `sibling add --create` runs git init and records acquire "none" because there is no
+        // remote yet; left visible, `git add .` fails on (or embeds) the nested repository.
+        const root = await fixture('.')
+        expect(spawnSync('git', ['-C', root, 'init', '--quiet']).status).toBe(0)
+        await mkdir(join(root, 'app'))
+        await writeFile(join(root, 'app/probe.txt'), 'tracked local data')
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete', changed: true })
+
+        expect(spawnSync('git', ['-C', root, 'init', '--quiet', 'services/api']).status).toBe(0)
+        await writeFile(join(root, 'cockpit.toml'), `${await readFile(join(root, 'cockpit.toml'), 'utf8')}
+[[sibling]]
+slug = "api"
+dir = "services/api"
+mount = "always"
+acquire = "none"
+var = "API_DIR"
+purpose = "Synthetic local repository"
+`)
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE' })
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toEqual({ kind: 'complete', changed: true,
+            changes: [{ operation: 'write', path: '.gitignore' }] })
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+        const ignored = (path: string) => spawnSync('git', ['-C', root, 'check-ignore', '--no-index', '--quiet', '--', path]).status
+        expect(ignored('services/api/probe.txt')).toBe(0)
+        expect(ignored('app/probe.txt')).toBe(1)
+        expect(spawnSync('git', ['-C', root, 'add', '--dry-run', '.']).status).toBe(0)
     })
 
     it('reports the exact initialization writes during a read-only preview', async () => {

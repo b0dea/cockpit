@@ -213,10 +213,12 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
     return spec
 }
 
-// A checkout cockpit clones is its own Git repository; left visible inside the cockpit root, a
-// `git add` embeds it as a gitlink. `acquire = "none"` rows are local data, never repositories,
-// and may be tracked by the cockpit itself, so they stay visible.
-function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling'>): string | undefined {
+// A checkout is its own Git repository; left visible inside the cockpit root, a `git add` embeds
+// it as a gitlink, or fails on one with no commit yet. Cloned rows are repositories by declaration.
+// `acquire = "none"` rows are local data the cockpit itself may track, except a directory that
+// already holds Git metadata: `sibling add --create` records a new repository as "none" until it
+// has a remote, so for those rows the disk decides.
+async function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibling'>): Promise<string | undefined> {
     const siblingsRoot = config.cockpit.siblings_root
     if (/[\0\r\n]/.test(siblingsRoot)) return undefined
     const patterns = ['/node_modules/', '/.cockpit/local/', '/env/.secrets/*', '!/env/.secrets/.gitignore']
@@ -229,10 +231,36 @@ function ignoreBlock(root: string, config: Pick<CockpitConfig, 'cockpit' | 'sibl
     const siblingsPattern = inside(siblings)
     if (siblingsPattern) patterns.push(siblingsPattern)
     else for (const sibling of config.sibling) {
-        const pattern = sibling.acquire === 'none' ? undefined : inside(resolve(siblings, sibling.dir))
-        if (pattern && !patterns.includes(pattern)) patterns.push(pattern)
+        const path = resolve(siblings, sibling.dir)
+        const pattern = inside(path)
+        if (pattern && !patterns.includes(pattern) && (sibling.acquire !== 'none' || await holdsGitMetadata(path))) patterns.push(pattern)
     }
-    return [START, ...patterns, END].join('\n')
+    const body = patterns.join('\n')
+    return `${blockHeader(body)}\n${body}\n${END}`
+}
+
+async function holdsGitMetadata(directory: string): Promise<boolean> {
+    try {
+        await lstat(join(directory, '.git'))
+        return true
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR') return false
+        throw error
+    }
+}
+
+// The start marker carries a digest of the region it opens, which is what separates a region a
+// changed configuration made stale (rewritten) from one a person edited (refused). Without it,
+// adding a sibling under a siblings_root of "." made every later sync refuse the cockpit's own block.
+function blockHeader(body: string): string {
+    return `${START} sha256=${createHash('sha256').update(body).digest('hex').slice(0, 16)}`
+}
+
+function writtenByCockpit(region: string): boolean {
+    const header = region.slice(0, Math.max(0, region.indexOf('\n')))
+    const body = region.slice(header.length + 1, region.length - END.length - 1)
+    return header !== '' && region.endsWith(`\n${END}`) && header === blockHeader(body)
 }
 
 function ignoreCandidate(original: string, block: string): string | undefined {
@@ -240,7 +268,9 @@ function ignoreCandidate(original: string, block: string): string | undefined {
     const end = original.indexOf(END)
     if ((start < 0) !== (end < 0) || start >= 0 && (original.indexOf(START, start + 1) >= 0 || original.indexOf(END, end + 1) >= 0 || end < start)) return undefined
     if (start < 0) return `${original}${original.length > 0 && !original.endsWith('\n') ? '\n' : ''}${block}\n`
-    return original.slice(start, end + END.length) === block ? original : undefined
+    const region = original.slice(start, end + END.length)
+    if (region === block) return original
+    return writtenByCockpit(region) ? `${original.slice(0, start)}${block}${original.slice(end + END.length)}` : undefined
 }
 
 export interface TeamMetadataAuthority {
@@ -270,7 +300,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
         if (loaded.kind !== 'complete') return configRefusal(loaded, configPath)
-        const block = ignoreBlock(root, loaded.result.config)
+        const block = await ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
                 'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
@@ -348,7 +378,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const loaded = await loadCockpitConfig(configPath)
         await authenticateRoot(authority)
         if (loaded.kind !== 'complete') return configRefusal(loaded, configPath)
-        const block = ignoreBlock(root, loaded.result.config)
+        const block = await ignoreBlock(root, loaded.result.config)
         if (block === undefined) {
             return refuse('TEAM_METADATA_UNAVAILABLE',
                 'cockpit.siblings_root must be a single-line path without NUL because .gitignore cannot represent it literally; fix cockpit.toml and run cockpit init again',
@@ -357,8 +387,10 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         const ignorePath = join(root, '.gitignore')
         const ignore = await readOptional(authority, ignorePath)
         const expected = ignoreCandidate(ignore?.bytes ?? '', block)
-        if (!ignore || expected === undefined || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `the cockpit-owned .gitignore block is missing, stale or edited; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
+        if (expected === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
+            `the cockpit-owned .gitignore block was edited; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit sync again`, ignorePath)
+        if (!ignore || expected !== ignore.bytes) return refuse('TEAM_METADATA_UNAVAILABLE',
+            'the cockpit-owned .gitignore block is missing or does not match cockpit.toml and the sibling directories on disk; run cockpit sync to rewrite it', ignorePath)
         return { kind: 'complete', changed: false, changes: Object.freeze([]) }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be verified (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
