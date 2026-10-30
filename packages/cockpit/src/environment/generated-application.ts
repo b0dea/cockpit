@@ -3504,7 +3504,7 @@ export async function syncTeamGeneratedEnvironment(
     const request = syncCommandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const metadata = await prepareTeamMetadata(request.configPath)
-    if (metadata.kind === 'refusal') return refuse(metadata.code, metadata.message, metadata.target)
+    if (metadata.kind === 'refusal') return refuse(metadata.code, metadata.message, metadata.target, metadata.fix)
     const prepared = await prepareGeneratedEnvironmentSync(request, adapterOverrides, undefined, metadata.authority.changes)
     if (prepared.kind === 'refusal') return prepared
     if (!prepared.dryRun) {

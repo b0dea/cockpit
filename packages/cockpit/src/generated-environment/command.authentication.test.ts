@@ -47,6 +47,16 @@ describe('generated environment command', () => {
         await expect(lstat(join(root, 'compose.generated.yml'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
+    it('keeps the restore command when team sync finds the configuration deleted', async () => {
+        const { root, configPath } = await consumer('deleted-config')
+        expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        await rm(configPath)
+        const refused = await syncTeamGeneratedEnvironment({ configPath })
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+            code: 'CONFIG_NOT_FOUND', fix: `git -C ${root} restore -- cockpit.toml (it is committed), then retry`,
+        })] })
+    })
+
     it('rejects proxy command inputs without evaluating traps', async () => {
         let traps = 0
         const input = new Proxy({ configPath: 'unused.toml' }, {
