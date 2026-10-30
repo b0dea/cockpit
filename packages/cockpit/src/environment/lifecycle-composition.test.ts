@@ -83,7 +83,10 @@ afterEach(async () => {
 
 const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
-describe('production lifecycle adapter composition', () => {
+// Each case drives the real lifecycle owners through dozens of child processes (fenced execution,
+// publication helpers, Git and runtime probes), so its wall time scales with machine load rather
+// than with the work under test. The budget is sized for four concurrent workers on a busy host.
+describe('production lifecycle adapter composition', { timeout: 180_000 }, () => {
     // Two generated-environment bring-ups plus a session join take 30-55s on an idle machine, so the
     // 60s default is too tight; the hand-off test below carries the same 120s budget.
     it('releases a supervised co-tenant without stopping the original holder runtime', async () => {

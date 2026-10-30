@@ -34,7 +34,10 @@ async function consumer() {
     return { root, configPath, paths: [...synced.result.paths, ledgerPath] }
 }
 
-describe('canonical mechanical repair', () => {
+// Each case drives the real lifecycle owners through dozens of child processes (fenced execution,
+// publication helpers, Git and runtime probes), so its wall time scales with machine load rather
+// than with the work under test. The budget is sized for four concurrent workers on a busy host.
+describe('canonical mechanical repair', { timeout: 180_000 }, () => {
     it('uses one admission and the same plan for catalogue repair with single consumption', async () => {
         const { root, configPath } = await consumer()
         expect(await initializeTeamMetadata(configPath)).toMatchObject({ kind: 'complete' })

@@ -87,7 +87,10 @@ afterEach(async () => {
 
 const { fixture, generatedFixture, configureGeneratedDocker, runGeneratedScenario } = createLifecycleCompositionFixtureSupport(roots, listenerProbeControl)
 
-describe('production lifecycle adapter composition', () => {
+// Each case drives the real lifecycle owners through dozens of child processes (fenced execution,
+// publication helpers, Git and runtime probes), so its wall time scales with machine load rather
+// than with the work under test. The budget is sized for four concurrent workers on a busy host.
+describe('production lifecycle adapter composition', { timeout: 180_000 }, () => {
     it('installs and stamps each generated physical dependency volume after authenticated teardown', async () => {
         const first = await runGeneratedScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })

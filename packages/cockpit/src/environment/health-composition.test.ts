@@ -145,7 +145,10 @@ sources = [
     return { root, configPath }
 }
 
-describe('production health adapter composition', () => {
+// Each case drives the real lifecycle owners through dozens of child processes (fenced execution,
+// publication helpers, Git and runtime probes), so its wall time scales with machine load rather
+// than with the work under test. The budget is sized for four concurrent workers on a busy host.
+describe('production health adapter composition', { timeout: 180_000 }, () => {
     it('passes seeded machine-floor health through public routes and refuses changed published surfaces', async () => {
         const candidate = await fixture({ machineOnly: true })
         const address = candidate.namespace.paths.lifecycle(candidate.stack)
@@ -314,7 +317,7 @@ else process.exit(64)
         } finally {
             if (listening) await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()))
         }
-    }, 180_000)
+    })
 
     it('explains an unseeded lifecycle before observing Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
