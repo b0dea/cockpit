@@ -349,7 +349,12 @@ operations that differ between products.
 shared regions with the ownership manifest. It reports drift and never mutates an output.
 `sync --dry-run` performs the same preparation and reports the ordered writes and removals without
 staging or mutation. `sync` publishes the complete owned set as one recoverable filesystem
-transaction. A stale removal requires separate approval of the dry run's exact path, operation,
+transaction. Team package metadata is prepared separately: known surface conflicts, input
+overlaps, and stale-removal approval refusals leave it unchanged. Resolve the reported conflict,
+then run `cockpit sync --config cockpit.toml` again. Metadata uses authenticated replacements
+after these checks; a later I/O or concurrent-input failure can retain those metadata updates while
+the generated-file transaction reports its own recovery outcome.
+A stale removal requires separate approval of the dry run's exact path, operation,
 and current-byte request. Plain `sync` refuses that apply; `sync --interactive` previews the
 request and requires the operator to type its exact digest. Once independently approved and
 revalidated, unchanged whole-file and symlink entries or the owned

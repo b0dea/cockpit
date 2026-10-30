@@ -1,3 +1,4 @@
+import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from '../team-metadata.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import type { FixContext } from '../fix-catalogue.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
@@ -77,7 +78,7 @@ import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-di
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
 import {
-    nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, runPublicationPlan,
+    nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, authorizePublicationPlan, runPublicationPlan,
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
@@ -124,7 +125,7 @@ import { observeGeneratedCheckoutIdentity, revalidateGeneratedCheckoutIdentity, 
 export const mechanism = {
     id: 'generated-environment-application',
     module: 'packages/cockpit/src/environment/generated-application.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationMountSources', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplicationSurfaces', 'observeGeneratedApplicationHealth', 'observeGeneratedApplication', 'isGeneratedApplicationSurfaceObservation', 'surfaceObservationDeclarations'],
+    exports: ['prepareGeneratedEnvironmentCurrentness', 'prepareWorkApplicationAuthorities', 'applyGeneratedEnvironmentRepair', 'syncGeneratedEnvironment', 'syncTeamGeneratedEnvironment', 'checkGeneratedEnvironment', 'generatedApplicationProjection', 'projectWorkApplicationAuthorities', 'consumeWorkApplicationAuthorities', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'inspectBrowserDebuggerPreparation', 'projectGeneratedApplicationNodeExecutable', 'projectGeneratedApplicationMountSources', 'projectGeneratedApplicationRuntimeAuthority', 'resolveGeneratedApplicationOperation', 'observeGeneratedApplicationSurfaces', 'observeGeneratedApplicationHealth', 'observeGeneratedApplication', 'isGeneratedApplicationSurfaceObservation', 'surfaceObservationDeclarations'],
 } as const
 
 export const surfaceObservationDeclarations = Object.freeze([
@@ -2975,7 +2976,7 @@ function publicationInputPath(root: string, path: string): string | undefined {
 
 async function ownedInputOverlap(
     prepared: PreparedEnvironment,
-    prior: readonly OwnershipEntry[],
+    prior: readonly Readonly<{ path: string }>[],
 ): Promise<Readonly<{ kind: 'complete'; path?: string }> | Readonly<{ kind: 'invalid' }>> {
     const presentInputPaths = [
         prepared.configPath,
@@ -2984,6 +2985,7 @@ async function ownedInputOverlap(
         ...prepared.sourceEvidence.filter((row): row is Extract<SurfaceInputEvidence, { kind: 'mcp' }> => row.kind === 'mcp')
             .map(evidence => resolve(evidence.root, evidence.path)),
         ...prepared.customSources.map(source => resolve(prepared.root, source.path)),
+        ...(prepared.nativeHookPolicySource ? [resolve(prepared.root, prepared.nativeHookPolicySource.path)] : []),
         ...prepared.adoptedSources.map(source => resolve(prepared.root, source.path)),
     ]
     const requiredPresentPaths = new Set(presentInputPaths)
@@ -3425,19 +3427,57 @@ export async function prepareGeneratedEnvironmentCurrentness(
     })
 }
 
-export async function syncGeneratedEnvironment(
+async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
-    adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
+    adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters>,
     portLease?: PortLeaseProjection,
-): Promise<GeneratedEnvironmentCommandOutcome> {
+    metadataChanges: readonly TeamMetadataChange[] = [],
+): Promise<RefusalOutcome | Readonly<{ kind: 'complete'; authority: GeneratedEnvironmentRepairAuthority; dryRun: boolean }>> {
     const request = syncCommandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
     const adapters = mergedAdapters(adapterOverrides)
     const publication = await preparePublication(request, adapters, undefined, undefined, portLease)
     if ('status' in publication) return publication
     if ('refusal' in publication) return publication.refusal
+    if (metadataChanges.length > 0) {
+        const overlap = await ownedInputOverlap(publication.prepared, metadataChanges)
+        if (overlap.kind === 'invalid' || overlap.path) return refuse('TEAM_METADATA_UNAVAILABLE',
+            'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run cockpit sync again',
+            overlap.kind === 'complete' ? overlap.path : 'team-metadata')
+    }
     const authority = issueRepairAuthority({ prepared: publication.prepared, plan: publication.plan, adapters })
-    return applyGeneratedEnvironmentRepair(authority, { dryRun: request.dryRun })
+    return { kind: 'complete', authority, dryRun: request.dryRun === true }
+}
+
+export async function syncGeneratedEnvironment(
+    input: GeneratedEnvironmentSyncInput,
+    adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
+    portLease?: PortLeaseProjection,
+): Promise<GeneratedEnvironmentCommandOutcome> {
+    const prepared = await prepareGeneratedEnvironmentSync(input, adapterOverrides, portLease)
+    return prepared.kind === 'refusal' ? prepared : applyGeneratedEnvironmentRepair(prepared.authority, { dryRun: prepared.dryRun })
+}
+
+export async function syncTeamGeneratedEnvironment(
+    input: GeneratedEnvironmentSyncInput,
+    adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
+): Promise<GeneratedEnvironmentCommandOutcome> {
+    const request = syncCommandInput(input)
+    if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
+    const metadata = await prepareTeamMetadata(request.configPath)
+    if (metadata.kind === 'refusal') return refuse(metadata.code, metadata.message, metadata.target)
+    const prepared = await prepareGeneratedEnvironmentSync(request, adapterOverrides, undefined, metadata.authority.changes)
+    if (prepared.kind === 'refusal') return prepared
+    if (!prepared.dryRun) {
+        const record = issuedRepairs.get(prepared.authority)!
+        const approved = await authorizePublicationPlan(record.plan, record.adapters)
+        if (approved !== true) return approved
+        const applied = await applyTeamMetadata(metadata.authority)
+        if (applied.kind === 'refusal') return refuse(applied.code, applied.message, applied.target)
+    }
+    const outcome = await applyGeneratedEnvironmentRepair(prepared.authority, { dryRun: prepared.dryRun })
+    return outcome.kind === 'refusal' ? outcome : { ...outcome,
+        result: { ...outcome.result, changes: Object.freeze([...metadata.authority.changes, ...outcome.result.changes]) } }
 }
 
 export async function applyGeneratedEnvironmentRepair(

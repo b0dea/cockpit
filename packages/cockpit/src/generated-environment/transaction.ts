@@ -21,7 +21,7 @@ import type { SurfaceChange } from '../surfaces/sync.js'
 export const mechanism = {
     id: 'generated-publication-transaction',
     module: 'packages/cockpit/src/generated-environment/transaction.ts',
-    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'runPublicationPlan'],
+    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'authorizePublicationPlan', 'runPublicationPlan'],
 } as const
 
 export interface PublicationAdapters {
@@ -2466,6 +2466,33 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     return Object.freeze({ kind: 'complete', plan })
 }
 
+const publicationApprovals = new WeakMap<PublicationPlan, Promise<boolean>>()
+
+function publicationApproved(plan: PublicationPlan, record: PublicationRecord, adapters: PublicationAdapters): Promise<boolean> {
+    let approval = publicationApprovals.get(plan)
+    if (!approval) {
+        approval = Promise.resolve().then(() => record.staleRemoval ? staleRemovalApproved(record.staleRemoval, adapters) : true)
+        publicationApprovals.set(plan, approval)
+    }
+    return approval
+}
+
+function approvalRefusal(record: PublicationRecord): PublicationRefusal {
+    return refuse('GENERATED_STALE_APPROVAL_REQUIRED', 'stale generated ownership requires independent approval bound to the exact current entries',
+        record.staleRemoval!.entries[0]!.path, `review dry-run stale-removal digest ${record.staleRemoval!.digest} before retrying through an approved operator boundary`)
+}
+
+/** Admit approval before another owner writes, retaining the exact plan's one-use publication. */
+export async function authorizePublicationPlan(plan: PublicationPlan, adapters: PublicationAdapters): Promise<true | PublicationRefusal> {
+    const record = plan && issuedPlans.get(plan)
+    if (!record || consumedPlans.has(plan)) return refuse('GENERATED_PUBLICATION_FAILED', 'publication requires a current owner-issued plan', 'generated-environment')
+    const approved = await publicationApproved(plan, record, adapters)
+    if (consumedPlans.has(plan)) return refuse('GENERATED_PUBLICATION_FAILED', 'publication requires a current owner-issued plan', 'generated-environment')
+    if (approved) return true
+    consumedPlans.add(plan)
+    return approvalRefusal(record)
+}
+
 export async function runPublicationPlan(plan: PublicationPlan, adapters: PublicationRunAdapters): Promise<PublicationOutcome> {
     try { return await runPlan(plan, adapters) } catch {
         return refuse('GENERATED_PUBLICATION_FAILED', 'publication owner revalidation failed', 'generated-environment')
@@ -2482,8 +2509,7 @@ async function runPlan(plan: PublicationPlan, adapters: PublicationRunAdapters):
         return Object.freeze({ kind: 'complete', changes: record.changes, committedPaths: Object.freeze([]), ...(record.staleRemoval ? { staleRemoval: record.staleRemoval } : {}) })
     }
     consumedPlans.add(plan)
-    if (record.staleRemoval && !await staleRemovalApproved(record.staleRemoval, adapters)) return refuse('GENERATED_STALE_APPROVAL_REQUIRED', 'stale generated ownership requires independent approval bound to the exact current entries',
-        record.staleRemoval.entries[0]!.path, `review dry-run stale-removal digest ${record.staleRemoval.digest} before retrying through an approved operator boundary`)
+    if (!await publicationApproved(plan, record, adapters)) return approvalRefusal(record)
     return applyPrepared(record, adapters)
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { installedPackageMetadata } from './package-metadata.js'
-import { initializeTeamMetadata, validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
+import { validateTeamMetadata, type TeamMetadataResult } from './team-metadata.js'
 import { discoverReleaseFreshness, type ReleaseMetadataTransport } from './freshness.js'
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises'
 import { parse as parseToml } from 'smol-toml'
@@ -88,7 +88,7 @@ import { resolveInstallPolicies } from './environment/install-policy.js'
 import {
     prepareSelectedBootstrapSurface, resumeSelectedBootstrapSurface, applySelectedBootstrapSurface,
     checkGeneratedEnvironment,
-    syncGeneratedEnvironment,
+    syncTeamGeneratedEnvironment,
     adoptAndSyncGeneratedEnvironment,
     runSyncOperatorCommand,
     type GeneratedEnvironmentCommandInput,
@@ -519,14 +519,6 @@ function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCo
     }
 }
 
-function includeTeamMetadataChanges(
-    metadata: Extract<TeamMetadataResult, { kind: 'complete' }>,
-    outcome: GeneratedEnvironmentCommandOutcome,
-): GeneratedEnvironmentCommandOutcome {
-    if (outcome.kind !== 'complete') return outcome
-    return { ...outcome, result: { ...outcome.result, changes: Object.freeze([...metadata.changes, ...outcome.result.changes]) } }
-}
-
 function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
     const env = runtime.env ?? process.env
     const inherited = inheritedSessionId(env)
@@ -570,10 +562,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                     message: 'cockpit.toml could not be authenticated as an absent or bounded regular file', target: path }] }
             },
             validateConfig: loadCockpitConfig,
-            synchronize: async input => {
-                const metadata = teamMetadataOutcome(await initializeTeamMetadata(input.configPath))
-                return metadata ?? syncGeneratedEnvironment(input)
-            },
+            synchronize: syncTeamGeneratedEnvironment,
             check: async input => {
                 const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
                 return metadata ?? checkGeneratedEnvironment(input)
@@ -583,11 +572,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         'registry-resolve': registryResolveCommand,
         setup: (input) => setupCommand({ ...input, env }, defaultSetupAdapters),
         sync: async ({ authorizeStaleRemoval, adopt, ...input }) => {
-            const initialized = await initializeTeamMetadata(input.configPath, { dryRun: input.dryRun })
-            if (initialized.kind === 'refusal') return teamMetadataOutcome(initialized)
             if (adopt) return adoptAndSyncGeneratedEnvironment({ configPath: input.configPath, adopt })
-            const outcome = await syncGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
-            return includeTeamMetadataChanges(initialized, outcome)
+            return syncTeamGeneratedEnvironment(input, authorizeStaleRemoval ? { authorizeStaleRemoval } : {})
         },
         check: async input => {
             const loaded = await loadCockpitConfig(input.configPath)

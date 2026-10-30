@@ -15,7 +15,7 @@ import { selectBootstrapStateRoot, transactState, type BootstrapStateRecord } fr
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 import * as ownership from '../surfaces/ownership.js'
 import { inspectSkillSet, projectInspectedSkillOutputs } from '../surfaces/skill-contract.js'
-import { admitPublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
+import { admitPublicationPlan, authorizePublicationPlan, captureReferenceBootstrap, encodeReferenceManifest, nodeAuthority, referenceBootstrapFiles, relocateAnchoredFile, readPersonaSource, restoreAnchoredFile,
     revalidateReferenceBootstrap, runPublicationPlan } from './transaction.js'
 
 const roots: string[] = []
@@ -902,6 +902,42 @@ describe('generated publication transaction', () => {
         }))).toEqual(identities)
         expect(await runPublicationPlan(plan, { execute: executeProbe, revalidate: async () => { throw new Error('replayed authority reached validation') } }))
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }] })
+    })
+
+    it('shares exact approval across concurrent admission and one-use publication', async () => {
+        const { input } = await publication()
+        const admitted = await admitPublicationPlan(input, { execute: executeProbe })
+        if (admitted.kind !== 'complete') throw new Error('expected publication plan')
+        const authorizeStaleRemoval = vi.fn(approve)
+        const adapters = { execute: executeProbe, authorizeStaleRemoval, revalidate: async () => true }
+        expect(await authorizePublicationPlan({ ...admitted.plan }, adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }],
+        })
+        expect(authorizeStaleRemoval).not.toHaveBeenCalled()
+        expect(await Promise.all([
+            authorizePublicationPlan(admitted.plan, adapters), authorizePublicationPlan(admitted.plan, adapters),
+        ])).toEqual([true, true])
+        expect(await runPublicationPlan(admitted.plan, adapters)).toMatchObject({ kind: 'complete' })
+        expect(authorizeStaleRemoval).toHaveBeenCalledTimes(1)
+        expect(await authorizePublicationPlan(admitted.plan, adapters)).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }],
+        })
+        expect(await runPublicationPlan(admitted.plan, adapters)).toMatchObject({ kind: 'refusal' })
+        expect(authorizeStaleRemoval).toHaveBeenCalledTimes(1)
+    })
+
+    it('consumes a denied approval before metadata admission can retry it', async () => {
+        const { root, input, prior } = await publication()
+        const admitted = await admitPublicationPlan(input, { execute: executeProbe })
+        if (admitted.kind !== 'complete') throw new Error('expected publication plan')
+        const authorizeStaleRemoval = vi.fn(async () => undefined)
+        expect(await authorizePublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ code: 'GENERATED_STALE_APPROVAL_REQUIRED' }],
+        })
+        expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, authorizeStaleRemoval: approve, revalidate: async () => true }))
+            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'GENERATED_PUBLICATION_FAILED' }] })
+        expect(authorizeStaleRemoval).toHaveBeenCalledTimes(1)
+        expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(prior.bytes)
     })
 
     it('previews unchanged publication without consuming its one-use apply authority', async () => {

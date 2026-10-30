@@ -9,7 +9,7 @@ import { installedPackageMetadata } from './package-metadata.js'
 
 export const mechanism = {
     id: 'team-metadata', module: 'packages/cockpit/src/team-metadata.ts',
-    exports: ['initializeTeamMetadata', 'validateTeamMetadata'],
+    exports: ['initializeTeamMetadata', 'prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata'],
 } as const
 
 const PACKAGE = installedPackageMetadata.name
@@ -33,7 +33,7 @@ export type TeamMetadataResult = Readonly<{ kind: 'complete'; changed: boolean; 
     | Readonly<{ kind: 'refusal'; code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH; message: string; target: string }>
 
 function refuse(code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH,
-    message: string, target: string): TeamMetadataResult {
+    message: string, target: string): Extract<TeamMetadataResult, { kind: 'refusal' }> {
     return { kind: 'refusal', code, message, target }
 }
 
@@ -238,7 +238,28 @@ function ignoreCandidate(original: string, block: string): string | undefined {
     return original.slice(start, end + END.length) === block ? original : undefined
 }
 
+export interface TeamMetadataAuthority {
+    readonly changes: readonly TeamMetadataChange[]
+}
+
+interface TeamMetadataRecord {
+    readonly authority: RootAuthority
+    readonly configPath: string
+    readonly sourceSha256: string
+    readonly sourceInstall: SourceInstallCandidate | undefined
+    readonly files: readonly Readonly<{ path: string; before: Awaited<ReturnType<typeof readOptional>>; bytes: string }>[]
+}
+const issuedMetadata = new WeakMap<TeamMetadataAuthority, TeamMetadataRecord>()
+
 export async function initializeTeamMetadata(configPath: string, options: Readonly<{ dryRun?: boolean }> = {}): Promise<TeamMetadataResult> {
+    const prepared = await prepareTeamMetadata(configPath)
+    if (prepared.kind === 'refusal') return prepared
+    return options.dryRun ? { kind: 'complete', changed: prepared.authority.changes.length > 0, changes: prepared.authority.changes }
+        : applyTeamMetadata(prepared.authority)
+}
+
+export async function prepareTeamMetadata(configPath: string): Promise<Extract<TeamMetadataResult, { kind: 'refusal' }>
+    | Readonly<{ kind: 'complete'; authority: TeamMetadataAuthority }>> {
     const root = dirname(resolve(configPath))
     try {
         const authority = await captureRoot(root)
@@ -264,23 +285,42 @@ export async function initializeTeamMetadata(configPath: string, options: Readon
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
-        const changes: TeamMetadataChange[] = []
-        if (sourceInstall && sourceInstall.before.bytes !== sourceInstall.bytes) changes.push({ operation: 'write', path: 'package-lock.json' })
-        if (packageBefore?.bytes !== candidate.bytes) changes.push({ operation: 'write', path: 'package.json' })
-        if (ignoreBefore?.bytes !== nextIgnore) changes.push({ operation: 'write', path: '.gitignore' })
-        if (options.dryRun) return { kind: 'complete', changed: changes.length > 0, changes: Object.freeze(changes) }
-        if (sourceInstall && sourceInstall.before.bytes !== sourceInstall.bytes) {
-            await authenticateSourceInstall(sourceInstall)
-            await replaceAuthenticated(authority, join(root, 'package-lock.json'), sourceInstall.before, sourceInstall.bytes)
-        }
-        if (packageBefore?.bytes !== candidate.bytes) {
-            if (sourceInstall) await authenticateSourceInstall(sourceInstall)
-            await replaceAuthenticated(authority, packagePath, packageBefore, candidate.bytes)
-        }
-        if (ignoreBefore?.bytes !== nextIgnore) await replaceAuthenticated(authority, ignorePath, ignoreBefore, nextIgnore)
-        return { kind: 'complete', changed: changes.length > 0, changes: Object.freeze(changes) }
+        const files = [
+            ...(sourceInstall ? [{ path: join(root, 'package-lock.json'), before: sourceInstall.before, bytes: sourceInstall.bytes }] : []),
+            { path: packagePath, before: packageBefore, bytes: candidate.bytes },
+            { path: ignorePath, before: ignoreBefore, bytes: nextIgnore },
+        ]
+        const changes = Object.freeze(files.filter(file => file.before?.bytes !== file.bytes)
+            .map(file => Object.freeze({ operation: 'write' as const, path: relative(root, file.path) })))
+        const prepared = Object.freeze({ changes })
+        issuedMetadata.set(prepared, { authority, configPath: loaded.result.source.path,
+            sourceSha256: loaded.result.source.sha256, sourceInstall, files })
+        return { kind: 'complete', authority: prepared }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
+    }
+}
+
+export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promise<TeamMetadataResult> {
+    const record = issuedMetadata.get(prepared)
+    if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'team metadata authority is unknown or already consumed; run cockpit sync again', 'team-metadata')
+    issuedMetadata.delete(prepared)
+    const { authority, sourceInstall, files } = record
+    try {
+        const loaded = await loadCockpitConfig(record.configPath)
+        if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== record.sourceSha256) throw new Error('configuration changed before metadata replacement')
+        await authenticateRoot(authority)
+        for (const file of files) {
+            if ((await readOptional(authority, file.path))?.identity !== file.before?.identity) throw new Error('team metadata changed before replacement')
+        }
+        if (sourceInstall) await authenticateSourceInstall(sourceInstall)
+        for (const file of files) if (file.before?.bytes !== file.bytes) {
+            if (sourceInstall) await authenticateSourceInstall(sourceInstall)
+            await replaceAuthenticated(authority, file.path, file.before, file.bytes)
+        }
+        return { kind: 'complete', changed: prepared.changes.length > 0, changes: prepared.changes }
+    } catch (error) {
+        return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, authority.root)
     }
 }
 

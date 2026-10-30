@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installedPackageMetadata } from './package-metadata.js'
-import { initializeTeamMetadata, validateTeamMetadata } from './team-metadata.js'
+import { initializeTeamMetadata, prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata } from './team-metadata.js'
 
 const roots: string[] = []
 async function fixture(siblingsRoot = 'repositories'): Promise<string> {
@@ -16,6 +16,22 @@ async function fixture(siblingsRoot = 'repositories'): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 describe('team metadata', () => {
+    it('rejects a stale prepared metadata authority before any write and never reuses it', async () => {
+        const root = await fixture()
+        const manifest = '{"private":true}\n'
+        await writeFile(join(root, 'package.json'), manifest)
+        await writeFile(join(root, '.gitignore'), 'operator-owned\n')
+        const prepared = await prepareTeamMetadata(join(root, 'cockpit.toml'))
+        if (prepared.kind !== 'complete') throw new Error(prepared.message)
+        await writeFile(join(root, '.gitignore'), 'concurrent edit\n')
+        expect(await applyTeamMetadata(prepared.authority)).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE' })
+        expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('concurrent edit\n')
+        await writeFile(join(root, '.gitignore'), 'operator-owned\n')
+        expect(await applyTeamMetadata(prepared.authority)).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE' })
+        expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
+    })
+
     it('adds exact package scripts and a narrow managed ignore block without changing user data', async () => {
         const root = await fixture()
         await writeFile(join(root, 'package.json'), '{"private":true,"scripts":{"test":"vitest"}}\n')

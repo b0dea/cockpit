@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { observeConfigSource } from '../config/load.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { applyGeneratedEnvironmentRepair, checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness, syncGeneratedEnvironment } from './command.js'
+import { applyGeneratedEnvironmentRepair, checkGeneratedEnvironment, prepareGeneratedEnvironmentCurrentness, syncGeneratedEnvironment, syncTeamGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
 const { roots, cleanup, publicationGroups, consumer, digest, ownership, bytes } = createGeneratedCommandFixture()
@@ -53,7 +53,7 @@ describe('generated environment command', () => {
             ownKeys(target) { traps += 1; return Reflect.ownKeys(target) },
             getOwnPropertyDescriptor(target, key) { traps += 1; return Reflect.getOwnPropertyDescriptor(target, key) },
         })
-        const results = await Promise.all([syncGeneratedEnvironment(input), checkGeneratedEnvironment(input)])
+        const results = await Promise.all([syncGeneratedEnvironment(input), syncTeamGeneratedEnvironment(input), checkGeneratedEnvironment(input)])
         expect(traps).toBe(0)
         expect(results).toEqual(results.map(() => expect.objectContaining({
             kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_INPUT_INVALID' })],

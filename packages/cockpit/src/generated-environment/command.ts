@@ -12,6 +12,7 @@ import {
     prepareSelectedBootstrapSurface as prepareBootstrap,
     resumeSelectedBootstrapSurface as resumeBootstrap,
     syncGeneratedEnvironment as synchronize,
+    syncTeamGeneratedEnvironment as synchronizeTeam,
     type GeneratedEnvironmentCommandAdapters,
     type GeneratedEnvironmentChange,
     type GeneratedEnvironmentCommandInput,
@@ -46,7 +47,7 @@ export type {
 export const mechanism = {
     id: 'generated-environment-command',
     module: 'packages/cockpit/src/generated-environment/command.ts',
-    exports: ['prepareGeneratedEnvironmentCurrentness', 'applyGeneratedEnvironmentRepair', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'syncGeneratedEnvironment', 'adoptAndSyncGeneratedEnvironment', 'checkGeneratedEnvironment', 'runSyncOperatorCommand'],
+    exports: ['prepareGeneratedEnvironmentCurrentness', 'applyGeneratedEnvironmentRepair', 'prepareSelectedBootstrapSurface', 'resumeSelectedBootstrapSurface', 'applySelectedBootstrapSurface', 'syncGeneratedEnvironment', 'syncTeamGeneratedEnvironment', 'adoptAndSyncGeneratedEnvironment', 'checkGeneratedEnvironment', 'runSyncOperatorCommand'],
 } as const
 
 export function prepareSelectedBootstrapSurface(
@@ -92,9 +93,16 @@ export function syncGeneratedEnvironment(
     return synchronize(input, adapters, portLease)
 }
 
+export function syncTeamGeneratedEnvironment(
+    input: GeneratedEnvironmentSyncInput,
+    adapters?: Partial<GeneratedEnvironmentCommandAdapters>,
+): Promise<GeneratedEnvironmentCommandOutcome> {
+    return synchronizeTeam(input, adapters)
+}
+
 /** `sync --adopt`: record the adoption, then run the ordinary sync that renders the merge. */
 export function adoptAndSyncGeneratedEnvironment(input: SyncAdoptionInput): Promise<SyncAdoptionOutcome> {
-    return runSyncAdoption(input, request => synchronize(request))
+    return runSyncAdoption(input, request => synchronizeTeam(request))
 }
 
 export function checkGeneratedEnvironment(

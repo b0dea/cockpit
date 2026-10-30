@@ -18,7 +18,7 @@ import {
 } from '../environment/generated-application.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
 import { SURFACE_TARGETS } from '../surfaces/harness-registry.js'
-import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
+import { checkGeneratedEnvironment, syncGeneratedEnvironment, syncTeamGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 
 const { roots, cleanup, publicationGroups, consumer, customHarness, enforcedCustomHarness,
@@ -27,6 +27,50 @@ afterEach(cleanup)
 
 describe('generated environment command', () => {
 describe('public surface publication transaction', () => {
+        it('refuses pending metadata writes that are authenticated custom inputs', async () => {
+            const manifest = '{"private":true}\n'
+            const fixture = await surfaceConsumer('metadata-input', {
+                custom: enforcedCustomHarness('adapters/synthetic.mjs', digest(manifest), 'package.json'),
+            })
+            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
+            await writeFile(join(fixture.root, 'package.json'), manifest)
+            await writeFile(join(fixture.root, '.gitignore'), 'operator-owned\n')
+
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'TEAM_METADATA_UNAVAILABLE', target: 'package.json' })],
+            })
+            expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).toBe(manifest)
+            expect(await readFile(join(fixture.root, '.gitignore'), 'utf8')).toBe('operator-owned\n')
+            await expect(lstat(join(fixture.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+        })
+
+        it('admits exact stale removal once before applying pending team metadata', async () => {
+            const fixture = await surfaceConsumer('metadata-stale-approval', { custom: customHarness('adapters/synthetic.mjs') })
+            await writeCustomModule(fixture.root, [{ path: 'custom/rules.md', bytes: 'custom/rules.md\n' }])
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            const config = await readFile(fixture.configPath, 'utf8')
+            await writeFile(fixture.configPath, config.slice(0, config.indexOf('[[surfaces.harnesses]]')))
+            const manifest = '{"private":true}\n'
+            await writeFile(join(fixture.root, 'package.json'), manifest)
+            const before = await bytes(fixture.root, ['package.json', '.gitignore', 'custom/rules.md', '.cockpit/generated-environment-ownership.json'])
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({
+                kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_STALE_APPROVAL_REQUIRED' })],
+            })
+            expect(await bytes(fixture.root, Object.keys(before))).toEqual(before)
+            let approvals = 0
+            const outcome = await syncTeamGeneratedEnvironment({ configPath: fixture.configPath }, {
+                authorizeStaleRemoval: async request => {
+                    approvals += 1
+                    expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).toBe(manifest)
+                    return { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }
+                },
+            })
+            expect(outcome, JSON.stringify(outcome.diagnostics)).toMatchObject({ kind: 'complete' })
+            expect(approvals).toBe(1)
+            expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).not.toBe(manifest)
+            await expect(lstat(join(fixture.root, 'custom/rules.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+        })
+
         it('confines custom check writes to scratch for a self-contained module', async () => {
             const fixture = await surfaceConsumer('custom-read-only', { custom: customHarness('adapters/synthetic.mjs', 'renderRules', 'custom/alpha/SKILL.md') })
             const output = [{ path: 'custom/alpha/SKILL.md', bytes: 'custom/alpha/SKILL.md\nscratch verified\n' }]

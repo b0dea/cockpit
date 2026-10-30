@@ -491,6 +491,42 @@ describe('generated environment process contract', () => {
         ]))
     })
 
+    it.each(['first sync', 'owned surface', 'adoption'] as const)(
+        'preserves team metadata when public sync refuses %s', async reason => {
+            const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-sync-refusal-metadata-')))
+            scratch.push(directory)
+            const configPath = join(directory, 'cockpit.toml')
+            mkdirSync(join(directory, 'app'))
+            mkdirSync(join(directory, 'fixtures'))
+            writeFileSync(join(directory, 'fixtures/personas.json'), '[{"id":"synthetic"}]\n')
+            writeFileSync(configPath, readFileSync(join(root, 'fixtures/registries/generated-environment.toml'), 'utf8')
+                .replace('name = "generated-environment"', 'name = "refusal-metadata"\nsiblings_root = "."'))
+            if (reason === 'owned surface') {
+                const initial = captureIo()
+                expect(await runCli(['sync', '--config', configPath, '--json'], initial.io), initial.output().stdout).toBe(0)
+            }
+            const metadata = {
+                'package.json': '{"private":true}\n',
+                'package-lock.json': '{"lockfileVersion":3,"canary":"unchanged"}\n',
+                '.gitignore': 'operator-owned\n',
+            }
+            for (const [path, bytes] of Object.entries(metadata)) writeFileSync(join(directory, path), bytes)
+            const guard = join(directory, '.cockpit/guards/bash-guard.sh')
+            if (reason !== 'adoption') {
+                mkdirSync(dirname(guard), { recursive: true })
+                writeFileSync(guard, '# operator change\n')
+            }
+            const capture = captureIo()
+            expect(await runCli(['sync', '--config', configPath, '--json',
+                ...(reason === 'adoption' ? ['--adopt', '.claude/settings.json'] : [])], capture.io)).toBe(2)
+            expect(JSON.parse(capture.output().stdout).diagnostics).toEqual([
+                expect.objectContaining({ code: reason === 'adoption' ? 'SURFACE_ADOPTION_REFUSED' : 'SURFACE_STATE_CONFLICT' }),
+            ])
+            for (const [path, bytes] of Object.entries(metadata)) expect(readFileSync(join(directory, path), 'utf8'), path).toBe(bytes)
+            if (reason !== 'adoption') expect(readFileSync(guard, 'utf8')).toBe('# operator change\n')
+        },
+    )
+
     it.each([
         ['a conflicting package pin', JSON.stringify({ devDependencies: { '@b0dea/cockpit': '9.9.9' } }), 'operator-owned\n'],
         ['a dependencies package slot', JSON.stringify({ dependencies: {
