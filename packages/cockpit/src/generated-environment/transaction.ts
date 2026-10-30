@@ -21,7 +21,7 @@ import type { SurfaceChange } from '../surfaces/sync.js'
 export const mechanism = {
     id: 'generated-publication-transaction',
     module: 'packages/cockpit/src/generated-environment/transaction.ts',
-    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'authorizePublicationPlan', 'runPublicationPlan'],
+    exports: ['nodeAuthority', 'readAnchoredFile', 'readAnchoredEntry', 'readAnchoredBatches', 'relocateAnchoredFile', 'restoreAnchoredFile', 'readPersonaSource', 'expectedState', 'portablePublicationPaths', 'captureReferenceBootstrap', 'referenceBootstrapFiles', 'revalidateReferenceBootstrap', 'encodeReferenceManifest', 'admitPublicationPlan', 'authorizePublicationPlan', 'runPublicationPlan'],
 } as const
 
 export interface PublicationAdapters {
@@ -1423,7 +1423,7 @@ function safePublicationSegment(value: unknown): value is string {
         && !/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(value)
 }
 
-function portablePublicationPaths(paths: readonly string[]): boolean {
+export function portablePublicationPaths(paths: readonly string[]): boolean {
     const prefixes = new Map<string, string>()
     for (const path of paths) {
         let prefix = ''

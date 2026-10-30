@@ -27,6 +27,33 @@ afterEach(cleanup)
 
 describe('generated environment command', () => {
 describe('public surface publication transaction', () => {
+        it.each([
+            { path: 'package.json', state: 'missing' },
+            { path: 'package.json', state: 'unchanged' },
+            { path: 'package.json', state: 'stale' },
+            { path: '.GITIGNORE', state: 'missing' },
+        ])('preserves metadata when its $state destination overlaps generated $path', async ({ path, state }) => {
+            const manifest = '{"private":true}\n'
+            const fixture = await surfaceConsumer('metadata-output', {
+                custom: customHarness('adapters/synthetic.mjs', 'renderRules', path),
+            })
+            await writeCustomModule(fixture.root, [{ path, bytes: manifest }])
+            if (state !== 'missing') {
+                expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+                if (state === 'stale') {
+                    const config = await readFile(fixture.configPath, 'utf8')
+                    await writeFile(fixture.configPath, config.slice(0, config.indexOf('[[surfaces.harnesses]]')))
+                }
+            }
+            const outcome = await syncTeamGeneratedEnvironment({ configPath: fixture.configPath }, {
+                authorizeStaleRemoval: async request => ({ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }),
+            })
+            if (state === 'missing') await expect(lstat(join(fixture.root, 'package.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+            else expect(await readFile(join(fixture.root, 'package.json'), 'utf8')).toBe(manifest)
+            await expect(lstat(join(fixture.root, '.gitignore'))).rejects.toMatchObject({ code: 'ENOENT' })
+            expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'TEAM_METADATA_UNAVAILABLE' })] })
+        })
+
         it('refuses pending metadata writes that are authenticated custom inputs', async () => {
             const manifest = '{"private":true}\n'
             const fixture = await surfaceConsumer('metadata-input', {

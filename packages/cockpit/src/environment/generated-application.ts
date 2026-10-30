@@ -78,7 +78,7 @@ import { fileFingerprint, verifiedDigest } from '../environment-exec/verified-di
 import { planSurfaceChanges, type SurfaceChange, type SurfaceObservedEntry, type SurfaceChangePlanResult } from '../surfaces/sync.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet, inspectSkillSet, projectInspectedSkillOutputs, type InspectedBootstrapOutputs, type SkillStandingCost } from '../surfaces/skill-contract.js'
 import {
-    nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, admitPublicationPlan, authorizePublicationPlan, runPublicationPlan,
+    nodeAuthority, readAnchoredFile, readAnchoredEntry, readAnchoredBatches, readPersonaSource, expectedState, portablePublicationPaths, admitPublicationPlan, authorizePublicationPlan, runPublicationPlan,
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
@@ -3440,6 +3440,15 @@ async function prepareGeneratedEnvironmentSync(
     if ('status' in publication) return publication
     if ('refusal' in publication) return publication.refusal
     if (metadataChanges.length > 0) {
+        const generatedPaths = [...new Set([
+            ...publication.prepared.owned.map(row => row.path),
+            ...publication.prepared.surfaces.map(row => row.path),
+            ...(publication.ownership.kind === 'complete' ? publication.ownership.manifest.entries.map(row => row.path) : []),
+        ])]
+        const destination = metadataChanges.find(change => generatedPaths.some(path => path === change.path || path.startsWith(`${change.path}/`))
+            || !portablePublicationPaths([...generatedPaths, change.path]))
+        if (destination) return refuse('TEAM_METADATA_UNAVAILABLE',
+            'a pending team metadata write overlaps a generated destination; move the generated output to a separate path, then run cockpit sync again', destination.path)
         const overlap = await ownedInputOverlap(publication.prepared, metadataChanges)
         if (overlap.kind === 'invalid' || overlap.path) return refuse('TEAM_METADATA_UNAVAILABLE',
             'pending team metadata writes overlap an authenticated input or its identity could not be checked; move the input to a separate file, update its declaration, then run cockpit sync again',
