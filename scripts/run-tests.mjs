@@ -10,7 +10,8 @@ export const mechanism = {
     id: 'bounded-test-runner', module: 'scripts/run-tests.mjs', exports: ['readProcessTable', 'runTestsCli'],
 }
 
-const EXECUTION_TIMEOUT_MS = 825_000
+const TARGETED_EXECUTION_TIMEOUT_MS = 825_000
+const COMPLETE_EXECUTION_TIMEOUT_MS = 3_600_000
 const TERMINATION_GRACE_MS = 10_000
 const CLEANUP_TIMEOUT_MS = 5_000
 const PROCESS_INVENTORY_TIMEOUT_MS = 5_000
@@ -427,7 +428,8 @@ export async function runTestsCli(argv, options = {}) {
     try {
         const parsed = parseArguments(argv)
         selectedFiles = parsed.positional
-        const timeoutMs = boundedDuration(options.timeoutMs, EXECUTION_TIMEOUT_MS, EXECUTION_TIMEOUT_MS, 'execution timeout')
+        const executionTimeoutMs = parsed.complete ? COMPLETE_EXECUTION_TIMEOUT_MS : TARGETED_EXECUTION_TIMEOUT_MS
+        const timeoutMs = boundedDuration(options.timeoutMs, executionTimeoutMs, executionTimeoutMs, 'execution timeout')
         const terminationGraceMs = boundedDuration(options.terminationGraceMs, TERMINATION_GRACE_MS,
             TERMINATION_GRACE_MS, 'termination grace')
         cleanupTimeoutMs = boundedDuration(options.cleanupTimeoutMs, CLEANUP_TIMEOUT_MS,
@@ -529,7 +531,9 @@ export async function runTestsCli(argv, options = {}) {
         tempCleanupComplete = tempCleanup.cleaned
         if (!tempCleanup.cleaned) throw new Error(`test temporary directory cleanup incomplete: ${tempCleanup.reason}`)
         if (observationFailure) throw new Error(`process observation failed: ${observationFailure instanceof Error ? observationFailure.message : String(observationFailure)}`)
-        if (timedOut) throw new Error('complete test run exceeded its 13 minute 45 second execution deadline')
+        if (timedOut) throw new Error(parsed.complete
+            ? 'complete test run exceeded its 60 minute execution deadline'
+            : 'selected test run exceeded its 13 minute 45 second execution deadline')
         if (forwardedSignal) return SIGNAL_STATUS[forwardedSignal]
         if (outcome.signal) throw new Error(`Vitest was interrupted by ${outcome.signal}`)
         if (!Number.isInteger(outcome.status)) throw new Error('Vitest did not report an exit status')

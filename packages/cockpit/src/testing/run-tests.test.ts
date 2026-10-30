@@ -303,15 +303,17 @@ describe('bounded test runner', () => {
         ])
     })
 
-    it('refuses duration overrides that could exceed the repository deadline', async () => {
+    it('keeps selected runs within the targeted deadline and bounds the complete-suite deadline', async () => {
         const { root } = fixture()
-        const run = (options: Record<string, number>) => spawnSync(process.execPath, ['--input-type=module', '-e',
-            `const { runTestsCli } = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); process.exitCode = await runTestsCli([], ${JSON.stringify({ root, ...options })})`],
+        const run = (arguments_: readonly string[], options: Record<string, number>) => spawnSync(process.execPath, ['--input-type=module', '-e',
+            `const { runTestsCli } = await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); process.exitCode = await runTestsCli(${JSON.stringify(arguments_)}, ${JSON.stringify({ root, ...options })})`],
         { cwd: root, encoding: 'utf8' })
 
-        expect(run({ timeoutMs: 825_001 }).status).toBe(2)
-        expect(run({ terminationGraceMs: 10_001 }).status).toBe(2)
-        expect(run({ cleanupTimeoutMs: 5_001 }).status).toBe(2)
+        expect(run([], { timeoutMs: 825_001 }).status).toBe(0)
+        expect(run([], { timeoutMs: 3_600_001 }).status).toBe(2)
+        expect(run(['synthetic.test.ts'], { timeoutMs: 825_001 }).status).toBe(2)
+        expect(run([], { terminationGraceMs: 10_001 }).status).toBe(2)
+        expect(run([], { cleanupTimeoutMs: 5_001 }).status).toBe(2)
     })
 
     it('returns the test status and accepts a complete successful report', async () => {
@@ -370,7 +372,7 @@ process.exitCode = await runTestsCli([], {
             temp = invocationTemp(tempPath)
             expect(result.error).toBeUndefined()
             expect(result.status, result.stderr).toBe(2)
-            expect(result.stderr).toContain('complete test run exceeded its 13 minute 45 second execution deadline')
+            expect(result.stderr).toContain('complete test run exceeded its 60 minute execution deadline')
             expect(alive(descendant)).toBe(false)
             expectOwnedTempRemoved(temp)
         } finally {
@@ -408,7 +410,7 @@ process.exitCode = await runTestsCli(${JSON.stringify(selected)}, {
         const descendant = Number(readFileSync(process.env.COCKPIT_RUNNER_PID_PATH, 'utf8'))
         try {
             expect(deadline.status, deadline.stderr).toBe(2)
-            expect(deadline.stderr).toContain('complete test run exceeded its 13 minute 45 second execution deadline')
+            expect(deadline.stderr).toContain('selected test run exceeded its 13 minute 45 second execution deadline')
             const [deadlineFile] = remainingFiles()
             expect(readFileSync(join(root, '.vitest-reports', deadlineFile), 'utf8')).toBe('b.test.ts\nc.test.ts\n')
             expect(deadline.stderr).toContain(`npm test -- $(cat .vitest-reports/${deadlineFile})`)
