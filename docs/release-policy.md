@@ -79,14 +79,15 @@ node ./node_modules/@b0dea/cockpit/libexec/release-evidence.mjs assemble \
 ```
 
 `upgrade` is experimental and its interface may change before a stable release. It is a
-read-only plan and fails closed without exact release evidence. Review changed
-overlays, ownership, capability evidence and any manual steps it lists before `sync`.
+read-only plan and refuses to run without the exact release-evidence file. Before `sync`, review the changed
+overlays, ownership, capability states and any manual steps it lists.
 
-Release evidence is read from a size-bounded stable regular file; pipes and other special files
-refuse without waiting for a writer. The [release-evidence owner](../packages/cockpit/src/upgrade/release-evidence.ts)
-defines the current input bound. Release integrity values must contain canonical base64 SHA-256, SHA-384, or SHA-512 digests with
-the matching byte length. Hexadecimal digests and truncated placeholders are refused even when
-the surrounding evidence file has the expected hash.
+Cockpit reads the release-evidence file only if it is a regular file of limited size that is not changing; pipes
+and other special files are refused without waiting for a writer. The size limit is set in
+[the release-evidence code](../packages/cockpit/src/upgrade/release-evidence.ts). Release integrity values must be
+canonical base64 SHA-256, SHA-384, or SHA-512 digests of the matching length.
+Hexadecimal digests and truncated placeholders are refused even when
+the file containing them has the expected hash.
 
 Every GitHub release attaches one `release-evidence.json` record and its SHA-256 file. The record
 names that exact npm package version and registry integrity and hashes the core surface
@@ -94,9 +95,9 @@ declarations with the same constructor used during `sync`. Download the installe
 records from their exact tags, review both SHA-256 files, then run the shipped offline assembler
 as shown above. The assembler refuses changed bytes, linked or special-file inputs, mismatched
 packages, invalid records, and an existing output instead of replacing it. Its paired output is
-the only file accepted by `upgrade`; a per-release record alone is not upgrade authority.
+the only file `upgrade` accepts; a record for a single release is not enough.
 
-The first public release truthfully carries only its own record because no published predecessor
-exists. It never fabricates a `current` release. Once a later release exists, combine any installed
+The first public release carries only its own record because no earlier release
+exists. It never invents a `current` release. Once a later release exists, combine any installed
 release record with the chosen candidate record, so skipping intermediate versions does not weaken
 the comparison.

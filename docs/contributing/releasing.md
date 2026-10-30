@@ -42,7 +42,7 @@ The automation above needs these settings, done once by the maintainer:
 ## Before the repository goes public
 
 Repository visibility and package publication are separate decisions, and a green test run
-authorises neither. Before opening the repository, run every gate in a maintainer checkout that
+does not decide either. Before opening the repository, run every gate in a maintainer checkout that
 has the private needle file, so the site-name class is scanned too:
 
 ```sh
@@ -56,7 +56,7 @@ npm audit --ignore-scripts
 ```
 
 The working tree, the package tarball and the reachable history are scanned separately. A
-history report with findings, binary gaps or exceeded bounds is not clean. If old history
+history report with findings, binary gaps or exceeded limits is not clean. If old history
 contains private material, publish a fresh root from the scanned source export instead of the
 old Git directory, branches or tags, and keep the private repository until you decide what to
 do with it.

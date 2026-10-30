@@ -16,14 +16,14 @@ Every Markdown path belongs to an estate before a rule runs:
 - Files under `fixtures/docs/` are synthetic controls and declare the estate they exercise in
   their filename.
 
-An unknown Markdown path fails closed. Git supplies the repository corpus, and an empty corpus
-is an error rather than a clean result.
+The linter fails on a Markdown path that belongs to no estate. It takes the file list from Git, and an empty list is an
+error rather than a clean result.
 
 ## Purpose and audience
 
-Human documentation has opening prose within its first twelve lines. The detector can prove
-that the opening contains prose; review decides whether those words actually communicate the
-page's purpose and audience.
+Human documentation has opening prose within its first twelve lines. The linter can check
+that the opening contains prose; a reviewer decides whether those words say what the
+page is for and who it is for.
 
 Executable instructions do not receive this prose rule. They may begin directly with commands
 or constraints because rewriting them as explanatory documentation can change their behavior.

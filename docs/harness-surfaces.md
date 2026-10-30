@@ -3,14 +3,16 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 This page explains what `cockpit sync` writes for Claude Code, Codex CLI, OpenCode, Cursor, and
-Grok Build, how product-specific additions enter, and how each feature's enforcement is measured. It is for
-people reviewing generated agent configuration and for integrators extending it.
+Grok Build, how product-specific additions enter, and how far each generated feature has been
+confirmed to work. It is for people reviewing generated agent configuration and for integrators
+extending it.
 
 ## Publish and verify
 
-Surfaces are published by the same `sync` and checked by the same `check` as the rest of the
-generated environment; follow [Bring the product up](getting-started.md#bring-the-product-up).
-`check` is the only drift authority and never repairs output.
+[Surfaces](concepts.md#surface) are published by the same `sync` and checked by the same `check`
+as the rest of the generated environment; follow
+[Bring the product up](getting-started.md#bring-the-product-up). `check` reports
+[drift](concepts.md#drift) and never repairs output.
 
 The repository action at `.github/actions/cockpit-check/action.yml` runs only `cockpit check`.
 The caller must install the exact cockpit version from its lockfile first; the action does not
@@ -18,104 +20,120 @@ download cockpit or invoke a second generator check.
 
 ## Ownership and extension
 
-Generated entries are either whole-file owned or an explicitly delimited region in a shared
-file. The ownership manifest records the expected type, bytes, and source identities. Its
-unkeyed digest detects accidental changes but does not prove historical ownership. A dry run
-reports an exact stale-removal request and digest. Applying any stale removal requires a separate
-approval bound to the current paths and bytes. Plain `sync` refuses the apply;
-`sync --interactive` previews the request, displays its entries and digest, and requires you to
-type that exact digest before a revalidated apply. Changed stale paths remain
-conflicts to reconcile. A team's existing `.claude/settings.json`, `.codex/config.toml` or
-`.codex/hooks.json` is not overwritten: [adopt it](adoption.md#adopt-existing-agent-settings) and
-cockpit renders a merge of the team's copy and its own output.
+Cockpit owns each generated entry either as a whole file or as a marked region inside a shared
+file. The ownership manifest records the expected type, bytes, and sources. Its digest catches
+accidental changes but does not prove who wrote a file in the past. A dry run lists the stale
+entries cockpit would remove, with a digest of that list. Removing them needs your separate
+approval of those exact paths and bytes: plain `sync` refuses, and `sync --interactive` shows the
+entries and digest and asks you to type the digest before it re-checks and applies. A stale path
+whose contents changed stays a conflict for you to resolve. A team's existing
+`.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` is not overwritten:
+[adopt it](adoption.md#adopt-existing-agent-settings) and cockpit renders a merge of the team's copy
+and its own output.
 
-Common root instructions are written once, in the owned region of **AGENTS.md**. Claude's owned
-region contains only `@AGENTS.md`. When an existing team **CLAUDE.md** already has that exact active
-import, cockpit leaves the file and its ownership alone; removing the import makes `check` report
-drift. A person approves instruction-structure changes and runs `sync`, because changing which file
-imports which changes what every agent session loads.
+Common root instructions are written once, in the region of **AGENTS.md** that cockpit owns.
+Claude's region contains only `@AGENTS.md`. When a team's existing **CLAUDE.md** already has that
+exact import, cockpit leaves the file alone; removing the import makes `check` report drift. A
+person approves changes to which file imports which and runs `sync`, because that decides what every
+agent session loads.
 
-Core declarations and `[surfaces].overlays` merge by stable name. A colliding overlay must use
-`replaces` with the core name and the recorded SHA-256 of that original. `permissions` and `mcp`
-remain core authority and cannot be replaced by an overlay. When a later cockpit version changes
-an overridden original, `OVERRIDDEN_CORE_CHANGED` identifies the affected overlay before you
-accept new output. `doctor` lists active overrides and changed originals from an
-authenticated read-only generation preview; an unavailable preview is reported explicitly.
-Authored Markdown frontmatter must use unqualified YAML delimiters and valid bounded YAML.
-Cockpit rejects language-qualified or malformed frontmatter before generator dispatch.
-For the complete list of supported product extension seams and the build-beside pattern, see
-[Extending cockpit](extending.md); this page owns only generated surface behavior.
+Core declarations and `[surfaces].overlays` merge by name. An overlay that reuses a core name
+must set `replaces` to the core name and the recorded SHA-256 of that original. An overlay cannot
+replace `permissions` or `mcp`; those stay with cockpit's core declarations. When a later cockpit
+version changes an original you overrode, `OVERRIDDEN_CORE_CHANGED` names the overlay before you
+accept new output. `doctor` lists active overrides and changed originals from a read-only
+generation preview, and says so when the preview cannot run.
+Markdown frontmatter you write must use plain `---` YAML delimiters (no language tag) and valid YAML
+of reasonable size. Cockpit rejects anything else before it runs the generator.
+For the full list of supported extension points and the build-beside pattern, see
+[Extending cockpit](extending.md); this page covers only generated surface behavior.
 
-The generator uses a checked-in, SHA-pinned bundle of Rulesync only for harness-specific
-spelling. Packaging verifies the bundle against its source and includes its third-party notices;
-runtime execution authenticates the bundle bytes before loading them. Cockpit
-owns declaration merge, restriction policy, MCP approval, sibling projection, capability state,
-output inventory, ownership, and publication. A generator result is accepted only when its
-reported inventory matches the files read back from its isolated output directory.
+The generator uses a checked-in, SHA-pinned bundle of Rulesync only to spell the output for each
+harness. Packaging verifies the bundle against its source and includes its third-party notices,
+and cockpit checks the bundle's bytes before loading it. Cockpit itself handles declaration merging,
+restriction policy, MCP approval, sibling guide links, capability state, the list of output files,
+ownership, and publication. It accepts a generator result only when the files the generator
+reports match the files read back from its isolated output directory.
 
 Setting `[surfaces].bundles = ["claudecode-plugin"]` also publishes the generated Claude plugin
-bundle directory at **.cockpit/bundles/claudecode-plugin/**. It contains a manifest and the applicable generated
-skills, subagents, hooks, and MCP declaration. These files use the same ownership transaction
-and drift check as other surfaces. An unmanaged file in that directory remains untouched.
-Publication alone does not show that Claude loaded the bundle; that needs a native run.
+bundle directory at **.cockpit/bundles/claudecode-plugin/**. It contains a manifest and the
+generated skills, subagents, hooks, and MCP declaration that apply. These files use the same
+ownership and drift check as other surfaces. A file in that directory that cockpit does not own is
+left alone. Writing the bundle does not show that Claude loaded it; that needs a run in Claude Code.
 
 ## Capability states
 
-Each feature is represented as `enforced`, `instructed`, or `unavailable`:
+Each feature (rules, MCP servers, subagents, skills, hooks, permissions) has one of three states
+per harness. The same words are defined in
+[Concepts](concepts.md#enforced-instructed-and-unavailable).
 
-- `enforced` has a mechanism that can refuse the prohibited operation and still requires the
-  dated evidence named by its declaration.
-- `instructed` emits guidance or a harness setting whose enforcement has not been established.
-- `unavailable` emits no pretend control and records why the harness cannot provide it.
+- `enforced`: the harness has a mechanism that can refuse the forbidden operation, and a dated
+  test with a deliberately broken control has confirmed it.
+- `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the
+  harness obeys it.
+- `unavailable`: cockpit writes nothing for this feature and records why the harness cannot
+  provide it.
 
-Built-in generation covers rules, MCP servers, subagents, skills, hooks, and permissions. The
-shared guard is generated only for targets with an admitted adapter. Native spellings differ,
-and generated output does not promote an unmeasured native capability. A custom harness must
-declare exactly one row for every feature.
-Each non-unavailable row names a measured date, output spelling, deliberately broken control,
-and bounded module export. Custom modules must be self-contained: cockpit imports the exact
-authenticated module bytes, and relative dependency imports are refused. The worker may write
-only to its temporary scratch directory; it receives no child-process, worker-thread, or native
-addon permission. If the installed Node runtime cannot provide filesystem permissions, cockpit
-refuses execution. These permissions limit ordinary filesystem writes and do not establish a
-sandbox for malicious code. Cockpit authenticates the module source and result;
-declaring a capability without a receipt is insufficient. For a custom row declared `enforced`,
-Cockpit also requires the named evidence file to match its declared SHA-256 before invoking the
-module and rechecks the file before publication. That byte match binds the declaration to a
-specific artifact; native enforcement still needs a separate paired probe.
+Native spellings differ per harness, and generating a file never upgrades a state: a feature moves
+to `enforced` only after a test of the real tool says so.
+
+The shared guard is generated only for harnesses that have a checked-in guard adapter (Claude Code,
+Codex and OpenCode). The guard scripts deny, and fail closed, whenever a harness runs them. Whether
+each harness actually runs them on a tool call is not yet confirmed for any harness: every
+guard-firing cell is `instructed`, pending a test.
+
+Cursor and Grok Build are different. Cockpit does generate rules, skills, subagents, hooks, MCP
+and permission files for them (`rulesyncFeatures` in
+[the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts)). Nobody has verified
+that either tool loads those files, and cockpit installs no guard hook for them. The generated
+[capability matrix](capability-matrix.md) currently lists them as `unavailable`, which by the
+definition above would mean cockpit emits nothing. That label is wrong for these two harnesses. The
+accurate state is "generated, not yet verified", and this page uses it below.
+
+A custom harness must declare exactly one row for every feature. Each row that is not
+`unavailable` names a test date, the output spelling, a deliberately broken control, and the
+module export that produces it. Custom modules must be self-contained: cockpit imports the module
+only if its bytes match the declaration, and refuses relative imports of other files. The module
+runs in a worker that can write only to its own temporary directory and cannot start child
+processes, worker threads, or native addons. If the installed Node.js cannot restrict filesystem
+access, cockpit refuses to run it. These limits restrict ordinary file writes; they are not a
+sandbox against malicious code. Cockpit checks the module's source and its result, so declaring a
+capability without a recorded test result is not enough. For a custom row declared `enforced`,
+cockpit also requires the named evidence file to match its declared SHA-256 before it runs the
+module, and checks it again before publishing. That ties the declaration to one specific file;
+confirming real enforcement still needs a separate paired test of the tool.
 
 ### Built-in capability matrix
 
-The renderer publishes Rulesync output for all built-in targets. Native capability stays
-`unavailable` for Cursor and Grok Build until an authenticated candidate and deliberately broken
-control have been measured.
+The renderer writes output for all five built-in harnesses. Cursor and Grok Build read "generated,
+not yet verified" for the reason given in [Capability states](#capability-states).
 
-| Feature | Claude Code | Codex | OpenCode | Cursor | Grok Build | Current evidence boundary |
+| Feature | Claude Code | Codex | OpenCode | Cursor | Grok Build | Still unconfirmed |
 |---|---|---|---|---|---|---|
-| Rules | instructed | instructed | instructed | unavailable | unavailable | Native instruction loading needs a paired probe. |
-| MCP | instructed | instructed | instructed | unavailable | unavailable | Approval controls generated enablement; native loading is unproven. |
-| Subagents | instructed | instructed | instructed | unavailable | unavailable | Native role behavior needs evidence. |
-| Skills | instructed | instructed | instructed | unavailable | unavailable | Native parity and required human reviews remain pending only for admitted candidates. |
-| Hooks | instructed | instructed | instructed | unavailable | unavailable | Generated hook files do not establish that the harness invokes them. |
-| Permissions | instructed | instructed | instructed | unavailable | unavailable | Generated permission files do not establish native loading; the shared guard remains unavailable without an admitted adapter. |
+| Rules | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | Whether the tool loads the instructions needs a paired test. |
+| MCP | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | Your approval controls which servers are enabled in the generated files; loading by the tool is unproven. |
+| Subagents | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | How the tool applies the role needs a test. |
+| Skills | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | Matching behaviour across tools and the required human reviews are still pending. |
+| Hooks | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | A generated hook file does not show that the harness runs it. |
+| Permissions | instructed | instructed | instructed | generated, not yet verified | generated, not yet verified | A generated permission file does not show that the tool loads it. Cursor and Grok Build have no guard adapter, so no guard is generated for them. |
 
 The checked-in guard adapters (the
 [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),
 [Codex](../packages/cockpit/surfaces/guards/codex.adapter.json) and
-[OpenCode](../packages/cockpit/surfaces/guards/opencode.adapter.json) adapters) record historical
-transport measurements. Each harness's recorded version, date and probe are in the
-[capability matrix](capability-matrix.md).
+[OpenCode](../packages/cockpit/surfaces/guards/opencode.adapter.json) adapters) record how the
+guard talks to each harness, tested on an older version. Each harness's recorded version, date and
+test are in the [capability matrix](capability-matrix.md). Those versions say nothing about the
+version you have installed.
 
-The recorded versions are not claims about a currently installed harness.
-[Restriction expansion](../packages/cockpit/src/surfaces/restrictions.ts) authenticates the
-adapter provenance but emits `instructed`/`pending_evidence`, including native read-only
-fragments. An unavailable adapter emits no control and records `unavailable`/`not_applicable`.
-Codex and OpenCode have no prompt tier, so ask decisions become denials.
-[Rendering](../packages/cockpit/src/surfaces/render.ts) preserves those states;
-[selftest planning](../packages/cockpit/src/surfaces/selftest.ts) derives the candidate's
-instruction-loading, guard-firing and per-skill matrix. Use the
-[selftest evidence procedure](#skills-and-selftest-evidence) to measure that exact candidate
-beside broken controls. Historical adapter provenance never promotes current native cells.
+[Restriction expansion](../packages/cockpit/src/surfaces/restrictions.ts) checks the adapter's
+recorded details but still emits `instructed` with a `pending_evidence` status, including
+native read-only settings. A harness without an adapter gets no control and is recorded as
+`unavailable`/`not_applicable`. Codex and OpenCode have no prompt tier, so "ask" decisions become
+denials. [Rendering](../packages/cockpit/src/surfaces/render.ts) keeps those states, and
+[selftest planning](../packages/cockpit/src/surfaces/selftest.ts) works out which
+instruction-loading, guard-firing and per-skill tests to run for a given candidate. Use the
+[selftest procedure](#skills-and-selftest-evidence) to test that candidate beside broken controls.
+An old adapter record never upgrades a current cell.
 
 ## MCP servers and restrictions
 
@@ -126,49 +144,49 @@ credential-like arguments, environment values that are not same-name references,
 directories outside the declared sibling. Generated wrappers start with an empty environment
 and pass only the declared environment names.
 
-Browser transport is published only for its eligible declared harnesses. A target with no applicable
+Browser transport is published only for harnesses that can use it. A harness with no applicable
 MCP server receives no MCP-only output; its instructions, skills and permissions still publish.
 This keeps browser access scoped without blocking the rest of the harness estate. Run
 `./node_modules/.bin/cockpit sync --config cockpit.toml`, then
 `./node_modules/.bin/cockpit check --config cockpit.toml --json` to verify
 the generated estate.
 
-Restriction policy comes from `[guards]`. Cockpit expands one shared guard through measured
-per-harness adapters. A harness event with no measured adapter stays unavailable. Codex has no
+Restriction policy comes from `[guards]`. Cockpit expands one shared guard through a tested
+adapter for each harness. A harness event with no adapter stays unavailable. Codex has no
 prompt tier, so policy configured as ask for Codex is rendered as deny rather than allowed.
-Read-only subagent support is reported independently because an instruction-only restriction is
+Read-only subagent support is reported on its own because an instruction-only restriction is
 weaker than a native tool restriction.
 
 ## Sibling projection and standing cost
 
-Sibling guides are observed from declared roots, content-digested, and projected through native
-root instructions and confined symlinks. A projection is refused if the guide changes between
-observation and planning, escapes its root, conflicts with the mount or directory grant, or
-would replace an unmanaged link. The generated state records both the link target and the source
-content identity.
+Cockpit reads each sibling's guide from its declared root, records a digest of its content, and
+links it into the generated root instructions through confined symlinks. It refuses a link if the
+guide changes between reading and planning, escapes its root, conflicts with the mount or directory
+grant, or would replace a link cockpit does not own. The generated state records both the link
+target and a digest of the source content.
 
-Codex sibling grants are core-owned `sandbox_workspace_write.writable_roots` entries under
-`sandbox_mode = "workspace-write"`. Cockpit keeps them checkout-relative so clones do not drift,
-and emits no competing permission profile because Codex would ignore it when the workspace-write
-settings are present. This is generated configuration with `pending_evidence`, not a claim of
-current native enforcement; run the paired [capability procedure](#skills-and-selftest-evidence)
+Codex sibling grants are `sandbox_workspace_write.writable_roots` entries that cockpit writes under
+`sandbox_mode = "workspace-write"`. Cockpit keeps them relative to the checkout so clones do not
+drift, and emits no competing permission profile because Codex would ignore it when the
+workspace-write settings are present. This is generated configuration with `pending_evidence`, not a
+claim that Codex enforces it; run the paired [capability procedure](#skills-and-selftest-evidence)
 before promoting that matrix cell.
 
-The `[cockpit].guide_cap` limit applies to always-loaded guidance. Cockpit reports the measured
-line cost per harness only when it has a dated load characterization. When a harness loads every
-rule regardless of scope, scoped text still counts toward that total. Missing characterization
-is `unavailable`, not zero.
+The `[cockpit].guide_cap` limit applies to always-loaded guidance. Cockpit reports the line cost per
+harness only when it has a dated test of how that harness loads guidance. When a harness loads every
+rule regardless of scope, scoped text still counts toward that total. A harness with no such test is
+`unavailable`, not zero.
 
 ## Skills and selftest evidence
 
 Shipped skills have small entry points and shared procedures. Each skill declares its trigger,
-native tool equivalents, allowed cockpit commands, side effects, non-goals, review requirements,
-and line cap. The renderer refuses embedded decision logic, undeclared commands, missing native
-tool equivalents, missing procedures, duplicate identities, and standing-cost overflow. Codex
-also receives its generated skill sidecar.
+the equivalent tool name in each harness, the cockpit commands it may run, what it changes, what it
+must not do, its review requirements, and a line cap. The renderer refuses embedded decision logic,
+undeclared commands, missing tool equivalents, missing procedures, duplicate names, and skills that
+exceed the always-loaded size limit. Codex also receives its generated skill sidecar.
 
-`selftest` consumes a measured probe-specification artifact tied to both the current source
-digest and generated manifest:
+`selftest` reads a probe-specification file that is tied to both the current source digest and the
+generated manifest:
 
 ```sh
 cockpit selftest --interactive \
@@ -178,36 +196,36 @@ cockpit selftest --interactive \
 
 For built-in harnesses, it runs each candidate beside a deliberately broken control and captures
 version, help, candidate, and broken-control events. The configured command first runs the read-only generated
-environment check and refuses an absent, malformed, stale, or provenance-mismatched artifact.
-Interactive mode requires a terminal. Before executing any submitted vector, it displays the
-canonical artifact path, whole-file SHA-256, bound source and manifest digests, and each exact
-invocation, version, and help command. You must type that artifact digest, then approve
-each resolved executable by its displayed absolute path and SHA-256. It is unavailable in CI and
+environment check and refuses a file that is missing, malformed, stale, or does not match the
+current source and manifest.
+Interactive mode requires a terminal. Before it runs any command from the file, it shows the
+file's canonical path, its whole-file SHA-256, the source and manifest digests it is tied to, and
+each exact invocation, version, and help command. You type that file digest, then approve
+each executable by its displayed absolute path and SHA-256. It is unavailable in CI and
 JSON mode.
-Custom cells remain `human_needed` until an approved exact probe is available.
-Generated custom-module checks do not authorize a constructed worker command.
-Without that approval, or when process isolation cannot be established, the cell remains
-`human_needed`. Claude Code and Codex skill reviews also remain
-`human_needed` until the required official-authoring or native-diagnostics evidence is attached.
-Repository tests and generated receipts do not promote those native or human rows.
+Custom cells stay `human_needed` until you approve an exact probe.
+A passing check of a custom module does not approve a worker command that cockpit built.
+Without that approval, or when cockpit cannot isolate the process, the cell stays
+`human_needed`. Claude Code and Codex skill reviews also stay
+`human_needed` until the required official-authoring or native-diagnostics results are attached.
+Repository tests and generated records do not promote those native or human rows.
 
-Legacy adapter evidence, command vectors and captured output are bounded before parsing. The
-[evidence validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) owns the current
-limits. Changed
-files and non-regular files refuse. These receipts retain their historical capability strength;
-passing their validator does not promote a native capability.
+Cockpit limits the size of legacy adapter records, command vectors and captured output before it
+parses them. The [validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) holds the
+current limits. It refuses changed files and files that are not regular. These records keep their
+original capability strength; passing the validator does not promote a native capability.
 
 ## Review an upgrade
 
-`upgrade` is a read-only plan. Without explicit release evidence, it fails closed with
-`UPGRADE_VERSION_AMBIGUOUS`. To inspect a candidate, supply an exact release-evidence file and
-its independently obtained SHA-256 with `--release-evidence` and
-`--release-evidence-sha256`. Cockpit checks the file bytes before parsing, then compares its
-current package name and version against the installed cockpit package and requires a strictly newer
-candidate version. It reports the attested release integrity, checks installed integrity when that
-identity is available, and joins core originals with the locally authenticated active overrides.
+`upgrade` is a read-only plan. Without release evidence it fails with
+`UPGRADE_VERSION_AMBIGUOUS`. To inspect a candidate, pass an exact release-evidence file and
+its SHA-256, obtained separately, with `--release-evidence` and
+`--release-evidence-sha256`. Cockpit checks the file's bytes before parsing, then compares its
+package name and version with the installed cockpit package and requires a strictly newer
+candidate version. It reports the release's integrity value, checks the installed integrity when
+that is available, and lists the originals that your active overrides replace.
 A digest computed from an untrusted file alone does
-not establish a publisher or release identity; obtain it from the approved release attestation.
+not show who published the release; take it from the approved release attestation.
 The command does not query a floating package tag, install anything, or modify the checkout.
 
 Review the reported versions, integrity, and every affected override. Upgrade the dependency
@@ -221,13 +239,13 @@ core bytes.
 
 ## Implementation and verification routes
 
-All owners below are under `packages/cockpit/src/`. Thin command adapters bind these owners
-through `packages/cockpit/src/cli.ts`; all process dispatch crosses
-[the sole executor](../packages/cockpit/src/environment-exec/execute.ts).
+Every file below is under `packages/cockpit/src/`. Thin command adapters connect these modules
+through `packages/cockpit/src/cli.ts`; all process dispatch goes through
+[the single executor](../packages/cockpit/src/environment-exec/execute.ts).
 
-| Responsibility | Owner | Focused test file |
+| Responsibility | Module | Focused test file |
 |---|---|---|
-| Generator admission and deterministic passes | [surfaces/generator-adapter.ts](../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-adapter.test.ts` |
+| Generator input checks and deterministic passes | [surfaces/generator-adapter.ts](../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-adapter.test.ts` |
 | Combined core/plugin dispatch and worker recovery | [surfaces/generator-adapter.ts](../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-estate.test.ts` |
 | Final surface rendering | [surfaces/render.ts](../packages/cockpit/src/surfaces/render.ts) | `packages/cockpit/src/surfaces/render.test.ts` |
 | Overlay merge | [surfaces/merge.ts](../packages/cockpit/src/surfaces/merge.ts) | `packages/cockpit/src/surfaces/merge.test.ts` |
@@ -236,14 +254,14 @@ through `packages/cockpit/src/cli.ts`; all process dispatch crosses
 | Sibling guides and grants | [surfaces/projection.ts](../packages/cockpit/src/surfaces/projection.ts) | `packages/cockpit/src/surfaces/projection.test.ts` |
 | Skills | [surfaces/skill-contract.ts](../packages/cockpit/src/surfaces/skill-contract.ts) | `packages/cockpit/src/surfaces/skill-contract.test.ts` |
 | Owned regions, changes and drift | [surfaces/ownership.ts](../packages/cockpit/src/surfaces/ownership.ts), [surfaces/sync.ts](../packages/cockpit/src/surfaces/sync.ts) | `packages/cockpit/src/surfaces/ownership.test.ts`, `packages/cockpit/src/surfaces/sync.test.ts` |
-| Publication input authentication | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.authentication.test.ts` |
+| Checking publication inputs | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.authentication.test.ts` |
 | Durable manifest and publication | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.publication-bounds.test.ts`, `packages/cockpit/src/generated-environment/command.publication-core.test.ts`, `packages/cockpit/src/generated-environment/command.publication-custom.test.ts`, `packages/cockpit/src/generated-environment/command.publication-native.test.ts` |
 | Repair and recovery | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
-| Selftest evidence | [surfaces/selftest.ts](../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.test.ts`, `packages/cockpit/src/selftest/command.native-execution.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.test.ts` |
-| Operator approval | [environment/operator-application.ts](../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
-| Configured upgrade evidence | [environment/upgrade-application.ts](../packages/cockpit/src/environment/upgrade-application.ts) | `packages/cockpit/src/upgrade/command.test.ts` |
+| Selftest | [surfaces/selftest.ts](../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.test.ts`, `packages/cockpit/src/selftest/command.native-execution.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.test.ts` |
+| Human approval prompts | [environment/operator-application.ts](../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
+| Upgrade plan | [environment/upgrade-application.ts](../packages/cockpit/src/environment/upgrade-application.ts) | `packages/cockpit/src/upgrade/command.test.ts` |
 
 From this repository, run `npm test -- packages/cockpit/src/<test-file>`
-with the listed file. [Troubleshooting](troubleshooting.md#focused-harness-verification) maps
-failure families to exact commands, including a bounded publication-recovery regression.
-Repository tests verify source behavior; they do not substitute for native selftest evidence.
+with the listed file. The contributor page `docs/contributing/testing.md` maps
+failure families to exact commands, including a regression test for publication recovery.
+Repository tests check source behavior; they do not replace a selftest of the real tool.

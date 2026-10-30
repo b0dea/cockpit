@@ -2,17 +2,17 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide is for users choosing between a direct fix and a durable work order, then collecting
-independent grading, browser evidence and the right test tier for that choice.
+This guide is for users choosing between a direct fix and a durable [work order](concepts.md#work-order),
+then getting independent grading, browser checks and the right test tier for that choice.
 
 All `work-*` and `browser-*` commands are experimental. Their interfaces may change before a
 stable release; use the command-specific help as the current contract.
 
-## Declare work and preserve its authority
+## Declare work and the files it may change
 
-The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill drives the browser commands in [Browser evidence](#browser-evidence) and reports findings with evidence without editing code.
+The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill runs the browser commands in [Browser evidence](#browser-evidence) and reports what it saw, with proof, without editing code.
 
-<!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The intent is a JSON file, not a sentence or a work-order document. Cockpit reads its upstream artifact, checks routing and capacity, and only then reads a candidate. A fix creates no work-order files. A work-order route returns `candidateRequired: true`; follow the examples below to prepare a draft. Existing orders can be inspected with `--work-order WO-001`.
+<!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The intent is a JSON file, not a sentence or a work-order document. Cockpit reads the upstream file, checks which route applies and whether there is capacity, and only then reads a candidate. A fix creates no work-order files. A work-order route returns `candidateRequired: true`; follow the examples below to prepare a draft. Existing orders can be inspected with `--work-order WO-001`.
 
 ### Intent descriptor
 
@@ -29,11 +29,11 @@ Save this as `intents/task.json`, relative to the directory containing `cockpit.
 }
 ```
 
-Every field shown is required; extra fields refuse. `version` is the descriptor format. `kind` is
+Every field shown is required; extra fields are refused. `version` is the descriptor format. `kind` is
 `task`, `issue`, `spec`, `decision` or `programme`; `reference` is an existing contained file,
 even for an external issue: first record the relevant request in that file. `certification` and
-`crossSession` are booleans describing independent certification and durable handoff. Either true
-selects a work order. `programme` is `null` for standalone work or the declared programme slug;
+`crossSession` are booleans: whether someone else must certify the result, and whether the work must
+survive a change of session. Either true selects a work order. `programme` is `null` for standalone work or the declared programme slug;
 a programme also selects a work order. With both booleans false and `programme: null`, intake
 returns the fix route without reading a candidate or creating work-order files.
 
@@ -55,7 +55,7 @@ Keep the current cache interface and storage provider.
 
 ### Draft contract
 
-<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Save this as `drafts/task.md`. Choose an unused work-order ID; intake checks repository refs and linked worktrees as well as current orders. Keep every canonical heading and the parser's bounded, sourced acceptance criteria. Authority lists exact files, including the intent's upstream file, so the draft binds the request being admitted. Verification rows are argument arrays, not shell strings; they declare future checks and do not claim those checks ran.
+<!-- cockpit:ref path=packages/cockpit/src/work-orders/contract.ts --> Save this as `drafts/task.md`. Choose an unused work-order ID; intake checks repository refs and linked worktrees as well as current orders. Keep every heading shown and give every acceptance criterion a source, within the parser's limits. Authority lists exact files, including the intent's upstream file, so the draft is tied to the request it answers. Verification rows are argument arrays, not shell strings; they declare checks to run later and do not claim those checks ran.
 
 ```markdown
 ---
@@ -108,10 +108,10 @@ none: The current interface remains unchanged.
 ```
 
 Source provenance is `read` for inspected file bytes, `inferred` for a reasoned conclusion, or
-`operator-confirmed` for a fact the operator confirmed. Cockpit re-reads `read` sources; other
-provenance labels do not establish file inspection. Keep those distinctions truthful and record
-unresolved questions in the audit rather than inventing answers. Keep the draft's `Evidence` empty
-until evidence exists; intake never certifies the implementation.
+`operator-confirmed` for a fact a person confirmed. Cockpit re-reads `read` sources; the other
+labels do not show that a file was inspected. Label each source truthfully and record
+unresolved questions in the audit rather than inventing answers. Keep the draft's `Evidence` section empty
+until there is something to record; intake never certifies the implementation.
 
 ### Adjacent source audit
 
@@ -137,31 +137,31 @@ execution. An empty `gaps` array means this audit found no material gaps.
 }
 ```
 
-Inspect applicable repository- and user-installed thinking, research, specification and planning
-skills before compiling the draft. Name the actual auditor, use `read` or `operator-confirmed`
-provenance for that inspection, and record its choices under `skills.rows`. The audited empty
-selection above records that inspection found no applicable skill; it is not permission to skip
-inspection or the source audit. Semantic applicability is instructed and human-reviewed. A generated
-skill inventory or a byte hash alone does not prove discovery or applicability.
+Before writing the draft, look through the thinking, research, specification and planning skills
+installed in the repository and for the user. Name the real auditor, use `read` or `operator-confirmed`
+provenance for that look, and record your choices under `skills.rows`. The empty selection above
+means the look found no applicable skill; it does not let you skip the look or the source audit.
+Whether a skill applies is a judgment that is instructed and reviewed by a person. A generated
+skill list or a file hash does not show that a skill was found or applies.
 
 Both `skills.auditor` and each skill row's `reference` must start with an ASCII letter or digit,
 then contain only ASCII letters, digits, `.`, `_` or `-`, within the
-[audit reader's length bound](../packages/cockpit/src/work-orders/composition.ts); use identifiers
+[length limit in the audit reader](../packages/cockpit/src/work-orders/composition.ts); use identifiers
 such as `reviewer-name` and `planning`.
 
 Each optional row has `scope` (`repository` or `user`), a logical `reference`, `category`
 (`thinking`, `research`, `specification`, `planning` or `other`), boolean `applicable`, a nonempty
 `reason`, and `sourceIds` naming contract sources produced or informed by that skill. An applicable
 row outside `other` requires linked source IDs. Add the skill's output as a contract source and
-match it in the audit; do not substitute the skill text for its output. Record inspected but
+match it in the audit; do not use the skill's own text in place of its output. Record inspected but
 inapplicable skills with `applicable: false`, the reason, and `sourceIds: []` when no output applies.
 
 Repository rows additionally require `path`, a contained file relative to the cockpit root, and
-`sha256`, the lowercase SHA-256 digest of its inspected bytes. Cockpit rechecks that binding.
-User rows have neither `path` nor `sha256`: their references stay opaque logical identifiers,
-not home-directory paths. All row fields are closed; include only the fields for its scope.
+`sha256`, the lowercase SHA-256 digest of the file you inspected. Cockpit rechecks it.
+User rows have neither `path` nor `sha256`: their references are plain names,
+not home-directory paths. Rows accept no other fields; include only the fields for their scope.
 
-Publish only after the route admits the draft:
+Publish only after the route accepts the draft:
 
 ```sh
 cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md
@@ -169,60 +169,58 @@ cockpit work-status --config cockpit.toml --work-order WO-004 --json
 ```
 
 Successful intake publishes the matched pair under `workorders/WO-004.md` and
-`workorders/WO-004.source-audit.json`, retaining `draft` status. It creates no accepted state or
-verification proof. Continue through [Accept and resume](#accept-and-resume); the operator's
-interactive acceptance is a separate step.
+`workorders/WO-004.source-audit.json`, retaining `draft` status. It does not accept the work order or record any verification. Continue with [Accept and resume](#accept-and-resume); a person accepts the order interactively as a separate step.
 
 ### Programme and capacity
 
-<!-- cockpit:ref command=work-programme-mint --> Programme intent remains in one ordered ledger. `cockpit work-programme-mint --config cockpit.toml --programme release` reports the first unminted item as a provisional candidate request. Candidate validation checks predecessor completion, shippability and remaining capacity. Future item folders are unnecessary. Candidate publication rechecks the current ledger, identity and capacity.
+<!-- cockpit:ref command=work-programme-mint --> A programme keeps its intent in one ordered ledger. `cockpit work-programme-mint --config cockpit.toml --programme release` reports the first item not yet minted as a provisional candidate request. Validation checks that earlier items are complete and shippable and that capacity remains. You do not need folders for future items. Publishing a candidate checks the ledger, the identity and the capacity again.
 
-<!-- cockpit:ref schema=workorders.wip_cap --> <!-- cockpit:ref schema=workorders.programme_wip_cap --> <!-- cockpit:ref schema=workorders.attempt_cap --> The configured cockpit, programme WIP and attempt caps are positive integers bounded by the [configuration schema](configuration-reference.md). At the configured attempt cap, record root-cause analysis and choose a different approach before execution resumes. Unresolved human-input gaps also block execution. Historical state remains readable; current execution uses the issued policy.
+<!-- cockpit:ref schema=workorders.wip_cap --> <!-- cockpit:ref schema=workorders.programme_wip_cap --> <!-- cockpit:ref schema=workorders.attempt_cap --> The configured cockpit, programme WIP and attempt caps are positive integers, with limits set by the [configuration schema](configuration-reference.md). At the configured attempt cap, record root-cause analysis and choose a different approach before execution resumes. Unresolved questions for a human also block execution. Older state stays readable; new execution uses the current policy.
 
-Repository identities admit exact, nonzero SHA-1 or SHA-256 Git object IDs. Identity inspection
+Repository identities accept only exact, nonzero SHA-1 or SHA-256 Git object IDs. The identity check
 covers local and remote branches and linked worktrees; tags alone do not reserve an identity.
-Malformed or null object IDs refuse instead of becoming durable source evidence.
+Malformed or null object IDs are refused rather than recorded as a source.
 
 ## Accept and resume
 
-<!-- cockpit:ref command=work-accept --> <!-- cockpit:ref command=work-renew --> Acceptance and renewal require an interactive terminal and the displayed current contract digest. JSON, CI and noninteractive calls cannot accept work. An answer is consumed by the same running process; changed contracts and replayed continuations refuse.
+<!-- cockpit:ref command=work-accept --> <!-- cockpit:ref command=work-renew --> Acceptance and renewal need an interactive terminal and the contract digest it displays. JSON, CI and non-interactive calls cannot accept work. The same running process must read the answer; a changed contract or a replayed answer is refused.
 
-<!-- cockpit:ref command=work-status --> <!-- cockpit:ref command=work-resume --> Status separates checked local proof from CI, runtime and deployment evidence. Selected source evidence is re-read even when its file is excluded from repository change observations; changed bytes are stale and unreadable or missing bytes are unavailable. Resume selects the next step with current prerequisites and no unresolved blocker. Durable acceptance survives a new process; it is re-admitted from its stored exact contract and generation rather than reconstructed by casting JSON into an issued value. These local integrity records assume a trusted host; they do not establish signer identity against a writer that can replace both the records and enforcement code.
+<!-- cockpit:ref command=work-status --> <!-- cockpit:ref command=work-resume --> Status keeps proof from local checks apart from proof from CI, the runtime and deployment. Source files you chose as sources are re-read even when they are excluded from repository change tracking; changed bytes make a record stale, and unreadable or missing bytes make it unavailable. Resume picks the next step whose prerequisites are current and that has no unresolved blocker. Acceptance survives a new process: cockpit re-checks it against the stored contract and generation. These local integrity records assume a trusted host. They cannot show who wrote them if a writer can replace both the records and the code that checks them.
 
-<!-- cockpit:ref command=work-recover --> Interrupted transactions retain a named owner lock. Run `cockpit work-recover --config cockpit.toml --lock WO-001` with the exact lock identifier from the refusal to inspect its holder. Recovery requires an explicit `--apply` and fresh positive evidence that the recorded process is absent. Live, unavailable, malformed, or changed holder evidence refuses reclamation. Ordinary status and journal recovery never reclaim a lock; malformed owner evidence remains preserved for operator inspection.
+<!-- cockpit:ref command=work-recover --> An interrupted operation leaves a named lock behind. Run `cockpit work-recover --config cockpit.toml --lock WO-001` with the exact lock identifier from the refusal to inspect its holder. Recovery needs an explicit `--apply` and a fresh check showing that the recorded process is gone. If the holder is still running, cannot be checked, has a malformed record, or has changed, cockpit refuses to take the lock. Ordinary status and journal recovery never take over a lock, and a malformed lock record is kept for a person to inspect.
 
-<!-- cockpit:ref command=work-record --> `cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json` persists heartbeat, root-cause, gap-answer and decision events through the current accepted state and its owned writer. A source-evidence request may select a contained file; cockpit observes its bytes and binds the digest, current contract, repository revisions and working-tree content. Every repository binding requires both its revision and working-tree digest, so incomplete state refuses before use. Tracked and untracked source changes invalidate retained proof even when HEAD is unchanged. Cockpit's own transient files inside excluded coordination directories do not count as source changes. Attempts and step checks remain execution-owned, and callers cannot assert local, CI, runtime or deployment proof.
+<!-- cockpit:ref command=work-record --> `cockpit work-record --config cockpit.toml --work-order WO-001 --event-file events/progress.json` saves heartbeat, root-cause, gap-answer and decision events against the current accepted order. A source-evidence request may name a file inside the project; cockpit reads its bytes and records the digest together with the current contract, the repository revisions and the working-tree content. Each repository entry needs both its revision and its working-tree digest, so incomplete state is refused. Changes to tracked or untracked source files make saved proof stale even when HEAD has not moved. Cockpit's own temporary files in excluded coordination directories do not count as source changes. `work-execute` records attempts and step checks, not `work-record`, and callers cannot claim local, CI, runtime or deployment proof.
 
-<!-- cockpit:ref command=work-metrics --> Metrics expose their retained history coverage. Creation-to-first-movement time uses bounded Git creation evidence and immutable current-generation movement history when available. Missing history remains partial or unavailable; it is never converted to a zero-duration result.
+<!-- cockpit:ref command=work-metrics --> Metrics show how much history they cover. Time from creation to first movement uses Git creation history and the movement history of the current generation, when they exist. Missing history is reported as partial or unavailable; it is never turned into a duration of zero.
 
-<!-- cockpit:ref command=work-sweep --> <!-- cockpit:ref command=work-reverse --> The sweep groups untouched drafts by creation day and programme. When a group reaches the threshold owned by the [work-order composition](../packages/cockpit/src/work-orders/composition.ts), it proposes retaining the earliest identity and parking the others. Applying it persists the prior status; reversal checks the current parked state and its recorded provenance. Human parking is not automatically reversed.
+<!-- cockpit:ref command=work-sweep --> <!-- cockpit:ref command=work-reverse --> The sweep groups untouched drafts by creation day and programme. When a group reaches the threshold set in the [work-order composition](../packages/cockpit/src/work-orders/composition.ts), it proposes retaining the earliest identity and parking the others. Applying it saves each order's previous status; reversal checks that the order is still parked and who parked it. An order a person parked by hand is not reversed automatically.
 
 ## Verify and grade independently
 
-<!-- cockpit:ref command=work-execute --> <!-- cockpit:ref command=work-review --> <!-- cockpit:ref command=work-grade --> Execution uses the accepted contract’s declared verification commands. After substantial implementation and before grading, `work-review` authenticates the current subject and performs simplification followed by independent code and security review. Findings, dispositions and affected-proof reruns are retained. `work-grade` repeats the final review sequence, runs final declared verification and then invokes the independent grader. Changed authority refuses before grading. Completion requires the distinct non-author review lanes owned by the [review sequencer](../packages/cockpit/src/work-orders/review.ts), current evidence and an exclusive lock through readback and the completion sentinel.
+<!-- cockpit:ref command=work-execute --> <!-- cockpit:ref command=work-review --> <!-- cockpit:ref command=work-grade --> Execution runs the verification commands declared in the accepted contract. After substantial implementation and before grading, `work-review` checks that it is reviewing the current work, then simplifies it and runs an independent code review and security review. Findings, how each was resolved and reruns of affected proof are kept. `work-grade` repeats the final review sequence, runs the final declared verification and then calls the independent grader. It refuses to grade if the listed files have changed. Completion needs the separate review lanes, run by someone other than the author, that the [review sequencer](../packages/cockpit/src/work-orders/review.ts) defines, current results, and an exclusive lock held until cockpit has read the result back and written the completion marker.
 
-Authority references beginning with `siblings/`, followed by a declared repository name and a relative path, select files within that repository, including repositories outside the cockpit directory. Unqualified references remain relative to the cockpit. References to unknown repositories, escaped paths or symlinks are refused. Declared environment instances, credential files and browser authentication state cannot become evaluator artifacts or source evidence.
+A path in the Authority list that starts with `siblings/`, followed by a declared repository name and a relative path, names a file in that repository, even one outside the cockpit directory. Other paths are relative to the cockpit. Paths naming an unknown repository, escaping their root, or going through a symlink are refused. Declared environment instances, credential files and saved browser sign-in state can never be given to the evaluator or used as a source.
 
-Environment seeding declarations do not authorize evaluator access to credential-shaped paths. Public environment template names ending in `.example`, `.schema`, `.template` or `.sample` are allowed when no parent directory is credential-shaped and the file is neither a declared environment instance nor browser authentication state.
+Declaring seed data does not give the evaluator access to paths that look like credentials. Public environment templates with names ending in `.example`, `.schema`, `.template` or `.sample` are allowed when no parent directory looks like credentials and the file is neither a declared environment instance nor saved browser sign-in state.
 
-<!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator instructions describe its restraint. That restriction is instructed: it does not establish a native harness enforcement guarantee. Source tests and synthetic process fixtures establish their recorded local behavior; actual harness calls and human assessment require their own evidence.
+<!-- cockpit:ref path=packages/cockpit/surfaces/agents/evaluator.agent.md --> The shipped evaluator instructions tell it to restrain itself. That restriction is instructed, not enforced: no harness is confirmed to enforce it. Cockpit's source tests and synthetic fixtures show only the local behavior they test; real harness calls and human review need their own checks.
 
 ## Browser evidence
 
-<!-- cockpit:ref command=browser-drive --> <!-- cockpit:ref command=browser-accessibility --> <!-- cockpit:ref command=browser-screenshot --> <!-- cockpit:ref command=browser-debugger --> Browser operations consume the configured posture, approved Playwright declaration, issued runtime, declared application routes and an authenticated project client. Real authentication additionally binds the current namespace, stack and coordination owner. Serialized authentication holds the shared state lock. Per-worker authentication holds an exclusive claim for its declared worker across processes; distinct workers can operate concurrently. Missing or stale authority refuses. Application origins come from retained application ports; the control proxy does not become the application origin.
+<!-- cockpit:ref command=browser-drive --> <!-- cockpit:ref command=browser-accessibility --> <!-- cockpit:ref command=browser-screenshot --> <!-- cockpit:ref command=browser-debugger --> Browser commands use the configured browser setup, the approved Playwright declaration, the current runtime, the declared application routes and a project client that is allowed to connect. Real sign-in additionally ties the session to the current namespace, stack and [holder](concepts.md#holder). With serialized sign-in, the shared state lock is held. With per-worker sign-in, each declared worker holds an exclusive claim across processes; different workers can run at the same time. A missing or stale claim is refused. Application origins come from the recorded application ports; the control proxy is never used as the application origin.
 
-Declared application routes select the starting destinations for driving. Automated operations drive one page; secondary top-level page navigation is refused. HTTP requests and redirects use the browser's native networking, cookies and DNS. A receipt requires a successful terminal navigation and a stable displayed document on the current application origin. These checks verify evidence; they do not provide a network egress sandbox.
+Declared application routes select the starting destinations for driving. Automated operations drive one page; secondary top-level page navigation is refused. HTTP requests and redirects use the browser's native networking, cookies and DNS. A record is made only after navigation ends successfully on a stable page on the current application origin. These checks validate what the browser saw; they do not sandbox outgoing network traffic.
 
-Direct requests to known browser-control authorities and the underlying server port are refused. Browser-control publication is restricted to host loopback. The proxy checks the exact Host, rejects browser-origin requests and admits only the configured WebSocket handshake. Its upstream browser server uses an unpublished capability path; the proxy rewrites an admitted public path to that private endpoint. The configured network exposure controls browser-to-client reach and does not widen the control listener. Host, Origin and protocol checks protect host-loopback access from browser-origin and DNS-rebinding requests. They do not authenticate arbitrary local processes or services already on the generated stack network.
+Direct requests to the browser-control addresses and to the underlying server port are refused. Browser control is published only on the host's loopback interface. The proxy checks the exact Host header, rejects requests that come from a browser origin, and accepts only the configured WebSocket handshake. The browser server behind it listens on an unpublished secret path, and the proxy rewrites each accepted public path to that private endpoint. The configured network exposure controls what the browser can reach from the client and does not widen the control listener. The Host, Origin and protocol checks protect loopback access from web pages and DNS-rebinding attacks. They do not verify the identity of other local processes or of services already on the generated stack network.
 
-<!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> Screenshot receipts bind a contained artifact path and digest. Accessibility receipts retain the digest of the bounded captured ARIA state; they do not publish an accessibility snapshot file or establish complete accessibility certification. Every unique declared application route is covered; the debugger supplies no UI acceptance evidence. Native capability rows retain their measured version and date, and unavailable rows remain non-authorizing.
+<!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> A screenshot record holds the path of the saved image, which must be inside the project, and its digest. An accessibility record holds the digest of the captured ARIA state; it does not publish a snapshot file and is not a full accessibility audit. Every distinct declared application route is covered; the debugger gives no UI acceptance result. Each row in the capability matrix keeps its tested version and date, and an `unavailable` row never allows anything.
 
 ## Choose the proving test tier
 
 <!-- cockpit:ref command=test-run --> <!-- cockpit:ref schema=testing.gates --> Product stages and gates are declared in configuration. Use the narrowest proving gate for isolated behavior, and the complete declared gate for shared behavior. Documentation-only changes need no behavioral gate when behavior is unchanged.
 
-<!-- cockpit:ref path=packages/cockpit/src/testing/verdict.ts --> Only a complete, stable declared gate with passing observations can report PASS. Executed disagreement reports FAIL; unavailable or malformed evidence reports DEGRADED; otherwise changed or stale authority reports VOID; otherwise a subset or staged run reports PARTIAL. A target selector forwards the declared selection to the product tool and never substitutes a synthetic pass.
+<!-- cockpit:ref path=packages/cockpit/src/testing/verdict.ts --> Only a complete, stable declared gate whose checks all pass can report PASS. If a check ran and failed, the result is FAIL. If results are unavailable or malformed, it is DEGRADED. Otherwise, if the listed files changed or are stale, it is VOID. Otherwise, a subset or staged run is PARTIAL. A target selector passes your selection to the product's own tool and never substitutes a made-up pass.
 
-<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default. Explicit native output requires an authenticated ownership-bound policy and bounded cost measurement. Rendering a hook and an activation description does not activate the Git hook path. Actual installation and native effectiveness require separate operator evidence.
+<!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default. Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A person must install it and check separately that it works.
 
-See the generated [CLI reference](cli-reference.md), [configuration reference](configuration-reference.md), [capability matrix](capability-matrix.md) and [diagnostic index](troubleshooting.md) for the current declared surfaces and evidence strength.
+See the generated [CLI reference](cli-reference.md), [configuration reference](configuration-reference.md), [capability matrix](capability-matrix.md) and [diagnostic index](troubleshooting.md) for the current declared surfaces and how far each is confirmed.

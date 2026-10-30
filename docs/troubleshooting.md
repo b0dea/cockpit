@@ -2,8 +2,8 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page takes you from a cockpit diagnostic code to its remedy, the code that owns it, and the
-test that pins it. Look the code up in the index at the end; remedies grouped by family are in
+This page takes you from a cockpit diagnostic code to what it means and what to do about it. Look
+the code up in the index at the end; remedies grouped by family are in
 the [environment reference](environment.md#respond-to-diagnostic-codes).
 
 Human output spells common refusals as **What failed**, **Why it matters**, and **Fix**. Result
@@ -16,16 +16,16 @@ machine-readable envelope. Every public flag is described by its command help, f
 | Diagnostic | Why it stops | Fix |
 | --- | --- | --- |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun `cockpit init`. |
-| `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be authenticated. | Restore the named checkout at its declared path, then rerun `cockpit sync`. |
-| `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot prove which settings it may replace. | Restore the last committed ownership metadata, then rerun `cockpit sync`. |
-| `SURFACE_STATE_CONFLICT` | Sync would overwrite settings cockpit does not own. | Review the file and use `cockpit sync --adopt <path>` only with human approval. |
+| `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `cockpit sync`. |
+| `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `cockpit sync`. |
+| `SURFACE_STATE_CONFLICT` | Sync would overwrite settings cockpit does not own. | Review the file and use `cockpit sync --adopt <path>` only with a person's approval. |
 | `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `cockpit sync`, then retry. |
-| `GENERATED_OWNERSHIP_INVALID` | Publication has no authenticated file ownership. | Restore the committed ownership metadata, then rerun `cockpit sync`. |
-| `GUARD_AUTHORITY_UNAVAILABLE` | The guard has no current authority for a safe decision. | Restore `cockpit.toml` and generated guard files, then have a human run `cockpit sync`. |
+| `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `cockpit sync`. |
+| `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `cockpit sync`. |
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `cockpit sync`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached. | Start it, verify `docker info`, then retry. |
-| `RUNTIME_UNMEASURED` | The current runtime has no measured support row. | Run `cockpit runtime measure --image <ref> --write`, review the change, then retry. |
-| `CLAIM_CO_TENANT` | Another holder owns or uses the stack. | After a failed `up`, run `cockpit up` to resume or `cockpit down` to release. Otherwise, have every owning session run `cockpit sleep`, then retry. |
+| `RUNTIME_UNMEASURED` | The current runtime has no recorded support row. | Run `cockpit runtime measure --image <ref> --write`, review the change, then retry. |
+| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `cockpit up` to resume or `cockpit down` to release. Otherwise, have every session that holds the stack run `cockpit sleep`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `cockpit setup`. |
@@ -34,7 +34,7 @@ machine-readable envelope. Every public flag is described by its command help, f
 ## GENERATED_ARTIFACT_DRIFT
 
 **Cause.** An owned whole file, symlink target, or shared region differs from the canonical state
-derived from the authenticated environment and surface declarations or their sources. The
+derived from the environment and surface declarations and their sources. The
 [generated environment contract](environment.md#generated-environment) requires `check` to report
 that mismatch without changing any owned file.
 
@@ -54,38 +54,21 @@ cockpit sync --config ./cockpit.toml
 Do not edit the ownership manifest or lifecycle state. If changed bytes belong to a formerly
 owned path, preserve them until the declaration and ownership transition are understood.
 
-**Ownership and extension seam.** Transactional rendering, inspection, publication, and recovery
-belong to `packages/cockpit/src/environment/generated-application.ts`. The public type-preserving
-adapter is `packages/cockpit/src/generated-environment/command.ts`, and canonical stack rendering
-is in `packages/cockpit/src/environment/generated-stack.ts`. Product-specific services, paths,
-probes, data operations, and vendor values enter through `[environment.generated]` in
-<!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. The generated review record is
+Your product's services, paths, probes, data operations, and vendor values go in
+`[environment.generated]` in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`. Cockpit
+writes its review record to
 <!-- cockpit:ref consumer=docs/cockpit/environment-decisions.md --> `docs/cockpit/environment-decisions.md`.
-
-**Test.** The full `sync`/`check` path is covered by
-`packages/cockpit/src/generated-environment/command.publication-core.test.ts`, test title
-`synchronizes one owned manifest idempotently and checks without mutation`. Run exactly:
-
-```sh
-npm test -- packages/cockpit/src/generated-environment/command.publication-core.test.ts -t 'synchronizes one owned manifest idempotently and checks without mutation'
-```
-
-The candidate exit synchronizes canonical bytes, then completes `check` without mutation. The
-adjacent broken control changes the authenticated persona source while retaining the old generated
-bytes; `check` returns `GENERATED_ARTIFACT_DRIFT` for the persona output and leaves all owned bytes
-unchanged. This proves the repository's generated-file detector. It does not turn unavailable
-native runtime or vendor evidence into a measured result.
 
 ## Harness surface failures
 
 Start with the target and message in the diagnostic, then run `cockpit sync --config
 ./cockpit.toml --dry-run`. The preview performs full preparation without changing the checkout.
 After correcting the named declaration or source, repeat the preview before applying `sync`; use
-`check` to confirm the installed state. Do not edit the ownership manifest, generated shared
-region, or selftest evidence bundle to make a diagnostic disappear.
+`check` to confirm the installed state. Do not edit the ownership manifest, a generated shared
+region, or the selftest results to make a diagnostic disappear.
 
 `REGISTRY_INPUT_INVALID` or `REGISTRY_EFFECTIVE_CONFIG_INVALID` means the declared sibling
-row cannot produce one valid effective registry/configuration. Correct the named row and its
+row cannot produce one valid registry and configuration. Correct the named row and its
 derived service, mount, port, policy, or MCP source before retrying the preview.
 
 ### Merge, ownership, and generation
@@ -93,56 +76,55 @@ derived service, mount, port, policy, or MCP source before retrying the preview.
 `SURFACE_INPUT_INVALID`, `SURFACE_BOUNDS`, `SURFACE_NAME_DUPLICATE`,
 `SURFACE_KIND_AMBIGUOUS`, `SURFACE_OVERRIDE_INVALID`, `SURFACE_PATH_CONFLICT`, and
 `SURFACE_OWNERSHIP_INVALID` mean the canonical declarations, overlay identity, output paths, or
-captured output failed admission. Correct the target named by the diagnostic. For an override,
+captured output failed validation. Correct the target named by the diagnostic. For an override,
 compare it with the current core declaration and update
 <!-- cockpit:ref schema=surfaces.overlays[].replaces.sha256 --> `surfaces.overlays[].replaces.sha256` only after reviewing the
-new original. For a path conflict, change the declarations so one producer owns the path; do not
+new original. For a path conflict, change the declarations so one declaration produces the path; do not
 delete the existing path as a workaround.
 
 `SURFACE_STATE_CONFLICT` means a shared region, stale entry, symlink, or prior ownership record no
-longer matches the bytes cockpit previously owned. Preserve the current bytes and reconcile their
-owner before retrying. For a team's own `.claude/settings.json`, `.codex/config.toml` or
+longer matches the bytes cockpit wrote earlier. Keep the current bytes and work out who changed them
+before retrying. For a team's own `.claude/settings.json`, `.codex/config.toml` or
 `.codex/hooks.json`, the message names the `sync --adopt` command that keeps it; see
 [Adopt existing agent settings](adoption.md#adopt-existing-agent-settings).
 `SURFACE_ADOPTION_REFUSED` names the adopted key that would switch off or bypass the guard, or that
 cockpit writes with a different value; remove it from the named file and sync again.
-`SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be authenticated. Restore that source at its declared root and retry the dry run.
+`SURFACE_SOURCE_UNAVAILABLE` means a declared source or active sibling could not be read or checked. Restore that source at its declared root and retry the dry run.
 `SURFACE_CUSTOM_REFUSED` means the named custom harness module did not return a complete result
 bound to its declaration and source digest, or an `enforced` row's evidence file was missing or
-did not match its declared SHA-256. Inspect the module, evidence reference, and broken control.
+did not match its declared SHA-256. Inspect the module, the evidence file reference, and the broken control.
 
 `GENERATED_STALE_APPROVAL_REQUIRED` means a dry run identified stale entries but the apply has no
-independent approval for its exact digest. Use `sync --interactive` from a terminal outside CI,
+approval for its exact digest. Use `sync --interactive` from a terminal outside CI,
 review the listed entries, and type the displayed digest only if each removal is intended.
 `GENERATED_STALE_APPROVAL_INVALID` means the request could not be bound safely; inspect the
 reported path and current ownership before retrying. Neither code permits deleting the path by
 hand.
 
 `SURFACE_NODE_UNAVAILABLE`, `SURFACE_PACKAGE_UNAVAILABLE`, and
-`SURFACE_SCRATCH_UNAVAILABLE` identify a missing authenticated Node executable, the checked-in
-Rulesync generator bundle, or a safe staging directory. Restore the exact cockpit package artifact
+`SURFACE_SCRATCH_UNAVAILABLE` identify a missing Node executable, a missing or changed copy of the checked-in
+Rulesync generator bundle, or no safe staging directory. Restore the exact cockpit package artifact
 or the named local path. `SURFACE_STAGING_FAILED`, `SURFACE_WORKER_TIMEOUT`,
 `SURFACE_WORKER_SIGNAL`, `SURFACE_WORKER_NONZERO`, `SURFACE_WORKER_STDERR`,
 `SURFACE_WORKER_OUTPUT`, `SURFACE_OUTPUT_COVERAGE`, `SURFACE_FEATURE_COVERAGE`,
 `SURFACE_STAGE_VARIANCE`, `SURFACE_ARTIFACT_INVALID`, and `SURFACE_CLEANUP_FAILED` identify the
-bounded generator stage that failed. Use the captured target and stderr; do not run a second
-generator and treat its output as cockpit evidence. The outer `SURFACE_GENERATION_FAILED` retains
+generator stage that failed. Use the captured target and stderr; do not run a second
+generator and treat its output as cockpit's result. The outer `SURFACE_GENERATION_FAILED` retains
 that cause at the generated-environment boundary.
 
-`EXECUTION_TERMINATION_UNCONFIRMED` means the process owner could not confirm that a surface
+`EXECUTION_TERMINATION_UNCONFIRMED` means cockpit could not confirm that a surface
 worker stopped. Cockpit retains the private staging path named by the diagnostic. Stop the
 remaining workers before removing that directory, then retry the operation.
 
 `SURFACE_GENERATOR_TRUST_WARNING` is a warning attached to an emitted Claude settings file that
 changes additional-directory or MCP trust. Review that file before applying it; a warning does
-not establish native enforcement.
+not mean the harness enforces anything.
 
 ### MCP and restrictions
 
-For `MCP_INPUT_INVALID` or `MCP_DECLARATION_INVALID`, correct the bounded declaration, digest,
+For `MCP_INPUT_INVALID` or `MCP_DECLARATION_INVALID`, correct the declaration, digest,
 same-name environment reference, or confined working directory named by the message.
-`MCP_COMMAND_CONFLICT` means two authenticated sources give one server name different execution
-identities; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
+`MCP_COMMAND_CONFLICT` means two sources give one server name different commands; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
 server disabled; add it to `[mcp].approved` only after reviewing its command, arguments, working
 directory, environment names, and sources. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
 declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
@@ -151,90 +133,57 @@ executable is absent or not executable; restore that executable rather than chan
 For `RESTRICTION_INPUT_INVALID`, `RESTRICTION_POLICY_UNSUPPORTED`,
 `RESTRICTION_ADAPTER_INVALID`, `RESTRICTION_EVENT_UNADAPTED`,
 `RESTRICTION_TEMPLATE_INVALID`, or `RESTRICTION_OUTPUT_LIMIT`, correct the named guard policy,
-measured adapter, template, or bounded output. An unadapted event remains unavailable. Do not
+adapter, template, or output. An unadapted event remains unavailable. Do not
 replace it with an instruction and describe it as enforced.
 
 ### Sibling projection and skills
 
 `PROJECTION_INPUT_INVALID` and `PROJECTION_RESULT_BOUNDS` mean the projection request or result
-is not bounded canonical data. `PROJECTION_ROOT_AMBIGUOUS`, `PROJECTION_MOUNT_MISMATCH`, and
-`PROJECTION_GRANT_MISMATCH` require the canonical main checkout, active mount, and directory grant
+is not valid, size-limited data. `PROJECTION_ROOT_AMBIGUOUS`, `PROJECTION_MOUNT_MISMATCH`, and
+`PROJECTION_GRANT_MISMATCH` require the main checkout, active mount, and directory grant
 to agree. `PROJECTION_GUIDE_UNAVAILABLE`, `PROJECTION_GUIDE_ESCAPE`,
 `PROJECTION_GUIDE_READ_FAILED`, and `PROJECTION_GUIDE_CLOSE_FAILED` identify the named guide or
 its confined read. Restore a regular declared guide and safe root. `PROJECTION_GUIDE_CHANGED`
-means the guide changed after observation; stop the concurrent edit and retry from fresh evidence.
+means the guide changed after observation; stop the concurrent edit and retry from a fresh read.
 
 For `SKILL_INPUT_INVALID`, `SKILL_FRONTMATTER_INVALID`, `SKILL_CONTRACT_INVALID`,
 `SKILL_IDENTITY_INVALID`, `SKILL_NAME_DUPLICATE`, `SKILL_TOOL_EQUIVALENCE_MISSING`,
 `SKILL_PROCEDURE_MISSING`, `SKILL_COMMAND_UNDECLARED`, `SKILL_ENTRY_POINT_EXCEEDED`, or
 `SKILL_DECISION_LOGIC_EMBEDDED`, correct the shipped skill entry point or shared procedure named
 by the diagnostic. `SKILL_RENDER_INVALID` and `SKILL_RENDER_INVENTORY_INVALID` mean generated
-files do not match the admitted skill contract. `SKILL_STANDING_COST_EXCEEDED` requires reducing
-always-loaded skill entry points; moving decision logic into a different always-loaded file is
+files do not match the skill contract. `SKILL_STANDING_COST_EXCEEDED` means the always-loaded skill entry points are too large. Shrink them; moving decision logic into a different always-loaded file is
 not a repair.
 
 ### Selftest and upgrade
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification artifact path,
-source digest, generated-manifest digest, or bounded specification failed authentication. Produce
-a fresh measured artifact for the current generated manifest; do not edit the stored digests.
-`SELFTEST_EXECUTION_INVALID` also refuses an unapproved or mismatched probe artifact before any
-submitted command runs. Inspect its displayed whole-file digest and exact command vectors.
+source digest, generated-manifest digest, or specification size failed its check. Produce
+a fresh probe-specification file for the current generated manifest; do not edit the stored digests.
+`SELFTEST_EXECUTION_INVALID` also refuses an unapproved or mismatched probe file before any
+command in it runs. Inspect its displayed whole-file digest and exact command vectors.
 It can also mean a candidate, deliberately broken control, version/help event,
-transcript, or final evidence bundle did not establish the expected result. Inspect the named
-harness and retained bounded evidence. A missing executable, authentication requirement,
-unavailable isolation boundary, or pending enforcement probe remains `human_needed` until the
-manual action in the record is completed. Use `selftest --interactive` at a terminal outside CI;
-approve the full artifact digest and vectors first, then each executable path and SHA-256.
+transcript, or final result bundle did not give the expected result. Inspect the named
+harness and the retained output. A missing executable, a sign-in requirement,
+missing process isolation, or a pending enforcement probe stays `human_needed` until the
+manual action in the record is done. Use `selftest --interactive` at a terminal outside CI;
+approve the full file digest and commands first, then each executable path and SHA-256.
 Approval lasts only for that run.
 
 `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE`, `SURFACE_OVERRIDE_INSPECTION_REFUSED`,
 `SURFACE_OVERRIDE_INSPECTION_INVALID`, and `SURFACE_OVERRIDE_INSPECTION_PATH_MISMATCH` mean
-`doctor` could not authenticate its read-only override view. They do not mean there are no
+`doctor` could not produce its read-only override view. They do not mean there are no
 overrides; inspect the named generated source or configuration path before relying on that view.
 
-`UPGRADE_SOURCE_INVALID` means the configuration path was not admitted.
-`UPGRADE_NETWORK_FAILED` and `UPGRADE_AUTH_FAILED` mean authenticated discovery could not be
-completed; repair that source and retry. `UPGRADE_VERSION_AMBIGUOUS` means discovery did not
+`UPGRADE_SOURCE_INVALID` means the configuration path was not accepted.
+`UPGRADE_NETWORK_FAILED` and `UPGRADE_AUTH_FAILED` mean cockpit could not look up the release;
+repair that source and retry. `UPGRADE_VERSION_AMBIGUOUS` means discovery did not
 establish one compatible current and candidate package identity, version, and integrity. It is
 the expected fail-closed result when no release evidence is supplied or the candidate is not
-strictly newer. `UPGRADE_AUTH_FAILED` also covers a missing or mismatched evidence file, SHA-256,
+strictly newer. `UPGRADE_AUTH_FAILED` also covers a missing or mismatched release-evidence file, SHA-256,
 or installed package identity; obtain the expected digest from
 the release attestation, not from the suspect file. `UPGRADE_DISCOVERY_INVALID` means the discovery result or affected override list was
 malformed. `UPGRADE_REPAIR_UNVERIFIED` means the source cannot establish that an earlier repair
-completed. None of these codes authorizes an install or a manifest edit.
-
-## Focused harness verification
-
-For the owner and extension seam, follow the
-[implementation routes](harness-surfaces.md#implementation-and-verification-routes). Run the
-command for the changed failure family from this repository; these are synthetic source
-controls, not native harness evidence. The supported `npm test --` entry point fixes the worker
-limit at four, bounds execution and descendant cleanup, and records the latest JSON result at
-`.vitest-reports/latest.json`.
-
-| Failure family | Focused verification command |
-|---|---|
-| Declaration/overlay admission | `npm test -- packages/cockpit/src/surfaces/merge.test.ts` |
-| Generator inventory/determinism | `npm test -- packages/cockpit/src/surfaces/generator-adapter.test.ts` |
-| Combined core/plugin dispatch, input bounds and worker recovery | `npm test -- packages/cockpit/src/surfaces/generator-estate.test.ts` |
-| Custom/whole/shared output admission | `npm test -- packages/cockpit/src/surfaces/render.test.ts packages/cockpit/src/surfaces/ownership.test.ts` |
-| MCP declarations/wrappers | `npm test -- packages/cockpit/src/surfaces/mcp.test.ts` |
-| Restriction policy/adapters | `npm test -- packages/cockpit/src/surfaces/restrictions.test.ts` |
-| Sibling guides/grants | `npm test -- packages/cockpit/src/surfaces/projection.test.ts` |
-| Skill contracts/budgets | `npm test -- packages/cockpit/src/surfaces/skill-contract.test.ts` |
-| Selftest authentication/approval | `npm test -- packages/cockpit/src/selftest/command.configured-artifact.test.ts packages/cockpit/src/selftest/command.native-execution.test.ts packages/cockpit/src/selftest/command.custom-operator.test.ts` |
-| Upgrade evidence/override inspection | `npm test -- packages/cockpit/src/upgrade/command.test.ts packages/cockpit/src/upgrade/release-evidence.test.ts` |
-
-Publication recovery is owned by `packages/cockpit/src/environment/generated-application.ts`. Its exact
-finalization-failure control preserves recovery inputs when cleanup cannot be proved:
-
-```sh
-npm test -- packages/cockpit/src/generated-environment/command.test.ts -t 'retains recovery records when publication finalization is not confirmed'
-```
-
-A passing source control does not authorize deleting retained recovery data or invent a manual
-state repair. Follow the named diagnostic and owning recovery procedure.
+completed. None of these codes is a reason to install a package or edit a manifest by hand.
 
 <!-- cockpit:diagnostic-index:begin -->
 | Diagnostic | Implementing owners | Source remedy |

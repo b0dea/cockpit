@@ -8,17 +8,17 @@ durable work order. It is an implementation contract, not a user procedure.
 Cockpit supports two execution paths.
 
 Small work uses the direct path: reproduce, fix, verify, and report without creating a work
-order. Work that needs independent grading uses an accepted work order. Cockpit may compile
-that order from an upstream task or specification, live estate evidence, and applicable
-installed capabilities, but it asks the operator only for facts the available sources cannot
-establish.
+order. Work that needs independent grading uses an accepted work order. Cockpit may draft
+that order from an upstream task or specification, what it can observe in the project, and the
+installed skills that apply, but it asks the person only for facts those sources cannot
+supply.
 
-The operator accepts the draft before cockpit freezes its criteria and authority. Cockpit
-then persists the plan, decisions, evidence, attempts, human gaps, and progress needed for a
-fresh session to resume without relying on a previous conversation. Before grading, cockpit
-uses available simplification, review, and security-review capabilities rather than
-duplicating them.
+A person accepts the draft before cockpit fixes its criteria and its list of files the work may
+change. Cockpit then saves the plan, decisions, results, attempts, open questions for a human,
+and progress, so a new session can resume without the earlier conversation. Before grading,
+cockpit uses the simplification, review, and security-review skills that are installed rather
+than duplicating them.
 
-The accepted work order is the stable execution-and-grading contract. It does not replace an
-upstream specification or programme plan, and its criteria and authority do not move during
+The accepted work order is the fixed contract for doing and grading the work. It does not replace an
+upstream specification or programme plan, and its criteria and file list do not change during
 execution.
