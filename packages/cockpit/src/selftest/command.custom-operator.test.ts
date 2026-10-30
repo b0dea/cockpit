@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
     await Promise.all([instructedFixture, enforcedFixture].flatMap((entry) => entry ? [
-        rm(join(entry.root, 'internal'), { recursive: true, force: true }),
+        rm(join(entry.root, '.cockpit/local/probes'), { recursive: true, force: true }),
         rm(join(entry.root, 'harness-bin'), { recursive: true, force: true }),
     ] : []))
 })

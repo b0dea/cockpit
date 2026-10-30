@@ -72,11 +72,19 @@ const LEGACY_COMMAND_MAX_ARGUMENTS = 256
 const LEGACY_COMMAND_MAX_BYTES = 1_048_576
 const LEGACY_TEXT_MAX_BYTES = 1_048_576
 
+// Probe controls and transcripts live in the checkout's machine-local state, which cockpit's
+// generated ignore block already excludes, so evidence never lands in tracked files.
+export const PROBE_EVIDENCE_ROOT = '.cockpit/local/probes'
+
 function isText(value) {
     return typeof value === 'string' && value.trim() !== ''
 }
 
-function resolveEvidencePath(root, value, field, errors) {
+// A legacy manifest names the shipped synthetic fixture it was built from; that one field resolves
+// under the fixture directory, and every captured artefact resolves under the probe root.
+const SYNTHETIC_FIXTURE_ROOT = 'fixtures/harness-probes'
+
+function resolveEvidencePath(root, value, field, errors, allowedRoot = PROBE_EVIDENCE_ROOT) {
     if (!isText(value)) return null
     if (isAbsolute(value)) {
         errors.push(`${field} must be relative to the repository root`)
@@ -90,8 +98,8 @@ function resolveEvidencePath(root, value, field, errors) {
         return null
     }
     const path = fromRoot.split(sep).join('/')
-    if (!path.startsWith('internal/probes/') && !path.startsWith('fixtures/harness-probes/')) {
-        errors.push(`${field} must be under internal/probes/ or fixtures/harness-probes/`)
+    if (!path.startsWith(`${allowedRoot}/`)) {
+        errors.push(`${field} must be under ${allowedRoot}/`)
         return null
     }
     if (!existsSync(absolute)) {
@@ -112,9 +120,9 @@ function resolveEvidencePath(root, value, field, errors) {
     return absolute
 }
 
-function isInternalProbePath(root, value) {
+function isProbeEvidencePath(root, value) {
     if (!isText(value) || isAbsolute(value)) return false
-    const unresolvedProbeRoot = resolve(root, 'internal/probes')
+    const unresolvedProbeRoot = resolve(root, PROBE_EVIDENCE_ROOT)
     if (!existsSync(unresolvedProbeRoot)) return false
     const probeRoot = realpathSync(unresolvedProbeRoot)
     const canonicalPath = realpathSync(resolve(root, value))
@@ -343,7 +351,7 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
     const candidatePath = resolveEvidencePath(root, manifest.candidatePath, 'candidatePath', errors)
     const brokenPath = resolveEvidencePath(root, manifest.brokenPath, 'brokenPath', errors)
     const transcriptPath = resolveEvidencePath(root, manifest.transcriptPath, 'transcriptPath', errors)
-    const syntheticFixture = resolveEvidencePath(root, manifest.syntheticFixture, 'syntheticFixture', errors)
+    const syntheticFixture = resolveEvidencePath(root, manifest.syntheticFixture, 'syntheticFixture', errors, SYNTHETIC_FIXTURE_ROOT)
     const candidateBytes = candidatePath
         ? readBoundedSelftestFile(candidatePath, LEGACY_EVIDENCE_MAX_BYTES, 'candidatePath', errors) : null
     const brokenBytes = brokenPath
@@ -373,9 +381,9 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
         errors.push('candidatePath, brokenPath and transcriptPath must resolve to one directory')
     }
     if (syntheticFixture) {
-        const fixtureRelative = relative(realpathSync(resolve(root, 'fixtures/harness-probes')), realpathSync(syntheticFixture))
+        const fixtureRelative = relative(realpathSync(resolve(root, SYNTHETIC_FIXTURE_ROOT)), realpathSync(syntheticFixture))
         if (fixtureRelative === '' || fixtureRelative === '..' || fixtureRelative.startsWith(`..${sep}`)) {
-            errors.push('syntheticFixture must be a file under fixtures/harness-probes/')
+            errors.push(`syntheticFixture must be a file under ${SYNTHETIC_FIXTURE_ROOT}/`)
         }
     }
 
@@ -514,10 +522,10 @@ export function validateEvidenceManifest(manifest, root = process.cwd(), options
         !brokenPath ||
         !transcriptPath ||
         ![manifest.candidatePath, manifest.brokenPath, manifest.transcriptPath].every((path) =>
-            isInternalProbePath(root, path),
+            isProbeEvidencePath(root, path),
         )
     ) {
-        errors.push('every verdict requires candidatePath, brokenPath and transcriptPath under internal/probes/')
+        errors.push(`every verdict requires candidatePath, brokenPath and transcriptPath under ${PROBE_EVIDENCE_ROOT}/`)
     }
     const brokenWasRejected =
         manifest.brokenRejected === true &&
@@ -943,8 +951,8 @@ function validateSelftestEvidence(record, expectedHarness, root, options, errors
     const transcriptBytes = transcriptPath
         ? readBoundedSelftestFile(transcriptPath, SELFTEST_MAX_BUNDLE_BYTES, 'transcriptPath', errors) : null
     if (candidatePath && brokenPath && transcriptPath) {
-        if (![record.candidatePath, record.brokenPath, record.transcriptPath].every(path => isInternalProbePath(root, path))) {
-            errors.push('evidence paths must remain under internal/probes/')
+        if (![record.candidatePath, record.brokenPath, record.transcriptPath].every(path => isProbeEvidencePath(root, path))) {
+            errors.push(`evidence paths must remain under ${PROBE_EVIDENCE_ROOT}/`)
         }
         if (new Set([candidatePath, brokenPath, transcriptPath].map(path => dirname(realpathSync(path)))).size !== 1) {
             errors.push('candidate, broken control, and transcript must be colocated')

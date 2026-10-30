@@ -23,7 +23,7 @@ beforeAll(async () => {
 afterEach(async () => {
     if (!sharedFixture) return
     await Promise.all([
-        rm(join(sharedFixture.root, 'internal'), { recursive: true, force: true }),
+        rm(join(sharedFixture.root, '.cockpit/local/probes'), { recursive: true, force: true }),
         rm(join(sharedFixture.root, 'harness-bin'), { recursive: true, force: true }),
     ])
 })
@@ -55,6 +55,10 @@ describe('surface selftest command', () => {
         if (outcome.kind !== 'complete') return
         expect(outcome.evidence.errors).toEqual([])
         expect(outcome.bundle.records).toHaveLength(27)
+        // Probe controls are machine-local state under the ignored .cockpit/local, never a tracked folder.
+        expect(outcome.bundle.records.every(record => record.kind !== 'evidence'
+            || record.candidatePath.startsWith('.cockpit/local/probes/'))).toBe(true)
+        await expect(readdir(join(root, 'internal'))).rejects.toMatchObject({ code: 'ENOENT' })
         expect(outcome.evidence.evidence).toHaveLength(27)
         expect(outcome.evidence.pending).toEqual([])
         expect(operator.requests).toHaveLength(3)
@@ -135,7 +139,7 @@ describe('surface selftest command', () => {
             { application, root, specifications: specifications(application), env: { PATH: bin } }, operator.adapters,
         )
         expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID' })
-        expect(await readdir(join(root, 'internal/probes'), { recursive: true }))
+        expect(await readdir(join(root, '.cockpit/local/probes'), { recursive: true }))
             .not.toContainEqual(expect.stringContaining('transcript.json'))
         expect(JSON.stringify(outcome)).not.toMatch(/pretty-canary|deep-canary/)
     }, 180_000)

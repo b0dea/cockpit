@@ -139,7 +139,7 @@ function matrixRows(root: string) {
     return ['Claude Code', 'Codex', 'OpenCode'].flatMap((harness) =>
         ['sandbox', 'approval'].map((capability) => ({ harness, capability })),
     ).map(({ harness, capability }, index) => {
-        const directory = join(root, 'internal/probes', `matrix-${index}`)
+        const directory = join(root, '.cockpit/local/probes', `matrix-${index}`)
         mkdirSync(directory)
         copyFileSync(join(ROOT, CANDIDATE), join(directory, 'candidate-control.json'))
         copyFileSync(join(ROOT, BROKEN), join(directory, 'broken-control.json'))
@@ -147,20 +147,20 @@ function matrixRows(root: string) {
             harness,
             capability,
             runId: `matrix-run-${index}`,
-            candidatePath: `internal/probes/matrix-${index}/candidate-control.json`,
-            brokenPath: `internal/probes/matrix-${index}/broken-control.json`,
-            transcriptPath: `internal/probes/matrix-${index}/transcript.json`,
+            candidatePath: `.cockpit/local/probes/matrix-${index}/candidate-control.json`,
+            brokenPath: `.cockpit/local/probes/matrix-${index}/broken-control.json`,
+            transcriptPath: `.cockpit/local/probes/matrix-${index}/transcript.json`,
         })
         writeTranscript(root, manifest)
-        return internalRow(root, manifest)
+        return probeRow(root, manifest)
     })
 }
 
-function internalRow(root: string, overrides: Record<string, unknown> = {}) {
+function probeRow(root: string, overrides: Record<string, unknown> = {}) {
     const manifest = row({
-        candidatePath: 'internal/probes/run/candidate-control.json',
-        brokenPath: 'internal/probes/run/broken-control.json',
-        transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+        candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+        brokenPath: '.cockpit/local/probes/run/broken-control.json',
+        transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
         ...overrides,
     })
     return {
@@ -171,37 +171,37 @@ function internalRow(root: string, overrides: Record<string, unknown> = {}) {
     }
 }
 
-function internalEvidenceRoot(): string {
+function probeEvidenceRoot(): string {
     const root = mkdtempSync(join(tmpdir(), 'harness-evidence-root-'))
-    mkdirSync(join(root, 'internal/probes/run'), { recursive: true })
+    mkdirSync(join(root, '.cockpit/local/probes/run'), { recursive: true })
     mkdirSync(join(root, 'fixtures/harness-probes'), { recursive: true })
-    copyFileSync(join(ROOT, CANDIDATE), join(root, 'internal/probes/run/candidate-control.json'))
-    copyFileSync(join(ROOT, BROKEN), join(root, 'internal/probes/run/broken-control.json'))
-    copyFileSync(join(ROOT, TRANSCRIPT), join(root, 'internal/probes/run/synthetic-transcript.txt'))
+    copyFileSync(join(ROOT, CANDIDATE), join(root, '.cockpit/local/probes/run/candidate-control.json'))
+    copyFileSync(join(ROOT, BROKEN), join(root, '.cockpit/local/probes/run/broken-control.json'))
+    copyFileSync(join(ROOT, TRANSCRIPT), join(root, '.cockpit/local/probes/run/synthetic-transcript.txt'))
     copyFileSync(join(ROOT, CANDIDATE), join(root, CANDIDATE))
     copyFileSync(join(ROOT, BROKEN), join(root, BROKEN))
     copyFileSync(join(ROOT, TRANSCRIPT), join(root, TRANSCRIPT))
     writeTranscript(
         root,
         row({
-            candidatePath: 'internal/probes/run/candidate-control.json',
-            brokenPath: 'internal/probes/run/broken-control.json',
-            transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+            candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+            brokenPath: '.cockpit/local/probes/run/broken-control.json',
+            transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
         }),
     )
     return root
 }
 
-function internalManifestWithCommands(
+function probeManifestWithCommands(
     root: string,
     versionCommand: string[],
     helpCommand: string[],
     invocation: string[],
     eventCwds: Partial<Record<keyof ReturnType<typeof eventsFor>, string>> = {},
 ) {
-    const candidatePath = 'internal/probes/run/candidate-control.json'
-    const brokenPath = 'internal/probes/run/broken-control.json'
-    const transcriptPath = 'internal/probes/run/synthetic-transcript.txt'
+    const candidatePath = '.cockpit/local/probes/run/candidate-control.json'
+    const brokenPath = '.cockpit/local/probes/run/broken-control.json'
+    const transcriptPath = '.cockpit/local/probes/run/synthetic-transcript.txt'
     const baseEvents = eventsFor(candidatePath, brokenPath)
     const events = {
         ...baseEvents,
@@ -220,19 +220,19 @@ function internalManifestWithCommands(
     }
     const overrides = { candidatePath, brokenPath, transcriptPath, versionCommand, helpCommand, invocation, events }
     writeTranscript(root, row(overrides))
-    return internalRow(root, overrides)
+    return probeRow(root, overrides)
 }
 
 describe('paired harness evidence', () => {
     it('requires real probe artifacts before accepting an enforced verdict', () => {
         expect(validateEvidenceManifest(row(), ROOT)).toContain(
-            'every verdict requires candidatePath, brokenPath and transcriptPath under internal/probes/',
+            'every verdict requires candidatePath, brokenPath and transcriptPath under .cockpit/local/probes/',
         )
 
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             expect(
-                validateEvidenceManifest(internalRow(root), root, {
+                validateEvidenceManifest(probeRow(root), root, {
                     testOnlyExecutableIdentities: SYNTHETIC_EXECUTABLE_IDENTITIES,
                 }),
             ).toEqual([])
@@ -241,13 +241,13 @@ describe('paired harness evidence', () => {
         }
     })
 
-    it('returns a refusal when a clean clone has no internal probe directory', () => {
-        const root = internalEvidenceRoot()
-        rmSync(join(root, 'internal'), { recursive: true, force: true })
+    it('returns a refusal when a clean clone has no probe evidence directory', () => {
+        const root = probeEvidenceRoot()
+        rmSync(join(root, '.cockpit'), { recursive: true, force: true })
         try {
             expect(() => validateEvidenceManifest(row(), root)).not.toThrow()
             expect(validateEvidenceManifest(row(), root)).toContain(
-                'every verdict requires candidatePath, brokenPath and transcriptPath under internal/probes/',
+                'every verdict requires candidatePath, brokenPath and transcriptPath under .cockpit/local/probes/',
             )
         } finally {
             rmSync(root, { recursive: true, force: true })
@@ -255,16 +255,16 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects evidence symlinks that resolve outside the repository root', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
-            rmSync(join(root, 'internal/probes/run/candidate-control.json'))
-            symlinkSync('/etc/hosts', join(root, 'internal/probes/run/candidate-control.json'))
+            rmSync(join(root, '.cockpit/local/probes/run/candidate-control.json'))
+            symlinkSync('/etc/hosts', join(root, '.cockpit/local/probes/run/candidate-control.json'))
             expect(
                 validateEvidenceManifest(
                     row({
-                        candidatePath: 'internal/probes/run/candidate-control.json',
-                        brokenPath: 'internal/probes/run/broken-control.json',
-                        transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+                        candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+                        brokenPath: '.cockpit/local/probes/run/broken-control.json',
+                        transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
                     }),
                     root,
                 ),
@@ -275,20 +275,20 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects enforced evidence symlinked from the synthetic fixture root', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
-            rmSync(join(root, 'internal/probes/run/candidate-control.json'))
-            symlinkSync(join(root, CANDIDATE), join(root, 'internal/probes/run/candidate-control.json'))
+            rmSync(join(root, '.cockpit/local/probes/run/candidate-control.json'))
+            symlinkSync(join(root, CANDIDATE), join(root, '.cockpit/local/probes/run/candidate-control.json'))
             expect(
                 validateEvidenceManifest(
                     row({
-                        candidatePath: 'internal/probes/run/candidate-control.json',
-                        brokenPath: 'internal/probes/run/broken-control.json',
-                        transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+                        candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+                        brokenPath: '.cockpit/local/probes/run/broken-control.json',
+                        transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
                     }),
                     root,
                 ),
-            ).toContain('every verdict requires candidatePath, brokenPath and transcriptPath under internal/probes/')
+            ).toContain('every verdict requires candidatePath, brokenPath and transcriptPath under .cockpit/local/probes/')
         } finally {
             rmSync(root, { recursive: true, force: true })
         }
@@ -312,11 +312,11 @@ describe('paired harness evidence', () => {
         expect(dirname(CANDIDATE)).toBe(dirname(BROKEN))
     })
 
-    it('requires evidence to remain colocated after resolving internal symlinks', () => {
-        const root = internalEvidenceRoot()
+    it('requires evidence to remain colocated after resolving probe symlinks', () => {
+        const root = probeEvidenceRoot()
         try {
             for (const directory of ['candidate-real', 'broken-real', 'transcript-real']) {
-                mkdirSync(join(root, 'internal/probes', directory))
+                mkdirSync(join(root, '.cockpit/local/probes', directory))
             }
             const paths = [
                 ['candidate-control.json', 'candidate-real'],
@@ -324,12 +324,12 @@ describe('paired harness evidence', () => {
                 ['synthetic-transcript.txt', 'transcript-real'],
             ] as const
             for (const [file, directory] of paths) {
-                copyFileSync(join(root, 'internal/probes/run', file), join(root, 'internal/probes', directory, file))
-                rmSync(join(root, 'internal/probes/run', file))
-                symlinkSync(`../${directory}/${file}`, join(root, 'internal/probes/run', file))
+                copyFileSync(join(root, '.cockpit/local/probes/run', file), join(root, '.cockpit/local/probes', directory, file))
+                rmSync(join(root, '.cockpit/local/probes/run', file))
+                symlinkSync(`../${directory}/${file}`, join(root, '.cockpit/local/probes/run', file))
             }
 
-            expect(validateEvidenceManifest(internalRow(root), root)).toContain(
+            expect(validateEvidenceManifest(probeRow(root), root)).toContain(
                 'candidatePath, brokenPath and transcriptPath must resolve to one directory',
             )
         } finally {
@@ -353,19 +353,27 @@ describe('paired harness evidence', () => {
     })
 
     it('binds the controls and same-run transcript by content digest and structured invocation', () => {
-        expect(validateEvidenceManifest(row({ candidateSha256: '0'.repeat(64) }), ROOT)).not.toEqual([])
-        expect(validateEvidenceManifest(row({ transcriptSha256: 'f'.repeat(64) }), ROOT)).not.toEqual([])
-        expect(validateEvidenceManifest(row({ invocation: ['other-tool', '{control}'] }), ROOT)).not.toEqual([])
-        expect(validateEvidenceManifest(row({ runId: 'a-run-absent-from-the-transcript' }), ROOT)).not.toEqual([])
-        expect(validateEvidenceManifest(row({ harness: 'Claude Code' }), ROOT)).toContain(
-            'transcript does not match the structured run evidence',
-        )
+        const root = probeEvidenceRoot()
+        try {
+            const options = { testOnlyExecutableIdentities: SYNTHETIC_EXECUTABLE_IDENTITIES }
+            const valid = probeRow(root)
+            expect(validateEvidenceManifest(valid, root, options)).toEqual([])
+            expect(validateEvidenceManifest({ ...valid, candidateSha256: '0'.repeat(64) }, root, options)).not.toEqual([])
+            expect(validateEvidenceManifest({ ...valid, transcriptSha256: 'f'.repeat(64) }, root, options)).not.toEqual([])
+            expect(validateEvidenceManifest({ ...valid, invocation: ['other-tool', '{control}'] }, root, options)).not.toEqual([])
+            expect(validateEvidenceManifest({ ...valid, runId: 'a-run-absent-from-the-transcript' }, root, options)).not.toEqual([])
+            expect(validateEvidenceManifest({ ...valid, harness: 'Claude Code' }, root, options)).toContain(
+                'transcript does not match the structured run evidence',
+            )
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+        }
     })
 
     it('refuses oversized legacy controls and transcripts before reading their contents', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
-            const manifest = internalRow(root)
+            const manifest = probeRow(root)
             for (const field of ['candidatePath', 'brokenPath', 'transcriptPath'] as const) {
                 const path = join(root, manifest[field])
                 truncateSync(path, 1_048_577)
@@ -381,7 +389,7 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects a broken control run by an unrelated command', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const events = {
                 ...EVENTS,
@@ -393,7 +401,7 @@ describe('paired harness evidence', () => {
             const manifest = row({ events })
             writeTranscript(root, manifest)
 
-            expect(validateEvidenceManifest(internalRow(root, { events }), root)).toContain(
+            expect(validateEvidenceManifest(probeRow(root, { events }), root)).toContain(
                 'brokenControl command does not match the shared invocation template',
             )
         } finally {
@@ -402,25 +410,25 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects same-named controls when the recorded cwd and command resolve to another pair', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
-            mkdirSync(join(root, 'internal/probes/other'))
+            mkdirSync(join(root, '.cockpit/local/probes/other'))
             for (const name of ['candidate-control.json', 'broken-control.json']) {
-                copyFileSync(join(root, 'internal/probes/run', name), join(root, 'internal/probes/other', name))
+                copyFileSync(join(root, '.cockpit/local/probes/run', name), join(root, '.cockpit/local/probes/other', name))
             }
             const events = eventsFor(
-                'internal/probes/other/candidate-control.json',
-                'internal/probes/other/broken-control.json',
+                '.cockpit/local/probes/other/candidate-control.json',
+                '.cockpit/local/probes/other/broken-control.json',
             )
             const manifest = row({
-                candidatePath: 'internal/probes/run/candidate-control.json',
-                brokenPath: 'internal/probes/run/broken-control.json',
-                transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+                candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+                brokenPath: '.cockpit/local/probes/run/broken-control.json',
+                transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
                 events,
             })
             writeTranscript(root, manifest)
 
-            expect(validateEvidenceManifest(internalRow(root, { events }), root)).toEqual(
+            expect(validateEvidenceManifest(probeRow(root, { events }), root)).toEqual(
                 expect.arrayContaining([
                     'brokenControl command does not resolve to brokenPath from its cwd',
                     'candidateControl command does not resolve to candidatePath from its cwd',
@@ -432,12 +440,12 @@ describe('paired harness evidence', () => {
     })
 
     it('binds the declared harness version to the successful version event', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const manifest = row({ version: '9.9.9' })
             writeTranscript(root, manifest)
 
-            expect(validateEvidenceManifest(internalRow(root, { version: '9.9.9' }), root)).toContain(
+            expect(validateEvidenceManifest(probeRow(root, { version: '9.9.9' }), root)).toContain(
                 'version event output does not contain the declared harness version',
             )
         } finally {
@@ -487,16 +495,16 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects one harness executable presented as another harness', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
-            const executable = join(root, 'internal/probes/run/codex')
+            const executable = join(root, '.cockpit/local/probes/run/codex')
             writeFileSync(executable, '#!/bin/sh\n')
             const versionCommand = [executable, '--version']
             const helpCommand = [executable, '--help']
             const invocation = [executable, '--config', '{control}']
             const baseEvents = eventsFor(
-                'internal/probes/run/candidate-control.json',
-                'internal/probes/run/broken-control.json',
+                '.cockpit/local/probes/run/candidate-control.json',
+                '.cockpit/local/probes/run/broken-control.json',
             )
             const overrides = {
                 harness: 'Claude Code',
@@ -510,25 +518,25 @@ describe('paired harness evidence', () => {
                     brokenControl: {
                         ...baseEvents.brokenControl,
                         command: invocation.map((argument) =>
-                            argument === '{control}' ? 'internal/probes/run/broken-control.json' : argument,
+                            argument === '{control}' ? '.cockpit/local/probes/run/broken-control.json' : argument,
                         ),
                     },
                     candidateControl: {
                         ...baseEvents.candidateControl,
                         command: invocation.map((argument) =>
-                            argument === '{control}' ? 'internal/probes/run/candidate-control.json' : argument,
+                            argument === '{control}' ? '.cockpit/local/probes/run/candidate-control.json' : argument,
                         ),
                     },
                 },
             }
             writeTranscript(root, row({
-                candidatePath: 'internal/probes/run/candidate-control.json',
-                brokenPath: 'internal/probes/run/broken-control.json',
-                transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+                candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+                brokenPath: '.cockpit/local/probes/run/broken-control.json',
+                transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
                 ...overrides,
             }))
 
-            expect(validateEvidenceManifest(internalRow(root, overrides), root)).toContain(
+            expect(validateEvidenceManifest(probeRow(root, overrides), root)).toContain(
                 'Claude Code evidence must invoke its harness executable directly',
             )
         } finally {
@@ -578,7 +586,7 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects evidence spliced across programs behind a shell command string', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const versionCommand = ['/bin/sh', '-c', 'version-tool --version']
             const helpCommand = ['/bin/sh', '-c', 'help-tool --help']
@@ -589,7 +597,7 @@ describe('paired harness evidence', () => {
 
             expect(
                 validateEvidenceManifest(
-                    internalManifestWithCommands(root, versionCommand, helpCommand, invocation),
+                    probeManifestWithCommands(root, versionCommand, helpCommand, invocation),
                     root,
                 ),
             ).toContain(`versionCommand must invoke the harness binary directly; ${shellName} is a generic command launcher`)
@@ -599,7 +607,7 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects a nested environment and shell launcher as harness identity', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const versionCommand = ['/usr/bin/env', 'sh', '-c', 'version-tool --version']
             const helpCommand = ['/usr/bin/env', 'sh', '-c', 'help-tool --help']
@@ -613,7 +621,7 @@ describe('paired harness evidence', () => {
             ]
             expect(
                 validateEvidenceManifest(
-                    internalManifestWithCommands(root, versionCommand, helpCommand, invocation),
+                    probeManifestWithCommands(root, versionCommand, helpCommand, invocation),
                     root,
                 ),
             ).toContain('versionCommand must invoke the harness binary directly; env is a generic command launcher')
@@ -623,9 +631,9 @@ describe('paired harness evidence', () => {
     })
 
     it.each(['node', 'npx'])('rejects evidence spliced across programs behind %s', (launcherName) => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
-            const launcher = join(root, 'internal/probes/run', launcherName)
+            const launcher = join(root, '.cockpit/local/probes/run', launcherName)
             writeFileSync(launcher, '#!/bin/sh\n')
             const versionCommand = [launcher, 'version-tool.js', '--version']
             const helpCommand = [launcher, 'help-tool.js', '--help']
@@ -633,7 +641,7 @@ describe('paired harness evidence', () => {
 
             expect(
                 validateEvidenceManifest(
-                    internalManifestWithCommands(root, versionCommand, helpCommand, invocation),
+                    probeManifestWithCommands(root, versionCommand, helpCommand, invocation),
                     root,
                 ),
             ).toContain(
@@ -645,18 +653,18 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects a relative program token that resolves differently across event working directories', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             for (const directory of ['version-tool', 'help-tool']) {
-                mkdirSync(join(root, 'internal/probes', directory))
-                writeFileSync(join(root, 'internal/probes', directory, 'harness'), '#!/bin/sh\n')
+                mkdirSync(join(root, '.cockpit/local/probes', directory))
+                writeFileSync(join(root, '.cockpit/local/probes', directory, 'harness'), '#!/bin/sh\n')
             }
             const versionCommand = [ENV_LAUNCHER, './harness', '--version']
             const helpCommand = [ENV_LAUNCHER, './harness', '--help']
             const invocation = [ENV_LAUNCHER, './harness', '--config', '{control}']
-            const manifest = internalManifestWithCommands(root, versionCommand, helpCommand, invocation, {
-                version: 'internal/probes/version-tool',
-                help: 'internal/probes/help-tool',
+            const manifest = probeManifestWithCommands(root, versionCommand, helpCommand, invocation, {
+                version: '.cockpit/local/probes/version-tool',
+                help: '.cockpit/local/probes/help-tool',
             })
 
             expect(validateEvidenceManifest(manifest, root)).toContain(
@@ -696,19 +704,19 @@ describe('paired harness evidence', () => {
 
     it('requires real ignored evidence for unavailable verdicts too', () => {
         expect(validateEvidenceManifest(row({ verdict: 'unavailable', brokenRejected: false }), ROOT)).toContain(
-            'every verdict requires candidatePath, brokenPath and transcriptPath under internal/probes/',
+            'every verdict requires candidatePath, brokenPath and transcriptPath under .cockpit/local/probes/',
         )
     })
 
     it('rejects an unavailable verdict when the same run also allows its broken control', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const baseEvents = eventsFor(
-                'internal/probes/run/candidate-control.json',
-                'internal/probes/run/broken-control.json',
+                '.cockpit/local/probes/run/candidate-control.json',
+                '.cockpit/local/probes/run/broken-control.json',
             )
-            const brokenOutput = 'internal/probes/run/broken-control.json\nCONTROL_ALLOWED'
-            const candidateOutput = 'internal/probes/run/candidate-control.json\nCONTROL_ALLOWED'
+            const brokenOutput = '.cockpit/local/probes/run/broken-control.json\nCONTROL_ALLOWED'
+            const candidateOutput = '.cockpit/local/probes/run/candidate-control.json\nCONTROL_ALLOWED'
             const events = {
                 ...baseEvents,
                 brokenControl: {
@@ -730,14 +738,14 @@ describe('paired harness evidence', () => {
             }
             const overrides = { verdict: 'unavailable', brokenRejected: false, events }
             writeTranscript(root, row({
-                candidatePath: 'internal/probes/run/candidate-control.json',
-                brokenPath: 'internal/probes/run/broken-control.json',
-                transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+                candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+                brokenPath: '.cockpit/local/probes/run/broken-control.json',
+                transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
                 ...overrides,
             }))
 
             expect(
-                validateEvidenceManifest(internalRow(root, overrides), root, {
+                validateEvidenceManifest(probeRow(root, overrides), root, {
                     testOnlyExecutableIdentities: SYNTHETIC_EXECUTABLE_IDENTITIES,
                 }),
             ).toContain('every verdict requires a non-zero rejected brokenControl event')
@@ -747,7 +755,7 @@ describe('paired harness evidence', () => {
     })
 
     it('rejects unavailable evidence whose structured results contradict their exit status', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const contradictoryEvents = {
                 ...EVENTS,
@@ -760,14 +768,14 @@ describe('paired harness evidence', () => {
                 events: contradictoryEvents,
             }
             const manifest = row({
-                candidatePath: 'internal/probes/run/candidate-control.json',
-                brokenPath: 'internal/probes/run/broken-control.json',
-                transcriptPath: 'internal/probes/run/synthetic-transcript.txt',
+                candidatePath: '.cockpit/local/probes/run/candidate-control.json',
+                brokenPath: '.cockpit/local/probes/run/broken-control.json',
+                transcriptPath: '.cockpit/local/probes/run/synthetic-transcript.txt',
                 ...overrides,
             })
             writeTranscript(root, manifest)
 
-            expect(validateEvidenceManifest(internalRow(root, overrides), root)).toEqual(
+            expect(validateEvidenceManifest(probeRow(root, overrides), root)).toEqual(
                 expect.arrayContaining([
                     'brokenControl rejected result requires a non-zero exitCode',
                     'candidateControl allowed result requires exitCode=0',
@@ -780,7 +788,7 @@ describe('paired harness evidence', () => {
     })
 
     it('uses structured refusal events instead of inferring refusal from negated prose', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const negatedEvents = {
                 ...EVENTS,
@@ -798,7 +806,7 @@ describe('paired harness evidence', () => {
             const manifest = row({ events: negatedEvents })
             writeTranscript(root, manifest)
 
-            expect(validateEvidenceManifest(internalRow(root, { events: negatedEvents }), root)).toEqual(
+            expect(validateEvidenceManifest(probeRow(root, { events: negatedEvents }), root)).toEqual(
                 expect.arrayContaining([
                     'brokenControl output does not contain its exact refusal code',
                     'candidateControl output does not contain its exact refusal code',
@@ -844,23 +852,23 @@ describe('manifest collection command', () => {
     })
 
     it('rejects distinct lexical evidence triples that resolve to one run', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const rows = ['Claude Code', 'Codex', 'OpenCode'].flatMap((harness) =>
                 ['sandbox', 'approval'].map((capability, capabilityIndex) => ({ harness, capability, capabilityIndex })),
             ).map(({ harness, capability }, index) => {
-                const directory = join(root, 'internal/probes', `alias-${index}`)
+                const directory = join(root, '.cockpit/local/probes', `alias-${index}`)
                 mkdirSync(directory)
                 for (const name of ['candidate-control.json', 'broken-control.json', 'synthetic-transcript.txt']) {
-                    symlinkSync(join(root, 'internal/probes/run', name), join(directory, name))
+                    symlinkSync(join(root, '.cockpit/local/probes/run', name), join(directory, name))
                 }
                 return row({
                     harness,
                     capability,
                     runId: `run-${index}`,
-                    candidatePath: `internal/probes/alias-${index}/candidate-control.json`,
-                    brokenPath: `internal/probes/alias-${index}/broken-control.json`,
-                    transcriptPath: `internal/probes/alias-${index}/synthetic-transcript.txt`,
+                    candidatePath: `.cockpit/local/probes/alias-${index}/candidate-control.json`,
+                    brokenPath: `.cockpit/local/probes/alias-${index}/broken-control.json`,
+                    transcriptPath: `.cockpit/local/probes/alias-${index}/synthetic-transcript.txt`,
                 })
             })
 
@@ -910,7 +918,7 @@ describe('manifest collection command', () => {
     })
 
     it('returns rows in stable harness then sandbox/approval order', () => {
-        const root = internalEvidenceRoot()
+        const root = probeEvidenceRoot()
         try {
             const rows = matrixRows(root).reverse()
             expect(
@@ -967,7 +975,7 @@ function writeSelftestEvidence(
     skill = 'cockpit-setup',
     harness: BuiltinHarnessRef = { kind: 'builtin', target: 'codexcli', name: 'Codex' },
 ): TestBuiltinEvidenceRecord {
-    const directory = `internal/probes/selftest-${index}`
+    const directory = `.cockpit/local/probes/selftest-${index}`
     mkdirSync(join(root, directory), { recursive: true })
     const candidatePath = `${directory}/candidate.json`
     const brokenPath = `${directory}/broken.json`
@@ -1031,7 +1039,7 @@ function writeSelftestEvidence(
 
 function selftestFixture() {
     const root = mkdtempSync(join(tmpdir(), 'harness-selftest-root-'))
-    mkdirSync(join(root, 'internal/probes'), { recursive: true })
+    mkdirSync(join(root, '.cockpit/local/probes'), { recursive: true })
     const records = [
         writeSelftestEvidence(root, 'instruction-loading', 'instructed', 0),
         writeSelftestEvidence(root, 'guard-firing', 'enforced', 1),

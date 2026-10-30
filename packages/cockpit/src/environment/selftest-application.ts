@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline/promises'
 import { types as utilTypes } from 'node:util'
 
 import {
+    PROBE_EVIDENCE_ROOT,
     validateSelftestEvidenceBundle,
     type SelftestEvidenceBundle,
     type SelftestEvidenceRecord,
@@ -360,9 +361,12 @@ async function ensurePlainDirectory(path: string): Promise<boolean> {
 async function ensureEvidenceDirectory(root: string): Promise<string | undefined> {
     try {
         if (await realpath(root) !== root) return undefined
-        const internal = join(root, 'internal')
-        const evidence = join(internal, 'probes')
-        return await ensurePlainDirectory(internal) && await ensurePlainDirectory(evidence) ? evidence : undefined
+        let directory = root
+        for (const segment of PROBE_EVIDENCE_ROOT.split('/')) {
+            directory = join(directory, segment)
+            if (!await ensurePlainDirectory(directory)) return undefined
+        }
+        return directory
     } catch { return undefined }
 }
 
@@ -408,7 +412,7 @@ async function runEvidenceProbe(
     if (resolution.state === 'unavailable') return surfaceSelftestHumanNeeded(
         expectation,
         probe.cell, 'executable_missing', observedAt,
-        `${resolution.reason}; provide an authenticated ${harnessName} executable on a supported host and rerun its ${probe.capability} probe`,
+        `${resolution.reason}; install ${harnessName} on a supported host, sign in, and rerun its ${probe.capability} probe`,
     )
     const executable = resolution.value
     if (!await hasExecutableAuthority(adapters, approvedExecutables, probe.harness.name, executable)) {
@@ -419,7 +423,7 @@ async function runEvidenceProbe(
     }
     if (!evidenceRoot) return surfaceSelftestHumanNeeded(
         expectation, probe.cell, 'isolation_unavailable', observedAt,
-        `Provide an isolated internal/probes directory and rerun the ${harnessName} ${probe.capability} probe`,
+        `${PROBE_EVIDENCE_ROOT} could not be created as a plain directory, so probe controls cannot be kept apart from the checkout; make it a plain directory and rerun the ${harnessName} ${probe.capability} probe`,
     )
     let directory: string
     try {

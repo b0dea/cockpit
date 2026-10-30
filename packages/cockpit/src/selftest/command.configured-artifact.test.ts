@@ -33,7 +33,7 @@ beforeAll(async () => {
 afterEach(async () => {
     if (!sharedFixture) return
     await Promise.all([
-        rm(join(sharedFixture.root, 'internal'), { recursive: true, force: true }),
+        rm(join(sharedFixture.root, '.cockpit/local/probes'), { recursive: true, force: true }),
         rm(join(sharedFixture.root, 'probe-specifications.json'), { force: true }),
     ])
 })
