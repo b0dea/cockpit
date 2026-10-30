@@ -183,6 +183,33 @@ purpose = "Synthetic web repository"
         })
     })
 
+    it('accepts a local-archive pin installed separately from the running copy of the same package', async () => {
+        // The bootstrap route runs init from a temporary install, then installs the same archive in
+        // the cockpit root; a resumed init from the temporary install must accept that pin.
+        const root = await fixture()
+        const spec = 'file:../archives/cockpit.tgz'
+        const manifest = `${JSON.stringify({ private: true, scripts: {
+            'cockpit:setup': 'cockpit setup --config cockpit.toml', 'cockpit:sync': 'cockpit sync --config cockpit.toml',
+            'cockpit:check': 'cockpit check --config cockpit.toml',
+        }, devDependencies: { [installedPackageMetadata.name]: spec } }, null, 2)}\n`
+        await writeFile(join(root, 'package.json'), manifest)
+        await writeFile(join(root, 'package-lock.json'), `${JSON.stringify({ lockfileVersion: 3, packages: {
+            '': { devDependencies: { [installedPackageMetadata.name]: spec } },
+            [`node_modules/${installedPackageMetadata.name}`]: { version: installedPackageMetadata.version, resolved: spec },
+        } }, null, 2)}\n`)
+        const installed = join(root, 'node_modules', ...installedPackageMetadata.name.split('/'))
+        await mkdir(installed, { recursive: true })
+        const runningManifest = await readFile(new URL('../package.json', import.meta.url), 'utf8')
+        await writeFile(join(installed, 'package.json'), runningManifest)
+
+        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+        expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'complete' })
+
+        await writeFile(join(installed, 'package.json'), runningManifest.replace('"cockpitSourceRevision"', '"rebuilt": true, "cockpitSourceRevision"'))
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH' })
+    })
+
     it('refuses redirected metadata without reading or overwriting its target', async () => {
         const root = await fixture()
         const outside = join(root, 'outside'); await writeFile(outside, 'outside-canary')

@@ -176,7 +176,9 @@ function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string):
 // `npm install -D <archive>` pins a `file:` spec, and before a release that archive is the only
 // source of the package. The pin is accepted as the team's version when the lockfile resolves it
 // to this exact running package; rewriting it to the bare version named a release that may not
-// exist and changed a dependency the user chose without asking.
+// exist and changed a dependency the user chose without asking. The installed copy is compared by
+// manifest bytes, not by location: the bootstrap route runs init from a temporary install of the
+// same archive, and requiring the running copy to be the root's own install refused that resume.
 async function verifiedLocalPin(authority: RootAuthority, packageBytes: string | undefined): Promise<string | undefined> {
     let manifest: unknown
     try { manifest = packageBytes === undefined ? undefined : JSON.parse(packageBytes) } catch { return undefined }
@@ -190,8 +192,13 @@ async function verifiedLocalPin(authority: RootAuthority, packageBytes: string |
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
         throw error
     }
-    if (!installed.isDirectory() || installed.isSymbolicLink()
-        || await realpath(installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) return undefined
+    if (!installed.isDirectory() || installed.isSymbolicLink()) return undefined
+    if (await realpath(installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) {
+        const installedManifest = await readBoundedInput(join(installedPath, 'package.json'))
+        const runningManifest = await readBoundedInput(join(INSTALLED_PACKAGE_ROOT, 'package.json'))
+        if (installedManifest.kind !== 'complete' || runningManifest.kind !== 'complete'
+            || !Buffer.from(installedManifest.bytes).equals(Buffer.from(runningManifest.bytes))) return undefined
+    }
 
     const lockFile = await readOptional(authority, join(authority.root, 'package-lock.json'))
     if (!lockFile) return undefined
