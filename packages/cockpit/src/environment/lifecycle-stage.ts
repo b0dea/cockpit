@@ -538,11 +538,10 @@ async function transition(
         if (requested === 'seeded' && currentStatus === undefined) {
             return abortStateTransaction(refusal('lifecycle history must be started before it is seeded', address.path))
         }
-        if (currentStatus === requested) {
+        // Seeded history already records its start, so a later `started` (setup acquiring a
+        // sibling added after the stack has run) leaves it seeded. Refusing it deadlocked setup.
+        if (currentStatus === requested || currentStatus === 'seeded') {
             return abortStateTransaction(Object.freeze({ kind: 'unchanged' as const, record: current! }))
-        }
-        if (currentStatus === 'seeded' && requested === 'started') {
-            return abortStateTransaction(refusal('seeded lifecycle history cannot return to started', address.path))
         }
         return {
             format: 'cockpit-state/v1' as const,

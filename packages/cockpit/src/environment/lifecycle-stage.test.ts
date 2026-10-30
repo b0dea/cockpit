@@ -141,7 +141,14 @@ describe('lifecycle stage authority', () => {
         expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'complete' })
         expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'unchanged' })
         expect(await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'complete' })
-        expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'refusal' })
+        // Setup records `started` before acquiring a sibling added after the stack has run; seeded
+        // history already contains that start, so it stays seeded instead of refusing setup.
+        expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({
+            kind: 'unchanged', record: { value: { status: 'seeded' } },
+        })
+        expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
+            kind: 'complete', authority: { stage: 'steady' },
+        })
         expect(await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'unchanged' })
     })
 
