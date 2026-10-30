@@ -87,6 +87,14 @@ or `::` only when you intend that wider exposure; cockpit keeps what you set. In
 mode, write the same explicit loopback binding in your own Compose file, as in
 `"127.0.0.1:${API_HOST_PORT}:3000"`; cockpit does not rewrite your published interfaces.
 
+Stack *n* publishes each `[ports.bases]` value plus *n* × `ports.step`, for up to `ports.count`
+stacks (defaults: step 100, count 27). Cockpits on one machine often declare similar bases, so
+their candidate families overlap, and that is safe: `up` leases a family under one lock shared by
+every cockpit of your user account, skips any family holding a port that another cockpit's active
+lease holds, and then checks that no other program is listening on the ports it picked. An
+overlap therefore costs a candidate family, never a shared port. A cockpit run by a different
+user account keeps separate lease records, so only the listener check separates the two.
+
 Entrypoint derivatives turn a port lease into application origins, callback URLs and other
 declared addresses. Add an optional `hostname` and `scheme` to use a named local URL:
 
