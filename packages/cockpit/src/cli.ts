@@ -455,7 +455,7 @@ function destructiveDaemonSelectionRefusal(runtime: CliRuntime): CommandOutcome 
     const env = runtime.env ?? process.env
     if (env.DOCKER_HOST !== undefined && admitLocalDockerEndpoint(env.DOCKER_HOST) === undefined) {
         return usageOutcome('CLI_USAGE_INVALID',
-            'down and reset require a local Docker endpoint so deletion cannot target a remote daemon; fix: unset DOCKER_HOST and set DOCKER_CONTEXT, or set DOCKER_HOST to a local Unix socket or Windows named pipe',
+            'down and reset require a local Docker endpoint so deletion cannot target a remote daemon; fix: unset DOCKER_HOST and set DOCKER_CONTEXT, or set DOCKER_HOST to a local Unix socket',
             'DOCKER_HOST')
     }
     return env.DOCKER_CONTEXT === undefined && env.DOCKER_HOST === undefined ? usageOutcome('CLI_USAGE_INVALID',
@@ -954,7 +954,7 @@ async function decodeRequest(
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID', 'provide --probe-specifications <file>', '--probe-specifications')
         const invalidEnvironment = () => usageOutcome('CLI_USAGE_INVALID',
-            'selftest executable search inputs must be bounded own string or undefined values; supply PATH/PATHEXT without accessors and run cockpit selftest --help to retry')
+            'selftest executable search inputs must be bounded own string or undefined values; supply PATH without accessors and run cockpit selftest --help to retry')
         const env: Record<string, string | undefined> = {}
         try {
             if (runtimeEnv === null || typeof runtimeEnv !== 'object' || Array.isArray(runtimeEnv)
@@ -962,7 +962,7 @@ async function decodeRequest(
             const keys = Reflect.ownKeys(runtimeEnv)
             if (keys.length > 4_096) return invalidEnvironment()
             for (const key of keys) {
-                if (typeof key !== 'string' || !/^(?:PATH|PATHEXT)$/i.test(key)) continue
+                if (key !== 'PATH') continue
                 const descriptor = Object.getOwnPropertyDescriptor(runtimeEnv, key)
                 if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')
                     || descriptor.value !== undefined && (typeof descriptor.value !== 'string'
@@ -1317,6 +1317,16 @@ export async function runCli(
             io.stdout.write(renderJsonResponse({ ...outcome, invocation }, outcome.fixContext))
         }
         return exitCode
+    }
+    // One refusal here instead of per-command checks: process ownership, filesystem publication and
+    // the shell guards assume POSIX semantics, so a native Windows run could fail part-way through a
+    // mutation rather than up front.
+    if (process.platform === 'win32') {
+        const outcome = usageOutcome('CLI_PLATFORM_UNSUPPORTED',
+            'cockpit does not run on native Windows because its process, filesystem and guard controls assume macOS or Linux; fix: run cockpit on a macOS or Linux host')
+        if (args.includes('--json')) return finish(outcome.status, outcome)
+        io.stderr.write(renderHumanDiagnostics(outcome.diagnostics))
+        return finish(outcome.status)
     }
     if (internal) {
         let harness: GuardSurfaceTarget | undefined

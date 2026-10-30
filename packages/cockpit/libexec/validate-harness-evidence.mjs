@@ -178,7 +178,7 @@ function canonicalExecutable(command, name, errors) {
 function canonicalToolCommand(command, name, errors) {
     const executable = canonicalExecutable(command, name, errors)
     if (!executable) return null
-    const executableName = basename(executable).toLowerCase().replace(/\.exe$/, '')
+    const executableName = basename(executable).toLowerCase()
     const versionedInterpreter = /^(?:node(?:js)?|perl|php|python|ruby)\d+(?:\.\d+)*$/.test(executableName)
     if (GENERIC_COMMAND_LAUNCHERS.has(executableName) || versionedInterpreter) {
         errors.push(`${name} must invoke the harness binary directly; ${executableName} is a generic command launcher`)
@@ -188,7 +188,6 @@ function canonicalToolCommand(command, name, errors) {
 }
 
 function executableOnPath(name) {
-    if (process.platform === 'win32') return null
     for (const directory of (process.env.PATH ?? '').split(':')) {
         if (!directory) continue
         const candidate = resolve(directory, name)
@@ -201,7 +200,7 @@ function validateHarnessExecutable(harness, command, errors, options, allowLiveP
     if (!HARNESSES.includes(harness) || !Array.isArray(command) || command.length === 0) return
     const canonical = canonicalExecutable(command, 'invocation', [])
     if (!canonical) return
-    const commandName = basename(command[0]).toLowerCase().replace(/\.exe$/, '')
+    const commandName = basename(command[0]).toLowerCase()
     const liveIdentity = allowLivePathIdentity && HARNESS_EXECUTABLE_IDENTITIES[harness].some(
         (name) => commandName === name && executableOnPath(name) === canonical,
     )

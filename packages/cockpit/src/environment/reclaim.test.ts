@@ -562,28 +562,6 @@ describe('runtime discovery authority', () => {
         }
     })
 
-    it.each(['npipe:////./pipe/docker_engine', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(
-        'plans the exact Windows pipe %s selection without issuing discovery authority', (host) => {
-            const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-            if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
-            const input = { executable: { ...executable('/tmp/docker.exe'), executionMode: 'staged' as const }, cwd: '/tmp',
-                env: { PATH: '/usr/bin' }, timeoutMs: 1_000, context: 'default', host }
-            try {
-                Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-                const steps = createDockerSelectionSteps(input)
-                expect(steps).toHaveLength(1)
-                expect(steps?.[0]).toMatchObject({
-                    argv: ['/tmp/docker.exe', 'context', 'inspect', 'default', '--format',
-                        '{"context":{{json .Name}},"endpoint":{{json .Endpoints.docker.Host}}}'],
-                    env: { PATH: '/usr/bin', DOCKER_HOST: host },
-                })
-                expect(admitDockerSelection(steps ?? [], [])).toBeUndefined()
-                expect(createDockerSelectionSteps({ ...input, context: dockerContext })).toBeUndefined()
-            } finally {
-                Object.defineProperty(process, 'platform', platform)
-            }
-        })
-
     it('refuses a Windows pipe on a POSIX host before Docker selection dispatch', () => {
         expect(createDockerSelectionSteps({
             executable: { ...executable('/tmp/docker'), executionMode: 'staged' }, cwd: '/tmp',

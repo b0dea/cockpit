@@ -7,41 +7,6 @@ import type { ExecutionStep } from '../environment/contract.js'
 import { runSurfaceSelftestCommand } from './command.js'
 
 const roots: string[] = []
-const windowsFilesystem = vi.hoisted(() => ({
-    files: new Set<string>(),
-    candidatePaths: [] as string[],
-    identityPaths: [] as string[],
-}))
-
-vi.mock('node:fs/promises', async importOriginal => {
-    const actual = await importOriginal<typeof import('node:fs/promises')>()
-    const windowsPath = (path: string) => process.platform === 'win32' && /^[A-Za-z]:\\/.test(path)
-    return {
-        ...actual,
-        lstat: async (...args: Parameters<typeof actual.lstat>) => {
-            const path = String(args[0])
-            if (!windowsPath(path)) return actual.lstat(...args)
-            windowsFilesystem.candidatePaths.push(path)
-            if (!windowsFilesystem.files.has(path)) {
-                throw Object.assign(new Error(`synthetic Windows candidate is absent: ${path}`), { code: 'ENOENT' })
-            }
-            return { isFile: () => true, isSymbolicLink: () => false }
-        },
-        realpath: async (...args: Parameters<typeof actual.realpath>) => {
-            const path = String(args[0])
-            if (!windowsPath(path)) return actual.realpath(...args)
-            windowsFilesystem.identityPaths.push(path)
-            throw new Error(`Windows candidate reached identity resolution: ${path}`)
-        },
-        open: async (...args: Parameters<typeof actual.open>) => {
-            const path = String(args[0])
-            if (!windowsPath(path)) return actual.open(...args)
-            windowsFilesystem.identityPaths.push(path)
-            throw new Error(`Windows candidate reached identity reads: ${path}`)
-        },
-    }
-})
-
 const {
     fakeHarnesses,
     issuedApplication,
@@ -56,9 +21,6 @@ beforeAll(async () => {
 }, 180_000)
 
 afterEach(async () => {
-    windowsFilesystem.files.clear()
-    windowsFilesystem.candidatePaths.length = 0
-    windowsFilesystem.identityPaths.length = 0
     if (!sharedFixture) return
     await Promise.all([
         rm(join(sharedFixture.root, 'internal'), { recursive: true, force: true }),
@@ -74,13 +36,6 @@ afterAll(async () => {
 function fixture() {
     if (!sharedFixture) throw new Error('shared selftest fixture is unavailable')
     return sharedFixture
-}
-
-async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
-    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-    if (descriptor === undefined) throw new Error('process.platform descriptor is unavailable')
-    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
-    try { return await action() } finally { Object.defineProperty(process, 'platform', descriptor) }
 }
 
 describe('surface selftest command', () => {
@@ -112,67 +67,6 @@ describe('surface selftest command', () => {
         expect(await runSurfaceSelftestCommand({
             application: { ...application }, root, specifications: specifications(application), env: { PATH: bin },
         })).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
-    }, 180_000)
-
-    it.each([
-        { suffix: '.EXE', pathExt: '.EXE;.CMD', reason: 'Windows native executable identity authority is unavailable' },
-        { suffix: '.CMD', pathExt: '.CMD;.EXE', reason: 'Windows batch executable requires an authenticated command interpreter' },
-    ])('reports $suffix authority refusal from captured Windows search aliases without executing', async ({ suffix, pathExt, reason }) => {
-        const { root, application } = fixture()
-        for (const name of ['claude', 'codex', 'opencode']) {
-            windowsFilesystem.files.add(`C:\\Harnesses\\${name}.EXE`)
-            windowsFilesystem.files.add(`C:\\Harnesses\\${name}.CMD`)
-        }
-        const execute = vi.fn(async () => { throw new Error('unavailable Windows executable must not run') })
-        const requestExecutableApproval = vi.fn(async () => undefined)
-
-        const outcome = await withPlatform('win32', () => runSurfaceSelftestCommand({
-            application, root, specifications: specifications(application),
-            env: { Path: 'C:\\Harnesses', PathExt: pathExt },
-        }, { execute, requestExecutableApproval }))
-
-        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
-        if (outcome.kind !== 'complete') throw new Error('Windows authority refusal did not produce pending selftest evidence')
-        expect(outcome.evidence.errors).toEqual([])
-        expect(outcome.evidence.evidence).toEqual([])
-        expect(outcome.evidence.pending).toHaveLength(27)
-        expect(outcome.bundle.records.every(record => record.kind === 'human_needed'
-            && record.reason === 'executable_missing' && record.operatorAction.includes(reason))).toBe(true)
-        expect(new Set(windowsFilesystem.candidatePaths)).toEqual(new Set([
-            `C:\\Harnesses\\claude${suffix}`, `C:\\Harnesses\\codex${suffix}`, `C:\\Harnesses\\opencode${suffix}`,
-        ]))
-        expect(windowsFilesystem.identityPaths).toEqual([])
-        expect(requestExecutableApproval).not.toHaveBeenCalled()
-        expect(execute).not.toHaveBeenCalled()
-    }, 180_000)
-
-    it.each([
-        { name: 'PATH', aliases: { PATH: 'C:\\OtherHarnesses' } },
-        { name: 'PATH', aliases: { PATH: undefined } },
-        { name: 'PATHEXT', aliases: { PATHEXT: '.CMD' } },
-        { name: 'PATHEXT', aliases: { PATHEXT: undefined } },
-    ])('retains ambiguous $name aliases before Windows candidate observation: $aliases', async ({ name, aliases }) => {
-        const { root, application } = fixture()
-        const execute = vi.fn(async () => { throw new Error('ambiguous search input must not execute') })
-        const requestExecutableApproval = vi.fn(async () => undefined)
-
-        const outcome = await withPlatform('win32', () => runSurfaceSelftestCommand({
-            application, root, specifications: specifications(application),
-            env: { Path: 'C:\\Harnesses', PathExt: '.EXE', ...aliases },
-        }, { execute, requestExecutableApproval }))
-
-        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
-        if (outcome.kind !== 'complete') throw new Error('ambiguous search input did not produce pending selftest evidence')
-        expect(outcome.evidence.errors).toEqual([])
-        expect(outcome.evidence.evidence).toEqual([])
-        expect(outcome.evidence.pending).toHaveLength(27)
-        expect(outcome.bundle.records.every(record => record.kind === 'human_needed'
-            && record.reason === 'executable_missing'
-            && record.operatorAction.includes(`Executable search environment has ambiguous ${name} spellings`))).toBe(true)
-        expect(windowsFilesystem.candidatePaths).toEqual([])
-        expect(windowsFilesystem.identityPaths).toEqual([])
-        expect(requestExecutableApproval).not.toHaveBeenCalled()
-        expect(execute).not.toHaveBeenCalled()
     }, 180_000)
 
     it('preserves POSIX executable approval with an undefined search alias without reading unrelated values', async () => {

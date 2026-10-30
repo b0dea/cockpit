@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import { win32 } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PassThrough, Readable } from 'node:stream'
@@ -815,11 +814,10 @@ describe('generated environment process contract', () => {
         expect(upgradeCalls).toEqual([{ configPath: 'cockpit.toml' }])
     })
 
-    it('preserves only selftest search aliases and undefined own values for injected handlers', async () => {
+    it('preserves only the selftest search path and its undefined own value for injected handlers', async () => {
         const unrelated = vi.fn(() => { throw new Error('unrelated environment value must not be read') })
         const env = Object.defineProperty({
-            Path: 'C:\\Harnesses', PATH: undefined, PathExt: '.EXE;.CMD', PATHEXT: undefined,
-            UNRELATED_DATA: 'synthetic-unrelated-canary',
+            PATH: undefined, Path: '/synthetic/harnesses', UNRELATED_DATA: 'synthetic-unrelated-canary',
         }, 'UNRELATED_ACCESSOR', { enumerable: true, get: unrelated })
         const selftest = vi.fn(async (_input: ConfiguredSurfaceSelftestCommandInput) => ({
             status: 0, diagnostics: [], result: { pending: ['native'] },
@@ -832,18 +830,16 @@ describe('generated environment process contract', () => {
 
         expect(selftest).toHaveBeenCalledExactlyOnceWith({
             configPath: 'cockpit.toml', probeSpecificationsPath: 'probe.json',
-            env: { Path: 'C:\\Harnesses', PATH: undefined, PathExt: '.EXE;.CMD', PATHEXT: undefined },
+            env: { PATH: undefined },
         })
-        expect(selftest.mock.calls[0]?.[0].env).toStrictEqual({
-            Path: 'C:\\Harnesses', PATH: undefined, PathExt: '.EXE;.CMD', PATHEXT: undefined,
-        })
+        expect(selftest.mock.calls[0]?.[0].env).toStrictEqual({ PATH: undefined })
         expect(unrelated).not.toHaveBeenCalled()
         expect(capture.output().stdout + capture.output().stderr).not.toContain('synthetic-unrelated-canary')
     })
 
-    it.each(['PATH', 'PathExt'])('refuses selftest %s accessors before reading or dispatching them', async name => {
+    it('refuses a selftest PATH accessor before reading or dispatching it', async () => {
         const selected = vi.fn(() => { throw new Error('selected search accessor must not be read') })
-        const env = Object.defineProperty({}, name, { enumerable: true, get: selected })
+        const env = Object.defineProperty({}, 'PATH', { enumerable: true, get: selected })
         const selftest = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
         const capture = captureIo()
 
@@ -1129,112 +1125,17 @@ describe('setup process contract', () => {
         expect(result.stdout).not.toContain(irrelevantSecret)
     })
 
-    it('preserves case-insensitive setup search names until Windows Git classification refuses native authority', async () => {
-        const { testRoot, checkout, home, configPath } = setupRuntimeFixture()
-        const selected = win32.join(String.raw`C:\Tools`, 'git.EXE')
-        const originalDirectory = process.cwd()
-        const originalConfig = readFileSync(configPath)
-        process.chdir(testRoot)
-        const capture = captureIo()
-        try {
-            writeFileSync(selected, 'synthetic native candidate\n')
-            const status = await withPlatform('win32', () => runCli(
-                ['setup', '--config', configPath, '--json'],
-                capture.io,
-                {},
-                { env: { Path: String.raw`C:\Tools`, PathExt: '.EXE', HOME: home } },
-            ))
-            const response = JSON.parse(capture.output().stdout)
-
-            expect(status).toBe(2)
-            expect(response).toEqual({
-                invocation: jsonInvocation(capture.output().stdout, status, 'setup', resolve(configPath)),
-                result: null,
-                diagnostics: [{
-                    severity: 'error',
-                    code: 'SETUP_PATH_TYPE_INVALID',
-                    message: `Windows native executable identity authority is unavailable: ${selected}`,
-                    target: realpathSync(configPath),
-                }],
-            })
-            expect(readFileSync(configPath)).toEqual(originalConfig)
-            expect(existsSync(join(checkout, 'assets'))).toBe(false)
-            expect(response).not.toHaveProperty('evidence')
-            expect(capture.output().stderr).toBe('')
-        } finally {
-            process.chdir(originalDirectory)
-        }
-    })
-
-    it.each([
-        ['defined PATH aliases', 'PATH', { PATH: String.raw`C:\Tools`, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
-        ['undefined PATH alias', 'PATH', { PATH: undefined, Path: String.raw`C:\Tools`, PATHEXT: '.EXE' }],
-        ['defined PATHEXT aliases', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: '.EXE' }],
-        ['undefined PATHEXT alias', 'PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: undefined, PathExt: '.EXE' }],
-    ] as const)('refuses %s before setup target mutation', async (_label, ambiguousName, searchEnvironment) => {
-        const { checkout, home, configPath } = setupRuntimeFixture()
-        const originalConfig = readFileSync(configPath)
-        const capture = captureIo()
-
-        const status = await withPlatform('win32', () => runCli(
-            ['setup', '--config', configPath, '--json'],
-            capture.io,
-            {},
-            { env: { ...searchEnvironment, HOME: home } },
-        ))
-        const response = JSON.parse(capture.output().stdout)
-
-        expect(status).toBe(2)
-        expect(response.diagnostics).toEqual([{
-            severity: 'error',
-            code: 'SETUP_PATH_TYPE_INVALID',
-            message: `Executable search environment has ambiguous ${ambiguousName} spellings`,
-            target: realpathSync(configPath),
-        }])
-        expect(readFileSync(configPath)).toEqual(originalConfig)
-        expect(existsSync(join(checkout, 'assets'))).toBe(false)
-        expect(response).not.toHaveProperty('evidence')
-        expect(capture.output().stderr).toBe('')
-    })
-
-    it('reads only relevant setup search aliases and reports an unreadable alias', async () => {
-        const { checkout, home, configPath } = setupRuntimeFixture()
-        const readPath = vi.fn(() => { throw new Error('relevant-search-canary') })
-        const readIrrelevant = vi.fn(() => { throw new Error('irrelevant-secret-canary') })
-        const environment = new Proxy({
-            Path: String.raw`C:\Tools`,
-            PathExt: '.EXE',
-            HOME: home,
-            COCKPIT_TEST_UNREADABLE: 'present',
-        } as Readonly<Record<string, string | undefined>>, {
-            get(target, property, receiver) {
-                if (property === 'Path') return readPath()
-                if (property === 'COCKPIT_TEST_UNREADABLE') return readIrrelevant()
-                return Reflect.get(target, property, receiver)
-            },
-        })
-        const capture = captureIo()
-
-        const status = await withPlatform('win32', () => runCli(
-            ['setup', '--config', configPath, '--json'],
-            capture.io,
-            {},
-            { env: environment },
-        ))
-        const response = JSON.parse(capture.output().stdout)
-
-        expect(status).toBe(2)
-        expect(response.diagnostics).toEqual([{
-            severity: 'error',
-            code: 'SETUP_PATH_TYPE_INVALID',
-            message: 'Executable search environment is not readable',
-            target: realpathSync(configPath),
-        }])
-        expect(readPath).toHaveBeenCalledOnce()
-        expect(readIrrelevant).not.toHaveBeenCalled()
-        expect(existsSync(join(checkout, 'assets'))).toBe(false)
-        expect(capture.output().stdout).not.toContain('canary')
-        expect(capture.output().stderr).toBe('')
+    it('refuses every command on native Windows before dispatch, in human and JSON modes', async () => {
+        const setup = vi.fn(async () => ({ status: 0, diagnostics: [], result: null }))
+        const human = captureIo()
+        expect(await withPlatform('win32', () => runCli(['setup', '--config', 'cockpit.toml'], human.io, { setup }))).toBe(2)
+        expect(human.output().stdout).toBe('')
+        expect(human.output().stderr).toContain('CLI_PLATFORM_UNSUPPORTED')
+        expect(human.output().stderr).toContain('run cockpit on a macOS or Linux host')
+        const json = captureIo()
+        expect(await withPlatform('win32', () => runCli(['guard-evaluate', '--harness', 'claudecode', '--json'], json.io))).toBe(2)
+        expect(JSON.parse(json.output().stdout)).toMatchObject({ result: null, diagnostics: [{ code: 'CLI_PLATFORM_UNSUPPORTED' }] })
+        expect(setup).not.toHaveBeenCalled()
     })
 
     it.each([
@@ -2524,7 +2425,7 @@ describe('init command admission', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
-    it.skipIf(process.platform === 'win32')('refuses a FIFO answers file without waiting for a writer', () => {
+    it('refuses a FIFO answers file without waiting for a writer', () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-init-answers-fifo-'))
         scratch.push(directory)
         const canonical = realpathSync(directory)

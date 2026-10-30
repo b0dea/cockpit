@@ -306,15 +306,10 @@ describe('runtime logs', () => {
         try {
             for (const hostPlatform of ['darwin', 'linux', 'win32', 'freebsd']) {
                 Object.defineProperty(process, 'platform', { ...platform, value: hostPlatform })
-                for (const endpoint of ['unix:///synthetic home/docker%23?#.sock', 'npipe:////./pipe/docker_engine',
-                    'npipe:////./pipe/dockerDesktopLinuxEngine', `npipe:////./pipe/${'x'.repeat(247)}`]) {
+                for (const endpoint of ['unix:///synthetic home/docker%23?#.sock', 'npipe:////./pipe/docker_engine']) {
                     const env = { PATH: '/usr/bin', DOCKER_HOST: endpoint }
-                    const executable = hostPlatform === 'win32'
-                        ? { ...input.executable, invocationPath: join(runtimeDirectory, 'docker.exe') }
-                        : input.executable
-                    const result = planLogs({ ...input, executable, env })
-                    const admitted = endpoint.startsWith('npipe:') ? hostPlatform === 'win32'
-                        : hostPlatform === 'darwin' || hostPlatform === 'linux'
+                    const result = planLogs({ ...input, env })
+                    const admitted = endpoint.startsWith('unix:') && (hostPlatform === 'darwin' || hostPlatform === 'linux')
                     expect(result.kind, `${hostPlatform}: ${endpoint}`).toBe(admitted ? 'planned' : 'unavailable')
                     if (result.kind === 'planned') expect(result.step.env).toEqual(env)
                 }
@@ -328,11 +323,8 @@ describe('runtime logs', () => {
         const platform = Object.getOwnPropertyDescriptor(process, 'platform')
         if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
         try {
-            for (const hostPlatform of ['darwin', 'linux', 'win32']) {
+            for (const hostPlatform of ['darwin', 'linux']) {
                 Object.defineProperty(process, 'platform', { ...platform, value: hostPlatform })
-                const executable = hostPlatform === 'win32'
-                    ? { ...input.executable, invocationPath: join(runtimeDirectory, 'docker.exe') }
-                    : input.executable
                 for (const endpoint of [
                     'tcp://127.0.0.1:2375', 'ssh://synthetic.invalid',
                     'npipe:////synthetic.invalid/pipe/docker_engine', 'npipe:////localhost/pipe/docker_engine',
@@ -345,7 +337,7 @@ describe('runtime logs', () => {
                     'unix://synthetic.invalid/socket', 'unix:////synthetic.invalid/socket', 'unix:///',
                     'unix:///tmp/docker.sock\0', 'unix:///tmp/docker.sock\n',
                 ]) {
-                    expect(planLogs({ ...input, executable, env: { PATH: '/usr/bin', DOCKER_HOST: endpoint } }), endpoint)
+                    expect(planLogs({ ...input, env: { PATH: '/usr/bin', DOCKER_HOST: endpoint } }), endpoint)
                         .toMatchObject({ kind: 'unavailable' })
                 }
             }

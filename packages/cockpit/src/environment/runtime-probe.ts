@@ -452,7 +452,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         // exact so a host override cannot borrow a different context's runtime evidence.
         const dockerHost = input.env.DOCKER_HOST
         if (dockerHost !== undefined && admitLocalDockerEndpoint(dockerHost) === undefined) {
-            fail('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket or Windows named pipe')
+            fail('DOCKER_HOST does not name a local Docker endpoint; unset it or point it at a local Unix socket')
         }
         await Promise.all([
             mkdir(siblingPath, { recursive: true, mode: 0o700 }),

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
-import { basename, delimiter, isAbsolute, join, normalize, win32 } from 'node:path'
+import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
 
 export const mechanism = {
     id: 'resolved-executable-identity',
@@ -21,11 +21,6 @@ export interface ResolvedExecutable {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
-type HostPolicy = 'posix' | 'windows'
-
-function currentHostPolicy(): HostPolicy {
-    return process.platform === 'win32' ? 'windows' : 'posix'
-}
 
 function exactKeys(value: object, expected: readonly string[]): boolean {
     const actual = Object.keys(value).sort()
@@ -56,12 +51,7 @@ export function isResolvedExecutable(value: unknown): boolean {
 
 export function resolvedDockerExecutable(value: unknown): ResolvedExecutable | undefined {
     const executable = resolvedExecutable(value)
-    const host = currentHostPolicy()
-    const name = executable && (host === 'windows'
-        ? win32.basename(executable.invocationPath).toLowerCase()
-        : basename(executable.invocationPath))
-    const accepted = host === 'windows' ? name === 'docker.exe' || name === 'docker.com' : name === 'docker'
-    return executable !== undefined && accepted && executable.executionMode === 'staged'
+    return executable !== undefined && basename(executable.invocationPath) === 'docker' && executable.executionMode === 'staged'
         ? executable : undefined
 }
 
@@ -71,12 +61,7 @@ export function isResolvedDockerExecutable(value: unknown): boolean {
 
 export function resolvedGitExecutable(value: unknown): ResolvedExecutable | undefined {
     const executable = resolvedExecutable(value)
-    const host = currentHostPolicy()
-    const name = executable && (host === 'windows'
-        ? win32.basename(executable.invocationPath).toLowerCase()
-        : basename(executable.invocationPath))
-    const accepted = host === 'windows' ? name === 'git.exe' || name === 'git.com' : name === 'git'
-    return executable !== undefined && accepted ? executable : undefined
+    return executable !== undefined && basename(executable.invocationPath) === 'git' ? executable : undefined
 }
 
 export function isResolvedGitExecutable(value: unknown): boolean {
@@ -89,127 +74,8 @@ export type ExecutableResolution = Readonly<{ state: 'available'; value: Resolve
 const EXECUTABLE_BYTE_LIMIT = 536_870_912
 const PATH_ENTRY_LIMIT = 256
 
-type SearchEnvironmentSelection = Readonly<{ kind: 'selected'; path: unknown; pathExt: unknown }>
-    | Readonly<{ kind: 'ambiguous'; name: 'PATH' | 'PATHEXT' }>
-    | Readonly<{ kind: 'unreadable' }>
-
-function selectSearchEnvironment(env: Readonly<Record<string, string | undefined>>, host: HostPolicy): SearchEnvironmentSelection {
-    let pathName = 'PATH'
-    let pathExtName: string | undefined
-    if (host === 'windows') {
-        let keys: string[]
-        try { keys = Object.keys(env) } catch { return { kind: 'unreadable' } }
-        const pathNames = keys.filter((candidate) => candidate.toUpperCase() === 'PATH')
-        const pathExtNames = keys.filter((candidate) => candidate.toUpperCase() === 'PATHEXT')
-        if (pathNames.length > 1) return { kind: 'ambiguous', name: 'PATH' }
-        if (pathExtNames.length > 1) return { kind: 'ambiguous', name: 'PATHEXT' }
-        if (pathNames[0] !== undefined) pathName = pathNames[0]
-        pathExtName = pathExtNames[0]
-    }
-    try {
-        return { kind: 'selected', path: env[pathName], pathExt: pathExtName === undefined ? undefined : env[pathExtName] }
-    } catch { return { kind: 'unreadable' } }
-}
-
-type WindowsCandidate = Readonly<{ kind: 'native' | 'batch'; path: string }>
-    | Readonly<{ kind: 'absent' }>
-    | Readonly<{ kind: 'invalid'; reason: string }>
-
-const WINDOWS_EXECUTABLE_SUFFIXES: ReadonlyMap<string, 'native' | 'batch'> = new Map([
-    ['.exe', 'native'],
-    ['.com', 'native'],
-    ['.cmd', 'batch'],
-    ['.bat', 'batch'],
-] as const)
-
-function windowsDriveAbsolute(path: string): boolean {
-    return /^[A-Za-z]:\\/.test(path) && win32.normalize(path) === path
-}
-
-function windowsCandidateKind(name: string): 'native' | 'batch' | undefined {
-    return WINDOWS_EXECUTABLE_SUFFIXES.get(win32.extname(name).toLowerCase())
-}
-
-async function inspectWindowsCandidate(path: string, kind: 'native' | 'batch'): Promise<WindowsCandidate> {
-    try {
-        const status = await lstat(path)
-        return status.isFile() || status.isSymbolicLink()
-            ? Object.freeze({ kind, path })
-            : Object.freeze({ kind: 'invalid', reason: `Windows executable candidate is not a file: ${path}` })
-    } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ENOENT'
-            ? Object.freeze({ kind: 'absent' })
-            : Object.freeze({ kind: 'invalid', reason: `Windows executable candidate could not be inspected: ${path}` })
-    }
-}
-
-async function selectWindowsCandidate(
-    name: string,
-    env: Readonly<Record<string, string | undefined>>,
-    host: HostPolicy,
-): Promise<WindowsCandidate> {
-    if (Buffer.byteLength(name) > 4_096 || name.includes('\0')) {
-        return { kind: 'invalid', reason: 'Windows executable name is invalid' }
-    }
-    if (windowsDriveAbsolute(name)) {
-        const kind = windowsCandidateKind(name)
-        return kind ? inspectWindowsCandidate(name, kind)
-            : { kind: 'invalid', reason: 'Windows executable name has an unsupported suffix' }
-    }
-    if (win32.isAbsolute(name) || win32.basename(name) !== name || name.includes('/') || name.includes('\\')) {
-        return { kind: 'invalid', reason: 'Windows executable name must be drive-absolute or a PATH entry name' }
-    }
-
-    const selected = selectSearchEnvironment(env, host)
-    if (selected.kind === 'unreadable') return { kind: 'invalid', reason: 'Executable search environment is not readable' }
-    if (selected.kind === 'ambiguous') return { kind: 'invalid', reason: `Executable search environment has ambiguous ${selected.name} spellings` }
-    const pathValue = selected.path
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
-        return { kind: 'invalid', reason: 'Windows executable search path is missing or invalid' }
-    }
-    const directories = pathValue.split(';')
-    if (directories.length > PATH_ENTRY_LIMIT || directories.some(path => !path || !windowsDriveAbsolute(path))) {
-        return { kind: 'invalid', reason: 'Windows executable search path must contain bounded drive-absolute directories' }
-    }
-
-    const explicitKind = windowsCandidateKind(name)
-    const extension = win32.extname(name)
-    if (extension && !explicitKind) return { kind: 'invalid', reason: 'Windows executable name has an unsupported suffix' }
-    let suffixes: readonly Readonly<{ bytes: string; kind: 'native' | 'batch' }>[]
-    if (explicitKind) {
-        suffixes = [{ bytes: '', kind: explicitKind }]
-    } else {
-        const pathExtValue = selected.pathExt
-        if (typeof pathExtValue !== 'string' || pathExtValue.length === 0 || pathExtValue.includes('\0')
-            || Buffer.byteLength(pathExtValue) > 65_536) {
-            return { kind: 'invalid', reason: 'Windows PATHEXT is missing or invalid' }
-        }
-        const entries = pathExtValue.split(';')
-        if (entries.length > PATH_ENTRY_LIMIT || entries.some(entry => !entry || !WINDOWS_EXECUTABLE_SUFFIXES.has(entry.toLowerCase()))) {
-            return { kind: 'invalid', reason: 'Windows PATHEXT contains an unsupported executable suffix' }
-        }
-        suffixes = entries.map(bytes => Object.freeze({
-            bytes,
-            kind: WINDOWS_EXECUTABLE_SUFFIXES.get(bytes.toLowerCase())!,
-        }))
-    }
-
-    for (const directory of directories) {
-        for (const suffix of suffixes) {
-            const candidate = win32.join(directory, `${name}${suffix.bytes}`)
-            const inspected = await inspectWindowsCandidate(candidate, suffix.kind)
-            if (inspected.kind !== 'absent') return inspected
-        }
-    }
-    return { kind: 'absent' }
-}
-
-function windowsCandidateResolution(candidate: WindowsCandidate, name: string): ExecutableResolution {
-    if (candidate.kind === 'invalid') return unavailable(candidate.reason)
-    if (candidate.kind === 'absent') return unavailable(`Windows executable was not found in the supplied search path: ${name}`)
-    return candidate.kind === 'batch'
-        ? unavailable(`Windows batch executable requires an authenticated command interpreter: ${candidate.path}`)
-        : unavailable(`Windows native executable identity authority is unavailable: ${candidate.path}`)
+function searchPath(env: Readonly<Record<string, string | undefined>>): Readonly<{ kind: 'selected'; path: unknown }> | Readonly<{ kind: 'unreadable' }> {
+    try { return { kind: 'selected', path: env.PATH } } catch { return { kind: 'unreadable' } }
 }
 
 function unavailable(reason: string): ExecutableResolution {
@@ -251,8 +117,6 @@ async function digestRegularFile(path: string): Promise<string | undefined> {
 }
 
 export async function resolveExecutablePath(path: string): Promise<ExecutableResolution> {
-    const host = currentHostPolicy()
-    if (host === 'windows') return unavailable('Windows direct-path executable identity authority is unavailable')
     if (typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0')) {
         return unavailable('Executable path must be an exact absolute path')
     }
@@ -271,13 +135,10 @@ export async function resolveExecutablePath(path: string): Promise<ExecutableRes
 
 export async function resolveExecutable(name: string, env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
     if (typeof name !== 'string' || name.length === 0 || name.includes('\0')) return unavailable('Executable name is invalid')
-    const host = currentHostPolicy()
-    if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate(name, env, host), name)
     if (isAbsolute(name)) return resolveExecutablePath(name)
     if (basename(name) !== name) return unavailable('Executable name must be absolute or a PATH entry name')
-    const selected = selectSearchEnvironment(env, host)
+    const selected = searchPath(env)
     if (selected.kind === 'unreadable') return unavailable('Executable search path is not readable')
-    if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
     const pathValue = selected.path
     if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
         return unavailable('Executable search path is missing or invalid')
@@ -294,11 +155,8 @@ export async function resolveExecutable(name: string, env: Readonly<Record<strin
 }
 
 export async function resolveGitExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
-    const host = currentHostPolicy()
-    if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate('git', env, host), 'git')
-    const selected = selectSearchEnvironment(env, host)
+    const selected = searchPath(env)
     if (selected.kind === 'unreadable') return unavailable('Git executable search path is not readable')
-    if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
     const pathValue = selected.path
     if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
         return unavailable('Git executable search path is missing or invalid')
@@ -332,11 +190,8 @@ export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolut
 }
 
 export async function resolveDockerExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
-    const host = currentHostPolicy()
-    if (host === 'windows') return windowsCandidateResolution(await selectWindowsCandidate('docker', env, host), 'docker')
-    const selected = selectSearchEnvironment(env, host)
+    const selected = searchPath(env)
     if (selected.kind === 'unreadable') return unavailable('Docker executable search path is not readable')
-    if (selected.kind === 'ambiguous') return unavailable(`Executable search environment has ambiguous ${selected.name} spellings`)
     const pathValue = selected.path
     if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
         return unavailable('Docker executable search path is missing or invalid')

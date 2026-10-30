@@ -2,13 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { commands } from './command-table.js'
 import { runCli, type CliIo } from './cli.js'
 
-async function withPlatform<T>(platform: NodeJS.Platform, action: () => Promise<T>): Promise<T> {
-    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
-    Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
-    try { return await action() }
-    finally { Object.defineProperty(process, 'platform', descriptor) }
-}
-
 function captureIo(confirmReset?: CliIo['confirmReset']) {
     let stdout = ''
     let stderr = ''
@@ -136,23 +129,6 @@ describe('lifecycle CLI composition', () => {
         expect(await runCli([
             'session', '--config', '/synthetic/cockpit.toml', '--json', '--', 'synthetic-agent',
         ], captureIo().io, { session })).toBe(2)
-    })
-
-    it.each([
-        ['PATH', { PATH: String.raw`C:\Tools`, Path: undefined, PATHEXT: '.EXE' }],
-        ['PATHEXT', { PATH: String.raw`C:\Tools`, PATHEXT: '.EXE', PathExt: undefined }],
-    ] as const)('retains an undefined %s alias until session executable discovery refuses it', async (name, env) => {
-        const capture = captureIo()
-
-        const status = await withPlatform('win32', () => runCli([
-            'session', '--config', '/synthetic/missing-cockpit.toml', '--', 'synthetic-agent',
-        ], capture.io, {}, { env }))
-
-        expect(status).toBe(2)
-        expect(capture.output().stdout).toBe('')
-        expect(capture.output().stderr).toContain('EXECUTION_PRECONDITION_CHANGED')
-        expect(capture.output().stderr).toContain(`Executable search environment has ambiguous ${name} spellings`)
-        expect(capture.output().stderr).not.toContain('CONFIG_NOT_FOUND')
     })
 
     it('keeps undefined case aliases harmless to the supported POSIX session path', async () => {

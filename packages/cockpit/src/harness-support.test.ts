@@ -486,40 +486,6 @@ describe('paired harness evidence', () => {
         )
     })
 
-    it('keeps Windows live PATH identity unavailable while preserving explicit identities', () => {
-        const root = internalEvidenceRoot()
-        const executable = join(root, 'internal/probes/run/codex')
-        const originalPath = process.env.PATH
-        const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-        if (!platform?.configurable) throw new Error('process.platform cannot be configured for the OS boundary test')
-        try {
-            copyFileSync(DIRECT_EXECUTABLE, executable)
-            const versionCommand = [executable, '--version']
-            const helpCommand = [executable, '--help']
-            const invocation = [executable, '--config', '{control}']
-            const manifest = internalManifestWithCommands(root, versionCommand, helpCommand, invocation)
-            process.env.PATH = dirname(executable)
-            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-
-            expect(validateEvidenceManifest(manifest, root)).toContain(
-                'Codex evidence must invoke its harness executable directly',
-            )
-            expect(validateEvidenceManifest(manifest, root, {
-                testOnlyExecutableIdentities: { Codex: [executable] },
-            })).toEqual([])
-            expect(validateEvidenceManifest(manifest, root, {
-                operatorExecutableIdentities: new Map([
-                    ['Codex' as const, { canonicalPath: executable, sha256: digest(readFileSync(executable)) }],
-                ]),
-            })).toEqual([])
-        } finally {
-            Object.defineProperty(process, 'platform', platform)
-            if (originalPath === undefined) delete process.env.PATH
-            else process.env.PATH = originalPath
-            rmSync(root, { recursive: true, force: true })
-        }
-    })
-
     it('rejects one harness executable presented as another harness', () => {
         const root = internalEvidenceRoot()
         try {

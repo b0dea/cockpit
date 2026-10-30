@@ -104,7 +104,7 @@ function logRequest(value: unknown): LogRequest | undefined {
 }
 
 // Logs must read the daemon the lifecycle started, so they accept the same local selection: a named
-// context, Unix socket or local Windows named pipe. TLS and remote endpoints stay refused.
+// context or a local Unix socket. TLS and remote endpoints stay refused.
 function localDockerSelection(name: string, value: string): boolean {
     return name === 'DOCKER_HOST' ? admitLocalDockerEndpoint(value) !== undefined
         : name === 'DOCKER_CONTEXT' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)
