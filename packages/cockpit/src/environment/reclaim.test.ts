@@ -69,7 +69,7 @@ const executable = (path: string) => ({
     canonicalPath: path === '/bin/rm' ? removalCanonicalPath : path,
     invocationPath: path,
     sha256: path === '/bin/rm' ? removalSha256 : sha(path),
-    executionMode: path.endsWith('/docker') ? 'staged' as const : 'verified-path' as const,
+    executionMode: 'verified-path' as const,
 })
 
 const canonicalTemp = async (prefix: string) => realpath(await mkdtemp(join(tmpdir(), prefix)))
@@ -182,7 +182,7 @@ const authenticatedDiscovery = async (
     const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif [ "$2" = inspect ]; then echo "$kind" >> "$PWD/inspect.calls"; shift 4; status=0; for id do if [ "$kind" = image ] || [ "$kind" = volume ]; then /bin/cat -- "$PWD/inspect.$id" || status=1; else /bin/cat -- "$PWD/inspect.$kind.$id" || status=1; fi; done; exit $status; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
-    const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'staged' as const }
+    const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path' as const }
     const selectionAuthority = await issuedSelection(root, docker, api)
     const plans = api.createReclaimDiscoverySteps({ executable: docker,
         cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000,
@@ -493,7 +493,7 @@ describe('runtime discovery authority', () => {
     })
 
     it('requires one issued context-to-endpoint observation before discovery', async () => {
-        const docker = { ...executable('/tmp/docker'), executionMode: 'staged' as const }
+        const docker = { ...executable('/tmp/docker'), executionMode: 'verified-path' as const }
         const probes = createDockerSelectionSteps({
             executable: docker, cwd: '/tmp', env: { PATH: '/usr/bin' }, timeoutMs: 1_000,
             context: dockerContext,
@@ -516,7 +516,7 @@ describe('runtime discovery authority', () => {
             const script = join(root, 'docker')
             const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\n/bin/cat -- "$PWD/docker.container"\n')
             await writeFile(script, bytes, { mode: 0o700 })
-            const runtime = { canonicalPath: script, invocationPath: script, sha256: sha(bytes.toString()), executionMode: 'staged' as const }
+            const runtime = { canonicalPath: script, invocationPath: script, sha256: sha(bytes.toString()), executionMode: 'verified-path' as const }
             const observe = async () => {
                 const selectionSteps = createDockerSelectionSteps({
                     executable: runtime, cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000,
@@ -563,7 +563,7 @@ describe('runtime discovery authority', () => {
 
     it('refuses a Windows pipe on a POSIX host before Docker selection dispatch', () => {
         expect(createDockerSelectionSteps({
-            executable: { ...executable('/tmp/docker'), executionMode: 'staged' }, cwd: '/tmp',
+            executable: { ...executable('/tmp/docker'), executionMode: 'verified-path' }, cwd: '/tmp',
             env: { PATH: '/usr/bin' }, timeoutMs: 1_000, context: 'default',
             host: 'npipe:////./pipe/dockerDesktopLinuxEngine',
         })).toBeUndefined()
@@ -577,7 +577,7 @@ describe('runtime discovery authority', () => {
             const script = join(root, 'docker')
             const bytes = Buffer.from('#!/bin/sh\n/bin/cat -- "$PWD/selection.context"\n')
             await writeFile(script, bytes, { mode: 0o700 })
-            const runtime = { canonicalPath: script, invocationPath: script, sha256: sha(bytes.toString()), executionMode: 'staged' as const }
+            const runtime = { canonicalPath: script, invocationPath: script, sha256: sha(bytes.toString()), executionMode: 'verified-path' as const }
             const select = async (input: { readonly context: string; readonly host: string }) => {
                 await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: 'default', endpoint: input.host })}\n`)
                 const steps = createDockerSelectionSteps({

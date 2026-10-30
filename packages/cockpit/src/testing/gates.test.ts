@@ -109,7 +109,7 @@ describe('product-owned gates', () => {
         let config = configSha256
         const capture = async (): Promise<RuntimeEvidence> => {
             const plan = createStabilityCapturePlan({ stackId, configSha256: config,
-                runtimeExecutable: { canonicalPath: executable, invocationPath: join(directory, 'docker'), sha256: sha(source), executionMode: 'staged' },
+                runtimeExecutable: { canonicalPath: executable, invocationPath: join(directory, 'docker'), sha256: sha(source), executionMode: 'verified-path' },
                 cwd: directory, env: { PATH: '/usr/bin', CONTENT_HASH: content }, containerId: 'synthetic', batchId: sha(`batch-${sequence++}`),
                 runtime: { name: 'docker', version: '27.1.2' }, contentPaths: ['/workspace/api'], timeoutMs: 5000, outputLimitBytes: 4096 })
             if (plan.kind !== 'preview') throw new Error('capture plan refused')

@@ -61,7 +61,7 @@ async function evidence(memoryBytes: number, cpus: number, freeBlocks: number, f
     await chmod(dockerPath, 0o755); await chmod(diskPath, 0o755)
     const executable = (path: string, body: string) => resolvedExecutable({
         canonicalPath: path, invocationPath: path,
-        sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'staged',
+        sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'verified-path',
     })!
     const configPath = join(root, 'cockpit.toml')
     await writeFile(configPath, `[cockpit]\nname = "fixture"\nsiblings_root = "siblings"\n\n[[sibling]]\nslug = "data"\ndir = "data"\nmount = "none"\nacquire = "none"\nvar = "DATA_DIR"\ntoolchain = "none"\npurpose = "Synthetic data"\n\n[ports]\nstep = 10\ncount = 2\nbases = { WEB = 3000 }\n\n[environment.machine]\nruntime_memory_mb = ${floor.memoryBytes / 1_048_576}\nruntime_cpus = ${floor.cpuMillis / 1_000}\nfree_disk_mb = ${floor.freeDiskBytes / 1_048_576}\ncold_start_seconds = 30\n`)

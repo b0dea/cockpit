@@ -19,7 +19,7 @@ vi.mock('./dependency-runtime.js', async () => {
             argv, argv0: canonicalPath, cwd: process.cwd(), env, timeoutMs,
             stdoutLimitBytes, stderrLimitBytes,
             paths: [], ports: [], labels: { role }, expected: [],
-            consumedFiles: [{ path: canonicalPath, sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+            consumedFiles: [{ path: canonicalPath, sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' }],
             filesystemChecks: [], compensation: [],
         })!
     }
@@ -114,7 +114,7 @@ async function digest(path: string): Promise<string> {
     return createHash('sha256').update(await readFile(path)).digest('hex')
 }
 
-async function executable(path: string, executionMode: ResolvedExecutable['executionMode'] = 'staged'): Promise<ResolvedExecutable> {
+async function executable(path: string, executionMode: ResolvedExecutable['executionMode'] = 'verified-path'): Promise<ResolvedExecutable> {
     return Object.freeze({ canonicalPath: path, invocationPath: path, sha256: await digest(path), executionMode })
 }
 
@@ -659,26 +659,6 @@ describe('install verification', () => {
         } finally {
             if (previous === undefined) delete process.env.TMPDIR
             else process.env.TMPDIR = previous
-        }
-    })
-
-    it('preserves an exact staging-cleanup refusal at the install boundary', async () => {
-        const input = await fixture()
-        const source = '#!/bin/sh\nstaging=$(dirname "$0")\nprintf %s "$staging"\nchmod 500 "$staging"\n'
-        await writeFile(input.installExecutable.canonicalPath, source)
-        const planned = await planInstall(input, { execute: executeProbe })
-        if (planned.kind !== 'complete') throw new Error(planned.message)
-        let installOutcome: Awaited<ReturnType<typeof executeProbe>> | undefined
-        const result = await verifyInstall(planned, { execute: async (step) => {
-            const outcome = await executeProbe(step)
-            if (step === planned.installStep) installOutcome = outcome
-            return outcome
-        } })
-        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_STAGING_CLEANUP_FAILED })
-        if (installOutcome) {
-            const staging = installOutcome.stdout.toString()
-            await chmod(staging, 0o700)
-            await rm(staging, { recursive: true, force: true })
         }
     })
 

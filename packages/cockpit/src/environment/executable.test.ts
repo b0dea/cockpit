@@ -1,4 +1,5 @@
-import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,7 +23,7 @@ describe('resolved executable identity', () => {
             canonicalPath: '/opt/runtime/docker-tools',
             invocationPath: '/usr/local/bin/docker',
             sha256: digest,
-            executionMode: 'staged',
+            executionMode: 'verified-path',
         })).toBe(true)
     })
 
@@ -50,7 +51,7 @@ describe('resolved executable identity', () => {
 
     it('classifies specialized identities from one owned property read', () => {
         let reads = 0
-        const docker = { canonicalPath: '/opt/runtime/tool', sha256: digest, executionMode: 'staged' }
+        const docker = { canonicalPath: '/opt/runtime/tool', sha256: digest, executionMode: 'verified-path' }
         Object.defineProperty(docker, 'invocationPath', {
             enumerable: true,
             get: () => ++reads === 1 ? '/usr/local/bin/docker' : '/tmp/not-docker',
@@ -76,7 +77,7 @@ describe('resolved executable identity', () => {
             canonicalPath: '/opt/runtime/docker-tools',
             invocationPath,
             sha256: digest,
-            executionMode: 'staged',
+            executionMode: 'verified-path',
         })).toBe(false)
     })
 
@@ -85,7 +86,7 @@ describe('resolved executable identity', () => {
             canonicalPath: '/opt/runtime/docker-tools',
             invocationPath: '/usr/local/bin/docker',
             sha256: digest,
-            executionMode: 'staged',
+            executionMode: 'verified-path',
         })).toBe(true)
     })
 
@@ -109,7 +110,7 @@ describe('resolved executable identity', () => {
             canonicalPath: '/synthetic/runtime-tool', invocationPath: '/synthetic/GIT', sha256: digest, executionMode: 'verified-path',
         })).toBe(false)
         expect(isResolvedDockerExecutable({
-            canonicalPath: '/synthetic/runtime-tool', invocationPath: '/synthetic/DOCKER', sha256: digest, executionMode: 'staged',
+            canonicalPath: '/synthetic/runtime-tool', invocationPath: '/synthetic/DOCKER', sha256: digest, executionMode: 'verified-path',
         })).toBe(false)
     })
 
@@ -156,7 +157,7 @@ describe('resolved executable identity', () => {
         })
     })
 
-    it('resolves Docker from its invocation while binding staged canonical bytes', async () => {
+    it('resolves Docker from its invocation while binding its canonical bytes', async () => {
         const root = directory()
         const canonicalPath = join(root, 'runtime-tool')
         const invocationPath = join(root, 'docker')
@@ -169,9 +170,26 @@ describe('resolved executable identity', () => {
             state: 'available',
             value: {
                 canonicalPath: realpathSync(canonicalPath), invocationPath,
-                sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'staged',
+                sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'verified-path',
             },
         })
+    })
+
+    it('re-hashes a resolved executable whose bytes changed under a restored size and modification time', async () => {
+        const root = directory()
+        const path = join(root, 'docker')
+        writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+        utimesSync(path, 1_700_000_000, 1_700_000_000)
+        const first = await resolveDockerExecutable({ PATH: root })
+        // Same length, timestamps put back: only the change time moves, and the remembered digest must not apply.
+        writeFileSync(path, '#!/bin/sh\nexit 1\n')
+        utimesSync(path, 1_700_000_000, 1_700_000_000)
+        const second = await resolveDockerExecutable({ PATH: root })
+
+        expect(first.state === 'available' && second.state === 'available').toBe(true)
+        if (first.state !== 'available' || second.state !== 'available') return
+        expect(second.value.sha256).toBe(createHash('sha256').update('#!/bin/sh\nexit 1\n').digest('hex'))
+        expect(second.value.sha256).not.toBe(first.value.sha256)
     })
 
     it.each([
@@ -210,6 +228,23 @@ describe('resolved executable identity', () => {
             state: 'available',
             value: { canonicalPath: realpathSync(canonicalPath), invocationPath, sha256: expect.stringMatching(/^[a-f0-9]{64}$/), executionMode: 'verified-path' },
         })
+    })
+
+    it('re-hashes a resolved executable whose bytes changed under a restored size and modification time', async () => {
+        const root = directory()
+        const path = join(root, 'docker')
+        writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
+        utimesSync(path, 1_700_000_000, 1_700_000_000)
+        const first = await resolveDockerExecutable({ PATH: root })
+        // Same length, timestamps put back: only the change time moves, and the remembered digest must not apply.
+        writeFileSync(path, '#!/bin/sh\nexit 1\n')
+        utimesSync(path, 1_700_000_000, 1_700_000_000)
+        const second = await resolveDockerExecutable({ PATH: root })
+
+        expect(first.state === 'available' && second.state === 'available').toBe(true)
+        if (first.state !== 'available' || second.state !== 'available') return
+        expect(second.value.sha256).toBe(createHash('sha256').update('#!/bin/sh\nexit 1\n').digest('hex'))
+        expect(second.value.sha256).not.toBe(first.value.sha256)
     })
 
     it.each([

@@ -107,7 +107,7 @@ function request(overrides: Partial<RuntimeProbeRequest> = {}): RuntimeProbeRequ
             canonicalPath: dockerPath,
             invocationPath: dockerInvocationPath,
             sha256: dockerSha,
-            executionMode: 'staged',
+            executionMode: 'verified-path',
         },
         gitExecutable: {
             canonicalPath: gitPath,
@@ -256,8 +256,8 @@ describe('installed container-runtime capability promotion', () => {
 
     it('does not promote an executor-authenticated parser-only four-step run', async () => {
         const verdict = await probeRuntimeSupport({
-            executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'staged' },
-            gitExecutable: { canonicalPath: '/tmp/git', invocationPath: '/tmp/git', sha256: 'e'.repeat(64), executionMode: 'staged' },
+            executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'verified-path' },
+            gitExecutable: { canonicalPath: '/tmp/git', invocationPath: '/tmp/git', sha256: 'e'.repeat(64), executionMode: 'verified-path' },
             cwd: '/tmp', env: {}, projectName: 'runtime-probe',
             candidate: { canonicalPath: '/tmp/candidate.yml', sha256: 'c'.repeat(64) },
             brokenControl: { canonicalPath: '/tmp/control.yml', sha256: 'd'.repeat(64) },
@@ -275,7 +275,7 @@ describe('installed container-runtime capability promotion', () => {
         ['remote endpoint', { env: { ...runtimeEnvironment(), DOCKER_HOST: 'ssh://synthetic.invalid' } }],
         ['secret-bearing environment', { env: { ...runtimeEnvironment(), API_SECRET: 'probe-secret-canary' } }],
         ['future measurement', { measuredOn: '9999-01-01' }],
-        ['fake executor path', { executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'staged' as const } }],
+        ['fake executor path', { executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'verified-path' as const } }],
     ])('keeps %s unavailable without retaining caller values', async (_name, overrides) => {
         const verdict = await probeRuntimeSupport(request(overrides as Partial<RuntimeProbeRequest>))
         expect(verdict.status).toBe('unavailable')
@@ -306,7 +306,7 @@ describe('installed container-runtime capability promotion', () => {
 
     it('bounds a slow installed command before mutation and leaves no owned runtime identity', () => {
         const verdict = installedChildProbe(request({
-            executable: { canonicalPath: slowDockerPath, invocationPath: slowDockerPath, sha256: slowDockerSha, executionMode: 'staged' },
+            executable: { canonicalPath: slowDockerPath, invocationPath: slowDockerPath, sha256: slowDockerSha, executionMode: 'verified-path' },
             timeoutMs: 25,
         }))
         expect(verdict).toEqual(expect.objectContaining({

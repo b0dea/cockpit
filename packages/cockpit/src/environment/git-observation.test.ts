@@ -248,7 +248,7 @@ describe('Git adjacency evidence', () => {
             const body = `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ services: { api: { labels, healthcheck: { test: ['CMD', 'true'] } } } }))})\n`
             await writeFile(probe, body); await chmod(probe, 0o755)
             const executable = resolvedExecutable({ canonicalPath: probe, invocationPath: probe,
-                sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'staged' })!
+                sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'verified-path' })!
             const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
             if (git.state !== 'available') throw new Error('nested fixture Git unavailable')
             for (const cwd of [nested, root]) {

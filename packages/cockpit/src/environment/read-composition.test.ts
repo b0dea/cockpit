@@ -140,7 +140,7 @@ vi.mock('./ports.js', async (importOriginal) => ({
 vi.mock('./executable.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('./executable.js')>(),
     resolveDockerExecutable: vi.fn(async () => ({ state: 'available', value: {
-        canonicalPath: '/synthetic/docker', invocationPath: '/synthetic/docker', sha256: topology.executableSha256, executionMode: 'staged',
+        canonicalPath: '/synthetic/docker', invocationPath: '/synthetic/docker', sha256: topology.executableSha256, executionMode: 'verified-path',
     } })),
 }))
 

@@ -37,7 +37,7 @@ afterEach(() => {
 })
 
 function executable(path: string): ResolvedExecutable {
-    return { canonicalPath: path, invocationPath: path, sha256: createHash('sha256').update(requireBytes(path)).digest('hex'), executionMode: 'staged' }
+    return { canonicalPath: path, invocationPath: path, sha256: createHash('sha256').update(requireBytes(path)).digest('hex'), executionMode: 'verified-path' }
 }
 
 function requireBytes(path: string): Buffer {

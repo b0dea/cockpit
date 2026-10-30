@@ -148,7 +148,7 @@ async function issueRuntimeTopology(root: string): Promise<RuntimeTopologyEviden
     const runtime = createRuntimeAdapter({
         runtime: { name: 'docker', version: '27.1.2', executableSha256: runtimeSha256 },
         composeVersion: '2.39.2',
-        executable: { canonicalPath: runtimePath, invocationPath: runtimePath, sha256: runtimeSha256, executionMode: 'staged' },
+        executable: { canonicalPath: runtimePath, invocationPath: runtimePath, sha256: runtimeSha256, executionMode: 'verified-path' },
         operation: 'validate',
         cwd: root,
         composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source: composeSource, sha256: sha(composeSource) }],
@@ -201,7 +201,7 @@ async function issueSelection(root: string, executable: ReturnType<typeof resolv
 }
 
 function resolvedExecutable(path: string, bytes: Buffer) {
-    return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'staged' as const }
+    return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'verified-path' as const }
 }
 
 async function issueReclaimDiscovery(root: string, resources: readonly ReclaimResource[]) {

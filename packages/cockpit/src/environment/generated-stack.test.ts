@@ -110,7 +110,7 @@ else process.exit(7)
 `)
     await chmod(docker, 0o700)
     await writeFile(compose, result.compose)
-    const executable = { canonicalPath: docker, invocationPath: docker, sha256: createHash('sha256').update(await readFile(docker)).digest('hex'), executionMode: 'staged' as const }
+    const executable = { canonicalPath: docker, invocationPath: docker, sha256: createHash('sha256').update(await readFile(docker)).digest('hex'), executionMode: 'verified-path' as const }
     const canonicalNode = realpathSync(process.execPath)
     const nodeExecutable = { canonicalPath: canonicalNode, invocationPath: process.execPath, sha256: createHash('sha256').update(await readFile(canonicalNode)).digest('hex'), executionMode: 'verified-path' as const }
     const composeSha256 = createHash('sha256').update(result.compose).digest('hex')

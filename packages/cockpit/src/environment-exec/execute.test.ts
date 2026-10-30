@@ -665,37 +665,37 @@ describe('mechanical environment executor', () => {
         expect(executionOutcomeMatches(outcome, { ...step, cwd: '/altered' })).toBe(false)
     })
 
-    it('executes verified bytes from a private content-addressed snapshot', async () => {
+    it('passes a data input to the process as its private content-addressed snapshot', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-consumed-file-'))
         scratch.push(directory)
-        const executable = join(directory, 'runtime')
-        const source = '#!/bin/sh\nprintf %s "$0"\n'
-        writeFileSync(executable, source)
-        chmodSync(executable, 0o755)
-        const step = nodeStep('consumed-control', '', {
-            argv: [executable],
-            consumedFiles: [{
-                path: executable,
-                sha256: createHash('sha256').update(source).digest('hex'),
-                maxBytes: 536_870_912, argvIndexes: [0],
-                executable: true,
-                executionMode: 'staged',
-            }],
+        const input = join(directory, 'input')
+        writeFileSync(input, 'verified')
+        const script = "process.stdout.write(process.argv[1] + '\\n' + require('node:fs').readFileSync(process.argv[1], 'utf8'))"
+        const step = nodeStep('consumed-control', script, {
+            argv: [process.execPath, '-e', script, input],
+            consumedFiles: [
+                { path: process.execPath, sha256: sha256(readFileSync(process.execPath)), maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' },
+                { path: input, sha256: sha256('verified'), maxBytes: 64, argvIndexes: [3], executable: false },
+            ],
         })
 
         const outcome = await executeProbe(step)
 
         expect(outcome.kind).toBe('complete')
         if (outcome.kind !== 'complete') return
-        expect(outcome.stdout.toString()).not.toBe(executable)
+        const [snapshot, content] = outcome.stdout.toString().split('\n')
+        expect(snapshot).not.toBe(input)
+        expect(dirname(dirname(snapshot!))).toBe(tmpdir())
+        expect(basename(dirname(snapshot!))).toMatch(/^cockpit-execution-/)
+        expect(content).toBe('verified')
         expect(executionOutcomeMatches(outcome, step)).toBe(true)
     })
 
-    it('revalidates a path executable immediately before spawn and binds its mode into the receipt', async () => {
+    it('runs a verified executable from its own path and binds its digest into the receipt', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-verified-path-'))
         scratch.push(directory)
         const executable = join(directory, 'runtime')
-        const source = '#!/bin/sh\nprintf safe\n'
+        const source = '#!/bin/sh\nprintf %s "$0"\n'
         writeFileSync(executable, source, { mode: 0o700 })
         const step = nodeStep('verified-path-control', '', {
             argv: [executable],
@@ -707,14 +707,11 @@ describe('mechanical environment executor', () => {
 
         const outcome = await executeProbe(step)
 
-        expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', stdout: Buffer.from('safe') }))
+        expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', stdout: Buffer.from(executable) }))
         if (outcome.kind !== 'complete') return
-        const relabelled = {
-            ...step,
-            consumedFiles: [{ ...step.consumedFiles[0], executable: true as const, executionMode: 'staged' as const }],
-        }
-        expect(executionReceiptMatches(outcome.receipt, relabelled)).toBe(false)
-        expect(executionOutcomeMatches(outcome, relabelled)).toBe(false)
+        const rebound = { ...step, consumedFiles: [{ ...step.consumedFiles[0]!, sha256: sha256('other') }] }
+        expect(executionReceiptMatches(outcome.receipt, rebound as ExecutionStep)).toBe(false)
+        expect(executionOutcomeMatches(outcome, rebound as ExecutionStep)).toBe(false)
     })
 
     it('re-hashes a verified executable whose bytes changed under a restored size and modification time', async () => {
@@ -790,7 +787,7 @@ done
             argv: [executable, 'compose', '--project-directory', directory, '--file', compose, 'config'],
             cwd: directory,
             consumedFiles: [
-                { path: executable, sha256: sha256(executableSource), maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' },
+                { path: executable, sha256: sha256(executableSource), maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' },
                 { path: compose, sha256: sha256(composeSource), maxBytes: 1_048_576, argvIndexes: [5], executable: false },
             ],
         })
@@ -804,12 +801,17 @@ done
         const executable = join(directory, 'runtime')
         const unrelated = join(directory, 'unrelated')
         writeFileSync(unrelated, 'safe')
-        const source = '#!/bin/sh\nstaging=$(dirname "$0")\nprintf %s "$staging"\nchmod 500 "$staging"\n'
+        const input = join(directory, 'input')
+        writeFileSync(input, 'input')
+        const source = '#!/bin/sh\nstaging=$(dirname "$1")\nprintf %s "$staging"\nchmod 500 "$staging"\n'
         writeFileSync(executable, source)
         chmodSync(executable, 0o755)
         const step = nodeStep('cleanup-control', '', {
-            argv: [executable],
-            consumedFiles: [{ path: executable, sha256: sha256(source), maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+            argv: [executable, input],
+            consumedFiles: [
+                { path: executable, sha256: sha256(source), maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' },
+                { path: input, sha256: sha256('input'), maxBytes: 16, argvIndexes: [1], executable: false },
+            ],
         })
         const outcome = await executeProbe(step)
 
@@ -1001,7 +1003,7 @@ done
         writeFileSync(executable, source, { mode: 0o700 })
         const outcome = await executeProbe(nodeStep('oversized-consumed', '', {
             argv: [executable],
-            consumedFiles: [{ path: executable, sha256: sha256(source), maxBytes: 1, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+            consumedFiles: [{ path: executable, sha256: sha256(source), maxBytes: 1, argvIndexes: [0], executable: true, executionMode: 'verified-path' }],
         }))
 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', code: 'EXECUTION_PRECONDITION_CHANGED' }))
@@ -1221,11 +1223,13 @@ done
         const compensationMarker = join(directory, 'compensated')
         const source = `#!/bin/sh
 trap '' TERM
-printf '%s\n%s\n' "$(dirname "$0")" "$$" > ${JSON.stringify(`${stagingMarker}.pending`)}
+printf '%s\n%s\n' "$(dirname "$1")" "$$" > ${JSON.stringify(`${stagingMarker}.pending`)}
 mv ${JSON.stringify(`${stagingMarker}.pending`)} ${JSON.stringify(stagingMarker)}
 while :; do sleep 1; done
 `
         writeFileSync(executable, source, { mode: 0o700 })
+        const input = join(directory, 'input')
+        writeFileSync(input, 'input')
         const controller = new AbortController()
         const nativeKill = process.kill
         process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
@@ -1240,12 +1244,12 @@ while :; do sleep 1; done
         try {
             try {
                 const execution = executePlan({ steps: [nodeStep('primary', '', {
-                    argv: [executable],
+                    argv: [executable, input],
                     argv0: executable,
                     consumedFiles: [{
                         path: executable, sha256: sha256(source), maxBytes: 1_024,
-                        argvIndexes: [0], executable: true, executionMode: 'staged',
-                    }],
+                        argvIndexes: [0], executable: true, executionMode: 'verified-path',
+                    }, { path: input, sha256: sha256('input'), maxBytes: 16, argvIndexes: [1], executable: false }],
                     compensation: [nodeStep(
                         'must-not-compensate',
                         `require('node:fs').writeFileSync(${JSON.stringify(compensationMarker)}, 'ran')`,
@@ -1282,19 +1286,21 @@ while :; do sleep 1; done
         const executable = join(directory, 'primary')
         const source = `#!/bin/sh
 trap '' TERM
-printf '%s\n%s\n' "$(dirname "$0")" "$$" > ${JSON.stringify(`${started}.pending`)}
+printf '%s\n%s\n' "$(dirname "$1")" "$$" > ${JSON.stringify(`${started}.pending`)}
 mv ${JSON.stringify(`${started}.pending`)} ${JSON.stringify(started)}
 while :; do sleep 1; done
 `
         writeFileSync(executable, source, { mode: 0o700 })
+        const input = join(directory, 'input')
+        writeFileSync(input, 'input')
         const controller = new AbortController()
         const step = nodeStep('unconfirmed-receipt', '', {
-            argv: [executable],
+            argv: [executable, input],
             argv0: executable,
             consumedFiles: [{
                 path: executable, sha256: sha256(source), maxBytes: 1_024,
-                argvIndexes: [0], executable: true, executionMode: 'staged',
-            }],
+                argvIndexes: [0], executable: true, executionMode: 'verified-path',
+            }, { path: input, sha256: sha256('input'), maxBytes: 16, argvIndexes: [1], executable: false }],
         })
         const nativeKill = process.kill
         process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
@@ -1322,6 +1328,7 @@ while :; do sleep 1; done
             }))
             expect(outcome).not.toHaveProperty('receipt')
             expect(executionOutcomeMatches(outcome, step)).toBe(true)
+            expect(basename(staging)).toMatch(/^cockpit-execution-/)
             expect(existsSync(staging)).toBe(true)
         } finally {
             process.kill = nativeKill
@@ -1348,7 +1355,7 @@ while :; do sleep 1; done
 const { spawn } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
-fs.writeFileSync(${JSON.stringify(stagingMarker)}, path.dirname(process.argv[1]) + '\\n' + process.pid)
+fs.writeFileSync(${JSON.stringify(stagingMarker)}, path.dirname(process.argv[2]) + '\\n' + process.pid)
 spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { detached: false, stdio: 'ignore' })
 const ready = setInterval(() => {
     if (!fs.existsSync(${JSON.stringify(descendantMarker)})) return
@@ -1357,13 +1364,15 @@ const ready = setInterval(() => {
 }, 5)
 `
         writeFileSync(executable, source, { mode: 0o700 })
+        const input = join(directory, 'input')
+        writeFileSync(input, 'input')
         const step = nodeStep('successful-leader', '', {
-            argv: [executable],
+            argv: [executable, input],
             argv0: executable,
             consumedFiles: [{
                 path: executable, sha256: sha256(source), maxBytes: 4_096,
-                argvIndexes: [0], executable: true, executionMode: 'staged',
-            }],
+                argvIndexes: [0], executable: true, executionMode: 'verified-path',
+            }, { path: input, sha256: sha256('input'), maxBytes: 16, argvIndexes: [1], executable: false }],
         })
         let descendantPid: number | undefined
         let leaderPid: number | undefined
@@ -1376,6 +1385,7 @@ const ready = setInterval(() => {
             expect(outcome).toEqual(expect.objectContaining({ kind: 'complete', receipt: expect.any(Object) }))
             expect(outcome.execution).toEqual(expect.objectContaining({ exitCode: 0, signal: null }))
             expect(() => process.kill(descendantPid as number, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+            expect(basename(staging)).toMatch(/^cockpit-execution-/)
             expect(existsSync(staging)).toBe(false)
         } finally {
             if ((descendantPid === undefined || leaderPid === undefined || staging === undefined)

@@ -59,7 +59,7 @@ writeFileSync(composeOverridePath, composeOverrideSource)
 chmodSync(runtimePath, 0o755)
 afterAll(() => rmSync(runtimeDirectory, { recursive: true, force: true }))
 const input: LogRequest = {
-    runtime: 'docker-compose' as const, executable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: sha(runtimeSource), executionMode: 'staged' as const },
+    runtime: 'docker-compose' as const, executable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: sha(runtimeSource), executionMode: 'verified-path' as const },
     cwd: runtimeDirectory, stackId: stack, configSha256, batchId: sha('log-batch'), containerId: 'synthetic-api-1', runtimeVersion: '27.1.2', composeVersion: '2.29.2',
     projectName: 'synthetic', composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source: composeSource, sha256: sha(composeSource) }],
     services: ['api'], service: 'api', since: '2026-09-07T00:00:00Z', tail: 100, follow: true,
@@ -130,7 +130,7 @@ fi
 `
     writeFileSync(path, source)
     chmodSync(path, 0o755)
-    const executable = { canonicalPath: path, invocationPath: runtimeInvocationPath, sha256: sha(source), executionMode: 'staged' as const }
+    const executable = { canonicalPath: path, invocationPath: runtimeInvocationPath, sha256: sha(source), executionMode: 'verified-path' as const }
     const runtime = createRuntimeAdapter({
         runtime: { name: 'docker', version: input.runtimeVersion, executableSha256: executable.sha256 },
         composeVersion: input.composeVersion,
@@ -207,7 +207,7 @@ fi
 `
     writeFileSync(path, source)
     chmodSync(path, 0o755)
-    const executable = { canonicalPath: path, invocationPath: runtimeInvocationPath, sha256: sha(source), executionMode: 'staged' as const }
+    const executable = { canonicalPath: path, invocationPath: runtimeInvocationPath, sha256: sha(source), executionMode: 'verified-path' as const }
     const runtime = createRuntimeAdapter({
         runtime: { name: 'docker', version: input.runtimeVersion, executableSha256: executable.sha256 },
         composeVersion: input.composeVersion,

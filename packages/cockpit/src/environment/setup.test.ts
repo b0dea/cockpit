@@ -19,7 +19,7 @@ const gitExecutable = {
     canonicalPath: gitCanonicalPath,
     invocationPath: gitInvocationPath,
     sha256: createHash('sha256').update(readFileSync(gitCanonicalPath)).digest('hex'),
-    executionMode: 'staged' as const,
+    executionMode: 'verified-path' as const,
 }
 const planSetup = (input: Omit<PlanSetupInput, 'gitExecutable'>) =>
     planSetupRaw({ ...input, gitExecutable } as PlanSetupInput)
@@ -54,7 +54,7 @@ describe('setup planner', () => {
 
     it('owns caller-supplied executable identity before deriving setup steps', async () => {
         let reads = 0
-        const volatile = { invocationPath: gitInvocationPath, sha256: gitExecutable.sha256, executionMode: 'staged' as const }
+        const volatile = { invocationPath: gitInvocationPath, sha256: gitExecutable.sha256, executionMode: 'verified-path' as const }
         Object.defineProperty(volatile, 'canonicalPath', {
             enumerable: true,
             get: () => ++reads === 1 ? gitCanonicalPath : '/tmp/relabelled-git',
@@ -82,7 +82,7 @@ describe('setup planner', () => {
         ])
         expect(outcome.plan.steps[0]).toEqual(expect.objectContaining({
             argv0: gitInvocationPath,
-            consumedFiles: [{ path: gitCanonicalPath, sha256: gitExecutable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+            consumedFiles: [{ path: gitCanonicalPath, sha256: gitExecutable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' }],
         }))
     })
 

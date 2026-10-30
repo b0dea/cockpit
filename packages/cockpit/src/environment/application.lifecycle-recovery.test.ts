@@ -244,7 +244,7 @@ const gitExecutable = {
     canonicalPath: gitCanonicalPath,
     invocationPath: gitInvocationPath,
     sha256: createHash('sha256').update(readFileSync(gitCanonicalPath)).digest('hex'),
-    executionMode: 'staged' as const,
+    executionMode: 'verified-path' as const,
 }
 
 function stubUpPlanner(planner: typeof import('./lifecycle.js').planUp): void {
@@ -731,7 +731,7 @@ describe('lifecycle application contracts', () => {
         const executable = (name: string, body: string) => {
             const path = join(root, name)
             writeFileSync(path, body, { mode: 0o700 })
-            return { canonicalPath: path, invocationPath: path, sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'staged' as const }
+            return { canonicalPath: path, invocationPath: path, sha256: createHash('sha256').update(body).digest('hex'), executionMode: 'verified-path' as const }
         }
         const docker = executable('docker', '#!/bin/sh\nprintf "1048576|1\\n"\n')
         const disk = executable('disk-fixture', '#!/bin/sh\nprintf "2097152\\n"\n')

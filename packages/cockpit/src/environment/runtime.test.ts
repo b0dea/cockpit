@@ -106,7 +106,7 @@ const artifact = (reference: string, source = 'services: {}\n') => ({
 const runtimeInput = {
     runtime: { name: 'docker' as const, version: '27.1.2', executableSha256: executableSha },
     composeVersion: '2.39.2',
-    executable: { canonicalPath: '/usr/local/bin/docker', invocationPath: '/usr/local/bin/docker', sha256: executableSha, executionMode: 'staged' as const },
+    executable: { canonicalPath: '/usr/local/bin/docker', invocationPath: '/usr/local/bin/docker', sha256: executableSha, executionMode: 'verified-path' as const },
     operation: 'up' as const,
     cwd: '/tmp/synthetic-cockpit',
     composeFiles: [artifact('compose/base.yml'), artifact('compose/local.yml')] as const,
@@ -146,7 +146,7 @@ else
 fi
 `
         writeFileSync(path, source, { mode: 0o700 })
-        return { directory, executable: { canonicalPath: path, invocationPath: path, sha256: sha(source), executionMode: 'staged' as const } }
+        return { directory, executable: { canonicalPath: path, invocationPath: path, sha256: sha(source), executionMode: 'verified-path' as const } }
     }
 
     it('uses authenticated bounded probes to identify the runtime and versions', async () => {
@@ -294,7 +294,7 @@ describe('runtime plan construction', () => {
             labels: { 'dev.b0dea.cockpit.id': 'synthetic-stack', operation: 'up', runtime: 'docker', composeVersion: '2.39.2' },
             expected: [],
             consumedFiles: [
-                { path: '/usr/local/bin/docker', sha256: executableSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' },
+                { path: '/usr/local/bin/docker', sha256: executableSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' },
                 { path: '/tmp/synthetic-cockpit/compose/base.yml', sha256: sha('services: {}\n'), maxBytes: 1_048_576, argvIndexes: [5], executable: false },
                 { path: '/tmp/synthetic-cockpit/compose/local.yml', sha256: sha('services: {}\n'), maxBytes: 1_048_576, argvIndexes: [7], executable: false },
             ],
@@ -570,7 +570,7 @@ describe('runtime plan construction', () => {
             if (binding) {
                 const floor = createMachineFloorPlan({
                     runtimePlan: admitted.plan,
-                    diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'staged' },
+                    diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'verified-path' },
                     timeoutMs: 10_000,
                     authority: binding.authority,
                 })
@@ -654,7 +654,7 @@ describe('runtime plan construction', () => {
     })
 
     it.each([
-        { executable: { canonicalPath: 'docker', invocationPath: 'docker', sha256: executableSha, executionMode: 'staged' as const }, timeoutMs: 45_000, label: 'unresolved executable path' },
+        { executable: { canonicalPath: 'docker', invocationPath: 'docker', sha256: executableSha, executionMode: 'verified-path' as const }, timeoutMs: 45_000, label: 'unresolved executable path' },
         { executable: { ...runtimeInput.executable, invocationPath: 'docker' }, timeoutMs: 45_000, label: 'relative invocation path' },
         { executable: { ...runtimeInput.executable, invocationPath: '/usr/local/bin/../bin/docker' }, timeoutMs: 45_000, label: 'noncanonical invocation path' },
         { executable: { ...runtimeInput.executable, invocationPath: '/tmp/not-docker' }, timeoutMs: 45_000, label: 'wrong runtime invocation name' },
@@ -698,7 +698,7 @@ describe('runtime measurement classification', () => {
             const node = await resolveExecutablePath(process.execPath)
             if (node.state !== 'available') throw new Error(node.reason)
             const planned = createMachineFloorPlan({
-                runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimePath, sha256: sha(runtimeBytes), executionMode: 'staged' },
+                runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimePath, sha256: sha(runtimeBytes), executionMode: 'verified-path' },
                 diskExecutable: node.value, cwd: root, env: {}, timeoutMs: 10_000,
             })
             expect(planned.kind).toBe('preview')
@@ -723,7 +723,7 @@ describe('runtime measurement classification', () => {
             const executable = (name: string, bytes: string) => {
                 const path = join(root, name)
                 writeFileSync(path, bytes, { mode: 0o700 })
-                return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'staged' as const }
+                return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'verified-path' as const }
             }
             const runtimeExecutable = executable('docker', '#!/bin/sh\nprintf "1048576|1\\n"\n')
             for (const output of ['0\n', '123456789\n', `${Number.MAX_SAFE_INTEGER}\n`,
@@ -746,7 +746,7 @@ describe('runtime measurement classification', () => {
         const diskSha = sha('disk executable')
         const outcome = createMachineFloorPlan({
             runtimeExecutable: runtimeInput.executable,
-            diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: diskSha, executionMode: 'staged' },
+            diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: diskSha, executionMode: 'verified-path' },
             cwd: runtimeInput.cwd,
             env: runtimeInput.env,
             timeoutMs: 10_000,
@@ -757,12 +757,12 @@ describe('runtime measurement classification', () => {
             {
                 id: 'runtime:measure:resources',
                 argv: ['/usr/local/bin/docker', 'info', '--format', '{{json .MemTotal}}|{{json .NCPU}}'],
-                consumedFiles: [{ path: '/usr/local/bin/docker', sha256: executableSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+                consumedFiles: [{ path: '/usr/local/bin/docker', sha256: executableSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' }],
                 filesystemChecks: [],
             },
             {
                 id: 'runtime:measure:free-disk', argv: ['/usr/local/bin/node', '--input-type=module', '-e', expect.any(String), runtimeInput.cwd],
-                consumedFiles: [{ path: '/usr/local/bin/node', sha256: diskSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'staged' }],
+                consumedFiles: [{ path: '/usr/local/bin/node', sha256: diskSha, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: 'verified-path' }],
                 filesystemChecks: [],
             },
         ])
@@ -772,7 +772,7 @@ describe('runtime measurement classification', () => {
     it.each(['null', 'primitive', 'revoked', 'missing', 'extra', 'nested executable', 'environment', 'working directory', 'timeout', 'forged authority'])('refuses hostile machine-floor input: %s', (kind) => {
         const valid = {
             runtimeExecutable: runtimeInput.executable,
-            diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'staged' as const },
+            diskExecutable: { canonicalPath: '/usr/local/bin/node', invocationPath: '/usr/local/bin/node', sha256: sha('disk executable'), executionMode: 'verified-path' as const },
             cwd: runtimeInput.cwd,
             env: runtimeInput.env,
             timeoutMs: 10_000,
@@ -1380,7 +1380,7 @@ fi
 `
         writeFileSync(path, source)
         chmodSync(path, 0o755)
-        return { canonicalPath: path, invocationPath: join(directory, 'docker'), sha256: sha(source), executionMode: 'staged' }
+        return { canonicalPath: path, invocationPath: join(directory, 'docker'), sha256: sha(source), executionMode: 'verified-path' }
     }
 
     async function topologyEvidence(topology: unknown, containers: unknown = [], options: {

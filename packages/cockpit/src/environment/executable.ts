@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
+import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 
 export const mechanism = {
     id: 'resolved-executable-identity',
@@ -13,11 +14,18 @@ export const mechanism = {
 // observes with are found on this fixed search path rather than the inherited PATH.
 export const GUARD_EXECUTABLE_SEARCH_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
 
+// Every executable runs from its own path. The executor re-checks the file's identity and digest
+// immediately before each spawn, and the process-wide digest memo makes that re-check cost a stat
+// unless the file's device, inode, size, mode or times moved. Docker used to be copied into a
+// private snapshot and re-hashed before every call; on a 74 MB client that cost one to two seconds
+// per call and made `down` take minutes. The snapshot only closed the instant between the final
+// check and spawn against a same-user writer, which the executor's cooperative-filesystem model
+// does not defend for Git or Node either.
 export interface ResolvedExecutable {
     readonly canonicalPath: string
     readonly invocationPath: string
     readonly sha256: string
-    readonly executionMode: 'staged' | 'verified-path'
+    readonly executionMode: 'verified-path'
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -37,7 +45,7 @@ export function resolvedExecutable(value: unknown): ResolvedExecutable | undefin
             && !canonicalPath.includes('\0') && typeof invocationPath === 'string' && isAbsolute(invocationPath)
             && normalize(invocationPath) === invocationPath && !invocationPath.includes('\0')
             && typeof sha256 === 'string' && SHA256.test(sha256)
-            && (executionMode === 'staged' || executionMode === 'verified-path')
+            && executionMode === 'verified-path'
             ? Object.freeze({ canonicalPath, invocationPath, sha256, executionMode })
             : undefined
     } catch {
@@ -51,8 +59,7 @@ export function isResolvedExecutable(value: unknown): boolean {
 
 export function resolvedDockerExecutable(value: unknown): ResolvedExecutable | undefined {
     const executable = resolvedExecutable(value)
-    return executable !== undefined && basename(executable.invocationPath) === 'docker' && executable.executionMode === 'staged'
-        ? executable : undefined
+    return executable !== undefined && basename(executable.invocationPath) === 'docker' ? executable : undefined
 }
 
 export function isResolvedDockerExecutable(value: unknown): boolean {
@@ -90,6 +97,9 @@ async function digestRegularFile(path: string): Promise<string | undefined> {
         file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
         const opened = await file.stat()
         if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > EXECUTABLE_BYTE_LIMIT) return undefined
+        const fingerprint = fileFingerprint(path, opened)
+        const remembered = verifiedDigest(fingerprint)
+        if (remembered !== undefined) return fileFingerprint(path, await lstat(path)) === fingerprint ? remembered : undefined
         const hash = createHash('sha256')
         const chunk = Buffer.allocUnsafe(1_048_576)
         let total = 0
@@ -106,6 +116,7 @@ async function digestRegularFile(path: string): Promise<string | undefined> {
             && linked.dev === opened.dev && linked.ino === opened.ino && linked.size === opened.size && linked.mtimeMs === opened.mtimeMs
             ? hash.digest('hex')
             : undefined
+        if (sha256 !== undefined && fileFingerprint(path, after) === fingerprint) recordVerifiedDigest(fingerprint, sha256)
         await file.close()
         file = undefined
         return sha256
@@ -155,34 +166,7 @@ export async function resolveExecutable(name: string, env: Readonly<Record<strin
 }
 
 export async function resolveGitExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
-    const selected = searchPath(env)
-    if (selected.kind === 'unreadable') return unavailable('Git executable search path is not readable')
-    const pathValue = selected.path
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
-        return unavailable('Git executable search path is missing or invalid')
-    }
-    const directories = pathValue.split(delimiter)
-    if (directories.length > PATH_ENTRY_LIMIT || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) {
-        return unavailable('Git executable search path must contain bounded absolute directories')
-    }
-    for (const directory of directories) {
-        const invocationPath = join(directory, 'git')
-        let invocation
-        try { invocation = await lstat(invocationPath) } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-            continue
-        }
-        if (!(invocation.isFile() || invocation.isSymbolicLink()) || (invocation.isFile() && (invocation.mode & 0o111) === 0)) {
-            continue
-        }
-        let canonicalPath: string
-        try { canonicalPath = await realpath(invocationPath) } catch { continue }
-        const sha256 = await digestRegularFile(canonicalPath)
-        if (sha256 === undefined) continue
-        const value = Object.freeze({ canonicalPath, invocationPath, sha256, executionMode: 'verified-path' as const })
-        return isResolvedGitExecutable(value) ? Object.freeze({ state: 'available', value }) : unavailable('Git executable identity is invalid')
-    }
-    return unavailable('Git executable was not found in the supplied search path')
+    return resolveExecutable('git', env)
 }
 
 export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolution> {
@@ -190,34 +174,7 @@ export async function resolveDiskCapacityExecutable(): Promise<ExecutableResolut
 }
 
 export async function resolveDockerExecutable(env: Readonly<Record<string, string | undefined>>): Promise<ExecutableResolution> {
-    const selected = searchPath(env)
-    if (selected.kind === 'unreadable') return unavailable('Docker executable search path is not readable')
-    const pathValue = selected.path
-    if (typeof pathValue !== 'string' || pathValue.length === 0 || pathValue.includes('\0') || Buffer.byteLength(pathValue) > 65_536) {
-        return unavailable('Docker executable search path is missing or invalid')
-    }
-    const directories = pathValue.split(delimiter)
-    if (directories.length > PATH_ENTRY_LIMIT || directories.some((path) => !isAbsolute(path) || normalize(path) !== path)) {
-        return unavailable('Docker executable search path must contain bounded absolute directories')
-    }
-    for (const directory of directories) {
-        const invocationPath = join(directory, 'docker')
-        let invocation
-        try { invocation = await lstat(invocationPath) } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-            continue
-        }
-        if (!(invocation.isFile() || invocation.isSymbolicLink()) || (invocation.isFile() && (invocation.mode & 0o111) === 0)) {
-            continue
-        }
-        let canonicalPath: string
-        try { canonicalPath = await realpath(invocationPath) } catch { continue }
-        const sha256 = await digestRegularFile(canonicalPath)
-        if (sha256 === undefined) continue
-        const value = Object.freeze({ canonicalPath, invocationPath, sha256, executionMode: 'staged' as const })
-        return isResolvedDockerExecutable(value) ? Object.freeze({ state: 'available', value }) : unavailable('Docker executable identity is invalid')
-    }
-    return unavailable('Docker executable was not found in the supplied search path')
+    return resolveExecutable('docker', env)
 }
 
 export async function resolvePathRemovalExecutable(): Promise<ExecutableResolution> {

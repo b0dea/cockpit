@@ -309,7 +309,7 @@ export function createGeneratedCommandFixture() {
             canonicalPath: docker,
             invocationPath: docker,
             sha256: createHash('sha256').update(await readFile(docker)).digest('hex'),
-            executionMode: 'staged' as const,
+            executionMode: 'verified-path' as const,
         })
         const composeSha256 = createHash('sha256').update(compose).digest('hex')
         const batchId = createHash('sha256').update(serviceGeneration).digest('hex')

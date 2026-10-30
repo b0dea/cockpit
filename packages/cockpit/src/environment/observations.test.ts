@@ -432,7 +432,7 @@ describe('observation contract and applicability', () => {
         await writeFile(composePath, composeSource)
         const executable = resolvedExecutable({
             canonicalPath: dockerPath, invocationPath: dockerPath,
-            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'staged',
+            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path',
         })!
         const planned = createRuntimeAdapter({
             runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 }, composeVersion: '2.39.2',
@@ -468,7 +468,7 @@ describe('observation contract and applicability', () => {
         await writeFile(composePath, composeSource)
         const executable = resolvedExecutable({
             canonicalPath: dockerPath, invocationPath: dockerPath,
-            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'staged',
+            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path',
         })!
         const planned = createRuntimeAdapter({
             runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 }, composeVersion: '2.39.2',

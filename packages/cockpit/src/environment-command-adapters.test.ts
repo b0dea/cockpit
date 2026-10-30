@@ -250,7 +250,7 @@ else if (args.includes('exec')) {
             await writeFile(docker, script)
             await chmod(docker, 0o700)
             const executable = resolvedExecutable({ canonicalPath: docker, invocationPath: docker,
-                sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'staged' })!
+                sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path' })!
             const composeSha256 = createHash('sha256').update(compose).digest('hex')
             const batchId = 'f'.repeat(64)
             const runtime = createRuntimeAdapter({ runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
@@ -400,7 +400,7 @@ else if (args.includes('exec')) {
                 await writeFile(path, script)
                 await chmod(path, 0o755)
                 const executable = resolvedExecutable({ canonicalPath: path, invocationPath: path,
-                    sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'staged' })!
+                    sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path' })!
                 const source = 'services: {}\n'
                 const composePath = join(root, 'compose.yml')
                 await writeFile(composePath, source)

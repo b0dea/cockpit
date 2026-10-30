@@ -40,7 +40,7 @@ const generated = () => createEnvironmentSnapshot({
 
 function stabilityPlan(batchId: string, containerId = 'synthetic', env: Readonly<Record<string, string>> = { PATH: '/usr/bin', COCKPIT_CONTENT_HASH: sha('tree') }, config = configSha256) {
     const plan = createStabilityCapturePlan({
-        stackId, configSha256: config, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'staged' },
+        stackId, configSha256: config, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'verified-path' },
         cwd: runtimeDirectory, env, containerId, batchId,
         runtime: { name: runtime.name, version: runtime.version }, contentPaths: ['/workspace/api'],
         timeoutMs: 15_000, outputLimitBytes: 4096,
@@ -186,7 +186,7 @@ describe('environment evidence authority', () => {
     it('constructs exact bounded steps bound to one runtime cohort and freezes the outcome', () => {
         const batchId = sha('plan-batch')
         const plan = createStabilityCapturePlan({
-            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'staged' as const }, cwd: runtimeDirectory,
+            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'verified-path' as const }, cwd: runtimeDirectory,
             env: { PATH: '/usr/bin' }, containerId: 'synthetic-api-1', batchId,
             runtime: { name: 'docker', version: '27.1.2' }, contentPaths: ['/workspace/api', '/workspace/shared'], timeoutMs: 15_000, outputLimitBytes: 4096,
         })
@@ -210,7 +210,7 @@ describe('environment evidence authority', () => {
 
     it('rejects capture-plan accessors without invoking caller code', () => {
         const request = {
-            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'staged' as const }, cwd: runtimeDirectory,
+            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'verified-path' as const }, cwd: runtimeDirectory,
             env: { PATH: '/usr/bin' }, containerId: 'synthetic-api-1', batchId: sha('snapshot-plan'),
             runtime: { name: 'docker', version: '27.1.2' }, contentPaths: ['/workspace/api'], timeoutMs: 1000, outputLimitBytes: 1024,
         }
@@ -223,7 +223,7 @@ describe('environment evidence authority', () => {
 
     it('refuses malformed capture-plan inputs without dereferencing missing authority', () => {
         const valid = {
-            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'staged' }, cwd: runtimeDirectory,
+            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'verified-path' }, cwd: runtimeDirectory,
             env: { PATH: '/usr/bin' }, containerId: 'synthetic-api-1', batchId: sha('strict-plan'),
             runtime: { name: 'docker', version: '27.1.2' }, contentPaths: ['/workspace/api'], timeoutMs: 1000, outputLimitBytes: 1024,
         }
@@ -281,7 +281,7 @@ done
         ['NUL environment', { env: { PATH: 'safe\0hidden' } }],
     ])('refuses %s before execution', (_label, patch) => {
         const result = createStabilityCapturePlan({
-            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'staged' },
+            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'verified-path' },
             cwd: runtimeDirectory, env: {}, containerId: 'synthetic', batchId: sha('batch'),
             runtime: { name: runtime.name, version: runtime.version }, contentPaths: ['/workspace/api'],
             timeoutMs: 1000, outputLimitBytes: 1024, ...patch,
@@ -514,12 +514,12 @@ done
 
     it('refuses capture input that cannot cross the strict execution boundary', () => {
         expect(createStabilityCapturePlan({
-            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'staged' },
+            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: runtimeInvocationPath, sha256: executableSha256, executionMode: 'verified-path' },
             cwd: runtimeDirectory, env: { 'BAD=KEY': 'value' }, containerId: 'synthetic', batchId: sha('invalid-env'),
             runtime, contentPaths: ['/workspace'], timeoutMs: 15_000, outputLimitBytes: 4096,
         }).kind).toBe('refusal')
         expect(createStabilityCapturePlan({
-            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: '/tmp/not-docker', sha256: executableSha256, executionMode: 'staged' },
+            stackId, configSha256, runtimeExecutable: { canonicalPath: runtimePath, invocationPath: '/tmp/not-docker', sha256: executableSha256, executionMode: 'verified-path' },
             cwd: runtimeDirectory, env: {}, containerId: 'synthetic', batchId: sha('invalid-runtime-name'),
             runtime, contentPaths: ['/workspace'], timeoutMs: 15_000, outputLimitBytes: 4096,
         }).kind).toBe('refusal')

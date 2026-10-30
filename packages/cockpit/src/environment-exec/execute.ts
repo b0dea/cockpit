@@ -428,17 +428,17 @@ type PreparationResult = { readonly kind: 'prepared'; readonly plan: PreparedPla
 const STAGING_PREFIX = 'cockpit-execution-'
 const ownedStagingDirectories = new Set<string>()
 
+// Data inputs are copied into a private snapshot so the process reads the bytes that were hashed.
+// Executables run from their own path and are re-checked just before spawn instead.
 async function stageVerifiedFile(file: ConsumedFile, snapshot: string): Promise<string | undefined> {
     let source: Awaited<ReturnType<typeof open>> | undefined
     let staged: Awaited<ReturnType<typeof open>> | undefined
     try {
         const before = await lstat(file.path)
-        if (before.isSymbolicLink() || !before.isFile() || before.size > file.maxBytes
-            || (file.executable && (before.mode & 0o111) === 0)) return undefined
+        if (before.isSymbolicLink() || !before.isFile() || before.size > file.maxBytes) return undefined
         source = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW)
         const opened = await source.stat()
-        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > file.maxBytes
-            || (file.executable && (opened.mode & 0o111) === 0)) return undefined
+        if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > file.maxBytes) return undefined
         staged = await open(snapshot, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
         const hash = createHash('sha256')
         const chunk = Buffer.allocUnsafe(65_536)
@@ -458,7 +458,7 @@ async function stageVerifiedFile(file: ConsumedFile, snapshot: string): Promise<
         if (digest !== file.sha256) return undefined
         await staged.close()
         staged = undefined
-        await chmod(snapshot, file.executable ? 0o500 : 0o400)
+        await chmod(snapshot, 0o400)
         return digest
     } catch {
         return undefined
@@ -530,7 +530,7 @@ async function prepareExecutionPlan(plan: ExecutionPlan): Promise<PreparationRes
         const consumed: ConsumedFile[] = []
         const verifiedPathExecutables: ConsumedFile[] = []
         for (const file of step.consumedFiles) {
-            if (file.executionMode === 'verified-path') {
+            if (file.executable) {
                 verifiedPathExecutables.push(file)
                 consumed.push(file)
                 continue
@@ -910,7 +910,7 @@ function captureForegroundInput(input: ForegroundProcessInput): ForegroundProces
         if (executable === null || typeof executable !== 'object'
             || typeof executable.canonicalPath !== 'string' || typeof executable.invocationPath !== 'string'
             || typeof executable.sha256 !== 'string'
-            || executable.executionMode !== 'verified-path' && executable.executionMode !== 'staged'
+            || executable.executionMode !== 'verified-path'
             || !Array.isArray(argv) || argv.length > 4_096
             || argv.some(value => typeof value !== 'string' || value.includes('\0') || Buffer.byteLength(value) > 65_536)
             || typeof cwd !== 'string' || !isAbsolute(cwd) || normalize(cwd) !== cwd || cwd.includes('\0')

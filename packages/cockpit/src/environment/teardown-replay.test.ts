@@ -72,7 +72,7 @@ const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: Re
           bytes: kind === 'network' ? null : kind === 'container' && bytes !== null ? `${bytes}B (virtual 200MB)` : bytes,
       }
 const executable = {
-    canonicalPath: '/usr/local/bin/docker', invocationPath: '/usr/local/bin/docker', sha256: sha('docker'), executionMode: 'staged' as const,
+    canonicalPath: '/usr/local/bin/docker', invocationPath: '/usr/local/bin/docker', sha256: sha('docker'), executionMode: 'verified-path' as const,
 }
 const input = (resources: readonly ReclaimResource[], root = '/tmp/synthetic-cockpit') => ({
     stackId, cockpitId, configSha256, coordinationRecord: coordinationRecord(root), declaredCacheIds: [], discovery: discovery(resources),
@@ -117,7 +117,7 @@ const authenticatedInput = async (
     const bytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ] && [ "$2" = inspect ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\ncase "$1" in --host) shift 2;; *) exit 91;; esac\nkind="$1"\nif { [ "$kind" = image ] || [ "$kind" = volume ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$id"; done; exit; fi\nif { [ "$kind" = network ] || [ "$kind" = container ]; } && [ "$2" = inspect ]; then shift 4; for id do /bin/cat -- "$PWD/inspect.$kind.$id"; done; exit; fi\nif [ "$kind" = builder ]; then shift; kind=build-cache; [ "$1" = prune ] && exit 0; fi\n/bin/cat -- "$PWD/docker.$kind"\n')
     await writeFile(script, bytes, { mode: 0o700 })
     await chmod(script, 0o700)
-    const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'staged' as const }
+    const docker = { canonicalPath: script, invocationPath: script, sha256: createHash('sha256').update(bytes).digest('hex'), executionMode: 'verified-path' as const }
     const probes = createDockerSelectionSteps({ executable: docker,
         cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 5_000, context: dockerContext,
     })

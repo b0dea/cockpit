@@ -240,7 +240,7 @@ const gitExecutable = {
     canonicalPath: gitCanonicalPath,
     invocationPath: gitInvocationPath,
     sha256: createHash('sha256').update(readFileSync(gitCanonicalPath)).digest('hex'),
-    executionMode: 'staged' as const,
+    executionMode: 'verified-path' as const,
 }
 
 afterEach(() => {

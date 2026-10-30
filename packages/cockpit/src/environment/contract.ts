@@ -377,7 +377,7 @@ interface ConsumedFileBase {
 }
 
 export type ConsumedFile = ConsumedFileBase & (
-    | { executable: true; executionMode: 'staged' | 'verified-path' }
+    | { executable: true; executionMode: 'verified-path' }
     | { executable: false; executionMode?: never }
 )
 
@@ -546,14 +546,14 @@ function consumedFiles(value: unknown, argv: readonly string[]): value is readon
     const paths = new Set<string>(); const indexes = new Set<number>(); let executableCount = 0
     for (const candidate of value) {
         if (candidate === null || typeof candidate !== 'object') return false
-        const file = candidate as Partial<ConsumedFileBase & { executable: boolean; executionMode: 'staged' | 'verified-path' }>
+        const file = candidate as Partial<ConsumedFileBase & { executable: boolean; executionMode: 'verified-path' }>
         if (!exactKeys(candidate, file.executable
             ? ['path', 'sha256', 'maxBytes', 'argvIndexes', 'executable', 'executionMode']
             : ['path', 'sha256', 'maxBytes', 'argvIndexes', 'executable']) || !canonicalPaths([file.path])
             || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256) || !Array.isArray(file.argvIndexes)
             || !Number.isSafeInteger(file.maxBytes) || (file.maxBytes as number) < 1 || (file.maxBytes as number) > 536_870_912
             || file.argvIndexes.length === 0 || typeof file.executable !== 'boolean' || paths.has(file.path as string)
-            || (file.executable && file.executionMode !== 'staged' && file.executionMode !== 'verified-path')) return false
+            || (file.executable && file.executionMode !== 'verified-path')) return false
         paths.add(file.path as string)
         if (file.executable) executableCount += 1
         for (const index of file.argvIndexes) {
