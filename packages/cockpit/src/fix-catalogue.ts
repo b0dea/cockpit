@@ -14,6 +14,9 @@ const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
 // down and reset delete Docker resources, so the CLI refuses them until the daemon is named; the
 // active context is the daemon an unprefixed docker command reaches.
 const DAEMON_SELECTION = 'DOCKER_CONTEXT="$(docker context show)"'
+// runtime measure needs the opposite: it measures the context Docker itself selected and refuses an
+// override, so a remedy printed to a shell that exports DOCKER_CONTEXT failed as printed.
+const DAEMON_UNSET = 'env -u DOCKER_CONTEXT'
 
 export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
     | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove'
@@ -47,7 +50,8 @@ export function formatShellCommand(argv: readonly string[]): string {
 export function cockpitCommand(command: ConfiguredCommand,
     options: Readonly<{ config?: string; operand?: string; args?: string }> = {}): string {
     const config = options.config === undefined ? CONFIG_PLACEHOLDER : formatShellCommand([options.config])
-    const daemon = command === 'down' || command === 'reset' ? `${DAEMON_SELECTION} ` : ''
+    const daemon = command === 'down' || command === 'reset' ? `${DAEMON_SELECTION} `
+        : command === 'runtime measure' ? `${DAEMON_UNSET} ` : ''
     const operand = options.operand === undefined ? '' : ` ${formatShellCommand([options.operand])}`
     return `${daemon}npx --no cockpit ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
 }

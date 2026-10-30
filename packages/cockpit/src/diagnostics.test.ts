@@ -20,6 +20,12 @@ describe('diagnostic envelope', () => {
         }
     })
 
+    it('prints the runtime measure remedy with DOCKER_CONTEXT cleared, since runtime measure refuses an override', () => {
+        expect(renderHumanDiagnostics([{ severity: 'error', code: 'RUNTIME_UNMEASURED', message: 'synthetic failure' }],
+            undefined, { resolvedConfigPath: '/synthetic/cockpit.toml', generatedTargets: [] }))
+            .toContain('Fix: run env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config /synthetic/cockpit.toml --image <ref> --write, review the change, then retry\n')
+    })
+
     it.each(['constructor', 'toString'])('treats inherited object keys such as %s as unregistered diagnostics', (code) => {
         expect(renderHumanDiagnostics([{ severity: 'error', code, message: 'synthetic failure' }]))
             .toBe(`ERROR ${code}: synthetic failure\n`)

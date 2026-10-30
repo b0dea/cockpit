@@ -362,7 +362,8 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(message).toContain('Runtime docker-desktop is not supported by a complete measurement row')
         expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"')
         expect(message).toContain('measured rows: docker-desktop (unmeasured)')
-        expect(message).toMatch(/Measure it with: npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image> --write$/)
+        // runtime measure refuses an exported DOCKER_CONTEXT, so the printed remedy clears it.
+        expect(message).toMatch(/Measure it with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image> --write$/)
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
     })
 

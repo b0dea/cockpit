@@ -55,6 +55,7 @@ import {
     type PortLeaseProjection,
     type PortListenerBinding,
 } from './ports.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import type { StateNamespace } from './state.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
@@ -618,7 +619,7 @@ export function admitRuntimeMeasurement(
             : `${reason} (${dockerInfo}; measured rows: ${rows.length}). ${action}`
     }
     const remeasure = (reason: string) => refuse(detail(reason,
-        'Measure it with: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image> --write'))
+        `Measure it with: ${cockpitCommand('runtime measure', { args: '--image <local-image> --write' })}`))
     if (!identity) {
         return refuse(detail('Docker runtime is not a recognised product, so no measurement row can apply',
             'Report these docker info values to the cockpit maintainers so the runtime can be identified'))
