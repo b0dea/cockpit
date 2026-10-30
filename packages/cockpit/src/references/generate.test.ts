@@ -312,7 +312,8 @@ describe('reference generation', () => {
         const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
         const section = (name: string, next: string) => cli.slice(cli.indexOf(`## cockpit ${name}`), cli.indexOf(`## cockpit ${next}`))
         expect(section('sync', 'check')).toContain('`SURFACE_STATE_CONFLICT`')
-        expect(section('sync', 'check')).toContain('`COCKPIT_VERSION_MISMATCH`')
+        expect(section('sync', 'check')).toContain('`TEAM_METADATA_UNAVAILABLE`')
+        expect(section('sync', 'check')).not.toContain('`COCKPIT_VERSION_MISMATCH`')
         expect(section('check', 'preflight')).toContain('`COCKPIT_VERSION_MISMATCH`')
         expect(section('up', 'sleep')).toContain('`GUARD_REFUSED`')
         expect(section('sibling', 'preflight')).not.toContain('`CLAIM_CO_TENANT`')

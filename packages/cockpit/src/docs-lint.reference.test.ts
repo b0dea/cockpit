@@ -105,14 +105,20 @@ describe('maintainer reference boundary', () => {
                 ['SURFACE_OVERRIDE_INSPECTION_REFUSED', ['packages/cockpit/src/environment/health-composition.ts']],
                 ['REGISTRY_GENERATED_BASELINE_MISSING', ['packages/cockpit/src/registry-derivation.ts']],
                 ['REGISTRY_ARTIFACT_UNSAFE', ['packages/cockpit/src/registry-resolve/command.ts']],
+                ['COCKPIT_VERSION_MISMATCH', [
+                    'packages/cockpit/src/environment/contract.ts',
+                    'packages/cockpit/src/team-metadata.ts',
+                ]],
             ])
 
-            for (const name of ['sync', 'check']) {
-                expect([...inventory.commandOwners.get(name) ?? []]).toEqual(expect.arrayContaining([
-                    'packages/cockpit/src/team-metadata.ts',
-                    'packages/cockpit/src/environment/generated-application.ts',
-                ]))
-            }
+            expect([...inventory.commandOwners.get('sync') ?? []]).toEqual(expect.arrayContaining([
+                'packages/cockpit/src/generated-environment/command.ts',
+                'packages/cockpit/src/environment/generated-application.ts',
+            ]))
+            expect([...inventory.commandOwners.get('check') ?? []]).toEqual(expect.arrayContaining([
+                'packages/cockpit/src/team-metadata.ts',
+                'packages/cockpit/src/environment/generated-application.ts',
+            ]))
 
             for (const [code, owners] of expectedOwners) {
                 expect(inventory.items).toContain(`diagnostic:${code}`)
