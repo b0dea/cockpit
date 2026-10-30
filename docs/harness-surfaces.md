@@ -5,7 +5,8 @@
 This page explains what `cockpit sync` writes for Claude Code, Codex CLI, OpenCode, Cursor, and
 Grok Build, how product-specific additions enter, and how far each generated feature has been
 confirmed to work. It is for people reviewing generated agent configuration and for integrators
-extending it.
+extending it. Maintainers find the modules and tests behind it in the contributor page
+`docs/contributing/testing.md`.
 
 ## Publish and verify
 
@@ -236,32 +237,3 @@ terminal outside the agent: until `sync` runs, the guard holds every agent tool 
 trusts only the cockpit it was generated for. Then commit the regenerated files. Do not
 accept a changed override original until its replacement has been reviewed against the new
 core bytes.
-
-## Implementation and verification routes
-
-Every file below is under `packages/cockpit/src/`. Thin command adapters connect these modules
-through `packages/cockpit/src/cli.ts`; all process dispatch goes through
-[the single executor](../packages/cockpit/src/environment-exec/execute.ts).
-
-| Responsibility | Module | Focused test file |
-|---|---|---|
-| Generator input checks and deterministic passes | [surfaces/generator-adapter.ts](../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-adapter.test.ts` |
-| Combined core/plugin dispatch and worker recovery | [surfaces/generator-adapter.ts](../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-estate.test.ts` |
-| Final surface rendering | [surfaces/render.ts](../packages/cockpit/src/surfaces/render.ts) | `packages/cockpit/src/surfaces/render.test.ts` |
-| Overlay merge | [surfaces/merge.ts](../packages/cockpit/src/surfaces/merge.ts) | `packages/cockpit/src/surfaces/merge.test.ts` |
-| MCP collection and approval | [surfaces/mcp.ts](../packages/cockpit/src/surfaces/mcp.ts) | `packages/cockpit/src/surfaces/mcp.test.ts` |
-| Guard expansion | [surfaces/restrictions.ts](../packages/cockpit/src/surfaces/restrictions.ts) | `packages/cockpit/src/surfaces/restrictions.test.ts` |
-| Sibling guides and grants | [surfaces/projection.ts](../packages/cockpit/src/surfaces/projection.ts) | `packages/cockpit/src/surfaces/projection.test.ts` |
-| Skills | [surfaces/skill-contract.ts](../packages/cockpit/src/surfaces/skill-contract.ts) | `packages/cockpit/src/surfaces/skill-contract.test.ts` |
-| Owned regions, changes and drift | [surfaces/ownership.ts](../packages/cockpit/src/surfaces/ownership.ts), [surfaces/sync.ts](../packages/cockpit/src/surfaces/sync.ts) | `packages/cockpit/src/surfaces/ownership.test.ts`, `packages/cockpit/src/surfaces/sync.test.ts` |
-| Checking publication inputs | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.authentication.test.ts` |
-| Durable manifest and publication | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.publication-bounds.test.ts`, `packages/cockpit/src/generated-environment/command.publication-core.test.ts`, `packages/cockpit/src/generated-environment/command.publication-custom.test.ts`, `packages/cockpit/src/generated-environment/command.publication-native.test.ts` |
-| Repair and recovery | [environment/generated-application.ts](../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
-| Selftest | [surfaces/selftest.ts](../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.test.ts`, `packages/cockpit/src/selftest/command.native-execution.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.test.ts` |
-| Human approval prompts | [environment/operator-application.ts](../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
-| Upgrade plan | [environment/upgrade-application.ts](../packages/cockpit/src/environment/upgrade-application.ts) | `packages/cockpit/src/upgrade/command.test.ts` |
-
-From this repository, run `npm test -- packages/cockpit/src/<test-file>`
-with the listed file. The contributor page `docs/contributing/testing.md` maps
-failure families to exact commands, including a regression test for publication recovery.
-Repository tests check source behavior; they do not replace a selftest of the real tool.

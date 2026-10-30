@@ -2,14 +2,39 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page is for people working on cockpit itself: which test command to run for each family of
-surface failure.
+This page is for people working on cockpit itself: which module owns each harness surface and
+which test command to run for each family of surface failure.
+
+## Harness surface modules
+
+Every module below is under `packages/cockpit/src/`. Thin command adapters connect them through
+`packages/cockpit/src/cli.ts`, and all process dispatch goes through
+[the single executor](../../packages/cockpit/src/environment-exec/execute.ts).
+
+| Responsibility | Module | Focused test file |
+|---|---|---|
+| Generator input checks and deterministic passes | [surfaces/generator-adapter.ts](../../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-adapter.test.ts` |
+| Combined core/plugin dispatch and worker recovery | [surfaces/generator-adapter.ts](../../packages/cockpit/src/surfaces/generator-adapter.ts) | `packages/cockpit/src/surfaces/generator-estate.test.ts` |
+| Final surface rendering | [surfaces/render.ts](../../packages/cockpit/src/surfaces/render.ts) | `packages/cockpit/src/surfaces/render.test.ts` |
+| Overlay merge | [surfaces/merge.ts](../../packages/cockpit/src/surfaces/merge.ts) | `packages/cockpit/src/surfaces/merge.test.ts` |
+| MCP collection and approval | [surfaces/mcp.ts](../../packages/cockpit/src/surfaces/mcp.ts) | `packages/cockpit/src/surfaces/mcp.test.ts` |
+| Guard expansion | [surfaces/restrictions.ts](../../packages/cockpit/src/surfaces/restrictions.ts) | `packages/cockpit/src/surfaces/restrictions.test.ts` |
+| Sibling guides and grants | [surfaces/projection.ts](../../packages/cockpit/src/surfaces/projection.ts) | `packages/cockpit/src/surfaces/projection.test.ts` |
+| Skills | [surfaces/skill-contract.ts](../../packages/cockpit/src/surfaces/skill-contract.ts) | `packages/cockpit/src/surfaces/skill-contract.test.ts` |
+| Owned regions, changes and drift | [surfaces/ownership.ts](../../packages/cockpit/src/surfaces/ownership.ts), [surfaces/sync.ts](../../packages/cockpit/src/surfaces/sync.ts) | `packages/cockpit/src/surfaces/ownership.test.ts`, `packages/cockpit/src/surfaces/sync.test.ts` |
+| Checking publication inputs | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.authentication.test.ts` |
+| Durable manifest and publication | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.publication-bounds.test.ts`, `packages/cockpit/src/generated-environment/command.publication-core.test.ts`, `packages/cockpit/src/generated-environment/command.publication-custom.test.ts`, `packages/cockpit/src/generated-environment/command.publication-native.test.ts` |
+| Repair and recovery | [environment/generated-application.ts](../../packages/cockpit/src/environment/generated-application.ts) | `packages/cockpit/src/generated-environment/command.test.ts` |
+| Selftest | [surfaces/selftest.ts](../../packages/cockpit/src/surfaces/selftest.ts), [environment/selftest-application.ts](../../packages/cockpit/src/environment/selftest-application.ts) | `packages/cockpit/src/selftest/command.configured-artifact.test.ts`, `packages/cockpit/src/selftest/command.native-execution.test.ts`, `packages/cockpit/src/selftest/command.custom-operator.test.ts` |
+| Human approval prompts | [environment/operator-application.ts](../../packages/cockpit/src/environment/operator-application.ts) | `packages/cockpit/src/environment/operator-application.test.ts` |
+| Upgrade plan | [environment/upgrade-application.ts](../../packages/cockpit/src/environment/upgrade-application.ts) | `packages/cockpit/src/upgrade/command.test.ts` |
+
+Repository tests check source behavior; they do not replace a selftest of the real tool.
 
 ## Focused harness verification
 
-For the source file and where to extend it, follow the
-implementation routes table in `docs/harness-surfaces.md`. Run the
-command for the changed failure family from this repository; these are tests on synthetic
+For the source file and where to extend it, see [Harness surface modules](#harness-surface-modules).
+Run the command for the changed failure family from this repository; these are tests on synthetic
 data, not tests of a real harness. The supported `npm test --` entry point caps workers at four,
 limits run time and cleans up child processes, and records the latest JSON result at
 `.vitest-reports/latest.json`.
