@@ -111,6 +111,32 @@ describe('reachable history hygiene', () => {
             expect(() => scanGitHistory(join(root, 'absent'))).toThrow(/history.*git|git.*history/i)
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
+
+    it('scans every object when reachable history exceeds one process buffer', () => {
+        const { root, git } = repository()
+        try {
+            const cleanBlob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+                cwd: root, encoding: 'utf8', input: Buffer.alloc(7 * 1024 * 1024, 97),
+            }).trim()
+            const lateBlob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+                cwd: root, encoding: 'utf8', input: 'token: sk_' + 'live_late_history\n',
+            }).trim()
+            const entries = [
+                ...Array.from({ length: 19 }, (_, index) =>
+                    Buffer.from(`100644 blob ${cleanBlob}\tbulk-${String(index).padStart(2, '0')}.txt\0`)),
+                Buffer.from(`100644 blob ${lateBlob}\tzz-late.txt\0`),
+            ]
+            const tree = execFileSync('git', ['mktree', '-z'], { cwd: root, encoding: 'utf8',
+                input: Buffer.concat(entries) }).trim()
+            git('update-ref', 'HEAD', git('commit-tree', tree, '-m', 'Large logical history'))
+
+            const report = scanGitHistory(root)
+            expect(report).toMatchObject({ complete: true, clean: false, commits: 1, blobs: 20, gaps: [] })
+            expect(report.findings).toContainEqual(expect.objectContaining({
+                path: 'zz-late.txt', kind: 'consumer-identifier',
+            }))
+        } finally { rmSync(root, { recursive: true, force: true }) }
+    })
 })
 
 function trackedFiles(): string[] {

@@ -42,6 +42,11 @@ export const INTERNAL = 'internal'
 /** Planted synthetic identifiers: the proof the scan can fire. */
 export const FIXTURE = 'fixtures/hygiene/planted-identifiers.txt'
 
+const HISTORY_OBJECT_BYTE_LIMIT = 8 * 1024 * 1024
+const HISTORY_OBJECT_COUNT_LIMIT = 100_000
+const HISTORY_BATCH_OBJECT_LIMIT = 32
+const HISTORY_BATCH_BYTE_LIMIT = 64 * 1024 * 1024
+
 /**
  * Hits that are known-good. An entry is a decision with a reason beside it, and a stale entry
  * is as much a defect as a missing one.
@@ -263,16 +268,14 @@ export function scanGitHistory(root = ROOT) {
     }
     const rows = []
     const seen = new Set()
-    let bytes = 0
     const add = (commit, path, object, size) => {
         const key = `${object}\0${path}`
         if (seen.has(key)) return
         seen.add(key)
-        if (size > 8 * 1024 * 1024 || bytes + size > 128 * 1024 * 1024 || rows.length >= 100_000) {
+        if (size > HISTORY_OBJECT_BYTE_LIMIT || rows.length >= HISTORY_OBJECT_COUNT_LIMIT) {
             gaps.push(`${commit}:${JSON.stringify(path)} exceeds the history byte/object bound`)
             return
         }
-        bytes += size
         rows.push({ commit, path, object, size })
     }
     const refs = git(['for-each-ref', '--format=%(refname)%00%(objecttype)%00%(objectname)%00'])
@@ -327,8 +330,16 @@ export function scanGitHistory(root = ROOT) {
             add(commit, path, object, Number(size))
         }
     }
-    for (let offset = 0; offset < rows.length; offset += 32) {
-        const batch = rows.slice(offset, offset + 32)
+    for (let offset = 0; offset < rows.length;) {
+        let end = offset
+        let batchBytes = 0
+        while (end < rows.length && end - offset < HISTORY_BATCH_OBJECT_LIMIT) {
+            const nextBytes = batchBytes + rows[end].size
+            if (end > offset && nextBytes > HISTORY_BATCH_BYTE_LIMIT) break
+            batchBytes = nextBytes
+            end += 1
+        }
+        const batch = rows.slice(offset, end)
         const output = git(['cat-file', '--batch', '-Z'], batch.map(row => `${row.object}\0`).join(''))
         let cursor = 0
         for (const row of batch) {
@@ -361,6 +372,7 @@ export function scanGitHistory(root = ROOT) {
             })
         }
         if (cursor !== output.length) throw new Error('hygiene-scan: history object batch has unexpected trailing bytes')
+        offset = end
     }
     return report(commits.length, rows.filter(row => row.path !== '(commit)' && row.path !== '(tag)').length)
 }
