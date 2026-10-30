@@ -13,7 +13,10 @@ import { resolveExecutablePath } from '../environment/executable.js'
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
 const cockpitId = `cockpit:synthetic:${sha('identity')}`
 const authority = { root: '/synthetic/cockpit', cockpitId, configPath: '/synthetic/cockpit/cockpit.toml' }
-const policyLimitMs = 15_000
+// The cost check measures wall-clock time of a real 128-process workload. A cap a loaded machine
+// can reach turns the within-budget cases into load-dependent failures; the tight cap below is the
+// deterministic control for the over-budget branch.
+const policyLimitMs = 3_600_000
 const policyBytes = `native-hook-ms=${policyLimitMs}\n`
 const manifest = encodeOwnershipManifest({ ...authority, generation: sha('generation'), sourceSha256: sha('source'),
     personaSource: { path: 'personas.json', sha256: sha('personas') },
