@@ -345,6 +345,40 @@ else process.exit(64)
         expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
     })
 
+    it('says a sleeping stack is asleep and to run up, before observing Docker', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'slept-session' })
+        // What `sleep` leaves behind: no session holds the stack and its port lease is released.
+        const address = candidate.namespace.paths.coordination(candidate.stack)
+        const asleep = await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+            format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+            subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+            value: { holders: [], lastReleasedHolder: holder, drain: null, restore: null,
+                lease: { offset: 0, ports: { APP_PORT: 61230 }, released: true, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+        }))
+        expect(asleep.kind).toBe('complete')
+        const execute = vi.fn(executeProbe)
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, execute)
+
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+
+        expect(preflight).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable' } })
+        expect(doctor).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'unavailable' } })
+        for (const outcome of [preflight, doctor]) {
+            expect(outcome.diagnostics).toContainEqual(expect.objectContaining({
+                severity: 'error', code: 'STACK_NOT_RUNNING', target: candidate.stack,
+                message: expect.stringContaining('is asleep'),
+                fix: `npx --no cockpit up --config ${candidate.configPath}`,
+            }))
+        }
+        expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
+    })
+
     it('names a cockpit root that is not a Git checkout instead of an unavailable observation', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         await rm(join(candidate.checkout, '.git'), { recursive: true, force: true })

@@ -10,7 +10,7 @@ import {
     type PreflightCommandAdapters,
     withLifecycleConfiguration,
 } from './application.js'
-import { observeClaimState } from './claims.js'
+import { decodeCoordinationRecord, observeClaimState } from './claims.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
     ENVIRONMENT_CODES,
@@ -147,6 +147,25 @@ function commandConfigPath(value: unknown): string | undefined {
     } catch {
         return undefined
     }
+}
+
+// `sleep` releases the last holder and stops the services, so every runtime probe after it fails;
+// reporting that as missing observation evidence hid the one command that brings the stack back.
+async function sleepingStack(
+    namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value'],
+    stack: ReturnType<typeof stackId>,
+    configPath: string,
+): Promise<EnvironmentDiagnostic | undefined> {
+    const stored = await readState(namespace.paths.coordination(stack))
+    if (stored.kind !== 'complete') return undefined
+    const coordination = decodeCoordinationRecord(stored.value, stack)
+    if (!coordination || coordination.holders.length > 0) return undefined
+    const fix = formatShellCommand(['npx', '--no', 'cockpit', 'up', '--config', configPath])
+    return Object.freeze({
+        severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
+        message: 'the stack is asleep: no session holds it and its services are stopped, so there is nothing running to check; run up to start it, then rerun this command',
+        fix,
+    })
 }
 
 function producers(input: {
@@ -650,6 +669,10 @@ export function createHealthCommandAdapters(
                         message: `lifecycle is still in bootstrap — ordinary health checks require a steady lifecycle after the first bring-up; fix: ${fix}; then retry the command that stopped`,
                         fix,
                     }])
+                }
+                if (previous === undefined) {
+                    const asleep = await sleepingStack(namespace.value, currentStack, loaded.result.source.path)
+                    if (asleep) return refuse?.([asleep])
                 }
                 return Object.freeze({
                 authorities: Object.freeze([authority]),
