@@ -221,7 +221,7 @@ Contributions are welcome from people and from AI coding agents.
 - **Security:** never in a public issue. See [SECURITY.md](SECURITY.md).
 
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Changes are recorded in
-the [changelog](CHANGELOG.md).
+the [changelog](packages/cockpit/CHANGELOG.md).
 
 ## License
 

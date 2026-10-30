@@ -39,7 +39,8 @@ installed version. They are not promises that a later release preserves an item 
 
 ## Migration
 
-Every breaking change ships a migration note for the person performing the upgrade. It states
+Every breaking change ships a migration note in the [changelog](../packages/cockpit/CHANGELOG.md)
+for the person performing the upgrade. It states
 what changed, the observable failure or diagnostic, the exact replacement, and any rollback
 boundary. When the edit is mechanical, the release includes a codemod or script; manual prose is
 not a substitute.

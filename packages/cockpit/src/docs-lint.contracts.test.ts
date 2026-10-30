@@ -657,6 +657,9 @@ describe('maintained prose detectors', () => {
                     '',
                     '[registry]: concepts.md#registry',
                 ].join('\n') },
+                // A release fragment is copied verbatim into the generated changelog, so it carries
+                // no verification marker; the changeset guide beside it still does.
+                { path: '.changeset/initial-release.md', body: '---\n"@b0dea/cockpit": minor\n---\n\nInitial release.\n' },
             ],
         })
         expect(valid.diagnostics).toEqual([])
@@ -668,6 +671,7 @@ describe('maintained prose detectors', () => {
             mechanismExists: () => true,
             documents: [
                 { path: 'docs/concepts.md', body: '# Concepts\n\n## Registry\n\n## Registry\n' },
+                { path: '.changeset/README.md', body: '# Changesets\n\nHow to write a release fragment.\n' },
                 { path: 'docs/guide.md', body: '# Guide\n<!-- cockpit:verified version=2.5.0 -->\n\n[Registry](concepts.md#registry) and Registry is a list.\n\n![screenshot: terminal](terminal.png)\n\n~~~console\noutput\n~~~\n\n<!-- cockpit:capture date=2026-02-30 version=2.4.0 --> Evidence.\n\n<!-- cockpit:ref path=../outside --> The check enforces it.\n' },
             ],
         })
@@ -681,7 +685,10 @@ describe('maintained prose detectors', () => {
         ]))
         expect(broken.diagnostics.filter(row => row.code === 'DOC067_CONCEPT_UNLINKED')).toHaveLength(1)
         expect(broken.diagnostics.filter(row => row.code === 'DOC065_CAPTURE_METADATA_MISSING')).toHaveLength(3)
-        expect(broken.reports).toMatchObject([{ code: 'DOC069_VERIFIED_VERSION_MISSING' }])
+        expect(broken.reports).toMatchObject([
+            { code: 'DOC069_VERIFIED_VERSION_MISSING', path: 'docs/concepts.md' },
+            { code: 'DOC069_VERIFIED_VERSION_MISSING', path: '.changeset/README.md' },
+        ])
     })
 
     it('runs external checking only on a scheduled or manual read-only workflow with pinned actions', () => {

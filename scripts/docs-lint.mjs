@@ -59,8 +59,11 @@ const EXECUTABLE_PREFIXES = [
 ]
 const EXECUTABLE_PATHS = new Set(['.github/PULL_REQUEST_TEMPLATE.md'])
 const HUMAN_PREFIXES = ['.changeset/', 'docs/', 'examples/']
-const HUMAN_PATHS = new Set(['packages/cockpit/README.md', 'packages/cockpit/libexec/rulesync-generator.NOTICE.md'])
+const HUMAN_PATHS = new Set(['packages/cockpit/CHANGELOG.md', 'packages/cockpit/README.md', 'packages/cockpit/libexec/rulesync-generator.NOTICE.md'])
 const HUMAN_ROOT = /^[^/]+\.md$/
+// Changesets copies a fragment's body verbatim into the package changelog, so a verification
+// marker there would be published inside the release notes.
+const CHANGESET_FRAGMENT = /^\.changeset\/(?!README\.md$)[^/]+\.md$/
 const ADMONITIONS = new Set(['CAUTION', 'IMPORTANT', 'NOTE', 'TIP', 'WARNING'])
 const EXTERNAL_LINK_LIMIT = 256
 const EXTERNAL_LINK_CONCURRENCY = 4
@@ -795,11 +798,15 @@ export function inspectMaintainedProse({ documents, currentVersion, staleMinorTh
     for (const document of documents) {
         const walked = walkMarkdownProse(document.path, document.body)
         const verified = document.body.match(/<!--\s*cockpit:verified version=([^\s]+)\s*-->/)
-        if (verified) {
+        if (CHANGESET_FRAGMENT.test(document.path)) {
+            // Release fragments are release notes, not maintained pages.
+        } else if (verified) {
             const distance = minorDistance(currentVersion, verified[1])
             if (distance === null || !validNonFutureVersion(verified[1], currentVersion)) diagnostics.push(diagnostic(document.path, 1, 'DOC063_VERIFIED_VERSION_INVALID', verified[1]))
             else if (distance > staleMinorThreshold) reports.push(diagnostic(document.path, 1, 'DOC064_VERIFIED_VERSION_STALE', verified[1]))
-        } else reports.push(diagnostic(document.path, 1, 'DOC069_VERIFIED_VERSION_MISSING', 'page has no verified version'))
+        } else {
+            reports.push(diagnostic(document.path, 1, 'DOC069_VERIFIED_VERSION_MISSING', 'page has no verified version'))
+        }
         const commentsAt = line => walked.lines.find(row => row.line === line)?.comments ?? []
         const captureMetadata = line => [...commentsAt(line - 1), ...commentsAt(line)].filter(comment => comment.startsWith('cockpit:capture'))
         const checkCapture = line => {

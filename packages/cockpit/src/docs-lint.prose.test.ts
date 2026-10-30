@@ -63,6 +63,7 @@ describe('documentation estate classification', () => {
     it.each([
         ['README.md', 'human'],
         ['packages/cockpit/README.md', 'human'],
+        ['packages/cockpit/CHANGELOG.md', 'human'],
         ['docs/contributing/style.md', 'human'],
         ['docs/contributing/decisions/operator-paths.md', 'human'],
         ['docs/contributing/decisions/installed-capabilities.md', 'human'],
