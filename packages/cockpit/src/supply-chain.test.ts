@@ -453,3 +453,65 @@ it('stops the release publish before stamping when the package does not exist on
     expect(JSON.parse(readFileSync(manifest, 'utf8')).cockpitSourceRevision).toBe('a'.repeat(40))
     expect(existsSync(published)).toBe(true)
 })
+
+it('admits only version fields, changelogs and consumed changesets on the Version Packages branch', () => {
+    // The release workflow rebuilds the version branch, but anyone who can push to it can add a
+    // commit that a reviewer reads as part of the bump.
+    const root = mkdtempSync(join(tmpdir(), 'cockpit-version-scope-'))
+    scratch.push(root)
+    const git = (...args: string[]) => {
+        const result = spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
+            '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: root, encoding: 'utf8' })
+        expect(result.status, result.stderr).toBe(0)
+        return result.stdout.trim()
+    }
+    const write = (path: string, body: string) => {
+        mkdirSync(dirname(join(root, path)), { recursive: true })
+        writeFileSync(join(root, path), body)
+    }
+    const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
+    const manifest = (version: string, extra: object = {}) => json({ name: '@b0dea/cockpit', version, ...extra })
+    const lock = (version: string, integrity = 'sha512-synthetic') => json({
+        name: 'synthetic-workspace', lockfileVersion: 3,
+        packages: { '': { name: 'synthetic-workspace' }, 'packages/cockpit': { name: '@b0dea/cockpit', version }, 'node_modules/zod': { version: '4.4.3', integrity } },
+    })
+    git('init', '-q', '-b', 'main')
+    write('packages/cockpit/package.json', manifest('0.1.0'))
+    write('package-lock.json', lock('0.1.0'))
+    write('packages/cockpit/CHANGELOG.md', '# @b0dea/cockpit\n')
+    write('.changeset/README.md', 'readme\n')
+    write('.changeset/config.json', '{}\n')
+    write('.changeset/brave-fox.md', '---\n"@b0dea/cockpit": minor\n---\n\nA change.\n')
+    write('src.ts', 'export {}\n')
+    git('add', '.')
+    git('commit', '-q', '-m', 'base')
+    const base = git('rev-parse', 'HEAD')
+    const bump = () => {
+        write('packages/cockpit/package.json', manifest('0.2.0'))
+        write('package-lock.json', lock('0.2.0'))
+        write('packages/cockpit/CHANGELOG.md', '# @b0dea/cockpit\n\n## 0.2.0\n\n- A change.\n')
+        rmSync(join(root, '.changeset/brave-fox.md'))
+    }
+    const check = (edit: () => void, from = base) => {
+        git('checkout', '-q', '-f', '-B', 'candidate', base)
+        edit()
+        git('add', '-A', '.')
+        git('commit', '-q', '-m', 'candidate')
+        return spawnSync('bash', [join(repositoryRoot, '.github/scripts/check-version-pr-scope.sh'), from, 'HEAD'], { cwd: root, encoding: 'utf8' })
+    }
+
+    const clean = check(bump)
+    expect(clean.status, clean.stdout + clean.stderr).toBe(0)
+    for (const [extra, path] of [
+        [() => write('src.ts', 'export const changed = true\n'), 'src.ts'],
+        [() => write('packages/cockpit/package.json', manifest('0.2.0', { scripts: { postinstall: 'node install.mjs' } })), 'packages/cockpit/package.json'],
+        [() => write('package-lock.json', lock('0.2.0', 'sha512-swapped')), 'package-lock.json'],
+        [() => rmSync(join(root, '.changeset/config.json')), '.changeset/config.json'],
+        [() => write('.changeset/new-step.md', 'added\n'), '.changeset/new-step.md'],
+    ] as const) {
+        const refused = check(() => { bump(); extra() })
+        expect(refused.status, path).toBe(1)
+        expect(refused.stdout).toContain(`::error::${path}: `)
+    }
+    expect(check(bump, 'f'.repeat(40)).status).not.toBe(0)
+})

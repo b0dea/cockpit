@@ -43,6 +43,12 @@ When you are ready to release:
 3. Merge it once `ci-ok` passes. If main moves before you merge, the workflow rebuilds the pull
    request; close and reopen it again.
 
+`ci-ok` includes the `version pull request scope` check, which fails when the pull request
+changes anything besides version fields in `package.json` and `package-lock.json`, `CHANGELOG.md`
+files and consumed `.changeset/*.md` files. It exists so a commit pushed onto the version branch
+cannot ship hidden inside the bump. If it fails, the error names each file outside that scope:
+remove those commits from the branch, or let the workflow rebuild it with the next push to main.
+
 ## First publication
 
 npm Trusted Publishing cannot create a package: the

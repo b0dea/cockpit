@@ -274,6 +274,27 @@ jobs:
             exit 1
           fi
 
+  # The release workflow opens the Version Packages pull request from this branch, and a reviewer
+  # reads it as a version bump. The guard holds it to that, so a commit pushed onto the branch
+  # cannot ride along with the bump. See .github/scripts/check-version-pr-scope.sh.
+  version-pr-scope:
+    name: version pull request scope
+    if: github.event_name == 'pull_request' && github.head_ref == 'changeset-release/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge commit and its base parent: the pull request's change against main.
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - run: bash .github/scripts/check-version-pr-scope.sh HEAD^1 HEAD
+
   # Needs a public repository (or GitHub Advanced Security), so it skips itself while the
   # repository is private instead of failing every dependency change.
   dependency-review:
@@ -299,7 +320,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, hygiene, test, test-protection, runtime-floor-negative, changeset, dependency-review]
+    needs: [changes, hygiene, test, test-protection, runtime-floor-negative, changeset, version-pr-scope, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
