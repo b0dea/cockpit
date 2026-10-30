@@ -256,7 +256,46 @@ describe('public estate observation', () => {
         rmSync(join(estateRoot, 'app/compose.yml'))
         symlinkSync(join(estateRoot, 'app/package.json'), join(estateRoot, 'app/compose.yml'))
         expect(await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate }))
-            .toMatchObject({ kind: 'refusal', status: 2 })
+            .toMatchObject({ kind: 'refusal', status: 2, diagnostics: [{
+                code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID',
+                message: expect.stringContaining('symbolic link'),
+                target: join(canonical, 'app/compose.yml'),
+                fix: expect.stringContaining('rerun the same cockpit init command'),
+            }] })
+        expect(await classifyEstateObservation({ root: canonical }, { observe: async () => {
+            throw new Error('api_token=raw-secret-shaped-value')
+        } })).toMatchObject({ kind: 'refusal', diagnostics: [{
+            message: 'estate observation owner failed', target: canonical,
+        }] })
+    })
+
+    it('keeps every supported ambiguous source as one bounded named runnable gap', async () => {
+        const estateRoot = temporaryPath('ambiguous-estate')
+        mkdirSync(join(estateRoot, 'app'), { recursive: true })
+        const files = {
+            'package.json': JSON.stringify({ scripts: { build: 'node build.mjs' } }),
+            'pyproject.toml': '[project]\nname = "app"\n',
+            'Cargo.toml': '[package]\nname = "app"\nversion = "0.0.0"\n',
+            'go.mod': 'module example.invalid/app\n',
+            Gemfile: 'source "https://rubygems.org"\n',
+            Dockerfile: 'FROM scratch\n',
+            'compose.yaml': 'services: {}\n',
+            'compose.yml': 'services: []\n',
+            'docker-compose.yaml': 'not-services: true\n',
+            'docker-compose.yml': 'services:\n  app: null\n',
+        }
+        for (const [name, bytes] of Object.entries(files)) writeFileSync(join(estateRoot, 'app', name), bytes)
+        const canonical = realpathSync(estateRoot)
+
+        const outcome = await classifyEstateObservation({ root: canonical }, { observe: observePublicEstate })
+
+        expect(outcome).toMatchObject({ kind: 'complete', result: {
+            classification: 'one-sibling',
+            gaps: [{ field: 'app.runnable', source: 'app/package.json', why: expect.stringContaining('additional source issues') }],
+            runnable: [{ slug: 'app', disposition: 'unknown' }],
+        } })
+        if (outcome.kind !== 'complete') throw new Error('ambiguous public source observation was refused')
+        expect(outcome.result.gaps[0]!.why.length).toBeLessThanOrEqual(512)
     })
 
     it('refuses a manifest appearing inside an omitted candidate during observation', async () => {
@@ -1081,6 +1120,10 @@ describe('operator-confirmed document completion', () => {
         mkdirSync(join(parent, 'worker'))
         mkdirSync(join(parent, 'worker/.git'))
         writeFileSync(join(parent, 'worker/Dockerfile'), 'FROM python:3.13-slim\nCMD ["python", "worker.py"]\n')
+        expect(await observeCockpitRoot({ root: join(parent, 'worker') })).toBe('product-repository')
+        writeFileSync(join(parent, 'worker/Dockerfile'), 'FROM scratch\n')
+        expect(await observeCockpitRoot({ root: join(parent, 'worker') })).toBe('product-repository')
+        writeFileSync(join(parent, 'worker/compose.yml'), 'services: {}\n')
         expect(await observeCockpitRoot({ root: join(parent, 'worker') })).toBe('product-repository')
 
         const scoped = await classifyEstateObservation({ root: parent, repositories: ['shop'] }, { observe: observePublicEstate })

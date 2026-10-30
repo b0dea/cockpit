@@ -151,12 +151,13 @@ function refusal(code: string, message: string, target?: string, fix?: string): 
     }
 }
 
-function estateRefusal(message: string, target = 'estate'): EstateClassificationOutcome {
+function estateRefusal(message: string, target = 'estate', fix?: string): EstateClassificationOutcome {
     return Object.freeze({ kind: 'refusal', status: 2, result: null, diagnostics: Object.freeze([Object.freeze({
         severity: 'error' as const,
         code: 'DOCUMENT_ESTATE_OBSERVATION_INVALID',
         message,
         target,
+        ...(fix === undefined ? {} : { fix }),
     })]) })
 }
 
@@ -164,6 +165,7 @@ const SHA256 = /^[a-f0-9]{64}$/
 const SAFE_NAME = /^[a-z][a-z0-9-]{0,63}$/
 const SAFE_RELATIVE = /^(?!.*(?:^|\/)\.\.(?:\/|$))[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/
 const MAX_ESTATE_EVIDENCE_BYTES = 1024 * 1024
+const MAX_ESTATE_REASON_LENGTH = 512
 const MAX_CONFIGURATION_ANSWER_BYTES = 262_144
 const LANGUAGE_MANIFESTS = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Gemfile'] as const
 const COMPOSE_MANIFESTS = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'] as const
@@ -184,6 +186,37 @@ interface RepositorySources {
     readonly runnable: EstateRepositoryObservation['runnable']
     readonly reasons: readonly string[]
     readonly sources: readonly Readonly<{ path: string; sha256: string }>[]
+}
+
+class EstateSourceObservationError extends Error {
+    readonly target: string
+    readonly fix: string
+
+    constructor(target: string, message: string) {
+        super(message)
+        this.target = target
+        this.fix = 'replace it with one readable regular file under the repository, then rerun the same cockpit init command'
+    }
+}
+
+function sourceObservationError(repository: string, label: string, source: string, problem: string) {
+    const displayed = label === '.' ? source : `${label}/${source}`
+    return new EstateSourceObservationError(resolve(repository, source),
+        `public runnable source ${displayed} ${problem}; init cannot trust product classification without bounded current source identity`)
+}
+
+function boundedReasons(reasons: readonly string[]): string {
+    const complete = reasons.join('; ')
+    if (complete.length <= MAX_ESTATE_REASON_LENGTH) return complete
+    const included: string[] = []
+    for (const reason of reasons) {
+        const omitted = reasons.length - included.length - 1
+        const suffix = omitted === 0 ? '' : `; ${omitted} additional source issue${omitted === 1 ? '' : 's'} omitted`
+        if ([...included, reason].join('; ').length + suffix.length > MAX_ESTATE_REASON_LENGTH) break
+        included.push(reason)
+    }
+    const omitted = reasons.length - included.length
+    return `${included.join('; ')}${included.length === 0 ? '' : '; '}${omitted} additional source issue${omitted === 1 ? '' : 's'} omitted`
 }
 
 function composeDeclaresServices(text: string): boolean {
@@ -207,16 +240,20 @@ async function observeRepositorySources(repository: string, label: string): Prom
         let bytes: Buffer
         try {
             const stat = await lstat(path)
-            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_ESTATE_EVIDENCE_BYTES) {
-                throw new TypeError(`public runnable source is not one bounded regular file: ${label}/${manifest}`)
+            if (stat.isSymbolicLink()) throw sourceObservationError(repository, label, manifest, 'is a symbolic link')
+            if (!stat.isFile()) throw sourceObservationError(repository, label, manifest, 'is not a regular file')
+            if (stat.nlink !== 1) throw sourceObservationError(repository, label, manifest, 'has multiple hard links')
+            if (stat.size > MAX_ESTATE_EVIDENCE_BYTES) {
+                throw sourceObservationError(repository, label, manifest, 'exceeds the bounded observation size')
             }
             bytes = await readFile(path)
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-            continue
+            if (error instanceof EstateSourceObservationError) throw error
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+            throw sourceObservationError(repository, label, manifest, 'could not be inspected and read safely')
         }
         if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) {
-            throw new TypeError(`public runnable source exceeds the observation bound: ${label}/${manifest}`)
+            throw sourceObservationError(repository, label, manifest, 'grew beyond the bounded observation size while it was read')
         }
         sources.push(Object.freeze({ path: manifest, sha256: createHash('sha256').update(bytes).digest('hex') }))
         if (manifest === 'Dockerfile') {
@@ -297,7 +334,7 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
         const { runnable, reasons, sources } = await observeRepositorySources(root, '.')
         const source = sources[0]
         if (source) repositories.push(Object.freeze({ slug, path: '.', evidencePath: source.path, runnable,
-            ...(runnable === 'confirmed' ? {} : { why: reasons.join('; ') }), source,
+            ...(runnable === 'confirmed' ? {} : { why: boundedReasons(reasons) }), source,
             ...(sources.length > 1 ? { sources: Object.freeze(sources) } : {}) }))
     }
     for (const entry of entries) {
@@ -305,7 +342,7 @@ export async function observePublicEstate(input: EstateObservationInput): Promis
         const source = sources[0]
         if (!source) continue
         repositories.push(Object.freeze({ slug: entry.name, path: entry.name, evidencePath: source.path, runnable,
-            ...(runnable === 'confirmed' ? {} : { why: reasons.join('; ') }), source,
+            ...(runnable === 'confirmed' ? {} : { why: boundedReasons(reasons) }), source,
             ...(sources.length > 1 ? { sources: Object.freeze(sources) } : {}) }))
     }
     return Object.freeze({ root, observedAt: new Date().toISOString(), repositories: Object.freeze(repositories) })
@@ -487,7 +524,11 @@ export async function classifyEstateObservation(
     let observed: unknown
     try { observed = await adapters.observe(Object.freeze({ root, ...(only === undefined ? {} : { repositories: only }),
         ...(captured.rootIsRepository ? { rootIsRepository: true as const } : {}) })) }
-    catch { return estateRefusal('estate observation owner failed', root) }
+    catch (error) {
+        return error instanceof EstateSourceObservationError
+            ? estateRefusal(error.message, error.target, error.fix)
+            : estateRefusal('estate observation owner failed', root)
+    }
     const rows = estateCandidate(observed, root)
     if (!rows || !await currentEstateRows(root, rows, captured)) {
         return estateRefusal('estate observation is malformed, ambiguous, stale or unbound to current source bytes', root)

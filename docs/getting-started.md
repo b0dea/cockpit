@@ -76,10 +76,10 @@ The [CLI reference](cli-reference.md) lists every command and flag.
 ### Bootstrap without a project manifest
 
 Keep the first tool installation outside an empty, documents-only or central multi-repository
-cockpit directory. `init` treats a Git checkout with a language manifest, a runnable final
-Dockerfile stage, or a Compose file with services as a product repository. An installation-only
-manifest and a dependency-free library can look identical, so it does not guess that the root
-should be excluded from the product.
+cockpit directory. `init` treats a Git checkout with a language manifest, Dockerfile, or standard
+Compose filename as a product repository before it decides whether that source is runnable. An
+installation-only manifest and a dependency-free library can look identical, so this conservative
+root choice prevents `init` from writing into a possible product checkout.
 
 From the intended cockpit directory, install a temporary, explicit executable and preview:
 
@@ -153,8 +153,8 @@ product repository, `init` first asks for the cockpit root (`cockpit.root`); see
 [Where the cockpit lives](concepts.md#where-the-cockpit-lives). A directory
 with nothing runnable gets a surfaces-only configuration with no `[environment]`, and `init` says
 that no runtime is declared; see [Environment modes](environment.md#environment-modes). That
-includes an empty directory and a repository of documents with no language manifest, runnable
-Dockerfile or Compose services: there, `init` proposes the cockpit root itself as the first sibling (`dir = "."`, `mount = "none"`),
+includes an empty directory and a repository of documents with no language manifest, Dockerfile or
+standard Compose file: there, `init` proposes the cockpit root itself as the first sibling (`dir = "."`, `mount = "none"`),
 and you add the product's repositories later with [`sibling add`](#add-or-remove-a-repository).
 
 Where a runtime is declared, `init` also asks for the machine floor the product needs. On every

@@ -173,8 +173,9 @@ is where the product's notes and decisions live until its repositories exist.
 Done when the human has chosen the cockpit root and `init` reports `environment-verified`
 from that root, or has stopped at a named gap you have reported.
 
-A Git checkout with a language manifest, a runnable final Dockerfile stage, or a Compose file
-with services at its root is a product repository. Run in it, the
+A Git checkout with a language manifest, Dockerfile, or standard Compose filename at its root is
+treated as a product repository before runnable status is settled. This conservative choice keeps
+`init` from writing into a possible product checkout. Run in it, the
 `--json` preview carries `result.cockpitRoot` before anything else: the question, both options
 with the exact paths each writes, and `recommended = "dedicated"`. Relay it to the human with
 both trade-offs; [Where the cockpit lives](concepts.md#where-the-cockpit-lives) states them. Never
@@ -195,7 +196,7 @@ first sibling (`dir` is the product repository's name,
 answers file, not from the new folder, which `init` would treat as a fresh empty cockpit;
 `result.root` shows the cockpit root, and the `sync`, `check` and `sibling add`
 commands that follow take `--config <result.root>/cockpit.toml`. With `"in-repo"`, `init`
-observes the repository's own manifest as its first sibling (`dir = "."`) and proposes that
+observes the repository's own runnable sources as its first sibling (`dir = "."`) and proposes that
 row, then asks the same runtime questions as
 [One or several repositories](#one-or-several-repositories), from step 2.
 
@@ -205,7 +206,7 @@ Done when `cockpit check --config cockpit.toml --json` exits 0 and `cockpit up` 
 `ENVIRONMENT_NOT_DECLARED`.
 
 A repository with no language manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`,
-`Gemfile`), runnable Dockerfile or Compose services has nothing runnable. Run `init` from the repository itself and follow
+`Gemfile`), Dockerfile or standard Compose file has nothing runnable. Run `init` from the repository itself and follow
 [Empty directory](#empty-directory) steps 1 to 3: the documents repository is the cockpit root
 and its own first sibling. [Environment modes](environment.md#environment-modes) explains what
 surfaces-only publishes. The runtime commands refuse with `ENVIRONMENT_NOT_DECLARED`, which is the
