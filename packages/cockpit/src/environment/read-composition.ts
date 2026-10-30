@@ -16,7 +16,7 @@ import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type HolderId, type LifecycleProgress, type StackId } from './contract.js'
-import { RuntimeNotDeclaredError } from './declaration.js'
+import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
     admitRuntimeServiceObservation,
@@ -344,7 +344,7 @@ export function createReadCommandAdapters(
         }, (step) => execute(step, signal ? { signal } : undefined))
         const loaded = await lifecycle.load({ configPath: input.configPath })
         if (loaded.kind === 'refusal' && loaded.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED)) {
-            throw new RuntimeNotDeclaredError(input.configPath)
+            throw new DeclarationRefusalError(runtimeNotDeclared(input.configPath))
         }
         if (loaded.kind !== 'complete') throw new TypeError('authenticated lifecycle context is unavailable')
         const context = loaded.result
@@ -427,8 +427,10 @@ export function createReadCommandAdapters(
     const observeLogs = async (request: { readonly configPath: string; readonly service: string }): Promise<LogObservation> => {
         if (!input || resolve(request.configPath) !== input.configPath) throw new TypeError('log configuration path does not match')
         const context = await prepare(input.signal)
+        const declared = context.topology.services.map(({ id }) => id)
+        if (!declared.includes(request.service)) throw new DeclarationRefusalError(serviceNotDeclared(request.service, declared))
         const completed = context.lifecycle.completedServices.find(({ service }) => service === request.service)
-        if (!completed || !context.topology.services.some(({ id }) => id === request.service)) {
+        if (!completed) {
             throw new TypeError('requested service is not in the selected running stack')
         }
         const evidence = await authenticateService(context.topology, completed.service, completed.containerId, execute, input.signal)

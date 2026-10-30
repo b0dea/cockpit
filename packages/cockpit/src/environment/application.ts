@@ -69,7 +69,7 @@ import {
 } from './lifecycle-stage.js'
 import { generatedApplicationProjection, prepareGeneratedEnvironmentCurrentness, type GeneratedApplicationProjection, type GeneratedEnvironmentCurrentness } from './generated-application.js'
 import { observeComposeTopology } from './compose-topology.js'
-import { declaredRuntime, RuntimeNotDeclaredError } from './declaration.js'
+import { declaredRuntime, DeclarationRefusalError } from './declaration.js'
 import type { ReleaseFreshness } from '../freshness.js'
 import { proposeGeneratedEnvironmentRepair } from '../repair.js'
 import type { ActiveSurfaceOverride, SurfaceUpgradeFinding } from '../surfaces/merge.js'
@@ -4880,7 +4880,7 @@ export async function runLogs(
         observation = await observe(Object.freeze({ configPath, service }))
     } catch (error) {
         if (signal?.aborted) return logsCancelled(json)
-        if (error instanceof RuntimeNotDeclaredError) return Object.freeze({ kind: 'refusal', status: 2, result: null,
+        if (error instanceof DeclarationRefusalError) return Object.freeze({ kind: 'refusal', status: 2, result: null,
             diagnostics: Object.freeze([error.diagnostic]) })
         return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log observation is unavailable for service ${service}`)
     }

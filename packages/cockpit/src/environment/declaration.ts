@@ -8,7 +8,7 @@ import { ENVIRONMENT_CODES, type EnvironmentDiagnostic } from './contract.js'
 export const mechanism = {
     id: 'environment-declaration',
     module: 'packages/cockpit/src/environment/declaration.ts',
-    exports: ['declaredRuntime', 'declaresNothingToRun', 'runtimeNotDeclared', 'RuntimeNotDeclaredError'],
+    exports: ['declaredRuntime', 'declaresNothingToRun', 'runtimeNotDeclared', 'serviceNotDeclared', 'DeclarationRefusalError'],
 } as const
 
 export type DeclaredRuntime = 'generated' | 'compose' | 'none'
@@ -36,14 +36,24 @@ export function runtimeNotDeclared(target: string): EnvironmentDiagnostic {
     })
 }
 
-/** Carries the refusal through owners whose only failure channel is a thrown error. */
-export class RuntimeNotDeclaredError extends Error {
+/** A service named on the command line that the stack does not declare: a wrong name, not a runtime failure. */
+export function serviceNotDeclared(service: string, declared: readonly string[]): EnvironmentDiagnostic {
+    return Object.freeze({
+        severity: 'error' as const,
+        code: 'SERVICE_NOT_DECLARED' satisfies typeof ENVIRONMENT_CODES.SERVICE_NOT_DECLARED,
+        message: `this stack declares no service ${service}; it declares ${declared.length === 0 ? 'no services' : declared.join(', ')}`,
+        target: service,
+        fix: 'rerun with --service set to one of the declared services',
+    })
+}
+
+/** Carries a declaration refusal through owners whose only failure channel is a thrown error. */
+export class DeclarationRefusalError extends Error {
     readonly diagnostic: EnvironmentDiagnostic
 
-    constructor(target: string) {
-        const diagnostic = runtimeNotDeclared(target)
+    constructor(diagnostic: EnvironmentDiagnostic) {
         super(diagnostic.message)
-        this.name = 'RuntimeNotDeclaredError'
+        this.name = 'DeclarationRefusalError'
         this.diagnostic = diagnostic
     }
 }

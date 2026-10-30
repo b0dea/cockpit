@@ -475,9 +475,12 @@ describe('production read command composition', () => {
             runtimeVersion: '27.1.2',
             composeVersion: '2.39.2',
         })
-        await expect(adapters.logs.observe({ configPath: source.path, service: 'worker' })).rejects.toThrow(
-            'requested service is not in the selected running stack',
-        )
+        // A service the stack does not declare is a wrong name, not a runtime that failed to measure.
+        expect(await runLogs({ configPath: source.path, service: 'worker', since: '10m', tail: 20, follow: false, json: false },
+            adapters.logs)).toMatchObject({ kind: 'refusal', status: 2, diagnostics: [{
+                code: 'SERVICE_NOT_DECLARED', target: 'worker',
+                message: 'this stack declares no service worker; it declares api',
+            }] })
     })
 
     it('captures a complete runtime cohort and publishes only its explicitly returned baseline', async () => {
