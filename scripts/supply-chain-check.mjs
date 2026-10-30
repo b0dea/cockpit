@@ -1,14 +1,14 @@
 import { execFileSync } from 'node:child_process'
 import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 
 export const mechanism = {
     id: 'supply-chain-readiness',
     module: 'scripts/supply-chain-check.mjs',
-    exports: ['expectedPackageFiles', 'inspectSupplyChain', 'resolveNpmLaunch', 'runSupplyChainCheck', 'generateSbom'],
+    exports: ['expectedPackageFiles', 'inspectSupplyChain', 'runSupplyChainCheck', 'generateSbom'],
 }
 
 const EXPECTED_RUNTIME_DEPENDENCIES = Object.freeze({ 'smol-toml': '1.9.1', yaml: '2.9.1', zod: '4.6.7' })
@@ -46,7 +46,6 @@ const OPERATOR_GAPS = Object.freeze([
     'package-scope-owner', 'trusted-publisher', 'superseded-minor-deprecation',
 ])
 const MINIMUM_COOLDOWN_DAYS = 7
-const MAXIMUM_NPM_MANIFEST_BYTES = 64 * 1024
 const STATIC_PACKAGE_FILES = Object.freeze([
     'LICENSE',
     'README.md',
@@ -102,93 +101,13 @@ function diagnostic(code, path, message) { return { code, path, message } }
 function json(root, path) { return JSON.parse(readFileSync(resolve(root, path), 'utf8')) }
 function compareCodeUnits(left, right) { return left < right ? -1 : left > right ? 1 : 0 }
 
-function npmLaunchInvalid(message) {
-    return new Error(`[NPM_LAUNCH_INVALID] ${message} — npm cannot be authenticated for this Node executable; fix: reinstall Node with its bundled npm, then run npm run lint:supply-chain`)
-}
-
-function npmLaunchEntry(path, kind, expected) {
-    let stat
-    try { stat = lstatSync(path) } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        throw npmLaunchInvalid(`${kind} is unavailable at ${path}: ${detail}`)
-    }
-    if (stat.isSymbolicLink() || !stat[expected]()) {
-        throw npmLaunchInvalid(`${kind} is not one ordinary ${expected === 'isFile' ? 'file' : 'directory'}: ${path}`)
-    }
-    return stat
-}
-
-function canonicalNpmLaunchFile(path, kind) {
-    if (typeof path !== 'string' || path.length === 0 || !isAbsolute(path) || resolve(path) !== path) {
-        throw npmLaunchInvalid(`${kind} must be one absolute path without traversal`)
-    }
-    npmLaunchEntry(path, kind, 'isFile')
-    try { return realpathSync(path) } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        throw npmLaunchInvalid(`${kind} cannot be resolved at ${path}: ${detail}`)
-    }
-}
-
-export function resolveNpmLaunch({
-    platform = process.platform,
-    nodePath = process.execPath,
-    env = process.env,
-} = {}) {
-    if (platform !== 'win32') return Object.freeze({ executable: 'npm', prefix: Object.freeze([]) })
-
-    const canonicalNode = canonicalNpmLaunchFile(nodePath, 'current Node executable')
-    const fromNpmRun = Object.prototype.hasOwnProperty.call(env, 'npm_execpath')
-    let npmCli
-    if (fromNpmRun) {
-        if (typeof env.npm_execpath !== 'string' || typeof env.npm_node_execpath !== 'string') {
-            throw npmLaunchInvalid('npm-run metadata must name both npm_execpath and npm_node_execpath')
-        }
-        const npmRunNode = canonicalNpmLaunchFile(env.npm_node_execpath, 'npm-run Node executable')
-        if (npmRunNode !== canonicalNode) {
-            throw npmLaunchInvalid('npm_node_execpath does not identify the current Node executable')
-        }
-        npmCli = env.npm_execpath
-    } else {
-        npmCli = join(dirname(canonicalNode), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-    }
-
-    const canonicalNpmCli = canonicalNpmLaunchFile(npmCli, 'npm CLI entrypoint')
-    const packageRoot = dirname(dirname(canonicalNpmCli))
-    const binRoot = join(packageRoot, 'bin')
-    const manifestPath = join(packageRoot, 'package.json')
-    npmLaunchEntry(packageRoot, 'npm package directory', 'isDirectory')
-    npmLaunchEntry(binRoot, 'npm bin directory', 'isDirectory')
-    const manifestStat = npmLaunchEntry(manifestPath, 'npm package manifest', 'isFile')
-    if (manifestStat.size === 0 || manifestStat.size > MAXIMUM_NPM_MANIFEST_BYTES) {
-        throw npmLaunchInvalid(`npm package manifest has an invalid size: ${manifestPath}`)
-    }
-    let manifest
-    try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        throw npmLaunchInvalid(`npm package manifest is not valid JSON at ${manifestPath}: ${detail}`)
-    }
-    if (manifest?.name !== 'npm' || manifest.bin?.npm !== 'bin/npm-cli.js') {
-        throw npmLaunchInvalid(`npm package manifest has an unexpected name or bin.npm at ${manifestPath}`)
-    }
-    const declaredCli = resolve(packageRoot, manifest.bin.npm)
-    if (declaredCli !== canonicalNpmCli || relative(packageRoot, declaredCli) !== join('bin', 'npm-cli.js')) {
-        throw npmLaunchInvalid(`npm package bin.npm does not identify the validated entrypoint: ${manifestPath}`)
-    }
-    return Object.freeze({ executable: canonicalNode, prefix: Object.freeze([canonicalNpmCli]) })
-}
-
-function runNpm(args, options) {
-    const launch = resolveNpmLaunch()
-    return execFileSync(launch.executable, [...launch.prefix, ...args], options)
-}
-
 function productionTypeScriptSources(root) {
     const sourceRoot = resolve(root, 'packages/cockpit/src')
     const files = []
     const visit = (directory, prefix = '') => {
         for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => compareCodeUnits(left.name, right.name))) {
             if (entry.isSymbolicLink()) throw new Error(`[PACKAGE_SOURCE_INVALID] source entry is linked: ${join(prefix, entry.name)}`)
-            const relativePath = join(prefix, entry.name).replaceAll('\\', '/')
+            const relativePath = join(prefix, entry.name)
             if (entry.isDirectory()) {
                 if (relativePath !== 'test-support') visit(resolve(directory, entry.name), relativePath)
             } else if (entry.isFile() && relativePath.endsWith('.ts') && !relativePath.endsWith('.test.ts')) {
@@ -369,7 +288,7 @@ function workflowDiagnostics(root, rootManifest) {
     const inspectWorkflow = absolute => {
         // `absolute` is canonical (symlinks resolved), so the root must be too, or a root reached
         // through a symlink such as /tmp yields a `../..` path that matches no job allowance.
-        const path = relative(realpathSync(root), absolute).replaceAll('\\', '/')
+        const path = relative(realpathSync(root), absolute)
         if (activeWorkflows.has(absolute)) {
             add('WORKFLOW_ACTION_CYCLE', path, `local reusable workflow dependency cycle reaches ${path}`)
             return
@@ -609,7 +528,7 @@ export function inspectSupplyChain(root, packFiles) {
 }
 
 export function runSupplyChainCheck(root) {
-    const output = runNpm(['pack', '--json', '--dry-run', '--workspace', '@b0dea/cockpit'], {
+    const output = execFileSync('npm', ['pack', '--json', '--dry-run', '--workspace', '@b0dea/cockpit'], {
         cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
     })
     const decoded = JSON.parse(output)
@@ -644,7 +563,7 @@ export function generateSbom(root, output) {
             packages: { ...lock.packages, '': { ...lock.packages[''], version: packageManifest.version } },
         }, null, 2)}\n`)
         cpSync(resolve(root, 'packages/cockpit/package.json'), resolve(temporaryRoot, 'packages/cockpit/package.json'))
-        const bytes = runNpm([
+        const bytes = execFileSync('npm', [
             'sbom', '--workspace', '@b0dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
         ], { cwd: temporaryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
         mkdirSync(dirname(output), { recursive: true })

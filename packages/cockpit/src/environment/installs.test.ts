@@ -662,7 +662,7 @@ describe('install verification', () => {
         }
     })
 
-    it.skipIf(process.platform === 'win32')('preserves an exact staging-cleanup refusal at the install boundary', async () => {
+    it('preserves an exact staging-cleanup refusal at the install boundary', async () => {
         const input = await fixture()
         const source = '#!/bin/sh\nstaging=$(dirname "$0")\nprintf %s "$staging"\nchmod 500 "$staging"\n'
         await writeFile(input.installExecutable.canonicalPath, source)
@@ -1092,7 +1092,7 @@ describe('filesystem helper protocol', () => {
         expect(outcome.stderr).toContain('install-filesystem:')
     })
 
-    it.skipIf(process.platform === 'win32')('refuses FIFO owner evidence without blocking', async () => {
+    it('refuses FIFO owner evidence without blocking', async () => {
         const root = await mkdtemp(join(tmpdir(), 'cockpit-helper-fifo-'))
         scratch.push(root)
         const lock = join(root, 'locks', 'shared.lock')

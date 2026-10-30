@@ -1,12 +1,12 @@
 import { spawnSync } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-    expectedPackageFiles, generateSbom, resolveNpmLaunch, runSupplyChainCheck,
+    expectedPackageFiles, generateSbom, runSupplyChainCheck,
 } from '../../../scripts/supply-chain-check.mjs'
 
 const childProcess = vi.hoisted(() => ({ execFileSync: vi.fn() }))
@@ -61,25 +61,6 @@ function mutate(root: string, path: string, update: (value: any) => void) {
     writeFileSync(absolute, `${JSON.stringify(value, null, 2)}\n`)
 }
 
-function npmPackage(root: string) {
-    const packageRoot = join(root, 'node_modules/npm')
-    const cli = join(packageRoot, 'bin/npm-cli.js')
-    mkdirSync(dirname(cli), { recursive: true })
-    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
-        name: 'npm', bin: { npm: 'bin/npm-cli.js' },
-    }))
-    writeFileSync(cli, 'synthetic npm entrypoint\n')
-    return { packageRoot, cli }
-}
-
-function windowsNpmFixture() {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit npm runtime ')))
-    scratch.push(root)
-    const node = join(root, 'node.exe')
-    writeFileSync(node, 'synthetic node executable\n')
-    return { root, node, ...npmPackage(root) }
-}
-
 function inspect(root: string, packFiles: readonly string[]): SupplyChainResult {
     const result = spawnSync(process.execPath, [detector, '--inspect', root, JSON.stringify(packFiles)], { encoding: 'utf8' })
     expect([0, 1]).toContain(result.status)
@@ -88,99 +69,22 @@ function inspect(root: string, packFiles: readonly string[]): SupplyChainResult 
 }
 
 describe('the supply-chain readiness detector', () => {
-    it('resolves the npm entrypoint installed beside the current Windows Node executable', () => {
-        const fixture = windowsNpmFixture()
-
-        expect(resolveNpmLaunch({ platform: 'win32', nodePath: fixture.node, env: {} })).toEqual({
-            executable: fixture.node,
-            prefix: [fixture.cli],
-        })
-    })
-
-    it('retains canonical Node and npm identities when their input paths cross an ancestor alias', () => {
-        const fixture = windowsNpmFixture()
-        const alias = join(fixture.root, 'runtime alias')
-        symlinkSync(fixture.root, alias, 'dir')
-
-        expect(resolveNpmLaunch({ platform: 'win32', nodePath: join(alias, 'node.exe'), env: {} })).toEqual({
-            executable: fixture.node,
-            prefix: [fixture.cli],
-        })
-        expect(resolveNpmLaunch({
-            platform: 'win32', nodePath: join(alias, 'node.exe'),
-            env: { npm_node_execpath: join(alias, 'node.exe'), npm_execpath: join(alias, relative(fixture.root, fixture.cli)) },
-        })).toEqual({ executable: fixture.node, prefix: [fixture.cli] })
-    })
-
-    it('accepts npm-run metadata only when it names a valid npm package for the current Node executable', () => {
-        const fixture = windowsNpmFixture()
-        const npmRun = npmPackage(join(fixture.root, 'npm run toolchain'))
-        const otherNode = join(fixture.root, 'other-node.exe')
-        writeFileSync(otherNode, 'synthetic other node executable\n')
-
-        expect(resolveNpmLaunch({
-            platform: 'win32',
-            nodePath: fixture.node,
-            env: { npm_execpath: npmRun.cli, npm_node_execpath: fixture.node },
-        })).toEqual({ executable: fixture.node, prefix: [npmRun.cli] })
-        expect(() => resolveNpmLaunch({
-            platform: 'win32',
-            nodePath: fixture.node,
-            env: { npm_execpath: npmRun.cli, npm_node_execpath: otherNode },
-        })).toThrow('[NPM_LAUNCH_INVALID]')
-    })
-
-    it.each([
-        ['wrong package identity', (packageRoot: string) => writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: 'not-npm', bin: { npm: 'bin/npm-cli.js' } }))],
-        ['escaping package bin', (packageRoot: string) => writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: 'npm', bin: { npm: '../npm-cli.js' } }))],
-        ['linked entrypoint', (_packageRoot: string, cli: string) => {
-            const target = `${cli}.target`
-            writeFileSync(target, 'synthetic linked target\n')
-            rmSync(cli)
-            symlinkSync(target, cli)
-        }],
-        ['missing entrypoint', (_packageRoot: string, cli: string) => rmSync(cli)],
-    ])('refuses a Windows npm launch with a %s', (_name, invalidate) => {
-        const fixture = windowsNpmFixture()
-        invalidate(fixture.packageRoot, fixture.cli)
-
-        expect(() => resolveNpmLaunch({ platform: 'win32', nodePath: fixture.node, env: {} }))
-            .toThrow('[NPM_LAUNCH_INVALID]')
-    })
-
-    it('uses current Node and the validated npm entrypoint for both Windows package operations', () => {
-        const fixture = windowsNpmFixture()
-        const alias = join(fixture.root, 'runtime alias')
-        symlinkSync(fixture.root, alias, 'dir')
-        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
-        const execPath = Object.getOwnPropertyDescriptor(process, 'execPath')!
-        const npmExecPath = process.env.npm_execpath
-        const npmNodeExecPath = process.env.npm_node_execpath
-        Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-        Object.defineProperty(process, 'execPath', { ...execPath, value: join(alias, 'node.exe') })
-        delete process.env.npm_execpath
-        delete process.env.npm_node_execpath
+    it('runs npm pack and npm sbom for the package workspace', () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-sbom-output-')))
+        scratch.push(root)
         childProcess.execFileSync
             .mockReturnValueOnce(JSON.stringify([{ filename: 'synthetic.tgz', files: PACK_FILES.map(path => ({ path })) }]))
             .mockReturnValueOnce('{"bomFormat":"CycloneDX"}\n')
-        const output = join(fixture.root, 'output', 'sbom.json')
-        try {
-            expect(runSupplyChainCheck(repositoryRoot)).toBe(0)
-            generateSbom(repositoryRoot, output)
-        } finally {
-            Object.defineProperty(process, 'platform', platform)
-            Object.defineProperty(process, 'execPath', execPath)
-            if (npmExecPath === undefined) delete process.env.npm_execpath
-            else process.env.npm_execpath = npmExecPath
-            if (npmNodeExecPath === undefined) delete process.env.npm_node_execpath
-            else process.env.npm_node_execpath = npmNodeExecPath
-        }
+        const output = join(root, 'output', 'sbom.json')
 
-        expect(childProcess.execFileSync).toHaveBeenNthCalledWith(1, fixture.node, [
-            fixture.cli, 'pack', '--json', '--dry-run', '--workspace', '@b0dea/cockpit',
+        expect(runSupplyChainCheck(repositoryRoot)).toBe(0)
+        generateSbom(repositoryRoot, output)
+
+        expect(childProcess.execFileSync).toHaveBeenNthCalledWith(1, 'npm', [
+            'pack', '--json', '--dry-run', '--workspace', '@b0dea/cockpit',
         ], expect.objectContaining({ cwd: repositoryRoot }))
-        expect(childProcess.execFileSync).toHaveBeenNthCalledWith(2, fixture.node, [
-            fixture.cli, 'sbom', '--workspace', '@b0dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
+        expect(childProcess.execFileSync).toHaveBeenNthCalledWith(2, 'npm', [
+            'sbom', '--workspace', '@b0dea/cockpit', '--sbom-format', 'cyclonedx', '--package-lock-only',
         ], expect.objectContaining({ cwd: expect.stringContaining('cockpit-sbom-input-') }))
         expect(readFileSync(output, 'utf8')).toBe('{"bomFormat":"CycloneDX"}\n')
     })

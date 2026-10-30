@@ -176,7 +176,7 @@ function refusal(message: string, target: string, fix?: string): DataModePlanRes
 
 function inside(root: string, path: string): boolean {
     const offset = relative(root, path)
-    return offset === '' || offset !== '..' && !offset.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(offset)
+    return offset === '' || offset !== '..' && !offset.startsWith('../') && !isAbsolute(offset)
 }
 
 function operationDigest(operation: OverlayOperation): string {

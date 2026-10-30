@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, posix, win32 } from 'node:path'
+import { join } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cockpitId, checkoutId, holderId, stackId } from '../environment/identity.js'
@@ -106,17 +106,14 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
 }
 
 describe('browser transport surfaces', () => {
-    it('confines browser package paths with the actual POSIX and Windows path rules', () => {
-        for (const [paths, root, candidate, expected] of [
-            [win32, 'C:\\Workspace With Spaces\\node_modules\\@playwright\\test', 'C:\\Workspace With Spaces\\node_modules\\@playwright\\test\\index.js', true],
-            [win32, 'C:\\packages\\test', 'C:\\packages\\test', false],
-            [win32, 'C:\\packages\\test', 'C:\\packages\\test-other\\index.js', false],
-            [win32, 'C:\\packages\\test', 'C:\\packages\\Test\\outside.js', false],
-            [win32, 'C:\\packages\\test', 'C:\\packages\\test\\..\\outside.js', false],
-            [win32, 'C:\\packages\\test', 'D:\\packages\\test\\index.js', false],
-            [posix, '/packages/test', '/packages/test/index.js', true],
-            [posix, '/packages/test', '/packages/test/../outside.js', false],
-        ] as const) expect(isPackageDescendant(root, candidate, paths), candidate).toBe(expected)
+    it('confines browser package paths to strict descendants of the package root', () => {
+        for (const [root, candidate, expected] of [
+            ['/Workspace With Spaces/node_modules/@playwright/test', '/Workspace With Spaces/node_modules/@playwright/test/index.js', true],
+            ['/packages/test', '/packages/test', false],
+            ['/packages/test', '/packages/test-other/index.js', false],
+            ['/packages/test', '/packages/test/../outside.js', false],
+            ['/packages/test', '/packages/./test/index.js', false],
+        ] as const) expect(isPackageDescendant(root, candidate), candidate).toBe(expected)
     })
 
     it('resolves the authenticated project package relative to a declared nested manifest', async () => {

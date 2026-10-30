@@ -101,7 +101,7 @@ describe('sync --adopt', () => {
         await expect(readFile(join(outside, 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
-    it.skipIf(process.platform === 'win32')('refuses a FIFO ownership manifest without waiting for a writer', async () => {
+    it('refuses a FIFO ownership manifest without waiting for a writer', async () => {
         const { root, configPath } = await teamConsumer('adopt-fifo-ownership')
         const ownershipPath = join(root, '.cockpit/generated-environment-ownership.json')
         await mkdir(join(root, '.cockpit'), { recursive: true })
@@ -182,7 +182,7 @@ describe('sync --adopt', () => {
         }
     })
 
-    it.skipIf(process.platform === 'win32')('keeps rollback indeterminate when a post-link helper fault retains private recovery links', async () => {
+    it('keeps rollback indeterminate when a post-link helper fault retains private recovery links', async () => {
         const { root, configPath } = await teamConsumer('adopt-post-link-fault')
         const sourcePath = join(root, '.claude/settings.json')
         const destinationPath = join(root, 'cockpit/adopted/.claude/settings.json')

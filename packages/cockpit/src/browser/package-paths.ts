@@ -1,4 +1,4 @@
-import * as nativePaths from 'node:path'
+import { isAbsolute, relative, sep } from 'node:path'
 
 export const mechanism = {
     id: 'browser-package-paths',
@@ -7,8 +7,7 @@ export const mechanism = {
 } as const
 
 // Lexical confinement complements the caller's canonical filesystem and byte-identity checks.
-export function isPackageDescendant(root: string, candidate: string,
-    paths: Pick<typeof nativePaths, 'relative' | 'isAbsolute' | 'sep'> = nativePaths): boolean {
-    const offset = paths.relative(root, candidate)
-    return candidate.startsWith(`${root}${paths.sep}`) && offset.length > 0 && offset !== '..' && !offset.startsWith(`..${paths.sep}`) && !paths.isAbsolute(offset)
+export function isPackageDescendant(root: string, candidate: string): boolean {
+    const offset = relative(root, candidate)
+    return candidate.startsWith(`${root}${sep}`) && offset.length > 0 && offset !== '..' && !offset.startsWith(`..${sep}`) && !isAbsolute(offset)
 }

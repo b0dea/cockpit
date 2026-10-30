@@ -13,7 +13,7 @@ describe('init operator command', () => {
         const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
         let applicationCalls = 0
         try {
-            Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+            Object.defineProperty(process, 'platform', { ...platform, value: 'freebsd' })
 
             const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
                 { interactive: false, json: true }, {
@@ -24,7 +24,7 @@ describe('init operator command', () => {
 
             expect(outcome).toMatchObject({ kind: 'refusal', status: 2, diagnostics: [{
                 code: 'STATE_ROOT_UNAVAILABLE',
-                message: 'init cannot select a state root on win32 — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host',
+                message: 'init cannot select a state root on freebsd — bootstrap state ownership is implemented only for macOS and Linux; fix: run cockpit init on a supported macOS or Linux host',
             }] })
             expect(applicationCalls).toBe(0)
 

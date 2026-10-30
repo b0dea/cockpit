@@ -26,7 +26,7 @@ const referenceLedgerPath = '.cockpit/generated-reference-ownership.json'
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 describe('anchored file relocation', () => {
-    it.skipIf(process.platform === 'win32')('refuses a source replaced by a FIFO before relocation without blocking or creating the destination', async () => {
+    it('refuses a source replaced by a FIFO before relocation without blocking or creating the destination', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-race-')))
         roots.push(root)
         const source = 'source/settings.json'
@@ -57,7 +57,7 @@ describe('anchored file relocation', () => {
         await expect(lstat(join(root, destination))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
-    it.skipIf(process.platform === 'win32')('preserves a source replacement made after the original is quarantined', async () => {
+    it('preserves a source replacement made after the original is quarantined', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-source-replacement-')))
         roots.push(root)
         const source = 'source/settings.json'
@@ -98,7 +98,7 @@ describe('anchored file relocation', () => {
         await expect(lstat(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
-    it.skipIf(process.platform === 'win32')('keeps an unexpected destination replacement made after the destination link', async () => {
+    it('keeps an unexpected destination replacement made after the destination link', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-destination-replacement-')))
         roots.push(root)
         const source = 'source/settings.json'
@@ -141,7 +141,7 @@ describe('anchored file relocation', () => {
         expect(await readFile(displacedPath)).toEqual(bytes)
     })
 
-    it.skipIf(process.platform === 'win32')('preserves a destination replacement made between link and first identity observation', async () => {
+    it('preserves a destination replacement made between link and first identity observation', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-link-observation-race-')))
         roots.push(root)
         const source = 'source/settings.json'
@@ -191,7 +191,7 @@ describe('anchored file relocation', () => {
         expect(await readFile(displacedPath)).toEqual(bytes)
     })
 
-    it.skipIf(process.platform === 'win32')('retains exact recovery links when destination cleanup fails after linking', async () => {
+    it('retains exact recovery links when destination cleanup fails after linking', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-post-link-fault-')))
         roots.push(root)
         const source = 'source/settings.json'
@@ -257,7 +257,7 @@ describe('anchored file relocation', () => {
         ]))
     })
 
-    it.skipIf(process.platform === 'win32')('keeps writes through an already-open source descriptor at an authenticated name', async () => {
+    it('keeps writes through an already-open source descriptor at an authenticated name', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-relocation-open-writer-')))
         roots.push(root)
         const source = 'source/settings.json'

@@ -841,7 +841,7 @@ describe('destructive drain recovery inspection', () => {
             .toEqual({ kind: 'recoverable', request })
     })
 
-    it.skipIf(process.platform === 'win32')('does not retry an expired attempt while its orphaned executor is still alive', async () => {
+    it('does not retry an expired attempt while its orphaned executor is still alive', async () => {
         const state = await namespace()
         await seedCoordination(state, [{ holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z' }])
         const reserved = await reserveDrain({ namespace: state, request: {
