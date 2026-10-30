@@ -34,6 +34,6 @@ Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside t
 Route through `cockpit doctor`, `cockpit logs`, and `cockpit check` as the defect requires. Use `cockpit up` only for behavior that depends on a live process or integration.
 
 This is the direct-fix door. It changes only the repository that owns a reproduced defect.
-It does not scaffold a cockpit or copy the environment, tier, or proof decisions owned by the CLI.
+It does not scaffold a cockpit or copy the environment, tier, or proof decisions that the CLI makes.
 
 If a second person must certify this, use cockpit-work instead.

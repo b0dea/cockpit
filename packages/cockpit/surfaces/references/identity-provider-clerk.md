@@ -3,7 +3,7 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 Read this only when the consumer's lockfile shows Clerk together with `@clerk/testing` and
-`@playwright/test`. It adds provider specifics to the procedure in `test-data-and-personas.md`; the rules
+`@playwright/test`. It adds Clerk details to the procedure in `test-data-and-personas.md`; the rules
 there still apply. Any other provider needs its own starter, so stop and ask rather than adapting this one.
 
 ## Confirm roles before using them
@@ -16,8 +16,8 @@ assumed role signs in and then fails authorization for a reason that looks like 
 
 ## Create the identities
 
-The consumer adapter creates or adopts the stable synthetic users and organization and uses direct
-memberships with confirmed roles. Secrets cross only its existing secret-bearing command.
+The consumer's adapter creates or adopts the stable synthetic users and organization and uses direct
+memberships with confirmed roles. Secrets pass only through its existing command that already handles secrets.
 
 ## Sign in and save state
 

@@ -15,11 +15,11 @@ do not use a command runner that can download a missing package implicitly.
 
 Choose the current harness target explicitly from the
 [capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
-which separates generation from measured native enforcement.
+which separates what cockpit generates from what has been tested as enforced.
 For Codex CLI, preview with `./node_modules/.bin/cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
-The CLI owns registry interpretation, preview, durable state, artifact publication and environment checks.
-Do not re-derive those decisions in this procedure.
+The CLI reads the registry, shows the preview, keeps state, writes the generated files and checks the environment.
+Do not redo those steps here.
 
 Explore the repository estate before asking questions. Ask only for facts the repositories
 and CLI output cannot answer, in a small answerable round. Present inferred facts
@@ -38,10 +38,10 @@ init for `--help` to list its flags. The step is done when the result reports
 `environment-verified`. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
-named gaps. Native discovery, a real interview and clean-machine proof require separate evidence.
+named gaps. Native discovery, a real interview and a clean-machine run each still need their own check.
 
 For a dedicated cockpit, offer an instruction pointer for each product repository during the
-preview. Do not enable or write one without human approval: it changes what every agent session in
+preview. Do not enable or write one without a person's approval: it changes what every agent session in
 that repository loads. If the product has no **AGENTS.md**, show the exact proposed file as a draft;
 if it has one, show the marked block that would be appended without changing the team's text. After
 approval, record `instruction_pointer = true` on that sibling and follow **Add a repository** to
@@ -57,7 +57,7 @@ lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
 Explain the trade-off in a sentence or two from [root placement choices](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
 
-After accepted initialization, and only with explicit authorization to change product-owned fixtures
+After accepted initialization, and only with explicit permission to change the product's fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
 it as a separate product change. Bootstrap does not discover provider identities or create browser
 state.
@@ -70,7 +70,7 @@ ignore boundary.
 Use this when a repository has no local setup: it has only ever run in CI, staging or a cluster,
 so there is no Dockerfile, Compose file or documented way to start it on a laptop. Cockpit cannot
 read a setup that does not exist, and a setup it guessed would look complete while holding
-guesses. So derive each value from evidence, record it as inferred, and let the human confirm it.
+guesses. So derive each value from what the repository shows, record it as inferred, and let the human confirm it.
 
 1. Read what the repository already states, without running or changing anything: the manifests and
    lockfiles for the runtime and entrypoint, CI workflows for the services they start, deployment
@@ -78,7 +78,7 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    The init preview from **Bootstrap** already proposes several of these under `interview.outstanding`; reuse them
    rather than re-deriving. Done when you hold a list of entrypoint and runtime, ports, environment
    variable names, backing services with images, and a health endpoint, each with the file it came from.
-2. Record variable names only. Values belong to the secret owner; see **Secret handling**. Done when
+2. Record variable names only. Values belong to whoever owns the secret; see **Secret handling**. Done when
    no value from an env file, manifest or workflow appears in your notes or output.
 3. Mark every derived value as `inferred` with its source file and the reason you read it from there.
    Show the human the whole list and ask them to confirm or correct it. Done when the human has
@@ -93,7 +93,7 @@ guesses. So derive each value from evidence, record it as inferred, and let the 
    data or a login exists.
 5. Decide where the runnable pieces live. A Dockerfile or Compose file written into a product
    repository is a product change, so ask the human first and show the exact path and contents.
-   Without that authorisation, declare an environment cockpit renders itself and leave the product
+   Without that permission, declare an environment cockpit renders itself and leave the product
    untouched. Done when either the human approved that specific file or no product file was written.
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
@@ -122,8 +122,8 @@ order, so the later central path takes precedence. For status the locked executa
 --inject vars --redact-stdout -- <exact command>`. The angle brackets describe product-resolved inputs,
 not literal commands. Resolve the executable and version
 from the product manifest and lock; runtime commands never fetch with `npx`. If the product has not
-adopted Varlock, explicit product-change authority is required to add and lock it. `varlock init`,
-provider login, encryption and secret migration remain human/operator actions; preview their file and
+adopted Varlock, you need explicit permission to change the product before adding and locking it. `varlock init`,
+provider login, encryption and secret migration stay with a person; preview their file and
 provider scope instead of running them automatically.
 
 Preflight and doctor already check the schema of every sibling that has a `.env.schema`; a failing row
@@ -131,8 +131,8 @@ names the keys, and `varlock load` in that sibling shows why.
 
 Treat Varlock output as secret-tainted even in agent mode. Report variable names, validation state,
 exit status and provenance only. Never copy raw resolved values, stdout or stderr into work-order
-evidence. Varlock's credential proxy is preview software and same-user code is not confined here;
-report secure agent secret use as unavailable unless a separate measured sandbox proves it.
+records. Varlock's credential proxy is preview software and same-user code is not confined here;
+report secure agent secret use as unavailable unless a sandbox that has been tested proves it.
 
 ## Add a repository
 
@@ -199,11 +199,11 @@ source, redacted status, trusted child injection and unavailable same-user read 
 
 ## Fix
 
-Before creating files, route the intent through the current work-order routing and capacity owner.
+Before creating files, ask cockpit which route applies and whether there is capacity (`cockpit work-intake`).
 Start from the task, issue, specification, decision record or next programme item; do not require an
-empty work-order template. Independent certification, a durable handoff or a programme requires the
+empty work-order template. Independent certification, work that must carry on in a later session, or a programme requires the
 work-order lane. A fix result creates zero work-order files. Re-evaluate the route when scope
-changes or the work needs a handoff; do not wait until hand-back to discover that boundary.
+changes or the work must carry on in a later session; do not wait until hand-back to discover that boundary.
 
 Inspect repository- and user-installed skills for applicable brainstorming, research, specification
 and planning procedures before using a cockpit fallback. Reuse their procedures and link their
@@ -212,22 +212,22 @@ selection, chosen source, applicability and reason in the source audit, with the
 output sources. Record explicit absence when no applicable skill is available; absence never skips
 the required source audit. A generated skill inventory or a file hash alone proves no applicability.
 
-Only after route and capacity admission, prepare a draft through the work-order owner. Link the
-upstream artifact as authority, audit its sources and unresolved gaps, and validate the canonical
-contract. Keep programme intent in its ordered ledger; prepare only its currently admitted next item
-against the estate that exists now. Operator acceptance remains a separate gate.
+Only after the route and capacity check pass, prepare a draft with `cockpit work-intake`. Link the
+upstream file in the draft's Authority list, audit its sources and unresolved gaps, and validate the canonical
+contract. Keep programme intent in its ordered ledger; prepare only its next item that capacity allows
+against the estate that exists now. A person must still accept the draft as a separate step.
 
 Name the defect, expected behavior, and observed behavior. Reproduce at the narrowest real boundary:
 for logic-only changes use the owning product test or read-only command without starting the stack;
 use `./node_modules/.bin/cockpit up --config cockpit.toml` only when the behavior depends on a live process or integration.
 Then change the repository that owns it. Use `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`
-and `./node_modules/.bin/cockpit doctor --config cockpit.toml` only for relevant runtime evidence. Use
+and `./node_modules/.bin/cockpit doctor --config cockpit.toml` only for relevant runtime output. Use
 `./node_modules/.bin/cockpit check --config cockpit.toml` for generated-surface drift. Replace `service-id` with the
 declared service being inspected. Follow the generated testing tiers: extend the nearest behavior
 test through its public surface, iterate with the narrowest selector, and batch complete or shared
 gates after the change stabilizes. Do not repeat weaker proof already established by a stronger test. In the
 work-order lane, persist step checks and heartbeat before moving on; record attempts, root causes,
-human gaps, evidence and decisions through their owned writers. Preserve each evidence layer.
+open questions for a human, results and decisions with the matching cockpit commands. Keep each layer of results separate.
 For environment or credential defects, follow **Secret handling** before invoking the exact declared
 product command.
 
@@ -239,16 +239,16 @@ not a parallel checklist or plan. Persist findings and dispositions, fix blockin
 re-run the affected proof. The grader starts only after final declared verification is current. Apply the same sequence proportionally to
 a fix without adding work-order files or an independent grading requirement.
 
-Before hand-back, enumerate the exact files, temporary artifacts, processes and runtime claims this
-task created. Remove only task-owned temporary artifacts. Preserve pre-existing dirty state, other
-agents' files, co-tenant claims and review evidence. Release a runtime claim only through the existing
-cockpit lifecycle command, honoring any applicable existing operator gate. Rely on its lifecycle
-outcome; retain and report the owner, refusal and evidence when it cannot authenticate safe release.
-Report every retained task-owned item and why.
+Before you report back, list the exact files, temporary files, processes and stack claims this
+task created. Remove only the temporary files this task created. Keep earlier uncommitted changes, other
+agents' files, claims held by other holders and the review results. Release a stack claim only with the existing
+cockpit lifecycle command, following any approval step it already requires. Trust its
+result; when cockpit cannot confirm that release is safe, keep the claim and report who holds it, the refusal and the output.
+Report every item this task created that you kept, and why.
 
 Semantic applicability and these conversation steps are instructed, including skill and review
-routing. Contract validation, capacity admission, durable progress and completion checks belong to
-their CLI owners. Report any missing mechanical support as a gap; never describe an instruction as
+routing. Contract validation, capacity checks, saved progress and completion checks are done by
+the CLI. Report any check the CLI cannot do as a gap; never describe an instruction as
 an enforced harness restriction.
 
 If a second person must certify this, use cockpit-work instead.
@@ -259,8 +259,8 @@ Experimental. This is the work-order loop for changes a second person must certi
 contract and the independent grading, not the thinking: reuse the planning skills the harness already has.
 
 0. **Is this a work order?** Ask whether anyone besides you must certify the result, or whether the work
-   must survive a handoff or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
-   ceremony costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
+   must carry on in a later session or span a programme. If not, stop and follow **Fix**: most changes are fixes, and the
+   overhead costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** When preparing an intent descriptor, draft contract or source audit, follow the
    [public intake examples](https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor)
@@ -268,7 +268,7 @@ contract and the independent grading, not the thinking: reuse the planning skill
    thinking, research, specification and planning skills, and link each selected output in the source audit.
    Record an audited empty selection when none applies. Then compile them into the work-order schema with
    `./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.
-   The contract needs the parser-admitted number of acceptance criteria, each a Given/When/Then that independent reviewers could not
+   The contract needs the number of acceptance criteria the parser allows, each a Given/When/Then that independent reviewers could not
    disagree about, an Authority list of exact files and a verification command per criterion. Read the new ID from
    intake, then a human accepts it in a terminal with `./node_modules/.bin/cockpit work-accept --config cockpit.toml --work-order WO-001 --interactive`,
    replacing `WO-001` with that ID. JSON and CI refuse, so an agent cannot accept its own work. Done when
@@ -285,7 +285,7 @@ contract and the independent grading, not the thinking: reuse the planning skill
    `./node_modules/.bin/cockpit work-review --config cockpit.toml --work-order WO-001` to run and persist cockpit's independent
    simplification, code/spec and security findings. Fix every blocking finding and repeat the command until all
    all required review lanes pass.
-5. **Hand off to the evaluator subagent** through `./node_modules/.bin/cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
+5. **Pass the work to the evaluator subagent** through `./node_modules/.bin/cockpit work-grade --config cockpit.toml --work-order WO-001`. Never grade
    your own work: the evaluator is the grader and there is no separate grader skill. Its outcome per
    criterion is one of the verdicts in the evaluator's instructions; anything but "passed with current
    supporting evidence" sends you back to step 2 for that criterion.
@@ -301,4 +301,4 @@ contract and the independent grading, not the thinking: reuse the planning skill
    would be parked to free capacity; add `--apply` to park them. `./node_modules/.bin/cockpit work-reverse --config cockpit.toml --work-order WO-001`
    restores a swept order. An order a human parked by hand is reversed by a human, not by the sweep.
 
-Report the outcome of each criterion with the evidence the evaluator quoted, and name any step you could not run.
+Report the outcome of each criterion with the quotes the evaluator gave, and name any step you could not run.

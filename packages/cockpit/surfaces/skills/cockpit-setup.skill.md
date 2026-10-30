@@ -33,4 +33,4 @@ Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside t
 For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`. Read the identity-provider reference it names only when the lockfile shows that provider.
 
 Preview every proposed mutation and obtain explicit confirmation before irreversible work.
-The init command owns durable resume and final environment checks; show its actual result and any pending proof.
+The init command resumes after an interruption and runs the final environment checks; show its actual result and anything still unconfirmed.

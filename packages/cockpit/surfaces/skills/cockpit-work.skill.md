@@ -1,6 +1,6 @@
 ---
 name: cockpit-work
-description: "Use when a change needs a second person to certify it, must survive a handoff, or belongs to a programme, in a cockpit with work orders configured. Experimental; ordinary fixes use cockpit-fix."
+description: "Use when a change needs a second person to certify it, must carry on in a later session, or belongs to a programme, in a cockpit with work orders configured. Experimental; ordinary fixes use cockpit-fix."
 targets: ["*"]
 cockpit:
   tools: [shell]
@@ -29,7 +29,7 @@ opencode:
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Work**, starting at its step 0: if nobody besides you must certify the result, stop and use cockpit-fix.
-Run `cockpit work-status` for capacity and attempt counts, `cockpit work-intake` to prepare the order, `cockpit test-run` for the declared gate and `cockpit work-grade` to hand off to the evaluator.
+Run `cockpit work-status` for capacity and attempt counts, `cockpit work-intake` to prepare the order, `cockpit test-run` for the declared gate and `cockpit work-grade` to pass it to the evaluator.
 Use `cockpit work-sweep` when the work-in-progress cap blocks a new order.
 
 The evaluator subagent grades; this skill never does.
