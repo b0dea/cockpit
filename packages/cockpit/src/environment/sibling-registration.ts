@@ -6,7 +6,9 @@
  * verified write in `config/verified-write.ts`. It never clones, moves or deletes a checkout, and
  * it never talks to a remote host: the only child processes are local `git init` and a local read
  * of an existing checkout's `origin`, and both cross the supplied `execute`, which production
- * binds to `environment-exec/execute.ts`.
+ * binds to `environment-exec/execute.ts`. Before editing, it reads (never writes) the checkout
+ * identity through `setup-observation.ts` and the stack's lifecycle record, so it can refuse an
+ * edit that would strand a recorded stack.
  */
 import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises'
@@ -19,7 +21,12 @@ import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { CockpitConfig, deriveSiblingVariable, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
+import { declaredRuntime } from './declaration.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
+import { stackId } from './identity.js'
+import { decodeLifecycleRecord } from './lifecycle-stage.js'
+import { observeGeneratedCheckoutIdentity } from './setup-observation.js'
+import { readState, selectStateRoot } from './state.js'
 
 export const mechanism = {
     id: 'sibling-registration',
@@ -43,6 +50,7 @@ export interface SiblingAddInput {
 export interface SiblingRemoveInput {
     readonly configPath: string
     readonly slug: string
+    readonly env: Readonly<Record<string, string | undefined>>
 }
 
 export interface SiblingDependencies {
@@ -246,6 +254,39 @@ async function commit(path: string, sha256: string, prepared: Prepared, verb: st
     return written.kind === 'complete' ? null : refused(written.code, written.message, path)
 }
 
+type LoadedConfig = Extract<Awaited<ReturnType<typeof loadCockpitConfig>>, { kind: 'complete' }>['result']
+
+/**
+ * Every stack resource is labelled with the SHA-256 of the cockpit.toml that started it, and `down`
+ * removes only resources whose label matches the current file. Editing the file while a stack is
+ * recorded therefore strands that stack until the old file is restored, so the edit is refused
+ * before anything is written, while `down` still works.
+ */
+async function refuseWhileStackRecorded(loaded: LoadedConfig, env: SiblingAddInput['env']): Promise<SiblingOutcome | undefined> {
+    const configPath = loaded.source.path
+    // Lifecycle commands start a stack only for a declared runtime on these platforms, so no other
+    // cockpit can have one recorded.
+    if (declaredRuntime(loaded.config.environment) === 'none' || (process.platform !== 'darwin' && process.platform !== 'linux')) return undefined
+    const checkout = await observeGeneratedCheckoutIdentity({ source: loaded.source, cockpitName: loaded.config.cockpit.name, env })
+    if (checkout.state === 'failed') return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        `cannot tell whether a stack started from ${configPath} is still recorded: ${checkout.reason}; nothing was written`, configPath)
+    const namespace = await selectStateRoot({ platform: process.platform, home: env.HOME, xdgStateHome: env.XDG_STATE_HOME,
+        checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath], cockpitId: checkout.cockpitId })
+    if (namespace.kind !== 'complete') return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        `cannot tell whether a stack started from ${configPath} is still recorded: ${'message' in namespace ? namespace.message : 'the state root is missing'}; nothing was written`, configPath)
+    const stack = stackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } })
+    const address = namespace.value.paths.lifecycle(stack)
+    const stored = await readState(address)
+    if (stored.kind === 'missing') return undefined
+    if (stored.kind !== 'complete') return refused(stored.code, `${stored.message}; nothing was written`, stored.target)
+    const lifecycle = decodeLifecycleRecord(stored.value, { cockpitId: checkout.cockpitId, stackId: stack })
+    if (!lifecycle) return refused(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'lifecycle progress record is malformed; nothing was written', address.path)
+    if (lifecycle.value.teardownComplete === true) return undefined
+    return refused('SIBLING_STACK_RECORDED',
+        `a stack started from ${configPath} is still recorded, and cockpit removes a stack only under the exact cockpit.toml that started it, so this edit would leave it unremovable; nothing was written — fix: run \`cockpit down --config ${configPath}\`, then rerun this command`,
+        configPath)
+}
+
 export async function runSiblingAdd(input: SiblingAddInput, dependencies: SiblingDependencies): Promise<SiblingOutcome> {
     const searchEnvironment = input.env
     const modes = [input.create, input.from !== undefined, input.remote !== undefined].filter(Boolean).length
@@ -262,6 +303,8 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
 
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    const stranded = await refuseWhileStackRecorded(loaded.result, input.env)
+    if (stranded) return stranded
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     const configDir = dirname(configPath)
@@ -482,6 +525,8 @@ async function existingGuideProjections(configDir: string, row: Sibling): Promis
 export async function runSiblingRemove(input: SiblingRemoveInput): Promise<SiblingOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
+    const stranded = await refuseWhileStackRecorded(loaded.result, input.env)
+    if (stranded) return stranded
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     const index = config.sibling.findIndex((sibling) => sibling.slug === input.slug)

@@ -12,6 +12,7 @@ import { beginOperatorReset, decodeLifecycleRecord, runDoctor, runDown, runReset
 import type { ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
+import { runSiblingAdd, runSiblingRemove } from './sibling-registration.js'
 import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { readState } from './state.js'
@@ -830,30 +831,63 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
     })
 
-    it('names the generated identity change and cleanup commands instead of hiding it behind readiness', async () => {
-        const first = await runGeneratedScenario()
-        const source = await readFile(first.candidate.configPath, 'utf8')
-        await writeFile(first.candidate.configPath, source.replace(
-            'reason = "Pinned synthetic runtime"',
-            'reason = "Pinned synthetic runtime after configuration review"',
-        ))
-        const adapters = createLifecycleCommandAdapters({
+    it('refuses sibling edits while a stack is recorded and accepts them once down has removed it', async () => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+        const configPath = first.candidate.configPath
+        const before = await readFile(configPath, 'utf8')
+        const add = () => runSiblingAdd({ configPath, slug: 'docs', create: false, env,
+            remote: 'https://git.invalid/docs.git', purpose: 'Synthetic docs' }, { execute: executeProbe })
+        const fix = `fix: run \`cockpit down --config ${first.context.source.path}\`, then rerun this command`
+
+        for (const refused of [await add(), await runSiblingRemove({ configPath, slug: 'app', env })]) {
+            expect(refused).toMatchObject({ status: 2, diagnostics: [{ code: 'SIBLING_STACK_RECORDED' }] })
+            expect(refused.diagnostics[0]!.message).toContain(fix)
+        }
+        expect(await readFile(configPath, 'utf8')).toBe(before)
+        const down = await runDown({ configPath }, createDestructiveCommandAdapters({ configPath, env, dockerContext: 'default',
+            sessionId: 'generated-production', timeoutMs: 5_000 }, executeProbe))
+        expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        expect(await add()).toMatchObject({ status: 0, result: { action: 'added' } })
+    })
+
+    it('refuses an up after a configuration edit with one recovery that removes the old stack and starts the new one', async () => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = {
             configPath: first.candidate.configPath,
             env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
-            sessionId: 'generated-production',
-            timeoutMs: 5_000,
-        }, executeProbe)
-        const loaded = await adapters.load({ configPath: first.candidate.configPath })
+            sessionId: 'generated-production', timeoutMs: 5_000,
+        }
+        const previous = await readFile(input.configPath, 'utf8')
+        const intended = previous.replace('reason = "Pinned synthetic runtime"', 'reason = "Pinned synthetic runtime after configuration review"')
+        await writeFile(input.configPath, intended)
+        const adapters = createLifecycleCommandAdapters(input, executeProbe)
+        const loaded = await adapters.load({ configPath: input.configPath })
         if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        const path = loaded.result.source.path
         const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        // The fake daemon renders whichever configuration it is told about; the running containers
+        // keep the labels of the file that started them until `down` removes them.
         await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
-        listenerProbeControl.enabled = true
 
-        const result = await runUp({ configPath: first.candidate.configPath }, adapters)
+        const refused = await runUp({ configPath: input.configPath }, adapters)
 
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: `generated environment identity changed since lifecycle progress was recorded; the previous stack must be removed under its own declaration — fix: restore the previous configuration and generated files, run \`cockpit up --config ${loaded.result.source.path}\` then \`cockpit down --config ${loaded.result.source.path}\`, restore the intended configuration, run \`cockpit sync --config ${loaded.result.source.path}\` then \`cockpit up --config ${loaded.result.source.path}\``,
+            message: `the recorded stack was started from a different cockpit.toml, and cockpit removes a stack only under the exact configuration that started it — fix: restore the previous cockpit.toml, run \`cockpit sync --config ${path}\` then \`cockpit down --config ${path}\`, restore the intended cockpit.toml, then run \`cockpit sync --config ${path}\` and \`cockpit up --config ${path}\``,
         }] })
+        // Follow the recovery exactly as printed: it must remove the old stack and start the new one.
+        await writeFile(input.configPath, previous)
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        await configureGeneratedDocker(first.candidate, first.context, first.generation, {})
+        const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
+        expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        await writeFile(input.configPath, intended)
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        const resumed = createLifecycleCommandAdapters(input, executeProbe)
+        expect(await runUp({ configPath: input.configPath }, resumed)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
     })
 })

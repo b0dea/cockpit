@@ -172,7 +172,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     'registry-resolve': RegistryResolveCommandInput
     reset: ResetCommandInput
     runtime: Readonly<{ configPath: string; image: string; write: boolean }>
-    sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: SiblingRemoveInput }>
+    sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
     setup: SetupCommandInput
     selftest: Readonly<{
         configPath: string
@@ -662,7 +662,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         runtime: (input) => runRuntimeMeasure({ ...input, env }, { execute: executeProbe, probe: probeInstalledRuntime }),
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
-            : runSiblingRemove(request.input),
+            : runSiblingRemove({ ...request.input, env }),
         logs: (input) => {
             if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
                 'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))

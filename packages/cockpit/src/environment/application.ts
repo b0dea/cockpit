@@ -2668,9 +2668,13 @@ async function executeUpRound(
         const generated = generatedBringupRuns.get(context)
         const teardownComplete = stored?.value.teardownComplete === true
         if (stored && generated && !teardownComplete && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
+            // Stack resources carry the SHA-256 of the file that started them and `down` removes only
+            // matching ones, so the old file has to come back for one `down`; `up` is not needed for it.
+            const file = basename(context.source.path)
+            const sync = formatShellCommand(['cockpit', 'sync', '--config', context.source.path])
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                `generated environment identity changed since lifecycle progress was recorded; the previous stack must be removed under its own declaration — fix: restore the previous configuration and generated files, run \`${lifecycleSuggestion(context, 'up')}\` then \`${lifecycleSuggestion(context, 'down')}\`, restore the intended configuration, run \`${formatShellCommand(['cockpit', 'sync', '--config', context.source.path])}\` then \`${lifecycleSuggestion(context, 'up')}\``,
+                `the recorded stack was started from a different ${file}, and cockpit removes a stack only under the exact configuration that started it — fix: restore the previous ${file}, run \`${sync}\` then \`${lifecycleSuggestion(context, 'down')}\`, restore the intended ${file}, then run \`${sync}\` and \`${lifecycleSuggestion(context, 'up')}\``,
                 context.stackId) }
         }
         if (teardownComplete) {

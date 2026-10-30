@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import type { ExecutionStep } from './contract.js'
@@ -47,7 +47,10 @@ async function estate() {
     return { root, configPath, siblings: join(root, 'siblings') }
 }
 
-const env = { PATH: process.env.PATH }
+// A private home keeps the lifecycle-state lookup away from the developer's real state root.
+const home = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-sibling-home-')))
+afterAll(() => rm(home, { recursive: true, force: true }))
+const env = { PATH: process.env.PATH, HOME: home }
 const add = (input: Pick<SiblingAddInput, 'configPath' | 'slug'> & Partial<SiblingAddInput>) =>
     runSiblingAdd({ create: false, env, ...input }, { execute: executeProbe })
 
@@ -336,14 +339,14 @@ describe('sibling remove', () => {
         await writeFile(join(siblings, 'docs', 'index.md'), 'checkout content')
         const before = await readFile(configPath, 'utf8')
 
-        const blocked = await runSiblingRemove({ configPath, slug: 'api' })
+        const blocked = await runSiblingRemove({ configPath, env, slug: 'api' })
 
         expect(blocked.status).toBe(2)
         expect(blocked.diagnostics[0]?.code).toBe('SIBLING_REFERENCED')
         expect(blocked.diagnostics[0]?.message).toContain('environment.generated.services[0].sibling')
         expect(await readFile(configPath, 'utf8')).toBe(before)
 
-        const removed = await runSiblingRemove({ configPath, slug: 'docs' })
+        const removed = await runSiblingRemove({ configPath, env, slug: 'docs' })
 
         expect(removed.diagnostics).toEqual([])
         expect(removed.status).toBe(0)
@@ -363,7 +366,7 @@ describe('sibling remove', () => {
         const { root, configPath } = await estate()
         await writeFile(join(root, '.sibling-docs-AGENTS.md'), 'projected guide\n')
 
-        const removed = await runSiblingRemove({ configPath, slug: 'docs' })
+        const removed = await runSiblingRemove({ configPath, env, slug: 'docs' })
 
         expect(removed.status).toBe(0)
         expect(removed.result).toMatchObject({ flaggedForReview: ['.sibling-docs-AGENTS.md (guide projection)'] })
@@ -385,7 +388,7 @@ describe('sibling remove', () => {
         await writeFile(join(root, 'compose.yml'), 'services:\n  web:\n    build: ${WEB_DIR}\n  api:\n    build: ${API_DIR}\n')
         const before = await readFile(configPath, 'utf8')
 
-        const blocked = await runSiblingRemove({ configPath, slug: 'web' })
+        const blocked = await runSiblingRemove({ configPath, env, slug: 'web' })
 
         expect(blocked.status).toBe(2)
         expect(blocked.diagnostics[0]).toMatchObject({ code: 'SIBLING_REFERENCED',
