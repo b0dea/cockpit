@@ -245,6 +245,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `CLI_USAGE_INVALID` | see the message |
 | `COCKPIT_REVISION_INVALID` | see the message |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
+| `COMPOSE_BIND_UNDECLARED` | see the message |
 | `COMPOSE_HEALTHCHECK_MISSING` | see the message |
 | `COMPOSE_IMAGE_UNPINNED` | see the message |
 | `COMPOSE_PORT_NOT_LEASED` | see the message |
@@ -288,6 +289,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `DOCUMENT_SOURCE_CONFLICT` | see the message |
 | `DOCUMENT_SOURCE_REQUIRED` | see the message |
 | `DOCUMENT_STDOUT_TARGET` | see the message |
+| `DOWN_RESOURCES_KEPT` | see the message |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
 | `ENVIRONMENT_FILE_MALFORMED` | see the message |
 | `ENVIRONMENT_FILE_NOT_FOUND` | see the message |

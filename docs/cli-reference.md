@@ -36,6 +36,11 @@ Does not read `cockpit.toml`.
 | `CLI_INTERNAL_ERROR` | see the message |
 | `CLI_USAGE_INVALID` | see the message |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
+| `COMPOSE_BIND_UNDECLARED` | see the message |
+| `COMPOSE_HEALTHCHECK_MISSING` | see the message |
+| `COMPOSE_IMAGE_UNPINNED` | see the message |
+| `COMPOSE_PORT_NOT_LEASED` | see the message |
+| `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
 | `CONFIG_ENCODING_INVALID` | see the message |
@@ -128,6 +133,7 @@ Does not read `cockpit.toml`.
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
 | `MCP_DECLARATION_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `REGISTRY_EMPTY` | see the message |
 | `REGISTRY_ENCODING_INVALID` | see the message |
 | `REGISTRY_NOT_FOUND` | see the message |
@@ -282,6 +288,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -513,6 +520,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -560,6 +568,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -610,6 +619,7 @@ Reads `cockpit.toml` from `--config`.
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
 | `MOUNT_POSTURE_UNAVAILABLE` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNAVAILABLE` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
@@ -658,6 +668,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -706,6 +717,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -839,6 +851,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -886,6 +899,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
@@ -937,6 +951,7 @@ Reads `cockpit.toml` from `--config`.
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
