@@ -3347,7 +3347,7 @@ async function preparePublication(
     const priorEntries = ownership.kind === 'complete' ? ownership.manifest.entries : []
     const priorSurfaces = [...priorEntries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row), ...(adoptedBootstrap ?? [])]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
-    let prepared = await prepareSurfaces(base, priorSurfaces, adapters, ownership.kind === 'complete' ? ownership.manifest : undefined)
+    const prepared = await prepareSurfaces(base, priorSurfaces, adapters, ownership.kind === 'complete' ? ownership.manifest : undefined)
     if ('status' in prepared) return prepared
     const ownedInput = await ownedInputOverlap(prepared, priorEntries)
     if (ownedInput.kind === 'invalid') return refuse(
@@ -3375,14 +3375,6 @@ async function preparePublication(
     if (!surface) return refuse('SURFACE_STATE_CONFLICT', 'surface change plan could not be admitted', 'surfaces')
     const all = [...environment.mutations, ...surface]
     if (new Set(all.map(row => row.path)).size !== all.length) return refuse('SURFACE_PATH_CONFLICT', 'generated output estates overlap', 'generated-environment')
-    const previousProducer = ownership.kind === 'complete' ? ownership.manifest.producer : null
-    const identityUnchanged = previousProducer?.package === installedPackageMetadata.name
-        && previousProducer.version === installedPackageMetadata.version
-        && previousProducer.sourceRevision === installedPackageMetadata.cockpitSourceRevision
-    if (identityUnchanged && all.length === 0 && ownership.kind === 'complete') {
-        const candidate = Object.freeze({ ...prepared, producedAt: previousProducer.producedAt })
-        if (encodeOwnershipManifest(candidate).bytes === ownership.bytes) prepared = candidate
-    }
     const publication = await admitPublicationPlan({
         authority: { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath },
         generation: prepared.generation,

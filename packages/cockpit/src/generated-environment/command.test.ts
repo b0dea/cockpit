@@ -85,16 +85,15 @@ describe('public generated repair', () => {
     })
 })
 
-it('prepares canonical currentness with genuine producer facts and preserves a complete-estate noop timestamp', async () => {
+it('prepares canonical currentness with genuine producer facts and no wall-clock field', async () => {
     const { root, configPath } = await consumer('producer-currentness')
     const first = '2026-10-22T12:00:00.000Z'
     const later = '2026-10-23T12:00:00.000Z'
     expect(await syncGeneratedEnvironment({ configPath }, { now: () => first })).toMatchObject({ kind: 'complete' })
     const before = await readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8')
-    expect(JSON.parse(before)).toMatchObject({ format: 'cockpit-generated-ownership/v3', producer: {
-        package: installedPackageMetadata.name, version: installedPackageMetadata.version,
-        sourceRevision: installedPackageMetadata.cockpitSourceRevision, producedAt: first,
-    } })
+    expect(JSON.parse(before)).toMatchObject({ format: 'cockpit-generated-ownership/v3' })
+    expect(JSON.parse(before).producer).toEqual({ package: installedPackageMetadata.name, version: installedPackageMetadata.version,
+        sourceRevision: installedPackageMetadata.cockpitSourceRevision })
     const admission = vi.spyOn(publicationTransaction, 'admitPublicationPlan')
     try {
         const outputPaths = ['app/.env.example', 'compose.generated.yml', 'docs/cockpit/environment-decisions.md', 'fixtures/personas.generated.ts']
@@ -116,7 +115,7 @@ it('prepares canonical currentness with genuine producer facts and preserves a c
     } finally { admission.mockRestore() }
 })
 
-it('preserves the complete-estate producer timestamp during no-op sync', async () => {
+it('keeps the committed ownership manifest byte-identical during a later no-op sync', async () => {
     const { root, configPath } = await consumer('producer-currentness-noop')
     const first = '2026-10-22T12:00:00.000Z'
     const later = '2026-10-23T12:00:00.000Z'
@@ -136,7 +135,7 @@ it('preserves the complete-estate producer timestamp during no-op sync', async (
     expect(canonicalReads).toHaveLength(1)
 })
 
-it('timestamps a changed producer identity with the actual installed producer', async () => {
+it('records a changed producer identity as the actual installed producer', async () => {
     const { root, configPath } = await consumer('producer-migration')
     expect(await syncGeneratedEnvironment({ configPath }, { now: () => '2026-10-22T12:00:00.000Z' })).toMatchObject({ kind: 'complete' })
     const path = join(root, '.cockpit/generated-environment-ownership.json')
@@ -160,10 +159,8 @@ it('timestamps a changed producer identity with the actual installed producer', 
             return result
         },
     })).toMatchObject({ kind: 'complete' })
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ format: 'cockpit-generated-ownership/v3', producer: {
-        package: installedPackageMetadata.name, version: installedPackageMetadata.version,
-        sourceRevision: installedPackageMetadata.cockpitSourceRevision, producedAt: '2026-10-23T12:00:00.000Z',
-    } })
+    expect(JSON.parse(await readFile(path, 'utf8')).producer).toEqual({ package: installedPackageMetadata.name,
+        version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision })
     expect(canonicalReads).toHaveLength(1)
     expect(canonicalReads).toEqual([{ action: 'read-batch', entries: outputPaths.map(path => ({ path, maxBytes: 16_777_216, action: 'read-file' })), afterPublication: true }])
 }, 120_000)

@@ -296,7 +296,6 @@ describe('generated environment command', () => {
         expect(await readFile(markdownPath, 'utf8')).toBe(markdown)
         expect(await readFile(openCodePath, 'utf8')).toBe(openCode)
         const { integrity: _originalIntegrity, ...migratedPayload } = JSON.parse(original)
-        migratedPayload.producer.producedAt = migrationInstant
         const migratedLedger = `${JSON.stringify({ ...migratedPayload, integrity: digest(JSON.stringify(migratedPayload)) }, null, 2)}\n`
         expect(await readFile(ledgerPath, 'utf8')).toBe(migratedLedger)
         await rm(markdownPath)

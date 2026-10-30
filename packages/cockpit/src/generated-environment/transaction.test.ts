@@ -1060,9 +1060,9 @@ describe('generated publication transaction', () => {
 
     it('restores only an exact authenticated v3 whole-file postimage and binds its corrupt preimage', async () => {
         const { root, input, common, shared } = await publication()
-        const prior = encodeOwnershipManifest({ ...common, producedAt: '2026-10-22T12:00:00.000Z',
+        const prior = encodeOwnershipManifest({ ...common,
             owned: [{ path: 'a-stale.txt', sha256: digest('old') }], surfaces: [shared] })
-        const next = encodeOwnershipManifest({ ...common, producedAt: '2026-10-23T12:00:00.000Z',
+        const next = encodeOwnershipManifest({ ...common,
             owned: [{ path: 'a-stale.txt', sha256: digest('old') }], surfaces: [shared] })
         await writeFile(join(root, ledgerPath), prior.bytes)
         await writeFile(join(root, 'a-stale.txt'), 'corrupt')
@@ -1077,7 +1077,7 @@ describe('generated publication transaction', () => {
         expect(admitted).toMatchObject({ kind: 'complete' })
         if (admitted.kind !== 'complete') throw new Error('Exact authenticated restoration refused')
         expect(await runPublicationPlan(admitted.plan, { execute: executeProbe, revalidate: async () => true }))
-            .toMatchObject({ kind: 'complete', committedPaths: ['a-stale.txt', ledgerPath] })
+            .toMatchObject({ kind: 'complete', committedPaths: ['a-stale.txt'] })
         expect(await readFile(join(root, 'a-stale.txt'), 'utf8')).toBe('old')
         expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(next.bytes)
 

@@ -208,7 +208,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
             console.log(JSON.stringify(result));`,
         ], options)
         expect(JSON.parse(parsed)).toMatchObject({ kind: 'complete', manifest: { format: 'cockpit-generated-ownership/v3',
-            producer: { package: actual.name, version: actual.version, sourceRevision: actual.cockpitSourceRevision, producedAt: expect.any(String) } } })
+            producer: { package: actual.name, version: actual.version, sourceRevision: actual.cockpitSourceRevision } } })
     }, 120_000)
 
     it('refuses a stale schema artifact without rewriting it', () => {

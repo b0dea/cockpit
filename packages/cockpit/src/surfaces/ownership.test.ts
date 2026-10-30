@@ -12,16 +12,15 @@ const digest = (value: string | Uint8Array) => createHash('sha256').update(value
 const authority = { root: '/synthetic/cockpit', cockpitId: `cockpit:synthetic:${'a'.repeat(64)}`, configPath: '/synthetic/cockpit/cockpit.toml' }
 const manifestInput = () => ({ ...authority, generation: 'b'.repeat(64), sourceSha256: 'c'.repeat(64),
     personaSource: { path: 'fixtures/personas.json', sha256: 'd'.repeat(64) },
-    producedAt: '2026-10-22T12:00:00.000Z',
     owned: [{ path: 'generated.txt', sha256: digest('generated\n') }], surfaces: [] })
 
 describe('generated ownership manifest', () => {
-    it('rejects producer integrity and timestamp tampering', () => {
+    it('rejects producer integrity tampering and a re-signed wall-clock field', () => {
         const encoded = encodeOwnershipManifest(manifestInput())
         expect(parseOwnershipManifest(encoded.bytes.replace('development', 'tampered'), authority)).toEqual({ kind: 'invalid' })
         const changed = JSON.parse(encoded.bytes)
         delete changed.integrity
-        changed.producer.producedAt = '2026-02-30T12:00:00.000Z'
+        changed.producer.producedAt = '2026-10-22T12:00:00.000Z'
         expect(parseOwnershipManifest(JSON.stringify({ ...changed, integrity: digest(JSON.stringify(changed)) }), authority)).toEqual({ kind: 'invalid' })
     })
     it('refuses unknown authority fields at parsing and producer projection boundaries', () => {
@@ -44,7 +43,7 @@ describe('generated ownership manifest', () => {
         const input = manifestInput()
         const payload = { format: 'cockpit-generated-ownership/v3', cockpitId: input.cockpitId, generation: input.generation,
             source: { path: 'cockpit.toml', sha256: input.sourceSha256 }, personaSource: input.personaSource,
-            producer: { package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision, producedAt: input.producedAt },
+            producer: { package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision },
             entries: [{ kind: 'file', path: 'generated.txt', ownership: 'whole-file', sha256: digest('generated\n') }] }
         const encoded = encodeOwnershipManifest(input)
         expect(encoded.bytes).toBe(`${JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) }, null, 2)}\n`)

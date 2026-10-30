@@ -69,7 +69,6 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
             expect(run.mock.calls[0]![0]).toBe(admission.plan)
             expect(admit).toHaveBeenCalledTimes(1)
             expect(await readFile(join(root, personaPath), 'utf8')).toContain('changed')
-            expect(JSON.parse(await readFile(join(root, ledgerPath), 'utf8')).producer.producedAt).toBe(nextInstant)
             expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ message: expect.stringMatching(/authority/) })] })
             expect(await applyGeneratedEnvironmentRepair({ ...current.repairAuthority })).toMatchObject({ kind: 'refusal' })
         } finally { admit.mockRestore(); run.mockRestore() }
@@ -114,9 +113,10 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         expect(await Promise.all(paths.map(path => readFile(join(root, path))))).toEqual(before)
     })
 
-    it('repairs same-generation corrupted owned bytes and advances producedAt', async () => {
+    // The ownership manifest is committed, so a repair at a later time must not dirty it with a clock.
+    it('repairs same-generation corrupted owned bytes without rewriting the committed ownership manifest', async () => {
         const { root, configPath } = await consumer()
-        const before = JSON.parse(await readFile(join(root, ledgerPath), 'utf8'))
+        const before = await readFile(join(root, ledgerPath), 'utf8')
         const desired = await readFile(join(root, personaPath), 'utf8')
         await writeFile(join(root, personaPath), 'synthetic corruption\n')
         const admit = vi.spyOn(transaction, 'admitPublicationPlan')
@@ -131,9 +131,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         expect(current.outcome).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'GENERATED_ARTIFACT_DRIFT' })] })
         if (!current.repairAuthority) throw new Error('Corrupted owned leaf needs genuine repair authority')
         expect(await applyGeneratedEnvironmentRepair(current.repairAuthority)).toMatchObject({ kind: 'complete' })
-        const after = JSON.parse(await readFile(join(root, ledgerPath), 'utf8'))
-        expect(after.generation).toBe(before.generation)
-        expect(after.producer).toEqual({ ...before.producer, producedAt: nextInstant })
+        expect(await readFile(join(root, ledgerPath), 'utf8')).toBe(before)
         expect(await readFile(join(root, personaPath), 'utf8')).toBe(desired)
     })
 
@@ -167,7 +165,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
                     return outcome
                 },
             })
-            expect(current.changes).toEqual([{ operation: 'write', path: personaPath }, { operation: 'write', path: ledgerPath }])
+            expect(current.changes).toEqual([{ operation: 'write', path: personaPath }])
             expect(admit).toHaveBeenCalledTimes(1)
             const admitted = await admit.mock.results[0]!.value
             if (admitted.kind !== 'complete' || !current.repairAuthority) throw new Error('Corrupt repair authority unavailable')
@@ -190,7 +188,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
             expect(run.mock.calls[0]![0]).toBe(syncAdmission.plan)
             expect(await readFile(join(root, personaPath))).toEqual(desired)
             const after = JSON.parse(await readFile(join(root, ledgerPath), 'utf8'))
-            expect(after).toEqual({ ...original, producer: { ...original.producer, producedAt: nextInstant }, integrity: after.integrity })
+            expect(after).toEqual(original)
             expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
             expect(await readFile(join(root, 'foreign.txt'), 'utf8')).toBe('unowned synthetic control\n')
         } finally { admit.mockRestore(); run.mockRestore() }

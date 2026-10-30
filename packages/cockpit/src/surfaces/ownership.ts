@@ -506,7 +506,6 @@ export interface GeneratedProducer {
     readonly package: string
     readonly version: string
     readonly sourceRevision: string
-    readonly producedAt: string
 }
 
 export interface OwnershipManifestPayload {
@@ -529,8 +528,9 @@ export interface OwnershipAuthority {
     readonly cockpitId: string
     readonly configPath: string
 }
+// No wall-clock field: the manifest is committed, and a timestamp turned every resync on another
+// clone or after a repair into a team-visible diff.
 export interface OwnershipManifestInput extends OwnershipAuthority {
-    readonly producedAt?: string
     readonly generation: string
     readonly sourceSha256: string
     readonly personaSource: Readonly<{ path: string; sha256: string }>
@@ -588,7 +588,7 @@ function ownershipPayload(prepared: OwnershipManifestInput): OwnershipManifestPa
         generation: prepared.generation,
         source: Object.freeze({ path: basename(prepared.configPath), sha256: prepared.sourceSha256 }),
         personaSource: prepared.personaSource,
-        producer: Object.freeze({ package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision, producedAt: prepared.producedAt ?? new Date().toISOString() }),
+        producer: Object.freeze({ package: installedPackageMetadata.name, version: installedPackageMetadata.version, sourceRevision: installedPackageMetadata.cockpitSourceRevision }),
         entries: Object.freeze(entries),
     })
 }
@@ -637,12 +637,10 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
             || source.path !== basename(prepared.configPath) || typeof source.sha256 !== 'string' || !SHA256.test(source.sha256)
             || typeof personaSource.path !== 'string' || typeof personaSource.sha256 !== 'string' || !SHA256.test(personaSource.sha256)) return undefined
         const producer = ownRecord(record.producer)
-        if (!producer || !exactKeys(producer, ['package', 'version', 'sourceRevision', 'producedAt'])
+        if (!producer || !exactKeys(producer, ['package', 'version', 'sourceRevision'])
             || [producer.package, producer.version, producer.sourceRevision].some(value => typeof value !== 'string' || value.length === 0 || value.length > 256 || /[\u0000-\u0020\u007f-\u009f]/.test(value))
             || typeof producer.package !== 'string' || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(producer.package)
-            || typeof producer.version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(producer.version)
-            || typeof producer.producedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(producer.producedAt)
-            || !Number.isFinite(Date.parse(producer.producedAt)) || new Date(producer.producedAt).toISOString() !== producer.producedAt) return undefined
+            || typeof producer.version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(producer.version)) return undefined
         const entries: OwnershipEntry[] = []
         for (const item of record.entries as unknown[]) {
             const row = ownRecord(item)
