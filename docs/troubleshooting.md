@@ -582,7 +582,7 @@ state repair. Follow the named diagnostic and owning recovery procedure.
 | `SURFACE_WORKER_SIGNAL` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_WORKER_STDERR` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
 | `SURFACE_WORKER_TIMEOUT` | `packages/cockpit/src/surfaces/generator-adapter.ts` | no static remedy captured; inspect implementing owners |
-| `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
+| `TEAM_METADATA_UNAVAILABLE` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/generated-application.ts`, `packages/cockpit/src/team-metadata.ts` | no static remedy captured; inspect implementing owners |
 | `TEMPLATE_IGNORED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts` | no static remedy captured; inspect implementing owners |
 | `TEMPLATE_NOT_FOUND` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/templates.ts` | no static remedy captured; inspect implementing owners |
 | `TEMPLATE_NOT_TRACKED` | `packages/cockpit/src/environment/contract.ts`, `packages/cockpit/src/environment/setup-observation.ts` | no static remedy captured; inspect implementing owners |
