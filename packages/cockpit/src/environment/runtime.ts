@@ -1842,6 +1842,8 @@ function projectRuntimeExecutionStep(step: ExecutionStep, slot?: Readonly<{ inde
 
 export type RuntimeServicePlan =
     | { readonly kind: 'planned'; readonly service: string; readonly start: ExecutionStep; readonly status: ExecutionStep; readonly identity: ExecutionStep
+        /** Stops, without removing, the service this plan started when it did not become healthy. */
+        readonly stop: ExecutionStep
         /** Present for a built generated service: run before start and admitted by admitBuiltImageLauncher. */
         readonly build?: ExecutionStep; readonly launcher?: ExecutionStep }
     | { readonly kind: 'unavailable'; readonly service: string; readonly reason: string }
@@ -1936,6 +1938,7 @@ function unavailableRuntimeService(service: unknown): RuntimeServicePlan {
 
 interface RuntimeServiceInitialSteps {
     readonly start: ExecutionStep
+    readonly stop: ExecutionStep
     readonly status: ExecutionStep
     readonly identity: ExecutionStep
 }
@@ -1999,8 +2002,22 @@ function runtimeServiceInitialSteps(
         undefined,
         topologyContract.runtime.generatedPortNames,
     )
+    // A service that failed its start under a restart policy restarts forever until `down`. The
+    // failed `up` stops it and keeps the container, so its logs stay readable and the next `up`
+    // starts it again.
+    const stop = derivedComposeStep(
+        { ...topologyContract.step, timeoutMs: COMPOSE_STOP_GRACE_MS + topologyContract.step.timeoutMs },
+        `runtime:docker-compose:stop:${service.id}`,
+        'stop',
+        ['--progress', 'quiet', 'stop', service.id],
+        OUTPUT_LIMIT_BYTES,
+        issuanceId,
+        MAX_OBSERVATION_WINDOW_MS,
+        undefined,
+        topologyContract.runtime.generatedPortNames,
+    )
     const lookup = runtimeServiceLookupSteps(topologyContract, service, issuanceId)
-    return start && lookup ? Object.freeze({ start, ...lookup }) : undefined
+    return start && stop && lookup ? Object.freeze({ start, stop, ...lookup }) : undefined
 }
 
 export function createRuntimeServicePlan(input: { readonly topology: RuntimeTopologyEvidence; readonly service: string }): RuntimeServicePlan {

@@ -155,6 +155,7 @@ import {
     type RuntimeServiceEvidence,
     type RuntimeServiceFailureEvidence,
     type RuntimeServiceHealthPlan,
+    type RuntimeServicePlan,
     type RuntimeServiceObservation,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
@@ -2204,7 +2205,10 @@ type ServiceAdmission =
     | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence | RuntimeServiceObservation }
 
 /** A start can also be refused before Compose starts anything, with a diagnostic of its own. */
-type ServiceStart = ServiceAdmission | { readonly kind: 'refused'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
+type ServiceStart = Exclude<ServiceAdmission, { readonly kind: 'failure' }>
+    | { readonly kind: 'refused'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
+    /** `stop` is present once Compose was asked to start the service. */
+    | (Extract<ServiceAdmission, { readonly kind: 'failure' }> & { readonly stop?: ExecutionStep })
 
 async function inspectService(
     healthPlan: Extract<RuntimeServiceHealthPlan, { kind: 'planned' }>,
@@ -2256,6 +2260,14 @@ async function startService(
             : { plan, buildOutcome })
         if (admitted.kind === 'refusal') return { kind: 'refused', diagnostics: admitted.diagnostics }
     }
+    const started = await startPlannedService(plan, adapters)
+    return started.kind === 'failure' ? { ...started, stop: plan.stop } : started
+}
+
+async function startPlannedService(
+    plan: Extract<RuntimeServicePlan, { kind: 'planned' }>,
+    adapters: UpCommandAdapters,
+): Promise<ServiceAdmission> {
     const start = await adapters.execute(plan.start)
     const startAdmission = admitRuntimeServiceStageOutcome({ plan, stage: 'start', outcome: start })
     if (startAdmission.kind === 'failure') return { kind: 'failure', logs: startAdmission.evidence }
@@ -2272,6 +2284,32 @@ async function startService(
     if (identityAdmission.kind !== 'admitted') return { kind: 'failure' }
     const healthPlan = createRuntimeServiceHealthPlan({ plan, startOutcome: start, outcome: status, identityOutcome: identity })
     return healthPlan.kind === 'planned' ? inspectService(healthPlan, adapters) : { kind: 'failure' }
+}
+
+const FAILURE_LOG_EXCERPT_LINES = 10
+const FAILURE_LOG_LINE_CHARACTERS = 240
+
+// Failure evidence for a service that did not become healthy: its bounded logs as one diagnostic,
+// read before anything else touches the container. When this `up` started the service, `stop` then
+// stops it: under a restart policy a failed service otherwise restarted until `down`. The
+// container is kept, with its logs, and the next `up` starts it again.
+async function reportFailedService(
+    evidence: RuntimeServiceFailureEvidence | RuntimeServiceObservation | undefined,
+    service: string,
+    context: LifecycleRunContext,
+    adapters: UpCommandAdapters,
+    stop?: ExecutionStep,
+): Promise<readonly EnvironmentDiagnostic[]> {
+    const logs = await collectFailureLogs(evidence, service, adapters)
+    const stopped = stop ? (await adapters.execute(stop)).kind === 'complete' : undefined
+    const next = `fix the error in the log excerpt, then run \`${lifecycleSuggestion(context, 'up')}\` to resume, or \`${lifecycleSuggestion(context, 'down')}\` to remove the stack`
+    const fix = stopped ? `cockpit stopped the failed container and kept it with its logs; ${next}` : next
+    return Object.freeze([
+        ...logs.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED ? { ...diagnostic, fix } : diagnostic),
+        ...(stopped === false ? [ownerDiagnostic(ENVIRONMENT_CODES.EXECUTION_COMPENSATION_STEP_FAILED,
+            `the failed service ${service} could not be stopped, so it may keep restarting; run \`${lifecycleSuggestion(context, 'down')}\` to remove it`,
+            service)] : []),
+    ])
 }
 
 async function collectFailureLogs(
@@ -2293,17 +2331,23 @@ async function collectFailureLogs(
     const outcome = await adapters.execute(plan.step)
     const admitted = admitFailureLogs({ plan, outcome })
     if (admitted.kind === 'complete') {
-        return admitted.records.length > 0
-            ? admitted.records.map((record) => ownerDiagnostic(
-                  ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-                  `[${record.timestamp}] ${record.stream}: ${record.message}`,
-                  record.service,
-              ))
-            : [ownerDiagnostic(
-                  ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-                  'bounded failure logs contained no records',
-                  service,
-              )]
+        // One diagnostic per log line buried the cause under dozens of near-identical errors.
+        const { records } = admitted
+        if (records.length === 0) return [ownerDiagnostic(
+            ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
+            'bounded failure logs contained no records',
+            service,
+        )]
+        const excerpt = records.slice(-FAILURE_LOG_EXCERPT_LINES).map(({ stream, message }) => {
+            const characters = [...message]
+            return `${stream}: ${characters.slice(0, FAILURE_LOG_LINE_CHARACTERS).join('')}${characters.length > FAILURE_LOG_LINE_CHARACTERS ? '…' : ''}`
+        })
+        const count = `${records.length} log line${records.length === 1 ? '' : 's'}`
+        return [ownerDiagnostic(
+            ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
+            `service ${service} wrote ${count} before it failed${records.length > excerpt.length ? `; the last ${excerpt.length}` : ''}: ${excerpt.join(' | ')}`,
+            service,
+        )]
     }
     return [ownerDiagnostic(
         'code' in admitted ? admitted.code : ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
@@ -2735,7 +2779,7 @@ async function executeUpRound(
                 const admitted = await revalidateService(runtime.topology, completed, adapters)
                 if (admitted.kind === 'stale') return { kind: 'retry' }
                 if (admitted.kind !== 'complete') {
-                    const logDiagnostics = await collectFailureLogs(admitted.logs, completed.service, adapters)
+                    const logDiagnostics = await reportFailedService(admitted.logs, completed.service, context, adapters)
                     const primary = lifecycleRefusal(
                         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
                         'completed runtime service could not be revalidated',
@@ -2873,10 +2917,12 @@ async function executeUpRound(
             const admitted = await startService(issuance.topology, service.id, adapters)
             if (admitted.kind === 'refused') return { kind: 'complete' as const, result: forwardedRefusal(admitted.diagnostics) }
             if (admitted.kind !== 'complete') {
-                const logDiagnostics = await collectFailureLogs(
+                const logDiagnostics = await reportFailedService(
                     admitted.kind === 'failure' ? admitted.logs : undefined,
                     service.id,
+                    context,
                     adapters,
+                    admitted.kind === 'failure' ? admitted.stop : undefined,
                 )
                 const primary = lifecycleRefusal(
                     ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,

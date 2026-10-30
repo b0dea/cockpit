@@ -846,6 +846,66 @@ describe('lifecycle application contracts', () => {
         })
     })
 
+    // A failed up left the failing container restart-looping until down, and turned each of its
+    // log lines into its own diagnostic.
+    it('stops the service a failed up started and reports its logs as one bounded diagnostic', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        const projection = Object.freeze({
+            lease,
+            ownership: Object.freeze({
+                change: 'unchanged' as const, holderId: context.holderId, recordRevision: 2,
+                holderCount: 1, holderIds: Object.freeze([context.holderId]),
+            }),
+            entrypoints: Object.freeze([]),
+        })
+        stubUpPlanner((input) => ({
+            kind: 'execute', mode: 'start',
+            plan: { progress: { workBasisSha256: 'd'.repeat(64), operationGeneration: input.operationGeneration, completedServices: [] }, diagnostics: [] },
+        } as never))
+        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
+            topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
+            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
+        } as never)
+        applicationOwners.runtime.createRuntimeServicePlan = () => ({ kind: 'planned', service: 'api',
+            start: { id: 'start' }, stop: { id: 'stop' } } as never)
+        applicationOwners.runtime.admitRuntimeServiceStageOutcome = () => ({ kind: 'failure', evidence: { service: 'api' } } as never)
+        applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
+        applicationOwners.logs.planFailureLogs = () => ({ kind: 'planned', step: { id: 'logs' } } as never)
+        const records = Array.from({ length: 69 }, (_, index) => ({ service: 'api',
+            timestamp: '2026-09-10T08:00:00.000Z', stream: 'stderr', message: `record-${index}-${'x'.repeat(index === 68 ? 5_000 : 10)}` }))
+        applicationOwners.logs.admitFailureLogs = () => ({ kind: 'complete', records } as never)
+        const executed: string[] = []
+
+        const result = await runUp({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
+                leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2, lease },
+                projection,
+            } as never),
+            execute: async (step) => {
+                executed.push(step.id)
+                return { kind: step.id === 'stop' ? 'complete' : 'refusal' } as never
+            },
+        })
+
+        expect(executed).toEqual(['start', 'logs', 'stop'])
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [
+            { code: 'LIFECYCLE_EVIDENCE_INVALID', target: 'api', message: 'runtime service did not become healthy' },
+            { code: 'EXECUTION_STEP_FAILED', target: 'api', message: expect.stringContaining('69 log lines') },
+        ] })
+        expect(result.diagnostics).toHaveLength(2)
+        const excerpt = result.diagnostics[1]!.message
+        expect(excerpt).toContain('record-59-')
+        expect(excerpt).toContain('record-68-')
+        expect(excerpt).not.toContain('record-58-')
+        expect(excerpt.length).toBeLessThan(4_096)
+        expect(result.diagnostics[1]!.fix).toContain('stopped')
+    })
+
     it('keeps the lease of a partial startup that reached Compose and completes from its durable prefix on the next invocation', async () => {
         const value = await unissuedContextFixture()
         const firstLoaded = await loadCockpitConfig(value.configPath)

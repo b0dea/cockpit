@@ -223,7 +223,10 @@ an existing one, so if the start fails, cockpit undoes only what that attempt ad
 resuming, cockpit checks that the saved progress still matches the current lifecycle record,
 runtime and port lease. If it does, cockpit rechecks the services that already completed and
 resumes the rest; if anything changed, cockpit discards that progress before it touches containers
-left by the earlier attempt. Failure logs are limited to the exact service and time window, and
+left by the earlier attempt. When a service that `up` started does not become healthy, cockpit
+reports that service's last log lines as one diagnostic, then stops its container and keeps it, so
+a restart policy cannot leave it restarting; the holder and lease stay, so the next `up` resumes
+and `down` removes the stack. Failure logs are limited to the exact service and time window, and
 never follow the process that failed. After the first seed, missing saved progress blocks
 startup. Restore that state: deleting it would make the stack look like a fresh environment when
 it is not.
