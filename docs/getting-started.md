@@ -383,7 +383,8 @@ Otherwise it lists every reference and changes nothing.
 It never deletes the checkout or any generated file. After either command, run
 `cockpit sync --config ./cockpit.toml --dry-run` to see which generated files change.
 Both commands refuse while a stack is up or asleep, because cockpit removes a stack only under
-the exact `cockpit.toml` that started it: run `./node_modules/.bin/cockpit down --config ./cockpit.toml`
+the exact `cockpit.toml` that started it: run
+`DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml`
 first. Edit `cockpit.toml` by hand only with the stack down too: otherwise a generated
 environment's `up` refuses and prints the steps to restore the old file, remove the stack and
 start again.

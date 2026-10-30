@@ -190,7 +190,7 @@ exceed the always-loaded size limit. Codex also receives its generated skill sid
 generated manifest:
 
 ```sh
-cockpit selftest --interactive \
+./node_modules/.bin/cockpit selftest --interactive \
   --config ./cockpit.toml \
   --probe-specifications ./.cockpit/probe-specifications.json
 ```

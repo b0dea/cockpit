@@ -351,7 +351,7 @@ Record a measurement for the runtime on this machine:
 
 ```sh
 docker pull node:22-alpine
-cockpit runtime measure --config ./cockpit.toml --image node:22-alpine --write
+./node_modules/.bin/cockpit runtime measure --config ./cockpit.toml --image node:22-alpine --write
 ```
 
 The command runs a probe in a throwaway directory: a candidate stack that exercises profiles, bind
@@ -481,8 +481,8 @@ from the declared [persona](concepts.md#persona) source.
 
 In-stack data operations and their read-only probes use the identities and leased ports of the
 current stack, so Compose cannot pick a different stack or fall back to default ports. Host data
-operations run with an empty process environment. Run `./node_modules/.bin/cockpit up` to apply
-the declared mode, then `./node_modules/.bin/cockpit doctor` to run its current probes.
+operations run with an empty process environment. Run `./node_modules/.bin/cockpit up --config ./cockpit.toml` to apply
+the declared mode, then `./node_modules/.bin/cockpit doctor --config ./cockpit.toml` to run its current probes.
 
 The shipped `cockpit-setup` skill includes an on-demand reference for signed-in testing
 (`references/test-data-and-personas.md`), which `cockpit-setup` loads, and which `cockpit-browser`
@@ -552,14 +552,14 @@ Run the declared flow in this order. Replace the two `*-gate-id` placeholders wi
 because cockpit does not create identities or write product rows.
 
 ```sh human-only: resets data, creates provider state, and requires the declared local stack
-cockpit check --config cockpit.toml --json
-cockpit up --config cockpit.toml
-cockpit reset --config cockpit.toml --json
-cockpit reset --interactive --config cockpit.toml
-cockpit up --config cockpit.toml
-cockpit test-run --config cockpit.toml --gate auth-state-gate-id
-cockpit test-run --config cockpit.toml --gate authorization-gate-id
-cockpit check --config cockpit.toml --json
+./node_modules/.bin/cockpit check --config cockpit.toml --json
+./node_modules/.bin/cockpit up --config cockpit.toml
+DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit reset --config cockpit.toml --json
+DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit reset --interactive --config cockpit.toml
+./node_modules/.bin/cockpit up --config cockpit.toml
+./node_modules/.bin/cockpit test-run --config cockpit.toml --gate auth-state-gate-id
+./node_modules/.bin/cockpit test-run --config cockpit.toml --gate authorization-gate-id
+./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
 The first `up` applies the declared default data mode. Reset previews exactly which data and auth

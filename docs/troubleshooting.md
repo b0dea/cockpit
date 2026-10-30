@@ -15,7 +15,7 @@ machine-readable envelope. Every public flag is described by its command help, f
 
 | Diagnostic | Why it stops | Fix |
 | --- | --- | --- |
-| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun `npx --no cockpit init`. |
+| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `npx --no cockpit init . --target <target>` command. |
 | `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `SURFACE_STATE_CONFLICT` | Sync would overwrite settings cockpit does not own. | Review the file and use `npx --no cockpit sync --adopt <path> --config cockpit.toml` only with a person's approval. |
@@ -41,14 +41,14 @@ that mismatch without changing any owned file.
 **Remedy.** Inspect the target named in the diagnostic. Run:
 
 ```sh
-cockpit check --config ./cockpit.toml
+npx --no cockpit check --config ./cockpit.toml
 ```
 
 Review the declaration and source change. If the new canonical bytes are intended, publish the
 complete owned manifest with:
 
 ```sh
-cockpit sync --config ./cockpit.toml
+npx --no cockpit sync --config ./cockpit.toml
 ```
 
 Do not edit the ownership manifest or lifecycle state. If changed bytes belong to a formerly

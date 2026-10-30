@@ -245,7 +245,7 @@ describe('the public synthetic cockpit', () => {
         expect(guide).toContain('| `api` | Tiny api | none: already on disk |')
         expect(guide).toContain('npx --no cockpit session --config cockpit.toml -- <command>')
         expect(guide).toContain('npx --no cockpit sync --config cockpit.toml --dry-run')
-        expect(guide).toContain('npx --no cockpit test-run --config cockpit.toml --select <kind>:<value>')
+        expect(guide).toContain('npx --no cockpit test-run --config cockpit.toml --gate <id> --select <kind>:<value>')
         expect(guide).toContain('database hosts: not declared')
         expect(guide).toMatch(/A local mistake is cheap; a production one is not/)
         // Sync refuses a hand edit rather than replacing it, so the guide must not promise an overwrite.

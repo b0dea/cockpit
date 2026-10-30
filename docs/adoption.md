@@ -17,7 +17,7 @@ registry start from [Bootstrap a new product](getting-started.md#bootstrap-a-new
 instead.
 
 ```sh
-cockpit document . --json
+./node_modules/.bin/cockpit document . --json
 ```
 
 Every value the registry did not state is marked with its source and the reason it was
@@ -49,8 +49,8 @@ substitute a similarly named registry found somewhere else.
 Pick one harness so the preview covers one tool, preview, then accept:
 
 ```sh
-cockpit init . --target codexcli --registry ./env/lib/instance.sh --json
-cockpit init . --target codexcli --registry ./env/lib/instance.sh --interactive
+./node_modules/.bin/cockpit init . --target codexcli --registry ./env/lib/instance.sh --json
+./node_modules/.bin/cockpit init . --target codexcli --registry ./env/lib/instance.sh --interactive
 ```
 
 The first command writes nothing. The second needs a terminal and the exact preview digest.
@@ -95,9 +95,9 @@ three files whole, so a plain `sync` refuses with `SURFACE_STATE_CONFLICT` and n
 that keeps the team's settings instead of overwriting them:
 
 ```sh
-cockpit sync --config cockpit.toml
-cockpit sync --config cockpit.toml --adopt .claude/settings.json
-cockpit check --config cockpit.toml
+./node_modules/.bin/cockpit sync --config cockpit.toml
+./node_modules/.bin/cockpit sync --config cockpit.toml --adopt .claude/settings.json
+./node_modules/.bin/cockpit check --config cockpit.toml
 ```
 
 `--adopt <path>` can be repeated, once per file. It moves the file's bytes to

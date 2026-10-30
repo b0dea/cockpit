@@ -21,7 +21,7 @@ with invented values in it is the failure it is built to prevent. Work under fiv
 
 1. Ask the human before writing into a product repository, creating a Git remote or hosted
    repository, running a destructive command (`down`, `reset`, approving removals), running
-   `cockpit sync --adopt`, or accepting an `init` digest.
+   `sync --adopt`, or accepting an `init` digest.
 2. Show the exact preview first: the `sync --dry-run` listing, the `init` preview and its
    `previewSha256`, the answers file, or the defaults digest. Consent binds to those bytes.
 3. Take every value (port, image, command, health check, purpose, name) from a file you read or

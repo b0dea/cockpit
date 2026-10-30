@@ -168,8 +168,8 @@ not home-directory paths. Rows accept no other fields; include only the fields f
 Publish only after the route accepts the draft:
 
 ```sh
-cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md
-cockpit work-status --config cockpit.toml --work-order WO-004 --json
+./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md
+./node_modules/.bin/cockpit work-status --config cockpit.toml --work-order WO-004 --json
 ```
 
 Successful intake publishes the matched pair under `workorders/WO-004.md` and
