@@ -400,6 +400,34 @@ describe('cockpits without a generated environment', () => {
             severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
     })
 
+    it('fails check on a mount = "always" sibling that no Compose service bind-mounts', () => {
+        const root = copyPlainExample('compose-first', 'compose-first-mount')
+        mkdirSync(join(root, 'worker'))
+        const config = join(root, 'cockpit.toml')
+        writeFileSync(config, readFileSync(config, 'utf8').replace('# The bases are', [
+            '[[sibling]]', 'slug = "worker"', 'dir = "worker"', 'mount = "always"', 'acquire = "none"',
+            'var = "WORKER_DIR"', 'purpose = "Background worker"', '', '# The bases are'].join('\n')))
+        const checked = () => {
+            const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+            expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
+            return run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        }
+
+        const unmounted = checked()
+        expect(unmounted.status).toBe(2)
+        expect(unmounted.response.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'error', code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: 'sibling:worker' }))
+        expect(unmounted.response.guidance).toContainEqual({ code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: 'sibling:worker',
+            text: expect.stringMatching(/bind-mount it .*\$\{WORKER_DIR\}.*set mount = "none" on sibling worker/) })
+        expect(unmounted.response.diagnostics.filter((row: { code: string }) => row.code === 'COMPOSE_SIBLING_NOT_MOUNTED')).toHaveLength(1)
+
+        // Compose reports a variable source uninterpolated; the sibling's own variable is its mount.
+        const compose = join(root, 'compose.yml')
+        writeFileSync(compose, readFileSync(compose, 'utf8').replace('volumes: ["./web:/app"]', 'volumes: ["./web:/app", "${WORKER_DIR}:/worker"]'))
+        const mounted = checked()
+        expect(mounted.status, `${mounted.stdout}\n${mounted.stderr}`).toBe(0)
+    })
+
     it('warns, without failing check, that a service with no healthcheck is ready once running', () => {
         const root = syncedComposeFirst('compose-first-health')
         const path = join(root, 'compose.yml')

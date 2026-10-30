@@ -44,6 +44,19 @@ export interface ComposeServiceTopology {
     readonly healthcheck: boolean
     readonly image: string | null
     readonly build: boolean
+    /**
+     * Each volume source as Compose reports it without interpolation: the absolute host path of a
+     * bind, or the raw `${VAR}` text of a source still waiting for its variable.
+     */
+    readonly mountSources: readonly string[]
+}
+
+/** A `[[sibling]]` row as the mount detector needs it: its absolute checkout path and variable. */
+export interface ComposeSiblingMount {
+    readonly slug: string
+    readonly var: string
+    readonly mount: string
+    readonly path: string
 }
 
 export type ComposeTopologyObservation =
@@ -155,9 +168,18 @@ function projectServices(stdout: Buffer): readonly ComposeServiceTopology[] | un
             && !(Array.isArray(test) && test[0] === 'NONE')
         const image = service.image
         if (image !== undefined && typeof image !== 'string') return undefined
+        const rawVolumes = service.volumes ?? []
+        if (!Array.isArray(rawVolumes)) return undefined
+        const mountSources: string[] = []
+        for (const volume of rawVolumes) {
+            const source = record(volume)?.source
+            if (source === undefined) continue
+            if (typeof source !== 'string') return undefined
+            mountSources.push(source)
+        }
         projected.push(Object.freeze({
             id, ports: Object.freeze(ports as ComposePublishedPort[]), healthcheck,
-            image: image ?? null, build: service.build !== undefined,
+            image: image ?? null, build: service.build !== undefined, mountSources: Object.freeze(mountSources),
         }))
     }
     return Object.freeze(projected)
@@ -208,9 +230,21 @@ function suggestedVariable(service: string): string {
 export function assessComposeTopology(
     services: readonly ComposeServiceTopology[],
     portVariables: readonly string[],
+    siblings: readonly ComposeSiblingMount[],
 ): readonly Diagnostic[] {
     const leased = new Set(portVariables)
     const diagnostics: Diagnostic[] = []
+    // `up` admits the topology only when its bind sources are exactly the mount = "always" checkouts,
+    // so a declared row no service mounts passed check and then refused every runtime command.
+    const sources = services.flatMap(service => service.mountSources)
+    for (const sibling of siblings) {
+        if (sibling.mount !== 'always' || sources.some(source => source === sibling.path || variableName(source) === sibling.var)) continue
+        diagnostics.push(Object.freeze({
+            severity: 'error' as const, code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: `sibling:${sibling.slug}`,
+            message: `sibling ${sibling.slug} is declared mount = "always", but no Compose service bind-mounts ${sibling.path}; up admits a stack only when every such sibling is mounted, so it would refuse to start`,
+            fix: `bind-mount it in a service of the Compose file (for example "\${${sibling.var}}:/workspace/${sibling.slug}"), or set mount = "none" on sibling ${sibling.slug} in cockpit.toml, then run npx --no cockpit sync`,
+        }))
+    }
     for (const service of services) {
         for (const port of service.ports) {
             if (port.published === null) continue

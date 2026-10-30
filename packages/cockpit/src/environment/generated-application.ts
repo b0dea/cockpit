@@ -3682,7 +3682,9 @@ async function composeTopologyDiagnostics(
         message: `check could not read the declared Compose topology, so its ports, healthchecks and images are unverified: ${observed.reason}`,
         target: config.environment.compose_files.join(', '),
         fix: 'install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files' }])
-    return assessComposeTopology(observed.services, Object.keys(config.ports.bases))
+    const siblingsRoot = resolve(dirname(loaded.result.source.path), config.cockpit.siblings_root)
+    return assessComposeTopology(observed.services, Object.keys(config.ports.bases), config.sibling.map(sibling => Object.freeze({
+        slug: sibling.slug, var: sibling.var, mount: sibling.mount, path: resolve(siblingsRoot, sibling.dir) })))
 }
 
 export async function checkGeneratedEnvironment(

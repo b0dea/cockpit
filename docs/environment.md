@@ -75,7 +75,9 @@ change the topology it has checked. The topology check does not read service `en
 either, so service secrets never enter cockpit's records; Compose still passes those files to the
 containers when the stack runs. Any other `${VAR}` reference needs a `:-default`. Each sibling
 declared with `mount = "always"` must be bind-mounted, because that is what the declaration
-promises.
+promises: `check` fails with `COMPOSE_SIBLING_NOT_MOUNTED` when no service mounts one, and `up`
+refuses to start the stack. Mount it through its variable, as in `"${WORKER_DIR}:/srv/worker"`, or
+set `mount = "none"` on the row.
 
 ## Local URLs and port families
 
