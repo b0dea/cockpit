@@ -10,7 +10,7 @@ import { installedPackageMetadata } from './package-metadata.js'
 
 export const mechanism = {
     id: 'team-metadata', module: 'packages/cockpit/src/team-metadata.ts',
-    exports: ['initializeTeamMetadata', 'prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata'],
+    exports: ['initializeTeamMetadata', 'prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata', 'productPackageManifest'],
 } as const
 
 const PACKAGE = installedPackageMetadata.name
@@ -129,6 +129,26 @@ async function replaceAuthenticated(authority: RootAuthority, path: string, befo
             await unlink(temporary)
         }
     }
+}
+
+/**
+ * The package manifest without the entries sync owns in it: the cockpit dependency, under any spec,
+ * and each cockpit script while it is the exact command sync writes. Sections those removals leave
+ * empty are dropped, so a manifest cockpit created and one it edited project the same way.
+ */
+export function productPackageManifest(manifest: Readonly<Record<string, unknown>>): Record<string, unknown> {
+    const product: Record<string, unknown> = { ...manifest }
+    if (object(manifest.devDependencies)) {
+        const { [PACKAGE]: _pin, ...rest } = manifest.devDependencies
+        product.devDependencies = rest
+    }
+    if (object(manifest.scripts)) product.scripts = Object.fromEntries(Object.entries(manifest.scripts)
+        .filter(([name, command]) => (SCRIPTS as Record<string, string>)[name] !== command))
+    for (const section of ['devDependencies', 'scripts'] as const) {
+        const value = product[section]
+        if (object(value) && Object.keys(value).length === 0) delete product[section]
+    }
+    return product
 }
 
 interface PackageDependencySlots {

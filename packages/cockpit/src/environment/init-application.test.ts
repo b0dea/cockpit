@@ -15,6 +15,7 @@ import { renderHumanValue } from '../diagnostics.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
+import { syncTeamGeneratedEnvironment } from './generated-application.js'
 
 const scratch: string[] = []
 const digest = (character: string) => character.repeat(64)
@@ -947,6 +948,78 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     expect(completed, JSON.stringify(completed)).toMatchObject({ kind: 'complete', status: 0,
         result: { stage: 'environment-verified' } })
     expect(synchronizeInputs).toEqual([true])
+}, 120_000)
+
+// Sync writes the cockpit's package pin and scripts into the root package.json, editing the
+// product's own manifest or creating one beside a Compose-only product.
+it.each([
+    ['its own package manifest', { name: 'synthetic-shop', scripts: { test: 'node test.mjs' } }],
+    ['only a Compose file', undefined],
+] as const)('resumes an in-repo init of a product with %s after sync wrote into it, and still refuses a product change', async (_shape, productManifest) => {
+    const f = fixture()
+    if (productManifest) await writeFile(join(f.root, 'package.json'), `${JSON.stringify(productManifest)}\n`)
+    const composeBytes = 'services:\n  web:\n    image: synthetic.invalid/web:1\n    ports: ["127.0.0.1:${WEB_HOST_PORT:-4100}:80"]\n'
+    await writeFile(join(f.root, 'compose.yml'), composeBytes)
+    // The first bring-up has not happened yet, so preflight stops the run as it does on a fresh machine.
+    let preflight: InitApplicationAdapters['preflight'] = async () => ({ kind: 'blocked', status: 2, result: null,
+        diagnostics: [{ severity: 'error', code: 'STATE_UNSEEDED', message: 'synthetic: lifecycle is still in bootstrap' }] })
+    const adapters: InitApplicationAdapters = {
+        ...f.adapters,
+        prepareBootstrap: prepareSelectedBootstrapSurface,
+        resumeBootstrap: resumeSelectedBootstrapSurface,
+        applyBootstrap: applySelectedBootstrapSurface,
+        document: documentObservedCommand,
+        classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
+        observeDestination: async ({ path }) => {
+            if (!existsSync(path)) return { kind: 'absent' }
+            return { kind: 'available', sha256: createHash('sha256').update(await readFile(path)).digest('hex') }
+        },
+        validateConfig: loadCockpitConfig,
+        // The production binding: sync also writes the cockpit's package pin and scripts.
+        synchronize: input => syncTeamGeneratedEnvironment(input),
+        preflight: input => preflight(input),
+    }
+    const input: InitApplicationInput = { root: f.root, target: f.input.target, accepted: false, sessionId: f.input.sessionId,
+        platform: f.input.platform, home: f.input.home, xdgStateHome: f.input.xdgStateHome, cockpitRoot: { kind: 'in-repo' } }
+    const preview = await runInitApplication(input, adapters)
+    const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
+    let outcome = await runInitApplication(accepted, adapters)
+    for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
+        expect(count).toBeLessThan(9)
+        const question = outcome.result.question
+        const value = question.field === 'sibling'
+            ? [{ slug: 'checkout', dir: '.', mount: 'none', acquire: 'none', var: 'CHECKOUT_DIR', purpose: 'Synthetic shop' }]
+            : question.field === 'ports.bases' ? { WEB_HOST_PORT: 4100 }
+                : question.field === 'environment.install_policies' ? []
+                    : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
+                        : question.field === 'environment.generated' ? { compose_files: ['compose.yml'] }
+                            : question.field === 'environment.machine'
+                                ? { runtime_memory_mb: 256, runtime_cpus: 1, free_disk_mb: 512, cold_start_seconds: 120 }
+                                : question.field === 'environment.posture' ? { addressing: 'port', authentication: 'none', posture_requirements: [{ requirement: 'leased-localhost-ports', addressing: 'port' }] }
+                                    : question.field === 'guards' ? { hosted_db_hosts: [], vendor_endpoint_hosts: [] }
+                                        : question.field === 'configuration.defaults' ? { confirmed: true, sha256: question.expectedSha256 }
+                                            : undefined
+        expect(value, question.field).toBeDefined()
+        outcome = await runInitApplication({ ...accepted, greenfieldAnswer: {
+            questionId: question.id, bytes: JSON.stringify(value), provenance: 'operator-confirmed',
+        } }, adapters)
+    }
+    expect(outcome.kind, JSON.stringify(outcome)).toBe('artifact')
+    await writeFile(f.destination, outcome.artifact!)
+    expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_UNSEEDED' }] })
+    expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({
+        ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
+        devDependencies: { '@b0dea/cockpit': expect.any(String) } })
+
+    // A product source changed after acceptance is still a different estate.
+    await writeFile(join(f.root, 'compose.yml'), composeBytes.replace('web:1', 'web:2'))
+    expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal',
+        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED' }] })
+    await writeFile(join(f.root, 'compose.yml'), composeBytes)
+
+    preflight = f.adapters.preflight
+    const resumed = await runInitApplication(accepted, adapters)
+    expect(resumed, JSON.stringify(resumed.diagnostics)).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified' } })
 }, 120_000)
 
 

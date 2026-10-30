@@ -12,6 +12,7 @@ import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
 import { renderCompleteDocument, renderIncompleteDocument, type Attribution, type DocumentModel } from './render.js'
 import { COMPOSE_NAMES, readDockerfileFacts } from '../init/derive.js'
+import { productPackageManifest } from '../team-metadata.js'
 
 export const mechanism = {
     id: 'document-outcome',
@@ -218,6 +219,24 @@ function boundedReasons(reasons: readonly string[]): string {
     return `${included.join('; ')}${included.length === 0 ? '' : '; '}${omitted} additional source issue${omitted === 1 ? '' : 's'} omitted`
 }
 
+/**
+ * The digest a source is bound by, or undefined when it is cockpit output rather than product
+ * evidence. Sync writes the cockpit's package pin and scripts into the cockpit root's package.json,
+ * which for an in-repo cockpit is the product's own manifest; bound as raw bytes, that write made
+ * every resumed in-repo init refuse its accepted answers as a changed estate. So a package.json is
+ * bound by its parsed content without the entries sync owns, and one holding nothing else is not
+ * observed at all. Any other change to a source still changes its digest.
+ */
+function sourceDigest(manifest: string, bytes: Buffer): string | undefined {
+    const digest = (value: Buffer | string) => createHash('sha256').update(value).digest('hex')
+    if (manifest !== 'package.json') return digest(bytes)
+    let parsed: unknown
+    try { parsed = JSON.parse(bytes.toString('utf8')) } catch { return digest(bytes) }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return digest(bytes)
+    const product = productPackageManifest(parsed as Record<string, unknown>)
+    return Object.keys(product).length === 0 ? undefined : digest(JSON.stringify(product))
+}
+
 function composeDeclaresServices(text: string): boolean {
     try {
         const document: unknown = parseYaml(text)
@@ -254,7 +273,9 @@ async function observeRepositorySources(repository: string, label: string): Prom
         if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) {
             throw sourceObservationError(repository, label, manifest, 'grew beyond the bounded observation size while it was read')
         }
-        sources.push(Object.freeze({ path: manifest, sha256: createHash('sha256').update(bytes).digest('hex') }))
+        const sha256 = sourceDigest(manifest, bytes)
+        if (sha256 === undefined) continue
+        sources.push(Object.freeze({ path: manifest, sha256 }))
         if (manifest === 'Dockerfile') {
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
@@ -455,9 +476,15 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
             const manifests: string[] = []
             for (const manifest of PUBLIC_RUNNABLE_SOURCES) {
                 try {
-                    const stat = await lstat(resolve(root, directory.name, manifest))
+                    const path = resolve(root, directory.name, manifest)
+                    const stat = await lstat(path)
                     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
                         || stat.size > MAX_ESTATE_EVIDENCE_BYTES) return false
+                    if (manifest === 'package.json') {
+                        const bytes = await readFile(path)
+                        if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) return false
+                        if (sourceDigest(manifest, bytes) === undefined) continue
+                    }
                     manifests.push(manifest)
                 } catch (error) {
                     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -489,7 +516,7 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
                 if (bytes.byteLength > MAX_ESTATE_EVIDENCE_BYTES) return false
                 const after = await lstat(evidence)
                 if (!sameStat(before, after)
-                    || createHash('sha256').update(bytes).digest('hex') !== source.sha256) return false
+                    || sourceDigest(source.path, bytes) !== source.sha256) return false
             }
             if (!(ownRoot ? sameIdentity : sameStat)(repositoryBefore, await lstat(repository))) return false
         }
