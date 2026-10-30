@@ -178,6 +178,9 @@ purpose = "Synthetic web repository"
         })
         expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(manifest)
         expect(await readFile(join(root, 'package-lock.json'), 'utf8')).toBe(lock)
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({
+            kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH', message: expect.stringContaining(`pins ${installedPackageMetadata.name} to ${spec}`),
+        })
     })
 
     it('refuses redirected metadata without reading or overwriting its target', async () => {

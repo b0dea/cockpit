@@ -639,7 +639,7 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     })
 })
 
-it('resumes and normalizes an authenticated source install during installed init without changing product metadata', () => {
+it('keeps a verified local-archive pin through installed init, check and npm ci', () => {
     const requestedRoot = join(packScratch, 'source-install-init')
     mkdirSync(join(requestedRoot, 'library'), { recursive: true })
     const root = realpathSync(requestedRoot)
@@ -662,10 +662,9 @@ it('resumes and normalizes an authenticated source install during installed init
     execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', '--save-exact', sourceArchive], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })
-    const interruptedLock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
-    expect(interruptedLock.packages[''].devDependencies['@b0dea/cockpit']).toMatch(/^file:/)
-    interruptedLock.packages[''].devDependencies['@b0dea/cockpit'] = '0.0.0'
-    writeFileSync(join(root, 'package-lock.json'), `${JSON.stringify(interruptedLock, null, 2)}\n`)
+    const installedPin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).devDependencies['@b0dea/cockpit']
+    expect(installedPin).toMatch(/^file:/)
+    const installedLock = readFileSync(join(root, 'package-lock.json'), 'utf8')
     const launcher = join(root, 'node_modules/@b0dea/cockpit/bin/cockpit.mjs')
     const run = (...args: string[]) => {
         const result = spawnSync(process.execPath, [launcher, 'init', root, '--target', 'opencode', ...args, '--json'], {
@@ -688,13 +687,13 @@ it('resumes and normalizes an authenticated source install during installed init
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
         scripts: { lint: 'node --check synthetic.mjs', 'cockpit:setup': 'cockpit setup --config cockpit.toml' },
-        synthetic: { retained: true }, devDependencies: { '@b0dea/cockpit': '0.0.0' },
+        synthetic: { retained: true }, devDependencies: { '@b0dea/cockpit': installedPin },
     })
-    const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
-    expect(lock.packages[''].devDependencies['@b0dea/cockpit']).toBe('0.0.0')
-    expect(lock.packages['node_modules/@b0dea/cockpit']).toMatchObject({
-        version: '0.0.0', resolved: expect.stringContaining(packedArtifact().filename),
+    expect(readFileSync(join(root, 'package-lock.json'), 'utf8')).toBe(installedLock)
+    const check = spawnSync(process.execPath, [launcher, 'check', '--config', join(root, 'cockpit.toml'), '--json'], {
+        cwd: root, env, encoding: 'utf8', timeout: 30_000,
     })
+    expect(check.status, check.stdout + check.stderr).toBe(0)
     execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
         cwd: root, env, stdio: 'ignore', timeout: 30_000,
     })

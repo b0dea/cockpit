@@ -152,7 +152,7 @@ function misplacedDependencyMessage(sections: readonly string[]): string {
     return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run cockpit sync again`
 }
 
-function packageCandidate(bytes: string | undefined, authenticatedSourceSpec?: string): Readonly<{
+function packageCandidate(bytes: string | undefined, verifiedLocalPin?: string): Readonly<{
     bytes: string
     valid: boolean
     misplaced?: readonly string[]
@@ -165,24 +165,19 @@ function packageCandidate(bytes: string | undefined, authenticatedSourceSpec?: s
     if (!slots || !object(scripts)) return { bytes: '', valid: false }
     if (slots.misplaced.length > 0) return { bytes: '', valid: false, misplaced: slots.misplaced }
     const conflictingDependency = slots.devDependencies[PACKAGE] !== undefined && slots.devDependencies[PACKAGE] !== VERSION
-        && slots.devDependencies[PACKAGE] !== authenticatedSourceSpec
+        && slots.devDependencies[PACKAGE] !== verifiedLocalPin
     const conflictingScript = Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== undefined && scripts[name] !== command)
     if (conflictingDependency || conflictingScript) return { bytes: '', valid: false }
     return { valid: true, bytes: `${JSON.stringify({ ...parsed,
-        scripts: { ...scripts, ...SCRIPTS }, devDependencies: { ...slots.devDependencies, [PACKAGE]: VERSION },
+        scripts: { ...scripts, ...SCRIPTS }, devDependencies: { ...slots.devDependencies, [PACKAGE]: verifiedLocalPin ?? VERSION },
     }, null, 2)}\n` }
 }
 
-interface SourceInstallCandidate {
-    readonly before: NonNullable<Awaited<ReturnType<typeof readOptional>>>
-    readonly bytes: string
-    readonly spec: string
-    readonly installedPath: string
-    readonly installedDev: number
-    readonly installedIno: number
-}
-
-async function sourceInstallCandidate(authority: RootAuthority, packageBytes: string | undefined): Promise<SourceInstallCandidate | undefined> {
+// `npm install -D <archive>` pins a `file:` spec, and before a release that archive is the only
+// source of the package. The pin is accepted as the team's version when the lockfile resolves it
+// to this exact running package; rewriting it to the bare version named a release that may not
+// exist and changed a dependency the user chose without asking.
+async function verifiedLocalPin(authority: RootAuthority, packageBytes: string | undefined): Promise<string | undefined> {
     let manifest: unknown
     try { manifest = packageBytes === undefined ? undefined : JSON.parse(packageBytes) } catch { return undefined }
     const dependencies = object(manifest) && object(manifest.devDependencies) ? manifest.devDependencies : undefined
@@ -198,33 +193,17 @@ async function sourceInstallCandidate(authority: RootAuthority, packageBytes: st
     if (!installed.isDirectory() || installed.isSymbolicLink()
         || await realpath(installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) return undefined
 
-    const lockPath = join(authority.root, 'package-lock.json')
-    const before = await readOptional(authority, lockPath)
-    if (!before) return undefined
+    const lockFile = await readOptional(authority, join(authority.root, 'package-lock.json'))
+    if (!lockFile) return undefined
     let lock: unknown
-    try { lock = JSON.parse(before.bytes) } catch { return undefined }
-    const lockRecord = object(lock) ? lock : undefined
-    const packages = lockRecord && object(lockRecord.packages) ? lockRecord.packages : undefined
-    const rootValue = packages?.['']
-    const rootEntry = object(rootValue) ? rootValue : undefined
-    const rootDependencies = rootEntry && object(rootEntry.devDependencies) ? rootEntry.devDependencies : undefined
-    const installedValue = packages?.[`node_modules/${PACKAGE}`]
-    const installedEntry = object(installedValue) ? installedValue : undefined
-    if (!packages || !rootEntry || !rootDependencies || !installedEntry
-        || (rootDependencies[PACKAGE] !== spec && rootDependencies[PACKAGE] !== VERSION)
+    try { lock = JSON.parse(lockFile.bytes) } catch { return undefined }
+    const packages = object(lock) && object(lock.packages) ? lock.packages : undefined
+    const rootEntry = packages?.['']
+    const rootDependencies = object(rootEntry) && object(rootEntry.devDependencies) ? rootEntry.devDependencies : undefined
+    const installedEntry = packages?.[`node_modules/${PACKAGE}`]
+    if (!rootDependencies || rootDependencies[PACKAGE] !== spec || !object(installedEntry)
         || installedEntry.version !== VERSION || installedEntry.resolved !== spec) return undefined
-    const bytes = `${JSON.stringify({ ...lockRecord, packages: { ...packages, '': {
-        ...rootEntry, devDependencies: { ...rootDependencies, [PACKAGE]: VERSION },
-    } } }, null, 2)}\n`
-    return { before, bytes, spec, installedPath, installedDev: installed.dev, installedIno: installed.ino }
-}
-
-async function authenticateSourceInstall(candidate: SourceInstallCandidate): Promise<void> {
-    const current = await lstat(candidate.installedPath)
-    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== candidate.installedDev || current.ino !== candidate.installedIno
-        || await realpath(candidate.installedPath) !== await realpath(INSTALLED_PACKAGE_ROOT)) {
-        throw new Error('installed cockpit package changed before metadata replacement')
-    }
+    return spec
 }
 
 // A checkout cockpit clones is its own Git repository; left visible inside the cockpit root, a
@@ -265,7 +244,6 @@ interface TeamMetadataRecord {
     readonly authority: RootAuthority
     readonly configPath: string
     readonly sourceSha256: string
-    readonly sourceInstall: SourceInstallCandidate | undefined
     readonly files: readonly Readonly<{ path: string; before: Awaited<ReturnType<typeof readOptional>>; bytes: string }>[]
 }
 const issuedMetadata = new WeakMap<TeamMetadataAuthority, TeamMetadataRecord>()
@@ -293,8 +271,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         }
         const packagePath = join(root, 'package.json')
         const packageBefore = await readOptional(authority, packagePath)
-        const sourceInstall = await sourceInstallCandidate(authority, packageBefore?.bytes)
-        const candidate = packageCandidate(packageBefore?.bytes, sourceInstall?.spec)
+        const candidate = packageCandidate(packageBefore?.bytes, await verifiedLocalPin(authority, packageBefore?.bytes))
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(candidate.misplaced), packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
@@ -305,7 +282,6 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         if (nextIgnore === undefined) return refuse('TEAM_METADATA_UNAVAILABLE',
             `the cockpit-owned .gitignore block was edited or malformed; restore it exactly, or remove the whole ${START} through ${END} region and run cockpit init again`, ignorePath)
         const files = [
-            ...(sourceInstall ? [{ path: join(root, 'package-lock.json'), before: sourceInstall.before, bytes: sourceInstall.bytes }] : []),
             { path: packagePath, before: packageBefore, bytes: candidate.bytes },
             { path: ignorePath, before: ignoreBefore, bytes: nextIgnore },
         ]
@@ -313,7 +289,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
             .map(file => Object.freeze({ operation: 'write' as const, path: relative(root, file.path) })))
         const prepared = Object.freeze({ changes })
         issuedMetadata.set(prepared, { authority, configPath: loaded.result.source.path,
-            sourceSha256: loaded.result.source.sha256, sourceInstall, files })
+            sourceSha256: loaded.result.source.sha256, files })
         return { kind: 'complete', authority: prepared }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, root)
@@ -324,7 +300,7 @@ export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promis
     const record = issuedMetadata.get(prepared)
     if (!record) return refuse('TEAM_METADATA_UNAVAILABLE', 'this team metadata update was already applied or was never prepared; run cockpit sync again', 'team-metadata')
     issuedMetadata.delete(prepared)
-    const { authority, sourceInstall, files } = record
+    const { authority, files } = record
     try {
         const loaded = await loadCockpitConfig(record.configPath)
         if (loaded.kind !== 'complete' || loaded.result.source.sha256 !== record.sourceSha256) throw new Error('configuration changed before metadata replacement')
@@ -332,11 +308,7 @@ export async function applyTeamMetadata(prepared: TeamMetadataAuthority): Promis
         for (const file of files) {
             if ((await readOptional(authority, file.path))?.identity !== file.before?.identity) throw new Error('team metadata changed before replacement')
         }
-        if (sourceInstall) await authenticateSourceInstall(sourceInstall)
-        for (const file of files) if (file.before?.bytes !== file.bytes) {
-            if (sourceInstall) await authenticateSourceInstall(sourceInstall)
-            await replaceAuthenticated(authority, file.path, file.before, file.bytes)
-        }
+        for (const file of files) if (file.before?.bytes !== file.bytes) await replaceAuthenticated(authority, file.path, file.before, file.bytes)
         return { kind: 'complete', changed: prepared.changes.length > 0, changes: prepared.changes }
     } catch (error) {
         return refuse('TEAM_METADATA_UNAVAILABLE', `team metadata could not be updated (${error instanceof Error ? error.message : 'unknown I/O error'})`, authority.root)
@@ -357,7 +329,10 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         if (slots?.misplaced.length) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(slots.misplaced), packagePath)
         const pinned = slots?.devDependencies[PACKAGE]
-        if (pinned !== VERSION) return refuse('COCKPIT_VERSION_MISMATCH',
+        if (typeof pinned === 'string' && pinned.startsWith('file:')) {
+            if (pinned !== await verifiedLocalPin(authority, current?.bytes)) return refuse('COCKPIT_VERSION_MISMATCH',
+                `package.json pins ${PACKAGE} to ${pinned}, but package-lock.json and node_modules do not resolve that archive to the running ${VERSION}; run npm install, then ./node_modules/.bin/cockpit check`, packagePath)
+        } else if (pinned !== VERSION) return refuse('COCKPIT_VERSION_MISMATCH',
             `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, packagePath)
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
         if (!scripts || Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== command)) {
