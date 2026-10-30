@@ -56,11 +56,11 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
-| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync once a non-local environment exists |
+| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_INFERRED` | see the message |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | see the message |
-| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCUMENT_SOURCE_REQUIRED` | see the message |
 | `DOCUMENT_STDOUT_TARGET` | see the message |
 | `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
@@ -107,7 +107,7 @@ Does not read `cockpit.toml`.
 | `GREENFIELD_OBSERVATION_CHANGED` | see the message |
 | `GREENFIELD_OBSERVATION_INVALID` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INIT_ANSWER_RESET_CONFLICT` | see the message |
 | `INIT_BOOTSTRAP_IDENTITY_CHANGED` | see the message |
@@ -140,6 +140,7 @@ Does not read `cockpit.toml`.
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
 | `SKILL_RENDER_INVALID` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `STATE_ROOT_UNAVAILABLE` | see the message |
@@ -188,11 +189,11 @@ Does not read `cockpit.toml`.
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
-| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync once a non-local environment exists |
+| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_INFERRED` | see the message |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | see the message |
-| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCUMENT_SOURCE_REQUIRED` | see the message |
 | `DOCUMENT_STDOUT_TARGET` | see the message |
 | `REGISTRY_EMPTY` | see the message |
@@ -276,7 +277,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -285,6 +286,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -506,7 +508,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -515,6 +517,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -552,7 +555,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -561,6 +564,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -600,16 +604,18 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
 | `LIFECYCLE_PROGRESS_INVALID` | see the message |
+| `MOUNT_POSTURE_UNAVAILABLE` | see the message |
 | `RUNTIME_UNAVAILABLE` | see the message |
 | `RUNTIME_UNMEASURED` | see the message |
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -647,7 +653,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -656,6 +662,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -694,7 +701,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -703,6 +710,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -756,6 +764,7 @@ Reads `cockpit.toml` from `--config`.
 | `--dir` | string | unset |
 | `--var` | string | unset |
 | `--purpose` | string | unset |
+| `--mount` | string | unset |
 | `--instruction-pointer` | boolean | `false` |
 | `--json` | boolean | `false` |
 
@@ -825,7 +834,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -834,6 +843,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -871,7 +881,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -880,6 +890,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
@@ -921,7 +932,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
 | `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_REFUSED` | see the message |
 | `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
 | `LIFECYCLE_EVIDENCE_INVALID` | see the message |
@@ -930,6 +941,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
 | `SETUP_PATH_TYPE_INVALID` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_RECORD_MALFORMED` | see the message |
 | `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |

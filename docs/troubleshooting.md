@@ -248,6 +248,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `COMPOSE_HEALTHCHECK_MISSING` | see the message |
 | `COMPOSE_IMAGE_UNPINNED` | see the message |
 | `COMPOSE_PORT_NOT_LEASED` | see the message |
+| `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
 | `CONFIG_ENCODING_INVALID` | see the message |
@@ -276,14 +277,14 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
 | `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
-| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync once a non-local environment exists |
+| `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
 | `DOCUMENT_INFERRED` | see the message |
 | `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
 | `DOCUMENT_OPTION_DUPLICATE` | see the message |
 | `DOCUMENT_OUTPUT_JSON_UNSUPPORTED` | see the message |
 | `DOCUMENT_ROOT_COUNT` | see the message |
 | `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | see the message |
-| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync |
+| `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCUMENT_SOURCE_CONFLICT` | see the message |
 | `DOCUMENT_SOURCE_REQUIRED` | see the message |
 | `DOCUMENT_STDOUT_TARGET` | see the message |
@@ -293,7 +294,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `ENVIRONMENT_FILE_TOO_LARGE` | see the message |
 | `ENVIRONMENT_FILE_UNREADABLE` | see the message |
 | `ENVIRONMENT_KEYS_STALE` | see the message |
-| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync |
+| `ENVIRONMENT_NOT_DECLARED` | declare environment.compose_files = ["compose.yml"] to run your own Compose file, or [environment.generated] to have cockpit render one, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `ENVIRONMENT_SEED_FAILED` | see the message |
 | `ENVIRONMENT_SEED_PRECONDITION_CHANGED` | see the message |
 | `ENV_SCHEMA_TOOL_MISSING` | see the message |
@@ -364,7 +365,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `GREENFIELD_OBSERVATION_CHANGED` | see the message |
 | `GREENFIELD_OBSERVATION_INVALID` | see the message |
 | `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
-| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_INPUT_UNAVAILABLE` | see the message |
 | `GUARD_REFUSED` | see the message |
 | `GUARD_TRANSPORT_INVALID` | see the message |
@@ -524,6 +525,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `SKILL_RENDER_INVENTORY_INVALID` | see the message |
 | `SKILL_STANDING_COST_EXCEEDED` | see the message |
 | `SKILL_TOOL_EQUIVALENCE_MISSING` | see the message |
+| `STACK_NOT_RUNNING` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_FORMAT_UNSUPPORTED` | see the message |
 | `STATE_LOCKED` | see the message |
