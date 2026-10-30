@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFile, stat, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile, mkdir, realpath, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
@@ -320,7 +320,12 @@ native_hooks = { install = "inspect" }
                     expect(runner.command).toContain('localhost:3001')
                     expect(runner.command).toContain('localhost:${BROWSER_PORT:-3001}')
                     const runnerPath = join(fixture.root, '.cockpit/browser/runner.sh')
-                    expect((await stat(runnerPath)).mode & 0o777).toBe(0o600)
+                    // Generated files are committed, so they get the mode any new file gets here, not a private one.
+                    const control = `${fixture.root}.mode-control`
+                    await writeFile(control, '', { mode: 0o644 })
+                    try {
+                        expect((await stat(runnerPath)).mode & 0o777).toBe((await stat(control)).mode & 0o777)
+                    } finally { await rm(control, { force: true }) }
                     const launch = runner.command.slice(0, runner.command.indexOf('serve'))
                         .map((value: string) => value === '/cockpit/browser-runner.sh' ? runnerPath : value)
                     const checked = spawnSync(launch[0], [...launch.slice(1), 'invalid'], { encoding: 'utf8', timeout: 5_000 })

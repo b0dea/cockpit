@@ -97,10 +97,12 @@ const read = (target, maxBytes = limits.fileBytes, expected) => {
         return { bytes: Buffer.concat(chunks, total), status }
     } finally { fs.closeSync(fd) }
 }
+// Published files are committed, so they get the ordinary mode (after umask) a new file gets; 0600
+// made every generated file unreadable to anything but its owner, containers included.
 const copy = (source, target, expected) => {
     const value = read(source)
     if (digest(value.bytes) !== expected) throw new Error('digest')
-    const fd = fs.openSync(name(target), c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW || 0), 0o600)
+    const fd = fs.openSync(name(target), c.O_WRONLY | c.O_CREAT | c.O_EXCL | (c.O_NOFOLLOW || 0), 0o644)
     try {
         fs.writeFileSync(fd, value.bytes)
         fs.fsyncSync(fd)
