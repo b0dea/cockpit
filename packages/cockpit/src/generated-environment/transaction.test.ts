@@ -1091,8 +1091,6 @@ describe('generated publication transaction', () => {
             { ...current, mode: 'reference' as const, references: [{ kind: 'file' as const, path: 'a-stale.txt', sha256: digest('old') }] },
             { ...current, mutations: [{ ...current.mutations[0]!, phase: 'stale' as const }] },
             { ...current, mutations: [{ ...current.mutations[0]!, operation: 'remove-file' as const }] },
-            { ...current, mode: 'uninstall' as const, nextLedgerBytes: null },
-            { ...current, mode: 'forget' as const, nextLedgerBytes: null },
         ]) {
             expect((await admitPublicationPlan(denied, { execute: executeProbe })).kind).toBe('refusal')
             expect(await readFile(join(root, 'a-stale.txt'), 'utf8')).toBe('corrupt')
@@ -1216,9 +1214,7 @@ describe('generated publication transaction', () => {
             ...regionMutation, bytes: regionMutation.bytes!.replace('new diagnostic index', 'changed diagnostic index'),
             sha256: digest(regionMutation.bytes!.replace('new diagnostic index', 'changed diagnostic index')),
         }] }, { execute: executeProbe })).kind).toBe('refusal')
-        for (const mode of ['sync', 'uninstall', 'forget'] as const) {
-            expect((await admitPublicationPlan({ ...input, mode }, { execute: executeProbe })).kind).toBe('refusal')
-        }
+        expect((await admitPublicationPlan({ ...input, mode: 'sync' }, { execute: executeProbe })).kind).toBe('refusal')
         await writeFile(join(root, 'docs/troubleshooting.md'), input.mutations.at(-1)!.bytes!.replace(
             '<!-- cockpit:diagnostic-index:end -->', '<!-- cockpit:diagnostic-index:begin -->\n<!-- cockpit:diagnostic-index:end -->'))
         expect((await admitPublicationPlan(input, { execute: executeProbe })).kind).toBe('refusal')

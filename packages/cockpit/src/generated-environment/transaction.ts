@@ -1694,9 +1694,9 @@ export interface PublicationPlanInput {
     readonly sourceSha256: string
     readonly rootIdentity: DirectoryIdentity
     readonly node: ResolvedExecutable
-    readonly mode: 'sync' | 'uninstall' | 'forget' | 'reference'
+    readonly mode: 'sync' | 'reference'
     readonly ledgerExpected: ExpectedEntryState
-    readonly nextLedgerBytes: string | null
+    readonly nextLedgerBytes: string
     readonly mutations: readonly PublicationMutation[]
     readonly surfaceActions?: readonly SurfaceChange[]
     readonly references?: readonly PublicationReference[]
@@ -1804,7 +1804,7 @@ async function admitReferencePlan(
     adapters: PublicationAdapters,
 ): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; plan: PublicationPlan }>> {
     const { authority, node } = captured
-    if (authority.configPath !== join(authority.root, 'package.json') || captured.nextLedgerBytes === null) {
+    if (authority.configPath !== join(authority.root, 'package.json') || typeof captured.nextLedgerBytes !== 'string') {
         return refuse('GENERATED_REFERENCE_OWNERSHIP_INVALID', 'reference publication requires the root package source and a complete reference ledger', REFERENCE_OWNERSHIP_PATH)
     }
     const ledger = await readAnchoredEntry(authority.root, REFERENCE_OWNERSHIP_PATH, MAX_OWNERSHIP_BYTES, node, adapters)
@@ -2065,7 +2065,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     if (!captured || !fields || !exactKeys(fields, ['authority', 'generation', 'sourceSha256', 'rootIdentity', 'node', 'mode', 'ledgerExpected', 'nextLedgerBytes', 'mutations',
         ...(Object.hasOwn(fields, 'surfaceActions') ? ['surfaceActions'] : []), ...(Object.hasOwn(fields, 'references') ? ['references'] : [])])
         || !supplied || !exactKeys(supplied, [...Object.keys(fields), ...(Object.hasOwn(supplied, 'referenceBootstrap') ? ['referenceBootstrap'] : [])])
-        || !['sync', 'uninstall', 'forget', 'reference'].includes(captured.mode)
+        || !['sync', 'reference'].includes(captured.mode)
         || !captured.authority || !isAbsolute(captured.authority.root)
         || dirname(captured.authority.configPath) !== captured.authority.root
         || !SHA256.test(captured.generation) || !SHA256.test(captured.sourceSha256)
@@ -2086,25 +2086,22 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         try { parsed = parseOwnershipManifest(new TextDecoder('utf-8', { fatal: true }).decode(ledger.bytes), authority) } catch { /* Invalid bytes refuse below. */ }
         if (!parsed || parsed.kind !== 'complete') return refuse('GENERATED_OWNERSHIP_INVALID', 'publication requires authenticated ownership metadata', OWNERSHIP_PATH)
         prior = parsed.manifest
-    } else if (ledger.kind !== 'missing' || mode === 'uninstall' || mode === 'forget') {
-        return refuse('GENERATED_OWNERSHIP_MISSING', 'removal requires durable ownership metadata', OWNERSHIP_PATH)
+    } else if (ledger.kind !== 'missing') {
+        return refuse('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is not a regular file', OWNERSHIP_PATH)
     }
-    let next: OwnershipManifest | undefined
-    if (captured.nextLedgerBytes !== null) {
-        const parsed = parseOwnershipManifest(captured.nextLedgerBytes, authority)
-        if (parsed.kind !== 'complete' || parsed.manifest.generation !== captured.generation || parsed.manifest.source.sha256 !== captured.sourceSha256
-            || mode === 'uninstall' || mode === 'forget') return refuse('GENERATED_OWNERSHIP_INVALID', 'publication ledger does not match its declared authority', OWNERSHIP_PATH)
-        next = parsed.manifest
-    } else if (mode !== 'uninstall' && mode !== 'forget') return refuse('GENERATED_OWNERSHIP_INVALID', 'publication requires its complete resulting ledger', OWNERSHIP_PATH)
+    const parsedNext = typeof captured.nextLedgerBytes === 'string' ? parseOwnershipManifest(captured.nextLedgerBytes, authority) : undefined
+    if (parsedNext?.kind !== 'complete' || parsedNext.manifest.generation !== captured.generation
+        || parsedNext.manifest.source.sha256 !== captured.sourceSha256) return refuse('GENERATED_OWNERSHIP_INVALID', 'publication ledger does not match its declared authority', OWNERSHIP_PATH)
+    const next = parsedNext.manifest
     const priorProjection = prior && projectGeneratedPathFacts(prior, authority, [])
     if (priorProjection && priorProjection.kind !== 'complete') return refuse('GENERATED_OWNERSHIP_INVALID', 'publication requires authenticated prior ownership facts', OWNERSHIP_PATH)
-    const nextProjection = next && projectGeneratedPathFacts(next, authority, [])
-    if (nextProjection && nextProjection.kind !== 'complete') return refuse('GENERATED_OWNERSHIP_INVALID', 'publication requires authenticated resulting ownership facts', OWNERSHIP_PATH)
+    const nextProjection = projectGeneratedPathFacts(next, authority, [])
+    if (nextProjection.kind !== 'complete') return refuse('GENERATED_OWNERSHIP_INVALID', 'publication requires authenticated resulting ownership facts', OWNERSHIP_PATH)
     const priorFacts = new Map(priorProjection?.facts.map(fact => [fact.path, fact]))
-    const nextFacts = new Map(nextProjection?.facts.map(fact => [fact.path, fact]))
+    const nextFacts = new Map(nextProjection.facts.map(fact => [fact.path, fact]))
     // Only an unchanged authenticated estate can authorize restoration of corrupt bytes.
-    const restorationEstate = mode === 'sync' && prior?.format === 'cockpit-generated-ownership/v3'
-        && next?.format === 'cockpit-generated-ownership/v3' && prior.cockpitId === next.cockpitId
+    const restorationEstate = prior?.format === 'cockpit-generated-ownership/v3'
+        && next.format === 'cockpit-generated-ownership/v3' && prior.cockpitId === next.cockpitId
         && prior.generation === next.generation && prior.source.path === next.source.path && prior.source.sha256 === next.source.sha256
         && prior.personaSource.path === next.personaSource.path && prior.personaSource.sha256 === next.personaSource.sha256
         && prior.producer !== null && next.producer !== null && prior.producer.package === next.producer.package
@@ -2116,11 +2113,10 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
     if (!portablePublicationPaths(mutations.map(row => row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun cockpit sync --dry-run', 'generated-environment')
     if (new Set(mutations.map(row => row.path)).size !== mutations.length
         || mutations.some(row => !exactPath(authority.root, row.path) || row.path === OWNERSHIP_PATH || row.phase === 'ledger'
-            || !['desired', 'stale'].includes(row.phase) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(row.operation))
-        || mode === 'forget' && mutations.length !== 0) {
+            || !['desired', 'stale'].includes(row.phase) || !['write-file', 'write-symlink', 'remove-file', 'remove-symlink'].includes(row.operation))) {
         return refuse('GENERATED_PUBLICATION_FAILED', 'publication contains an undeclared or non-exact operation', 'generated-environment')
     }
-    const paths = mode === 'forget' ? [] : [...new Set([...(prior?.entries ?? []).map(row => row.path), ...(next?.entries ?? []).map(row => row.path)])].sort(compareCodeUnits)
+    const paths = [...new Set([...(prior?.entries ?? []).map(row => row.path), ...next.entries.map(row => row.path)])].sort(compareCodeUnits)
     if (!portablePublicationPaths(paths)) return refuse('GENERATED_PUBLICATION_FAILED', 'generated output names alias or cannot be transferred between supported filesystems; rename the declared outputs and rerun cockpit sync --dry-run', 'generated-environment')
     if (mutations.some(row => !paths.includes(row.path))) return refuse('GENERATED_PUBLICATION_FAILED', 'publication operation is absent from both ownership ledgers', 'generated-environment')
     // Sizes allocate bounded batches; anchored reads still authenticate every target and refuse growth.
@@ -2145,7 +2141,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         const expected = expectedState(current)
         if (!expected) return refuse('GENERATED_PUBLICATION_FAILED', 'publication target kind is unknown', path)
         const previous = prior?.entries.find(row => row.path === path)
-        const desired = next?.entries.find(row => row.path === path)
+        const desired = next.entries.find(row => row.path === path)
         const priorFact = priorFacts.get(path)
         const nextFact = nextFacts.get(path)
         if (previous && !priorFact || desired && !nextFact) return refuse('GENERATED_OWNERSHIP_INVALID', 'publication target lacks authenticated ownership facts', path)
@@ -2195,8 +2191,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         checks.push(Object.freeze({ path, expected, maxBytes: current.kind === 'file' ? Math.max(1, current.bytes.byteLength) : 1, ...(current.kind === 'file' ? { identity: current.identity } : {}) }))
     }
     checks.push(Object.freeze({ path: OWNERSHIP_PATH, expected: ledgerState, maxBytes: ledger.kind === 'file' ? Math.max(1, ledger.bytes.byteLength) : 1, ...(ledger.kind === 'file' ? { identity: ledger.identity } : {}) }))
-    if (captured.nextLedgerBytes === null) mutations.push(Object.freeze({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'remove-file', expected: ledgerState }))
-    else if (ledger.kind !== 'file' || ledger.sha256 !== sha256(captured.nextLedgerBytes)) mutations.push(Object.freeze({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
+    if (ledger.kind !== 'file' || ledger.sha256 !== sha256(captured.nextLedgerBytes)) mutations.push(Object.freeze({ path: OWNERSHIP_PATH, phase: 'ledger', operation: 'write-file',
         bytes: captured.nextLedgerBytes, sha256: sha256(captured.nextLedgerBytes), expected: ledgerState }))
     const groups = groupMutations(mutations)
     const count = groups?.reduce((total, group) => total + group.logicalWeight, 0) ?? 0
