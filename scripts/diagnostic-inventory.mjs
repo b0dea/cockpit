@@ -17,7 +17,9 @@ const IMPLEMENTATION_ROOTS = Object.freeze([
     'packages/cockpit/package.json',
     'packages/cockpit/tsconfig.build.json',
     'packages/cockpit/cockpit.schema.json',
-    'packages/cockpit/libexec/rulesync-generator.cjs',
+    // The built owners import libexec programs (fence-marker.cjs, rulesync-generator.cjs) beside dist,
+    // so the whole directory is part of the committed closure the references are rendered from.
+    'packages/cockpit/libexec',
     'packages/cockpit/src',
     'packages/cockpit/surfaces',
     'packages/cockpit/src/references/adopt-cockpit.skill.md',
@@ -26,6 +28,14 @@ const IMPLEMENTATION_ROOTS = Object.freeze([
     'scripts/docs-lint.mjs',
     'scripts/docs-lint.d.mts',
 ])
+const DIRECTORY_ROOTS = Object.freeze(['packages/cockpit/libexec', 'packages/cockpit/src', 'packages/cockpit/surfaces'])
+
+function isFixedInput(path) {
+    return IMPLEMENTATION_ROOTS.includes(path)
+        || path.startsWith('packages/cockpit/surfaces/')
+        || path.startsWith('packages/cockpit/libexec/')
+}
+
 const SHIPPED_ASSETS = Object.freeze({
     guardTemplate: 'packages/cockpit/surfaces/guards/bash-guard.sh',
     adapters: Object.freeze([
@@ -652,12 +662,14 @@ async function captureCommittedInputs(root, candidate, owners) {
         const path = match[3]
         const productionSource = path.startsWith('packages/cockpit/src/') && path.endsWith('.ts')
             && !path.endsWith('.test.ts') && !path.endsWith('.d.ts')
-        const fixedInput = IMPLEMENTATION_ROOTS.includes(path) || path.startsWith('packages/cockpit/surfaces/')
+        const fixedInput = isFixedInput(path)
         if (productionSource || fixedInput) rows.push(Object.freeze({ mode: match[1], oid: match[2], path }))
     }
     rows.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
     const required = [
-        ...IMPLEMENTATION_ROOTS.filter((path) => !path.endsWith('/src') && !path.endsWith('/surfaces')),
+        ...IMPLEMENTATION_ROOTS.filter((path) => !DIRECTORY_ROOTS.includes(path)),
+        'packages/cockpit/libexec/fence-marker.cjs',
+        'packages/cockpit/libexec/rulesync-generator.cjs',
         SHIPPED_ASSETS.guardTemplate,
         ...SHIPPED_ASSETS.adapters,
         ...SHIPPED_ASSETS.skills.map(([, path]) => path),
@@ -730,7 +742,7 @@ async function revalidateCommittedInputs(snapshot, owners, deadline) {
             const path = match[3]
             const productionSource = path.startsWith('packages/cockpit/src/') && path.endsWith('.ts')
                 && !path.endsWith('.test.ts') && !path.endsWith('.d.ts')
-            const fixedInput = IMPLEMENTATION_ROOTS.includes(path) || path.startsWith('packages/cockpit/surfaces/')
+            const fixedInput = isFixedInput(path)
             if (productionSource || fixedInput) rows.push({ mode: match[1], oid: match[2], path })
         }
         rows.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)

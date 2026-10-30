@@ -61,7 +61,7 @@ export function committedReferenceFixture() {
         'packages/cockpit/package.json',
         'packages/cockpit/tsconfig.build.json',
         'packages/cockpit/cockpit.schema.json',
-        'packages/cockpit/libexec/rulesync-generator.cjs',
+        'packages/cockpit/libexec',
         'packages/cockpit/src',
         'packages/cockpit/surfaces',
         'packages/cockpit/dist',
@@ -91,7 +91,7 @@ export function committedReferenceFixture() {
     execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root, stdio: 'ignore' })
     execFileSync('git', ['add', 'package.json', 'package-lock.json', 'tsconfig.json', 'packages/cockpit/package.json',
         'packages/cockpit/tsconfig.build.json', 'packages/cockpit/cockpit.schema.json',
-        'packages/cockpit/libexec/rulesync-generator.cjs', 'packages/cockpit/src',
+        'packages/cockpit/libexec', 'packages/cockpit/src',
         'packages/cockpit/surfaces', 'scripts', 'docs/troubleshooting.md'], { cwd: root, stdio: 'ignore' })
     execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture'], { cwd: root, stdio: 'ignore' })
     writeFileSync(join(root, 'fixture-head.txt'), 'current head\n')
