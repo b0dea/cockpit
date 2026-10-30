@@ -463,13 +463,19 @@ function destructiveDaemonSelectionRefusal(runtime: CliRuntime): CommandOutcome 
         'DOCKER_CONTEXT') : undefined
 }
 
+// The budget for one runtime query or command step (a Docker listing, an inspection, a Compose
+// config read). Scoped to the stack's own resources, those finish in well under a second even on
+// a daemon running a hundred other containers, so ten seconds is ample headroom while a hung
+// daemon still fails the step closed quickly. Service starts are bounded by cold_start_seconds instead.
+const RUNTIME_STEP_TIMEOUT_MS = 10_000
+
 function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId: string) {
     const env = runtime.env ?? process.env
     return createDestructiveCommandAdapters({
         configPath,
         env,
         sessionId,
-        timeoutMs: 10_000,
+        timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
         // A local DOCKER_HOST is reached through Docker's `default` context, which reports it exactly.
         dockerContext: env.DOCKER_CONTEXT ?? (env.DOCKER_HOST === undefined ? '' : 'default'),
     }, executeProbe)
@@ -480,7 +486,7 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
         configPath,
         env: runtime.env ?? process.env,
         sessionId,
-        timeoutMs: 10_000,
+        timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
         ...(runtime.signal ? { signal: runtime.signal } : {}),
     }, executeProbe)
 }
@@ -527,12 +533,12 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         configPath,
         env,
         sessionId,
-        timeoutMs: 10_000,
+        timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
     }, executeProbe)
     const healthAdapters = (configPath: string) => createHealthCommandAdapters({
         configPath,
         env,
-        timeoutMs: 10_000,
+        timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
     }, executeProbe)
     const workHandlers: Partial<Pick<CommandHandlers, WorkHandlerIdentifier>> = {}
     for (const command of commands) if (isWorkHandler(command.handler)) {
@@ -615,7 +621,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 configPath,
                 env: sessionEnvironment,
                 sessionId,
-                timeoutMs: 10_000,
+                timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
             }, executeProbe)
             return runSessionApplication({ ...input, configPath, cwd: process.cwd(), env: childEnv }, {
                 up: (request) => runUpApplication(request, adapters),
