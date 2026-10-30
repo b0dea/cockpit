@@ -12,6 +12,7 @@ import { deriveInferredFacts } from '../init/derive.js'
 import { runInitOperatorCommand, type InitCommandIo } from '../init/command.js'
 import { runCli } from '../cli.js'
 import { renderHumanValue } from '../diagnostics.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
@@ -1053,10 +1054,11 @@ it.each([
         ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
         devDependencies: { '@b0dea/cockpit': expect.any(String) } })
 
-    // A product source changed after acceptance is still a different estate.
+    // A product source changed after acceptance is still a different estate. Rerunning init alone
+    // refuses again, so the remedy names both ways out.
     await writeFile(join(f.root, 'compose.yml'), composeBytes.replace('web:1', 'web:2'))
-    expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal',
-        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED' }] })
+    for (let rerun = 0; rerun < 2; rerun += 1) expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal',
+        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun the same cockpit init command; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })}, then ${cockpitCommand('check', { config: f.destination })}` }] })
     await writeFile(join(f.root, 'compose.yml'), composeBytes)
 
     preflight = f.adapters.preflight

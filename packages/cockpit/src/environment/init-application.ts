@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import {
     plannedGreenfieldQuestions,
     type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
@@ -732,7 +733,17 @@ export async function runInitApplication(
         configuration: { sourceObservationSha256: persistedConfiguration.sourceObservationSha256,
             ...(persistedConfiguration.classification ? { classification: persistedConfiguration.classification } : {}),
             answers: persistedConfiguration.answers } })
-    if (currentDocument.kind !== 'complete') return ownerRefusal(currentDocument, current.value.stage, projection)
+    if (currentDocument.kind !== 'complete') {
+        // The answers are bound to the estate init observed; a product edit after the draft breaks
+        // that binding, and replaying the same answers cannot rebind it, so a bare rerun refuses again.
+        const observed = current.value.stage !== 'draft-prepared'
+        const fix = `restore the product files changed since init drafted cockpit.toml, then rerun the same cockpit init command${observed
+            ? `; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: destination })}, then ${cockpitCommand('check', { config: destination })}` : ''}`
+        return ownerRefusal({ ...currentDocument, diagnostics: currentDocument.diagnostics.map(row =>
+            row.code === 'DOCUMENT_ESTATE_OBSERVATION_CHANGED' ? { ...row, fix,
+                message: 'the product files init observed (package manifests, Dockerfile, Compose files) changed after it drafted cockpit.toml, so the recorded answers no longer describe this repository and init will not verify the draft against it' }
+                : row) }, current.value.stage, projection)
+    }
     if (currentDocument.destination !== destination || currentDocument.artifact !== current.value.artifactBytes
         || sha256(currentDocument.artifact) !== current.value.artifactSha256) {
         return refused('INIT_DRAFT_SOURCE_CHANGED',
