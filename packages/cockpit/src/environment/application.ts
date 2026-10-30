@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { lstatSync, readFileSync, realpathSync, type Stats } from 'node:fs'
+import { constants as osConstants } from 'node:os'
 import { isDeepStrictEqual } from 'node:util'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -887,7 +888,8 @@ export type SessionCommandResult =
         child: Readonly<{ exitCode: number; signal: NodeJS.Signals | null }>
         sleep: Extract<SleepCommandResult, { kind: 'complete' }>['result']
     }> }>
-    | Readonly<{ kind: 'refusal'; status: 2 | 130; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
+    // A refused session exits 2, 130 when cancelled, or the supervised command's own status.
+    | Readonly<{ kind: 'refusal'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
 
 const issuedLifecycleRuns = new WeakSet<object>()
 const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: SourceProvenance; siblingsRoot: string }>>()
@@ -3145,16 +3147,24 @@ export async function runSession(
 
     const sleep = await adapters.sleep({ configPath: input.configPath })
     const cleanup = sleep.kind === 'complete' ? `; environment cleanup ${sleep.result.change}` : ''
+    // A wrapper that exits 2 for every failing command hides the command's own status from the
+    // scripts and agents that branch on it, so a completed cleanup passes that status through,
+    // with the shell convention of 128 plus the signal number for a signalled command.
+    const signalNumber = child.kind === 'complete' && child.signal ? osConstants.signals[child.signal] : undefined
+    const childStatus = child.kind !== 'complete' ? undefined
+        : signalNumber !== undefined ? 128 + signalNumber : child.exitCode === 0 ? undefined : child.exitCode
     const childDiagnostic = child.kind === 'refusal'
         ? { severity: 'error' as const, code: child.code,
             message: `the supervised session process failed${cleanup}`, target: input.argv[0] }
-        : child.exitCode === 0 ? undefined : {
+        : childStatus === undefined ? undefined : {
             severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
-            message: `the supervised session process exited with status ${child.exitCode}${cleanup}`, target: input.argv[0],
+            message: `the supervised session process ${child.signal ? `was terminated by ${child.signal}` : `exited with status ${child.exitCode}`}${cleanup}`,
+            target: input.argv[0],
         }
     if (sleep.kind !== 'complete' || childDiagnostic) return {
-        kind: 'refusal', status: sleep.kind === 'complete' && child.kind === 'refusal'
-            && child.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? 130 : 2, result: null,
+        kind: 'refusal', status: sleep.kind !== 'complete' ? 2
+            : child.kind === 'refusal' ? child.code === ENVIRONMENT_CODES.EXECUTION_ABORTED ? 130 : 2
+                : childStatus ?? 2, result: null,
         diagnostics: Object.freeze([
             ...(childDiagnostic ? [childDiagnostic] : []),
             ...sleep.diagnostics,
