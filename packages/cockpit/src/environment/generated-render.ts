@@ -260,6 +260,11 @@ function buildContext(build: NonNullable<GeneratedEnvironmentDeclaration['servic
     return { context, ...(build.dockerfile === undefined ? {} : { dockerfile: build.dockerfile }) }
 }
 
+// A cockpit id is `cockpit:<cockpit.name>:<digest>`, already validated by COCKPIT_ID.
+function composeProjectName(id: string): string {
+    return id.split(':')[1]!
+}
+
 function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: GeneratedEnvironmentInput, hostInputDirectories: Readonly<Record<string, string>>): string | undefined {
     const ownershipLabels = {
         'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
@@ -295,8 +300,17 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         const mounts = [...service.mounts].sort((left, right) => `${left.kind}:${left.source}:${left.target}`.localeCompare(`${right.kind}:${right.source}:${right.target}`)).map((mount) => mount.kind === 'volume'
             ? { type: 'volume', source: mount.source, target: mount.target }
             : { type: 'bind', source: hostInputPath(hostInputDirectories[service.id]!, mount.source), target: mount.target, read_only: mount.kind === 'environment-file' })
+        // A pinned image knows nothing about the checkout mounted into it, so its own working
+        // directory (often `/`) made a relative command such as `node server.js` miss the code. A
+        // built image keeps the WORKDIR its Dockerfile declares.
+        const checkoutMounts = service.mounts.filter((mount) => mount.kind === 'bind' && mount.source === '.')
+        const workingDir = service.image && checkoutMounts.length === 1 ? checkoutMounts[0]!.target : undefined
         services[service.id] = {
             ...(service.image ? { image: service.image.reference } : { build: buildContext(service.build!, input.siblingDirectories[service.sibling]!) }),
+            ...(workingDir === undefined ? {} : { working_dir: workingDir }),
+            // The entrypoint execs the product command as PID 1, which gets no default signal
+            // handling: a server that ignores SIGTERM held sleep and down for the whole stop grace.
+            init: true,
             ...(service.resources ? { mem_limit: `${service.resources.memory_mb}m`, cpus: service.resources.cpus } : {}),
             labels: {
                 ...ownershipLabels,
@@ -342,7 +356,9 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
         },
     }]))
     return stringifyYaml({
-        name: `cockpit-${input.generation.slice(0, 12)}`,
+        // Lifecycle commands pass `--project-name <cockpit.name>`; naming the same project here keeps
+        // a plain `docker compose -f <this file>` on that stack instead of starting a second one.
+        name: composeProjectName(input.cockpitId),
         services: sortedRecord(Object.entries(services)),
         ...(Object.keys(volumes).length === 0 ? {} : { volumes }),
         networks: { default: { labels: ownershipLabels } },

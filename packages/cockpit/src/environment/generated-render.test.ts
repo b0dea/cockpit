@@ -58,6 +58,8 @@ describe('generated browser runner rendering', () => {
             expect(rendered, directory).toMatchObject({ kind: 'complete' })
             if (rendered.kind !== 'complete') throw new Error('declared sibling build unavailable')
             expect(parse(rendered.compose).services.api.build).toEqual({ context: expected, dockerfile: 'Dockerfile' })
+            // A built image keeps the WORKDIR its Dockerfile declares.
+            expect(parse(rendered.compose).services.api.working_dir).toBeUndefined()
             expect(rendered.manifest.map(file => file.path)).toEqual(['compose.generated.yml', 'docs/cockpit/environment-decisions.md'])
         }
         for (const directory of ['/outside/api', 'api/../../outside', '../api/../outside', 'C:\\outside', 'C:/outside', 'api\\nested', 'api\u0000suffix']) {
@@ -100,6 +102,12 @@ describe('generated browser runner rendering', () => {
         expect(compose.services.browser.volumes).toEqual([
             { type: 'bind', source: '.cockpit/browser', target: '/browser', read_only: false },
         ])
+        // A pinned image runs its command from the mounted checkout under an init that forwards
+        // signals; the Compose project is the one lifecycle commands name with --project-name.
+        expect(compose.name).toBe('mounts')
+        expect(compose.services.app).toMatchObject({ working_dir: '/workspace/source', init: true })
+        expect(compose.services.browser.working_dir).toBeUndefined()
+        expect(compose.services.browser.init).toBe(true)
         expect(compose.services.app.labels['dev.b0.cockpit.mounts']).toBe('bind:.:/workspace/source,environment-file:config/runtime:/workspace/config')
         expect(rendered.replay.mounts).toContain('app:bind:.:/workspace/source')
         expect(rendered.observations.find(({ id }) => id === 'mount:app:/workspace/source')?.target).toBe('.')
