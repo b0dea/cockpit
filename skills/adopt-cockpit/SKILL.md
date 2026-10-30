@@ -104,13 +104,16 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes.
 
 - Before the first `up`, measure the runtime with
-  `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`. The
-  guide's *Measure the runtime* says which runtimes are recognised. A measurement takes a few
-  minutes with no progress output, and `--write` makes `cockpit check` fail and the guard hold
-  tool calls until a human runs `cockpit sync --config cockpit.toml`.
+  `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`;
+  the probe refuses a `DOCKER_CONTEXT` override. The guide's *Measure the runtime* says which
+  runtimes are recognised. A measurement takes a few
+  minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check` fail and the guard hold
+  tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep` releases this checkout's hold;
-  `./node_modules/.bin/cockpit down` removes its runtime, so ask first.
+  `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`
+  removes its runtime, so ask first; `down` refuses unless `DOCKER_CONTEXT` names the daemon it
+  deletes from.
 - Upgrade: install the new version, then run `./node_modules/.bin/cockpit check`,
   `./node_modules/.bin/cockpit sync --dry-run` and `./node_modules/.bin/cockpit sync`. The guard
   trusts only the CLI it was generated for, so after an upgrade the human may need to run
@@ -208,8 +211,9 @@ guesses. So derive each value from what the repository shows, record it as infer
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
    the check exits 0. Where a runtime is declared, measure it with
-   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write`, using an image
-   already on this machine because the probe never pulls. Then start the stack with
+   `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write`,
+   using an image already on this machine because the probe never pulls; it refuses a
+   `DOCKER_CONTEXT` override because it measures the context Docker has selected. Then start the stack with
    `./node_modules/.bin/cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
    Report the actual result. Done when the stack reports healthy, or you have named what stopped it.
 
