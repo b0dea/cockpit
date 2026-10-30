@@ -191,7 +191,9 @@ describe('production health adapter composition', () => {
         expect(changed.result.checks).toContainEqual(expect.objectContaining({ code: 'HARNESS_SURFACE_UNAVAILABLE', verdict: 'unavailable' }))
     })
 
-    it.each(['config', 'lifecycle', 'lease'] as const)('checks a compose-first stack and rejects %s changes during comparison probes', async (authority) => {
+    // One stack serves every comparison race: bringing it up dominates the cost, and each race
+    // restores the bytes it changed before the next one starts.
+    it('checks a compose-first stack and rejects config, lifecycle and lease changes during comparison probes', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         await rm(join(candidate.checkout, COMPOSE_OWNERSHIP_FILE))
         const listener = createServer()
@@ -284,21 +286,26 @@ else process.exit(64)
             expect(doctor, JSON.stringify(doctor)).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'pass' } })
             expect(await readFile(statePath, 'utf8')).toBe(before)
             expect(execute.mock.calls.some(([step]) => step.argv.includes('up') || step.argv.includes('stop'))).toBe(false)
-            const authorityPath = authority === 'config' ? candidate.configPath
-                : authority === 'lifecycle' ? statePath : candidate.namespace.paths.coordination(candidate.stack).path
-            const authorityBytes = await readFile(authorityPath)
-            let changed = false
-            changeDuringComparison = async () => {
-                await writeFile(authorityPath, authority === 'config' ? `${config}\n# changed during comparison\n` : '{}\n')
-                changed = true
+            for (const authority of ['config', 'lifecycle', 'lease'] as const) {
+                const authorityPath = authority === 'config' ? candidate.configPath
+                    : authority === 'lifecycle' ? statePath : candidate.namespace.paths.coordination(candidate.stack).path
+                const authorityBytes = await readFile(authorityPath)
+                let changed = false
+                changeDuringComparison = async () => {
+                    await writeFile(authorityPath, authority === 'config' ? `${config}\n# changed during comparison\n` : '{}\n')
+                    changed = true
+                }
+                try {
+                    const raced = await runPreflight({ configPath: candidate.configPath }, adapters)
+                    expect(changed, authority).toBe(true)
+                    expect(raced, `${authority}: ${JSON.stringify(raced)}`).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable' } })
+                } finally {
+                    await writeFile(authorityPath, authorityBytes)
+                }
             }
-            try {
-                const raced = await runPreflight({ configPath: candidate.configPath }, adapters)
-                expect(changed).toBe(true)
-                expect(raced, JSON.stringify(raced)).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable' } })
-            } finally {
-                await writeFile(authorityPath, authorityBytes)
-            }
+            // Every race restored distinct bytes, so a lingering change from any of them fails here.
+            const restored = await runPreflight({ configPath: candidate.configPath }, adapters)
+            expect(restored, JSON.stringify(restored)).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'pass' } })
             await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()))
             listening = false
             const stopped = await runPreflight({ configPath: candidate.configPath }, adapters)
@@ -307,7 +314,7 @@ else process.exit(64)
         } finally {
             if (listening) await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()))
         }
-    })
+    }, 180_000)
 
     it('explains an unseeded lifecycle before observing Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
