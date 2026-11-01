@@ -1373,9 +1373,8 @@ function canonicalJson(value: unknown): string {
  * until it was torn down.
  *
  * It covers everything except what is known not to reach a container: comments and formatting,
- * guards, MCP, work orders, surfaces, testing, the guide settings, recorded runtime measurements
- * (they calibrate cockpit's own waits), generated decision records, the descriptive sibling fields,
- * and siblings with mount "none" that no generated service names. A new field is therefore counted
+ * guards, MCP, work orders, surfaces, testing, the guide settings, generated decision records, the
+ * descriptive sibling fields, and siblings with mount "none" that no generated service names. A new field is therefore counted
  * as runtime until someone decides otherwise: the failure is a needless down, never a stack running
  * an older declaration than the one on disk. The contents of `environment.compose_files` are
  * outside it: only their paths are declared here, and `up` hands the files to Compose as they are.
@@ -1387,7 +1386,7 @@ export function runtimeDeclarationSha256(cfg: CockpitConfig): string {
         .filter((row) => row.mount !== 'none' || servedSiblings.has(row.slug) || row.derives !== undefined || row.toolchain !== 'none')
         .map((row) => Object.fromEntries(Object.entries(row).filter(([field]) => !SIBLING_NON_RUNTIME_FIELDS.has(field))))
         .sort((left, right) => String(left.slug) < String(right.slug) ? -1 : 1)
-    const { runtime_measurements: _measurements, generated: _generated, ...environment } = cfg.environment
+    const { generated: _generated, ...environment } = cfg.environment
     const { decisions: _decisions, ...declaration } = generated ?? {}
     return createHash('sha256').update(canonicalJson({
         cockpit: { name: cfg.cockpit.name, siblings_root: cfg.cockpit.siblings_root },
