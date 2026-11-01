@@ -340,7 +340,7 @@ describe('lifecycle application contracts', () => {
 
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'CLAIM_CO_TENANT',
-            message: `lifecycle progress belongs to another active session; run \`npx --no cockpit up --config ${configPath}\` to resume it or \`DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config ${configPath}\` to release it`,
+            message: `lifecycle progress belongs to another active session; run \`npx --no cockpit up --config ${configPath}\` to resume it or \`npx --no cockpit down --config ${configPath}\` to release it`,
         }] })
         expect(await readState(lifecycleAddress)).toMatchObject({
             kind: 'complete', value: { value: { holderId: previousHolder } },

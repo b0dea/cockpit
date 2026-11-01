@@ -296,7 +296,7 @@ export const commands: readonly CommandDefinition[] = [
     },
     {
         name: 'down',
-        summary: 'Stop and remove the stack (run with DOCKER_CONTEXT set)',
+        summary: 'Stop and remove the stack (on the active local Docker context)',
         handler: 'down',
         visibility: 'public',
         // down removes only the containers and networks cockpit created; reset, which deletes data, stays out.
@@ -308,7 +308,7 @@ export const commands: readonly CommandDefinition[] = [
     },
     {
         name: 'reset',
-        summary: 'Preview a reset, or approve that exact preview interactively (run with DOCKER_CONTEXT set)',
+        summary: 'Preview a reset, or approve that exact preview interactively (on the active local Docker context)',
         handler: 'reset',
         visibility: 'public',
         ordinary: unavailable('reset requires separate approval'),

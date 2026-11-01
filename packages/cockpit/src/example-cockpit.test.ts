@@ -160,7 +160,7 @@ describe('the public synthetic cockpit', () => {
             ['git', '-C'], ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
             ['./node_modules/.bin/cockpit', 'preflight'], ['./node_modules/.bin/cockpit', 'up'],
-            ['DOCKER_CONTEXT="$(docker', 'context'],
+            ['./node_modules/.bin/cockpit', 'down'],
         ])
         for (const argv of executable) {
             if (argv[1] === 'setup') {

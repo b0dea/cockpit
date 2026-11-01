@@ -456,13 +456,13 @@ Done when the agent command has exited and `session` has released the stack.
 ```sh
 ./node_modules/.bin/cockpit session --config cockpit.toml -- claude
 ./node_modules/.bin/cockpit sleep --config cockpit.toml --json
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml --json
+./node_modules/.bin/cockpit down --config cockpit.toml --json
 ```
 
 `session` starts or resumes the stack, keeps it while the agent command after `--` runs, and
 releases it afterwards. `sleep` releases this checkout's hold and stops the stack only when no
 other checkout holds it. `down` removes this checkout's runtime; it is destructive, so ask first.
-It refuses unless `DOCKER_CONTEXT` names the daemon it deletes from
+It deletes only from the local Docker daemon it fixes at the start of the run
 ([Choose the Docker daemon](environment.md#choose-the-docker-daemon)). Details are in
 [Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment)
 and [Environment lifecycle](environment.md#lifecycle-and-ownership).

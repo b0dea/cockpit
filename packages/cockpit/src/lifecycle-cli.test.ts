@@ -1,6 +1,38 @@
-import { describe, expect, it, vi } from 'vitest'
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commands } from './command-table.js'
 import { runCli, type CliIo } from './cli.js'
+import * as destructiveComposition from './environment/destructive-composition.js'
+
+const roots: string[] = []
+afterEach(async () => {
+    vi.restoreAllMocks()
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+// A docker stand-in that answers only the context reads and records every invocation.
+async function activeContextHost(endpoint: string) {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-active-context-')))
+    roots.push(root)
+    const docker = join(root, 'docker')
+    await writeFile(docker, [
+        '#!/bin/sh',
+        `printf '%s\\n' "$*" >> ${JSON.stringify(join(root, 'calls'))}`,
+        'case "$1 $2" in',
+        '  "context show") printf "synthetic-local\\n" ;;',
+        `  "context inspect") printf '%s\\n' ${JSON.stringify(endpoint)} ;;`,
+        '  *) exit 64 ;;',
+        'esac',
+        '',
+    ].join('\n'), { mode: 0o700 })
+    await chmod(docker, 0o700)
+    return {
+        env: { PATH: `${root}:/usr/bin:/bin`, HOME: root },
+        calls: async () => (await readFile(join(root, 'calls'), 'utf8')).split('\n').filter(Boolean),
+    }
+}
 
 function captureIo(confirmReset?: CliIo['confirmReset']) {
     let stdout = ''
@@ -57,14 +89,30 @@ describe('lifecycle CLI composition', () => {
         expect(capture.output().stderr).toBe('')
     })
 
-    it.each(['down', 'reset'] as const)('names the missing Docker daemon selection for %s', async (verb) => {
+    // down and reset print without a daemon prefix, so with nothing named they find the context an
+    // unprefixed docker command reaches, once, and hold that one context for every later step.
+    it.each(['down', 'reset'] as const)('pins the active local Docker context for %s when none is named', async (verb) => {
+        const host = await activeContextHost('unix:///synthetic home/docker.sock')
+        const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
         const capture = captureIo()
-        const status = await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {}, { env: {} })
 
-        expect(status).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            diagnostics: [{ code: 'CLI_USAGE_INVALID', target: 'DOCKER_CONTEXT', message: expect.stringContaining('docker context show') }],
-        })
+        expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {}, { env: host.env })).toBe(2)
+        expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{ code: 'CONFIG_NOT_FOUND' }] })
+        expect(factory).toHaveBeenCalledWith(expect.objectContaining({ dockerContext: 'synthetic-local' }), expect.any(Function))
+        expect(await host.calls()).toEqual(['context show', 'context inspect synthetic-local --format {{.Endpoints.docker.Host}}'])
+    })
+
+    it.each(['down', 'reset'] as const)('refuses %s when the active Docker context is not a local daemon', async (verb) => {
+        const host = await activeContextHost('tcp://synthetic.invalid:2376')
+        const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
+        const capture = captureIo()
+
+        expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {}, { env: host.env })).toBe(2)
+        expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{
+            code: 'RUNTIME_UNAVAILABLE', target: 'docker context synthetic-local',
+            message: expect.stringContaining('tcp://synthetic.invalid:2376'),
+        }] })
+        expect(factory).not.toHaveBeenCalled()
     })
 
     it.each(['down', 'reset'] as const)('admits Unix endpoint syntax and refuses Windows pipe dispatch on POSIX for %s', async (verb) => {
@@ -95,6 +143,16 @@ describe('lifecycle CLI composition', () => {
 
         expect(status).toBe(2)
         expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
+    })
+
+    it('opens the interactive reset on the active local Docker context when none is named', async () => {
+        const host = await activeContextHost('unix:///synthetic/docker.sock')
+        const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
+        const capture = captureIo(async () => true)
+
+        expect(await runCli(['reset', '--config', '/synthetic/missing-cockpit.toml', '--interactive'], capture.io, {}, { env: host.env })).toBe(2)
+        expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
+        expect(factory).toHaveBeenCalledWith(expect.objectContaining({ dockerContext: 'synthetic-local' }), expect.any(Function))
     })
 
     it('registers every lifecycle verb as metadata without importing command handlers', () => {

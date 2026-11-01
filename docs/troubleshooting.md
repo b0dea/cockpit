@@ -25,7 +25,7 @@ machine-readable envelope. Every public flag is described by its command help, f
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `npx --no cockpit sync --config cockpit.toml`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached. | Start it, verify `docker info`, then retry. |
 | `RUNTIME_UNMEASURED` | This machine has no passing measurement for the current runtime and engine version. | Run `env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config cockpit.toml --image <local-image>`, which records the result for this machine only, then retry. |
-| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. |
+| `CLAIM_CO_TENANT` | Another [holder](concepts.md#holder) is using the stack. | After a failed `up`, run `npx --no cockpit up --config cockpit.toml` to resume or `npx --no cockpit down --config cockpit.toml` to release. Otherwise, have every session that holds the stack run `npx --no cockpit sleep --config cockpit.toml`, then retry. |
 | `PORT_FAMILY_COLLISION` | A selected host port is already in use. | Stop the named listener or release the inactive stack, then retry. |
 | `PORT_LEASE_EXHAUSTED` | Every declared port family is leased or occupied. | Release an inactive stack or extend `ports.count` after checking host capacity. |
 | `SETUP_MANUAL_MISSING` | A manually managed sibling checkout is absent. | Create it at the declared path, then rerun `npx --no cockpit setup --config cockpit.toml`. |
@@ -205,7 +205,7 @@ by hand, and do not delete them while the stack still runs: its containers would
 with nothing that knows about them. To clear one cockpit's state:
 
 1. Stop the stack and release its claims from the cockpit directory:
-   `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`.
+   `./node_modules/.bin/cockpit down --config cockpit.toml`.
 2. If `down` refuses because the state cannot be read, stop the stack with Docker instead: find
    its project with `docker compose ls`, then run `docker compose -p <project> down`.
 3. Delete the directory the diagnostic names, for example

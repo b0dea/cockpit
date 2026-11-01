@@ -306,7 +306,7 @@ declarations that reach its containers, not of the bytes of `cockpit.toml`. Edit
 alone, and the next `up` resumes it. A change to services, mounts, images or anything else the
 containers receive gives the stack a new identity: `up` refuses with `LIFECYCLE_PROGRESS_INVALID`
 rather than replace a running stack in place, and the fix it prints is
-`DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml`, then
+`npx --no cockpit down --config cockpit.toml`, then
 `npx --no cockpit up --config cockpit.toml`. A `[ports.bases]` change also needs the stack released
 with `sleep` before the edit, because the running stack holds a lease on its ports (see
 [Local URLs and port families](#local-urls-and-port-families)). `sleep` and `reset` keep the
@@ -315,8 +315,8 @@ previous generated identity so the stack can resume.
 `reset` first shows an exact preview of the generated volumes and declared generated host paths
 it would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at
 a terminal outside CI; the approval stays with the process that showed the preview, which checks
-everything again before it acts. `down` and `reset` need an explicit Docker daemon; see
-[Choose the Docker daemon](#choose-the-docker-daemon).
+everything again before it acts. `down` and `reset` delete only from a local Docker daemon, which
+they fix once per run; see [Choose the Docker daemon](#choose-the-docker-daemon).
 
 Every destructive action is recorded durably before it starts. If cockpit itself is interrupted, a
 detached supervisor process keeps track of that exact attempt. The next `sleep`, `down` or approved
@@ -335,17 +335,17 @@ one statement of both rules:
 
 | Command | `DOCKER_CONTEXT` | Why |
 |---|---|---|
-| `down`, `reset` | must be set, or unset with a local `DOCKER_HOST` | they delete, so they name the daemon they delete from instead of trusting whichever context happens to be current; with neither set they refuse with `CLI_USAGE_INVALID` |
+| `down`, `reset` | either | they delete, so they fix one daemon before the first step and address only it: `DOCKER_CONTEXT` when set, otherwise a local `DOCKER_HOST`, otherwise the context `docker context show` reports, read once. Reading the context per step could list one daemon and delete from another if `docker context use` ran mid-command; an active context that is not local is refused with `RUNTIME_UNAVAILABLE` |
 | `runtime measure` | must be unset | the probe authenticates the context Docker itself has selected, and an override would measure a daemon other than the one it records; it refuses with `RUNTIME_UNAVAILABLE` |
 | every other command | either | they use whatever daemon Docker selects |
 
 ```sh
-DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml
+npx --no cockpit down --config cockpit.toml
 env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine
 ```
 
-For `down` and `reset`, discovery and deletion then address the same daemon. A `DOCKER_HOST`
-endpoint must be an absolute `unix://` socket path; TCP, SSH and other transports are refused
+For `down` and `reset`, discovery and deletion then address the same daemon. However it was
+chosen, its endpoint must be an absolute `unix://` socket path; TCP, SSH and other transports are refused
 because a remote daemon could receive the deletion. Conflicting selections are refused. Socket
 paths keep literal spaces and punctuation, and cockpit uses the exact spelling when it binds the
 context and runs discovery or deletion. A TLS override is refused. For `runtime measure`, select
@@ -600,8 +600,8 @@ because cockpit does not create identities or write product rows.
 ```sh human-only: resets data, creates provider state, and requires the declared local stack
 ./node_modules/.bin/cockpit check --config cockpit.toml --json
 ./node_modules/.bin/cockpit up --config cockpit.toml
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit reset --config cockpit.toml --json
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit reset --interactive --config cockpit.toml
+./node_modules/.bin/cockpit reset --config cockpit.toml --json
+./node_modules/.bin/cockpit reset --interactive --config cockpit.toml
 ./node_modules/.bin/cockpit up --config cockpit.toml
 ./node_modules/.bin/cockpit test-run --config cockpit.toml --gate auth-state-gate-id
 ./node_modules/.bin/cockpit test-run --config cockpit.toml --gate authorization-gate-id

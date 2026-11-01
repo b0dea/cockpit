@@ -140,7 +140,11 @@ describe('printed cockpit commands', () => {
     // --help` prints npm's help and `--version` npm's version.
     const npxOwnFlag = /npx --no cockpit --(?:help|version)\b/g
 
-    it('name the configuration everywhere a diagnostic, instruction or skill spells one, the daemon for down and reset, and the root and target for init', () => {
+    // The guard refuses a command substitution, so a printed `VAR="$(…)" npx --no cockpit …` line is
+    // one an agent can never run as printed; down and reset once printed their daemon that way.
+    const substitutedPrefix = (before: string) => /\$\(|`/.test(/(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*) +)*$/.exec(before)![0])
+
+    it('name the configuration everywhere a diagnostic, instruction or skill spells one, carry no substituted environment prefix, and name the root and target for init', () => {
         const paths = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard',
             'packages/cockpit/src', 'packages/cockpit/surfaces'], { encoding: 'utf8' }).split('\0')
             .filter(path => /\.(?:ts|md|sh|json|cjs|mjs)$/.test(path) && !path.endsWith('.test.ts'))
@@ -154,8 +158,7 @@ describe('printed cockpit commands', () => {
                     const rest = line.slice(match.index + match[0].length)
                     if (rest.startsWith(' --help')) continue
                     if (!/--config (?!<file>|<cockpit\.toml>)/.test(rest.split(commandEnd)[0]!)) unrunnable.push(`${at}: ${match[0]} without --config`)
-                    if ((match[1] === 'down' || match[1] === 'reset')
-                        && !line.slice(0, match.index).endsWith('DOCKER_CONTEXT="$(docker context show)" ')) unrunnable.push(`${at}: ${match[0]} without DOCKER_CONTEXT`)
+                    if (substitutedPrefix(line.slice(0, match.index))) unrunnable.push(`${at}: ${match[0]} behind a substituted environment prefix`)
                 }
                 for (const match of line.matchAll(bare)) unrunnable.push(`${at}: bare ${match[0]}`)
                 for (const match of line.matchAll(runnableInit)) {
@@ -193,7 +196,7 @@ describe('printed cockpit commands', () => {
         expect(stderr).toContain(sync)
         expect(await runCli(['up', '--config', configPath, '--json'], io, {}, { env })).toBe(2)
         expect(JSON.parse(stdout).guidance).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED', text: expect.stringContaining(sync) })])
-        const down = `DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config ${quoted}`
+        const down = `npx --no cockpit down --config ${quoted}`
         expect(renderHumanDiagnostics([{ severity: 'error', code: 'CLAIM_CO_TENANT', message: 'another holder owns the stack' }],
             undefined, { resolvedConfigPath: configPath, generatedTargets: [] })).toContain(down)
 
@@ -205,8 +208,9 @@ describe('printed cockpit commands', () => {
         await chmod(launcher, 0o755)
         await writeFile(join(bin, 'npx'), `#!/bin/sh\ntest "$1" = --no && test "$2" = cockpit || exit 64\nshift 2\nexec ${JSON.stringify(launcher)} "$@"\n`)
         await chmod(join(bin, 'npx'), 0o755)
-        // Answers the context query the printed down command makes; any other Docker call fails.
-        await writeFile(join(bin, 'docker'), '#!/bin/sh\ntest "$1 $2" = "context show" && echo stand-in && exit 0\nexit 1\n')
+        // Answers the context reads down makes to pin the active daemon; any other Docker call fails.
+        await writeFile(join(bin, 'docker'), '#!/bin/sh\ntest "$1 $2" = "context show" && echo stand-in && exit 0\n'
+            + 'test "$1 $2" = "context inspect" && echo unix:///synthetic/docker.sock && exit 0\nexit 1\n')
         await chmod(join(bin, 'docker'), 0o755)
         const run = (command: string) => spawnSync('/bin/sh', ['-c', command], { cwd: resolve('.'), encoding: 'utf8',
             env: { ...env, PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` } })
@@ -214,7 +218,7 @@ describe('printed cockpit commands', () => {
         const synced = run(sync)
         expect(synced.status, synced.stderr).toBe(0)
         expect(existsSync(join(root, 'AGENTS.md'))).toBe(true)
-        // down gets past argument parsing and the daemon-selection refusal to the cockpit's own answer.
+        // down, printed without a daemon prefix, gets past argument parsing and daemon selection to the cockpit's own answer.
         const downed = run(down)
         expect(downed.stderr).not.toContain('CLI_USAGE_INVALID')
         expect(downed.stderr).toContain('ENVIRONMENT_NOT_DECLARED')
@@ -266,8 +270,7 @@ describe('printed cockpit commands', () => {
                 for (const match of snippet.matchAll(prefix)) {
                     const command = snippet.slice(match.index).split(/\s(?:&&|\|\||\||;|#)\s|;\s/)[0]!.trim()
                     printed.push({ at: `${path} (${kind})`, command })
-                    if (/^cockpit (?:down|reset)(?![\w-])/.test(command.replace(prefix, 'cockpit'))
-                        && !snippet.slice(0, match.index).endsWith('DOCKER_CONTEXT="$(docker context show)" ')) unrunnable.push(`${path}: ${command} without DOCKER_CONTEXT`)
+                    if (substitutedPrefix(snippet.slice(0, match.index))) unrunnable.push(`${path}: ${command} behind a substituted environment prefix`)
                 }
             }
             for (const line of fenced.join('\n').replace(/\\\n/g, ' ').split('\n')) {

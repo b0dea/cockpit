@@ -156,7 +156,7 @@ chain is permitted only when every segment is. Redirecting output to `/dev/null`
 | --- | --- | --- |
 | `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `logs --service <service>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
-| `npx --no cockpit up --config cockpit.toml`, and likewise `sleep` and `down` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and refuses to run unless `DOCKER_CONTEXT` or a local `DOCKER_HOST` is already set, because the printed `DOCKER_CONTEXT="$(docker context show)"` prefix is a command substitution the guard cannot evaluate and holds. |
+| `npx --no cockpit up --config cockpit.toml`, and likewise `sleep` and `down` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
 | `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
 | `npx --no cockpit sync --config cockpit.toml`, `reset`, `runtime measure`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or the guard's own files, or delete data. |
 

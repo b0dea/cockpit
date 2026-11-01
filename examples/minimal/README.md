@@ -20,5 +20,5 @@ env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockp
 ./node_modules/.bin/cockpit up --config cockpit.toml
 ./node_modules/.bin/cockpit session --config cockpit.toml -- sh -c 'curl -fsS localhost:4100/health'
 ./node_modules/.bin/cockpit sleep --config cockpit.toml && ./node_modules/.bin/cockpit up --config cockpit.toml
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml
+./node_modules/.bin/cockpit down --config cockpit.toml
 ```

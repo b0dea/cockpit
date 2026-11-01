@@ -115,9 +115,9 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
   `./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold;
-  `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`
-  removes its runtime, so ask first; `down` refuses unless `DOCKER_CONTEXT` names the daemon it
-  deletes from.
+  `./node_modules/.bin/cockpit down --config cockpit.toml`
+  removes its runtime, so ask first; `down` deletes only from the local Docker daemon it fixes at
+  the start of the run.
 - Upgrade: install the new version, then run `./node_modules/.bin/cockpit check --config cockpit.toml`,
   `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and `./node_modules/.bin/cockpit sync --config cockpit.toml`. The guard
   trusts only the CLI it was generated for, so after an upgrade the human may need to run

@@ -298,12 +298,14 @@ describe('CLI help', () => {
         expect(stable.stdout).not.toContain('Status: experimental.')
     })
 
-    it('tells `down --help` and `reset --help` readers to name the Docker daemon they delete from', async () => {
-        // Both refuse without DOCKER_CONTEXT, so help that leaves it out describes a command that fails as typed.
+    it('tells `down --help` and `reset --help` readers which Docker daemon they delete from', async () => {
+        // Both now pin the active context themselves; help that still asked for DOCKER_CONTEXT sent
+        // readers to a `$(docker context show)` prefix the guard refuses.
         for (const command of ['down', 'reset']) {
             const help = await runInProcess([command, '--help'])
             expect(help.status).toBe(0)
-            expect(help.stdout).toContain('DOCKER_CONTEXT')
+            expect(help.stdout).toContain('active local Docker context')
+            expect(help.stdout).not.toContain('DOCKER_CONTEXT')
         }
     })
 
@@ -419,8 +421,8 @@ describe('CLI help', () => {
             '  up                     Start or resume the declared environment\n' +
             '  sleep                  Release this checkout and stop the stack if no other holder remains\n' +
             '  session                Keep the environment available for one command, then release it\n' +
-            '  down                   Stop and remove the stack (run with DOCKER_CONTEXT set)\n' +
-            '  reset                  Preview a reset, or approve that exact preview interactively (run with DOCKER_CONTEXT set)\n' +
+            '  down                   Stop and remove the stack (on the active local Docker context)\n' +
+            '  reset                  Preview a reset, or approve that exact preview interactively (on the active local Docker context)\n' +
             '  runtime                Measure the local container runtime (runtime measure) and record the result for this machine\n' +
             '  sibling                Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  preflight              Check that the environment is healthy and ready for work\n' +

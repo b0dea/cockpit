@@ -8,7 +8,6 @@ import { basename, dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs, types as utilTypes } from 'node:util'
-import { admitLocalDockerEndpoint } from './environment/docker-endpoint.js'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
@@ -47,7 +46,7 @@ import {
     runGuardEvaluationApplication,
 } from './environment/application.js'
 import { executeForegroundProcess, executePlan, executeProbe } from './environment-exec/execute.js'
-import { createDestructiveCommandAdapters } from './environment/destructive-composition.js'
+import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
@@ -450,35 +449,23 @@ const defaultSetupAdapters: SetupCommandAdapters = {
         }),
 }
 
-// Destructive commands must name the daemon they delete from; refusing here names the fix instead of
-// the generic authority refusal an empty context selection produced.
-function destructiveDaemonSelectionRefusal(runtime: CliRuntime): CommandOutcome | undefined {
-    const env = runtime.env ?? process.env
-    if (env.DOCKER_HOST !== undefined && admitLocalDockerEndpoint(env.DOCKER_HOST) === undefined) {
-        return usageOutcome('CLI_USAGE_INVALID',
-            'down and reset require a local Docker endpoint so deletion cannot target a remote daemon; fix: unset DOCKER_HOST and set DOCKER_CONTEXT, or set DOCKER_HOST to a local Unix socket',
-            'DOCKER_HOST')
-    }
-    return env.DOCKER_CONTEXT === undefined && env.DOCKER_HOST === undefined ? usageOutcome('CLI_USAGE_INVALID',
-        'down and reset need an explicit Docker daemon: set DOCKER_CONTEXT (for example DOCKER_CONTEXT="$(docker context show)") or a local DOCKER_HOST',
-        'DOCKER_CONTEXT') : undefined
-}
-
 // The budget for one runtime query or command step (a Docker listing, an inspection, a Compose
 // config read). Scoped to the stack's own resources, those finish in well under a second even on
 // a daemon running a hundred other containers, so ten seconds is ample headroom while a hung
 // daemon still fails the step closed quickly. Service starts are bounded by cold_start_seconds instead.
 const RUNTIME_STEP_TIMEOUT_MS = 10_000
 
-function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId: string) {
+// down and reset delete, so the daemon is fixed once, before any adapter exists, and every step of
+// the command addresses that one daemon.
+async function destructiveAdapters(configPath: string, runtime: CliRuntime, sessionId: string) {
     const env = runtime.env ?? process.env
-    return createDestructiveCommandAdapters({
+    const daemon = await selectDestructiveDaemon(env, RUNTIME_STEP_TIMEOUT_MS, executeProbe)
+    return daemon.kind === 'refusal' ? daemon.adapters : createDestructiveCommandAdapters({
         configPath,
         env,
         sessionId,
         timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
-        // A local DOCKER_HOST is reached through Docker's `default` context, which reports it exactly.
-        dockerContext: env.DOCKER_CONTEXT ?? (env.DOCKER_HOST === undefined ? '' : 'default'),
+        dockerContext: daemon.dockerContext,
     }, executeProbe)
 }
 
@@ -633,21 +620,17 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
                 ...(runtime.signal ? { signal: runtime.signal } : {}),
             })
         },
-        down: (input) => {
-            if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
-            const unset = destructiveDaemonSelectionRefusal(runtime)
-            if (unset) return Promise.resolve(unset)
+        down: async (input) => {
+            if (ordinarySessionId === null) return usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
             const configPath = resolve(input.configPath)
-            return runDownApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
+            return runDownApplication({ configPath }, await destructiveAdapters(configPath, runtime, ordinarySessionId))
         },
-        reset: (input) => {
-            if (ordinarySessionId === null) return Promise.resolve(usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
-            const unset = destructiveDaemonSelectionRefusal(runtime)
-            if (unset) return Promise.resolve(unset)
+        reset: async (input) => {
+            if (ordinarySessionId === null) return usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
             const configPath = resolve(input.configPath)
-            return runResetApplication({ configPath }, destructiveAdapters(configPath, runtime, ordinarySessionId))
+            return runResetApplication({ configPath }, await destructiveAdapters(configPath, runtime, ordinarySessionId))
         },
         preflight: (input) => {
             const configPath = resolve(input.configPath)
@@ -1304,13 +1287,10 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
             return { digest: outcome.continuation.digest, prompt: outcome.continuation.prompt,
                 decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer)) }
         },
-        beginOperatorReset: (input) => {
-            if (sessionId === null) return Promise.resolve(operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID'))
+        beginOperatorReset: async (input) => {
+            if (sessionId === null) return operatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID')
             const configPath = resolve(input.configPath)
-            return beginOperatorResetApplication(
-                { configPath },
-                destructiveAdapters(configPath, runtime, sessionId),
-            )
+            return beginOperatorResetApplication({ configPath }, await destructiveAdapters(configPath, runtime, sessionId))
         },
         beginOperatorBaselineRecord: (input) => {
             if (sessionId === null) return Promise.resolve(baselineOperatorRefusal('COCKPIT_SESSION_ID must be a canonical UUID'))

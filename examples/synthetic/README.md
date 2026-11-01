@@ -59,5 +59,5 @@ commands are human-only because a consumer must first supply real service declar
 ```sh human-only:runtime
 ./node_modules/.bin/cockpit preflight --config cockpit.toml --json
 ./node_modules/.bin/cockpit up --config cockpit.toml --json
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml --json
+./node_modules/.bin/cockpit down --config cockpit.toml --json
 ```

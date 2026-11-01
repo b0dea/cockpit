@@ -387,7 +387,7 @@ It never deletes the checkout or any generated file. After either command, run
 While a stack is up or asleep, a repository the stack does not use (`mount = "none"`, named by
 no generated service) is added or removed at once. Any other row would change the environment
 underneath the running stack, so both commands refuse it and ask you to run
-`DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml`
+`./node_modules/.bin/cockpit down --config ./cockpit.toml`
 first.
 
 Editing `cockpit.toml` by hand works the same way. A change that never reaches a container, such
@@ -414,15 +414,16 @@ holds it. Interrupting `session` stops only the process group it started. A seco
 `cockpit session` inside the first is refused.
 Use plain `up` only when the stack should outlive one command.
 
-To remove the stack and its containers, run `down` with the Docker context it deletes from named
-explicitly; it refuses otherwise, so a deletion never lands on a daemon you did not choose:
+To remove the stack and its containers, run `down`. It reads the active Docker context once and
+deletes only from that daemon, and refuses one that is not local, so a deletion never lands on a
+remote daemon or on a context switched mid-command:
 
 ```sh
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml
+./node_modules/.bin/cockpit down --config ./cockpit.toml
 ```
 
-`runtime measure` needs the opposite, `DOCKER_CONTEXT` unset;
-[Choose the Docker daemon](environment.md#choose-the-docker-daemon) states both rules.
+[Choose the Docker daemon](environment.md#choose-the-docker-daemon) states the daemon rules for
+`down`, `reset` and `runtime measure`.
 
 ## Next steps
 
