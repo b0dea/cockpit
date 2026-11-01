@@ -285,11 +285,17 @@ describe('installed container-runtime capability promotion', () => {
         expect(JSON.stringify(verdict)).not.toContain('probe-secret-canary')
     })
 
-    it('rejects context overrides before installed runtime mutation', () => {
-        const verdict = installedChildProbe(request({ env: { ...runtimeEnvironment(), DOCKER_CONTEXT: 'synthetic-override' } }))
+    // The probe measures the context it is handed, not whichever one Docker has active: a context
+    // that resolves to no local endpoint fails the locality check before anything is mutated.
+    it('measures the context DOCKER_CONTEXT names and refuses one with no local endpoint before mutation', () => {
+        const { DOCKER_HOST: _host, ...env } = runtimeEnvironment()
+        const verdict = installedChildProbe(request({ env: { ...env, DOCKER_CONTEXT: 'synthetic-missing-context' } }))
         expect(verdict.status).toBe('unavailable')
-        expect(verdict.evidence).toBeNull()
-        expect(verdict.operatorAction?.reason).toBe('runtime probe input is malformed or contains an unsafe environment')
+        if (dockerPath.startsWith('/runtime-unavailable/')) return
+        expect(verdict.operatorAction?.reason).toBe('remote or unauthenticated Docker endpoints cannot establish local runtime support')
+        expect(verdict.evidence?.candidateChecks.localRuntime).toBe(false)
+        expect(verdict.evidence?.runtimeVersion).toBeNull()
+        expect(readdirSync(liveDirectory)).toEqual([])
     })
 
     it.each(['tcp://127.0.0.1:2375', 'npipe:////./pipe/dockerDesktopLinuxEngine'])(

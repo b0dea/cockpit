@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { admitLocalDockerEndpoint } from './docker-endpoint.js'
+import { selectLocalDockerDaemon } from './docker-daemon.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
@@ -108,41 +108,23 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (input.image.length === 0 || input.image.length > 256 || input.image.startsWith('-') || /[\s\u0000-\u001f\u007f]/.test(input.image)) {
         return refused('CLI_USAGE_INVALID', '--image must name one local image reference or ID', '--image')
     }
-    // The probe authenticates the context it runs against and refuses an override it cannot see.
-    if (input.env.DOCKER_CONTEXT !== undefined) {
-        return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            'DOCKER_CONTEXT overrides the selected Docker context; select it with `docker context use <name>` and unset DOCKER_CONTEXT', 'DOCKER_CONTEXT')
-    }
+    // Refuse a remote daemon before minutes of probing, and measure exactly the daemon `up` will
+    // reach: a local DOCKER_HOST as given, otherwise the context DOCKER_CONTEXT names or the active
+    // one, pinned by name for every later step so a `docker context use` mid-run cannot move the
+    // measurement to another daemon. cockpit's owners hand Docker no HOME, so a pinned name
+    // resolves through the operator's own context store, as it does for `up`. The context is pinned
+    // by name, not as its endpoint in DOCKER_HOST: that would leave down and reset inside the probe
+    // resolving the "default" context instead.
+    const daemon = await selectLocalDockerDaemon(input.env, STEP_TIMEOUT_MS, dependencies.execute, {
+        command: 'runtime measure', localOnly: 'a measurement describes this machine, which a remote daemon says nothing about' })
+    if (daemon.kind === 'refusal') return Object.freeze({ status: 2, result: null, artifact: null, destination: null, diagnostics: Object.freeze([daemon.diagnostic]) })
     const path = input.env.PATH ?? ''
     const [docker, git] = await Promise.all([resolveDockerExecutable(input.env), resolveGitExecutable(input.env)])
     if (docker.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, docker.reason, 'docker')
     if (git.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, git.reason, 'git')
     const cwd = dirname(configPath)
-
-    // Refuse a remote endpoint before minutes of probing. The endpoint is observed, never forced on the
-    // probe: cockpit's owners hand Docker no HOME, so the CLI resolves the operator's selected context
-    // itself, and down and reset select by context name. Pinning DOCKER_HOST here would leave them
-    // resolving the "default" context instead.
-    let dockerHost = input.env.DOCKER_HOST
-    let endpointSource = 'DOCKER_HOST'
-    if (dockerHost === undefined) {
-        const contextEnv = Object.freeze({ PATH: path })
-        const context = await readDocker(dependencies.execute, dockerStep(docker.value, cwd, contextEnv, 'runtime:measure:context', ['context', 'show']))
-        const endpoint = context.kind === 'complete'
-            ? await readDocker(dependencies.execute, dockerStep(docker.value, cwd, contextEnv, 'runtime:measure:endpoint',
-                ['context', 'inspect', context.text, '--format', '{{.Endpoints.docker.Host}}']))
-            : context
-        if (endpoint.kind !== 'complete') {
-            return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, `the selected Docker context endpoint could not be read (${endpoint.detail})`, 'docker context')
-        }
-        dockerHost = endpoint.text
-        endpointSource = `docker context ${context.kind === 'complete' ? context.text : ''}`
-    }
-    if (admitLocalDockerEndpoint(dockerHost) === undefined) {
-        return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            `the Docker endpoint from ${endpointSource} is not a local Docker endpoint; only a local runtime can be measured. Select a local context with docker context use <name> or set a local DOCKER_HOST`, endpointSource)
-    }
-    const runtimeEnv = Object.freeze({ PATH: path, ...(input.env.DOCKER_HOST === undefined ? {} : { DOCKER_HOST: input.env.DOCKER_HOST }) })
+    const runtimeEnv = Object.freeze({ PATH: path,
+        ...(input.env.DOCKER_HOST === undefined ? { DOCKER_CONTEXT: daemon.dockerContext } : { DOCKER_HOST: input.env.DOCKER_HOST }) })
 
     const observed = await observeDockerRuntime({ executable: docker.value, cwd, env: runtimeEnv, timeoutMs: STEP_TIMEOUT_MS }, dependencies.execute)
     if (observed.kind !== 'complete') return refused(observed.code, observed.reason, 'docker')
@@ -187,7 +169,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     const evidence = verdict.evidence
     const summary = Object.freeze({
         runtime: identity, dockerInfo: Object.freeze({ operatingSystem: observed.operatingSystem, name: observed.name, osType: observed.osType }),
-        endpoint: Object.freeze({ value: dockerHost, source: endpointSource }),
+        endpoint: Object.freeze({ value: daemon.endpoint, source: daemon.source }),
         image: image.text, candidate: verdict.candidate, brokenControl: verdict.brokenControl,
         checks: evidence?.candidateChecks ?? null,
     })

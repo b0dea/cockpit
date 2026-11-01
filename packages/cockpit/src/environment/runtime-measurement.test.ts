@@ -33,7 +33,7 @@ async function measuredHost(endpoint = 'unix:///synthetic/docker.sock') {
         '#!/bin/sh',
         'case "$1 $2" in',
         '  "context show") printf "synthetic\\n" ;;',
-        '  "context inspect") /bin/cat \"$PWD/endpoint\" ;;',
+        `  "context inspect") /bin/cat ${JSON.stringify(join(root, 'endpoint'))} ;;`,
         '  "version --format") printf "29.4.0\\n" ;;',
         '  "compose version") printf "5.1.2\\n" ;;',
         `  "info --format") printf '%s\\n' '["OrbStack","orbstack","linux"]' ;;`,
@@ -74,9 +74,8 @@ describe('runtime measurement recording', () => {
         const executionEnvironments: Readonly<Record<string, string>>[] = []
         const prefixes: string[] = []
         const probe: RuntimeMeasureProbe = async (request) => {
-            // The selected context stays the probe's to resolve; only an operator's own DOCKER_HOST passes through.
-            expect(request.env.DOCKER_HOST).toBeUndefined()
-            expect(request.env).toEqual({ PATH: host.env.PATH })
+            // The context read once at the start is the one the probe measures, whatever `docker context use` does meanwhile.
+            expect(request.env).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic' })
             expect(request.image).toEqual({ reference: IMAGE_ID, id: IMAGE_ID })
             prefixes.push(request.projectPrefix)
             return verdict(true, request.executable.sha256)
@@ -97,8 +96,9 @@ describe('runtime measurement recording', () => {
 
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
         expect(outcome.artifact).toContain('it replaces the measurement from 2026-09-01 (engine 28.0.0)')
-        expect(executionEnvironments.length).toBeGreaterThan(0)
-        for (const env of executionEnvironments) expect(env).toEqual({ PATH: host.env.PATH })
+        expect(executionEnvironments.slice(0, 2)).toEqual([{ PATH: host.env.PATH }, { PATH: host.env.PATH }])
+        expect(executionEnvironments.length).toBeGreaterThan(2)
+        for (const env of executionEnvironments.slice(2)) expect(env).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic' })
         expect(prefixes).toEqual(['synthetic-measure'])
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
         expect(await readLocalRuntimeMeasurements(host.root)).toEqual({
@@ -140,6 +140,44 @@ describe('runtime measurement recording', () => {
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
 
+    // The guard asks before an `env -u DOCKER_CONTEXT` wrapper, and an ask is a denial for some
+    // agents, so measure takes the context DOCKER_CONTEXT names exactly as `up` will.
+    it('measures the local context DOCKER_CONTEXT names and pins it for every later step', async () => {
+        const host = await measuredHost()
+        const steps: string[] = []
+        const environments: Readonly<Record<string, string>>[] = []
+        const env = { ...host.env, DOCKER_CONTEXT: 'synthetic-named' }
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env }, {
+            execute: async (step) => { steps.push(step.argv.slice(1).join(' ')); environments.push(step.env); return executeProbe(step) },
+            probe: async (request) => {
+                expect(request.env).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic-named' })
+                return verdict(true, request.executable.sha256)
+            },
+        })
+
+        expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        expect(outcome.result).toMatchObject({ endpoint: { value: 'unix:///synthetic/docker.sock', source: 'docker context synthetic-named' } })
+        expect(steps[0]).toBe('context inspect synthetic-named --format {{.Endpoints.docker.Host}}')
+        expect(steps).not.toContain('context show')
+        for (const stepEnv of environments.slice(1)) expect(stepEnv).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic-named' })
+    })
+
+    it('refuses a DOCKER_CONTEXT that names a remote daemon before probing', async () => {
+        const host = await measuredHost('tcp://synthetic.invalid:2376')
+        let calls = 0
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine',
+            env: { ...host.env, DOCKER_CONTEXT: 'synthetic-named' } }, {
+            execute: executeProbe, probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
+        })
+
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{
+            code: 'RUNTIME_UNAVAILABLE', target: 'docker context synthetic-named',
+            message: expect.stringMatching(/DOCKER_CONTEXT.*tcp:\/\/synthetic\.invalid:2376/),
+        }] })
+        expect(calls).toBe(0)
+        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'read', rows: [] })
+    })
+
     it('refuses a Windows pipe on a POSIX host before runtime probing or daemon commands', async () => {
         const endpoint = 'npipe:////./pipe/dockerDesktopLinuxEngine'
         const host = await measuredHost(endpoint)
@@ -150,7 +188,9 @@ describe('runtime measurement recording', () => {
                 execute: async (step) => { steps.push([...step.argv]); return executeProbe(step) },
                 probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
             })
-            expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+            expect(outcome).toMatchObject({ status: 2, diagnostics: [env.DOCKER_HOST === undefined
+                ? { code: 'RUNTIME_UNAVAILABLE', target: 'docker context synthetic', message: expect.stringContaining(endpoint) }
+                : { code: 'CLI_USAGE_INVALID', target: 'DOCKER_HOST' }] })
             expect(calls).toBe(0)
             expect(steps.every((argv) => argv[1] === 'context')).toBe(true)
             if (env.DOCKER_HOST !== undefined) expect(steps).toEqual([])
@@ -179,7 +219,7 @@ describe('runtime measurement recording', () => {
                 env: { ...host.env, DOCKER_HOST: endpoint } }, {
                 execute: executeProbe, probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
             })
-            expect(outcome, JSON.stringify(endpoint)).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
+            expect(outcome, JSON.stringify(endpoint)).toMatchObject({ status: 2, diagnostics: [{ code: 'CLI_USAGE_INVALID', target: 'DOCKER_HOST' }] })
         }
         expect(calls).toBe(0)
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)

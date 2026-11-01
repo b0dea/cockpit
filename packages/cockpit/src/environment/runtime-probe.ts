@@ -85,7 +85,7 @@ const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
 // A cockpit name, bounded so the probe's project and resource names stay short.
 const PROJECT_PREFIX = /^[a-z0-9][a-z0-9-]{0,39}$/
-const SAFE_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DOCKER_HOST'])
+const SAFE_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DOCKER_HOST', 'DOCKER_CONTEXT'])
 const MAX_TIMEOUT_MS = 120_000
 const OUTPUT_LIMIT = 1_048_576
 const PROBE_WINDOW_MS = 300_000
@@ -478,8 +478,9 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         dockerContext = decode(await execute.run('context-name', ['context', 'show'])) ?? ''
         const endpoint = dockerContext === '' ? undefined
             : decode(await execute.run('context-endpoint', ['context', 'inspect', dockerContext, '--format', '{{.Endpoints.docker.Host}}']))
+        // A named context is the daemon `up` will reach, so it is the one measured, never the active one.
         checks.localRuntime = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(dockerContext) && admitLocalDockerEndpoint(endpoint) !== undefined
-            && (dockerHost === undefined || endpoint === dockerHost)
+            && (dockerHost === undefined ? input.env.DOCKER_CONTEXT === undefined || dockerContext === input.env.DOCKER_CONTEXT : endpoint === dockerHost)
         if (!checks.localRuntime) fail('remote or unauthenticated Docker endpoints cannot establish local runtime support')
 
         const runtime = await observeDockerRuntime({
@@ -511,8 +512,10 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             '[environment.machine]', 'runtime_memory_mb = 1', 'runtime_cpus = 1', 'free_disk_mb = 1', 'cold_start_seconds = 30', '',
         ].join('\n')
         await writeExclusive(configPath, configSource)
+        // The lifecycle owners address the context checked above by name, so a `docker context use`
+        // during the probe cannot move its stack to another daemon.
         lifecycleEnvironment = Object.freeze({ PATH: input.env.PATH ?? '', HOME: homePath,
-            ...(dockerHost === undefined ? {} : { DOCKER_HOST: dockerHost }) })
+            ...(dockerHost === undefined ? { DOCKER_CONTEXT: dockerContext } : { DOCKER_HOST: dockerHost }) })
         const operationEnvironment = lifecycleEnvironment
         const freshLifecycle = () => createLifecycleCommandAdapters({
             configPath, env: operationEnvironment, sessionId: `runtime-probe-${batchId}`, timeoutMs: Math.min(input.timeoutMs, 30_000),

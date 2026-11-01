@@ -72,13 +72,15 @@ describe('lifecycle CLI composition', () => {
         expect(capture.output().stderr).toBe('')
     })
 
-    it.each(['down', 'reset'] as const)('binds %s to its production runner with an explicit runtime context', async (verb) => {
+    it.each(['down', 'reset'] as const)('binds %s to its production runner on the local context DOCKER_CONTEXT names', async (verb) => {
+        const host = await activeContextHost('unix:///synthetic/docker.sock')
+        const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
         const capture = captureIo()
         const status = await runCli(
             [verb, '--config', '/synthetic/missing-cockpit.toml', '--json'],
             capture.io,
             {},
-            { env: { DOCKER_CONTEXT: 'synthetic' } },
+            { env: { ...host.env, DOCKER_CONTEXT: 'synthetic-named' } },
         )
 
         expect(status).toBe(2)
@@ -87,6 +89,8 @@ describe('lifecycle CLI composition', () => {
             result: null,
         })
         expect(capture.output().stderr).toBe('')
+        expect(factory).toHaveBeenCalledWith(expect.objectContaining({ dockerContext: 'synthetic-named' }), expect.any(Function))
+        expect(await host.calls()).toEqual(['context inspect synthetic-named --format {{.Endpoints.docker.Host}}'])
     })
 
     // down and reset print without a daemon prefix, so with nothing named they find the context an
@@ -102,16 +106,17 @@ describe('lifecycle CLI composition', () => {
         expect(await host.calls()).toEqual(['context show', 'context inspect synthetic-local --format {{.Endpoints.docker.Host}}'])
     })
 
-    it.each(['down', 'reset'] as const)('refuses %s when the active Docker context is not a local daemon', async (verb) => {
+    it.each(['down', 'reset'] as const)('refuses %s when the active or named Docker context is not a local daemon', async (verb) => {
         const host = await activeContextHost('tcp://synthetic.invalid:2376')
         const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
-        const capture = captureIo()
-
-        expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {}, { env: host.env })).toBe(2)
-        expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{
-            code: 'RUNTIME_UNAVAILABLE', target: 'docker context synthetic-local',
-            message: expect.stringContaining('tcp://synthetic.invalid:2376'),
-        }] })
+        for (const [env, context] of [[host.env, 'synthetic-local'], [{ ...host.env, DOCKER_CONTEXT: 'synthetic-named' }, 'synthetic-named']] as const) {
+            const capture = captureIo()
+            expect(await runCli([verb, '--config', '/synthetic/missing-cockpit.toml', '--json'], capture.io, {}, { env })).toBe(2)
+            expect(JSON.parse(capture.output().stdout)).toMatchObject({ diagnostics: [{
+                code: 'RUNTIME_UNAVAILABLE', target: `docker context ${context}`,
+                message: expect.stringContaining('tcp://synthetic.invalid:2376'),
+            }] })
+        }
         expect(factory).not.toHaveBeenCalled()
     })
 
@@ -133,12 +138,13 @@ describe('lifecycle CLI composition', () => {
     })
 
     it('opens the production reset session only from the interactive branch', async () => {
+        const host = await activeContextHost('unix:///synthetic/docker.sock')
         const capture = captureIo(async () => true)
         const status = await runCli(
             ['reset', '--config', '/synthetic/missing-cockpit.toml', '--interactive'],
             capture.io,
             {},
-            { env: { DOCKER_CONTEXT: 'synthetic' } },
+            { env: { ...host.env, DOCKER_CONTEXT: 'synthetic' } },
         )
 
         expect(status).toBe(2)

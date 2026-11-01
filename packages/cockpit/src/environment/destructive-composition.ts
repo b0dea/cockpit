@@ -1,7 +1,8 @@
 import { resolve } from 'node:path'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
+import { selectLocalDockerDaemon } from './docker-daemon.js'
 import { cockpitCommand } from '../fix-catalogue.js'
-import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load.js'
 import {
     issueDestructiveRunContext,
@@ -201,86 +202,25 @@ async function selectionAuthority(
     return admitDockerSelection(steps, evidence)
 }
 
-const DOCKER_CONTEXT_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
-
 export type DestructiveDaemonSelection =
     | Readonly<{ kind: 'complete'; dockerContext: string }>
     // Adapters whose load reports why no daemon was selected.
     | Readonly<{ kind: 'refusal'; adapters: DestructiveAdapters }>
 
-async function readContext(execute: Executor, executable: Awaited<ReturnType<typeof resolveDockerExecutable>> & { readonly state: 'available' },
-    env: Readonly<Record<string, string>>, timeoutMs: number, id: string, args: readonly string[]): Promise<string | undefined> {
-    const step: ExecutionStep = Object.freeze({
-        id,
-        argv: Object.freeze([executable.value.canonicalPath, ...args]) as readonly [string, ...string[]],
-        argv0: executable.value.invocationPath,
-        // The context lookup reads only Docker's client configuration, and the config's own
-        // directory may not exist yet; a missing config is reported by load, not here.
-        cwd: '/', env, timeoutMs,
-        stdoutLimitBytes: 1_024, stderrLimitBytes: 4_096,
-        paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ purpose: id }),
-        expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({
-            path: executable.value.canonicalPath, sha256: executable.value.sha256,
-            maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true as const,
-            executionMode: executable.value.executionMode,
-        })]),
-        filesystemChecks: Object.freeze([]),
-        compensation: Object.freeze([]),
-    })
-    const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (outcome?.kind !== 'complete' || outcome.stderr.byteLength !== 0) return undefined
-    const text = outcome.stdout.toString('utf8')
-    // Docker's final line ending is framing; trimming more would rewrite the endpoint's identity.
-    return Buffer.from(text, 'utf8').equals(outcome.stdout) ? text.replace(/\r?\n$/, '') : undefined
-}
-
 /**
- * Names the one Docker context down and reset delete from. An explicit DOCKER_CONTEXT, or a local
- * DOCKER_HOST through Docker's `default` context, is taken as given. With neither, the active
- * context is read once, here, so every discovery and deletion step of the command addresses that
- * context even if `docker context use` changes it mid-run; reading it per step could list one
- * daemon and delete from another. Deletion never reaches a remote daemon, whichever way it was named.
+ * Names the one Docker context down and reset delete from, fixed before any adapter exists so
+ * every discovery and deletion step of the command addresses that context.
  */
 export async function selectDestructiveDaemon(
     env: Readonly<Record<string, string | undefined>>,
     timeoutMs: number,
     execute: Executor,
 ): Promise<DestructiveDaemonSelection> {
-    const daemonRefusal = (code: string, message: string, target: string): DestructiveDaemonSelection => Object.freeze({
-        kind: 'refusal' as const,
-        adapters: refusingAdapters(execute, Object.freeze({ severity: 'error' as const, code, message, target })),
-    })
-    if (env.DOCKER_HOST !== undefined) {
-        return admitLocalDockerEndpoint(env.DOCKER_HOST) === undefined
-            ? daemonRefusal('CLI_USAGE_INVALID',
-                'down and reset require a local Docker endpoint so deletion cannot target a remote daemon; fix: unset DOCKER_HOST to use the active Docker context, or set DOCKER_HOST to a local Unix socket',
-                'DOCKER_HOST')
-            : Object.freeze({ kind: 'complete' as const, dockerContext: 'default' })
-    }
-    if (env.DOCKER_CONTEXT !== undefined) return Object.freeze({ kind: 'complete' as const, dockerContext: env.DOCKER_CONTEXT })
-    const executable = await resolveDockerExecutable(env)
-    if (executable.state !== 'available') return daemonRefusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, executable.reason, 'docker')
-    const stepEnv = executionEnvironment(env)
-    const context = await readContext(execute, executable, stepEnv, timeoutMs, 'runtime:destructive:context', ['context', 'show'])
-    if (context === undefined || !DOCKER_CONTEXT_NAME.test(context)) {
-        return daemonRefusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            'down and reset could not read the active Docker context from `docker context show`; fix: run `docker context show` to see why, or set DOCKER_CONTEXT to the context to delete from',
-            'docker context')
-    }
-    const target = `docker context ${context}`
-    const endpoint = await readContext(execute, executable, stepEnv, timeoutMs, 'runtime:destructive:endpoint',
-        ['context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}'])
-    if (endpoint === undefined) {
-        return daemonRefusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            `down and reset could not read the endpoint of the active Docker context ${context}; fix: run \`docker context inspect ${context}\` to see why`, target)
-    }
-    if (admitLocalDockerEndpoint(endpoint) === undefined) {
-        return daemonRefusal(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            `the active Docker context ${context} points at ${endpoint}, not a local Unix socket, and down and reset never delete from a remote daemon; fix: select a local context with \`docker context use <name>\`, then retry`, target)
-    }
-    return Object.freeze({ kind: 'complete' as const, dockerContext: context })
+    const daemon = await selectLocalDockerDaemon(env, timeoutMs, execute,
+        { command: 'down and reset', localOnly: 'down and reset never delete from a remote daemon' })
+    return daemon.kind === 'refusal'
+        ? Object.freeze({ kind: 'refusal' as const, adapters: refusingAdapters(execute, daemon.diagnostic) })
+        : Object.freeze({ kind: 'complete' as const, dockerContext: daemon.dockerContext })
 }
 
 async function inspectDiscovery(
