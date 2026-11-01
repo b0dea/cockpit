@@ -132,10 +132,10 @@ jobs:
       # what this matrix exists to find.
       fail-fast: false
       matrix:
-        # Three lists, chosen by event, because macOS minutes cost ten times Linux minutes while
-        # the repository is private, and the full suite is long: about 15 minutes at four workers
-        # on a developer machine, longer on a hosted runner with fewer cores. The step timeouts
-        # below leave room for that.
+        # Three lists, chosen by event, because macOS runners have a lower concurrency limit than
+        # Linux runners (and cost ten times as much in a private repository), and the full suite
+        # is long: about 15 minutes at four workers on a developer machine, longer on a hosted
+        # runner with fewer cores. The step timeouts below leave room for that.
         # - pull request: the full suite on Linux at the supported floor, plus macOS running
         #   only the tests adjacent to the change (`changed`).
         # - weekly: the full suite at the upper edge of the supported Node range.
@@ -272,7 +272,7 @@ jobs:
           elif printf '%s' "$LABELS" | grep -Fq '"no-changeset"'; then
             echo 'no-changeset label present: skipping the changeset requirement'
           else
-            echo "::error::This pull request changes packages/cockpit/src or packages/cockpit/surfaces without a changeset. Run 'npx changeset' and commit the new .changeset/*.md file, or add the 'no-changeset' label if no consumer-visible behavior changed."
+            echo "::error::This pull request changes packages/cockpit/src or packages/cockpit/surfaces without a changeset. Run 'npx changeset' and commit the new .changeset/*.md file, or ask a maintainer to add the 'no-changeset' label if no consumer-visible behavior changed."
             exit 1
           fi
 
@@ -297,8 +297,8 @@ jobs:
           node-version: '22'
       - run: bash .github/scripts/check-version-pr-scope.sh HEAD^1 HEAD
 
-  # Needs a public repository (or GitHub Advanced Security), so it skips itself while the
-  # repository is private instead of failing every dependency change.
+  # Needs a public repository (or GitHub Advanced Security), so it skips itself in a private
+  # repository instead of failing every dependency change there.
   dependency-review:
     name: dependency review
     needs: changes

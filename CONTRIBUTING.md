@@ -48,7 +48,7 @@ The build and typecheck scripts invoke the native TypeScript compiler directly. 
 and architecture checks use the separate compiler API compatibility package listed in
 [package.json](package.json), because the native compiler does not expose that API. Use the
 repository scripts rather than a bare `tsc`: the compatibility package also installs a compiler
-executable. Compiler work runs on one thread to leave capacity for other sessions.
+executable. Compiler work runs on one thread to leave capacity for other processes on the machine.
 
 ## Development loop
 
@@ -147,8 +147,8 @@ something that has gone wrong before.
 - **Every bug fix lands with a test that fails without it.** Say how you saw it fail.
 - **Paste real output, not a summary**, and separate what you ran from what you believe.
 - Documentation for a behaviour change goes in the same pull request.
-- Add a changeset (`npx changeset`) when the change is visible to someone using cockpit; see
-  [.changeset/README.md](.changeset/README.md).
+- Add a changeset (`npx changeset`) when the change is visible to someone using cockpit; otherwise
+  ask a maintainer to add the `no-changeset` label. See [.changeset/README.md](.changeset/README.md).
 - Open an **issue first** for anything that changes the <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml` schema, the generated
   file layout, the overlay contract, or a CLI command or flag. Agree the shape before the diff.
 

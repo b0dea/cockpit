@@ -24,7 +24,8 @@ does not apply, with the reason.
 - [ ] Fixtures are synthetic and exercise the same shape as the real thing.
 - [ ] Documentation for a behaviour change is in this pull request, not a follow-up.
 - [ ] A changeset (`npx changeset`) describes any change visible to someone using cockpit, or
-      the pull request carries the `no-changeset` label.
+      nothing a consumer sees changed and you have asked a maintainer to add the `no-changeset`
+      label.
 - [ ] Nothing here reads as a control while binding nothing: no configuration that parses and
       does nothing, no CI step that runs nothing, no claim of enforcement without the thing
       that enforces it.
