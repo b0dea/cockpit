@@ -256,13 +256,13 @@ else if (args.includes('exec')) {
             const runtime = createRuntimeAdapter({ runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
                 composeVersion: '2.39.2', executable, operation: 'validate', cwd: root, stackId: stack,
                 coldStartLimitMillis: 60_000, expectedMountSources, ports: [effectivePort], projectName: 'synthetic', env: {}, timeoutMs: 5_000,
-                labels: { stackId: stack, configSha256: synced.result.application.sourceSha256, batchId },
+                labels: { stackId: stack, configSha256: synced.result.application.runtimeSha256, batchId },
                 composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: composePath, source: compose, sha256: composeSha256 }] },
                 { generatedComposeAuthority: synced.result.application.generatedComposeAuthority!, portLeaseProjection })
             if (runtime.kind !== 'preview') throw new Error(`generated health runtime was refused: ${JSON.stringify(runtime)}`)
             expect(labels['dev.b0dea.cockpit.stack-id']).toBe(stack)
             const planned = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack,
-                configSha256: synced.result.application.sourceSha256, batchId,
+                configSha256: synced.result.application.runtimeSha256, batchId,
                 observationWindow: { startedAt: new Date(Date.now() - 1_000).toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() } })
             if (planned.kind !== 'planned') throw new Error(planned.reason)
             const topology = admitRuntimeTopology({ plan: planned, outcome: await executeProbe(planned.step) })
