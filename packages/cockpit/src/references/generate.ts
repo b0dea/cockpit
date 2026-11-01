@@ -119,8 +119,17 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
         const skills = await inspectSkillSet({ sources: captured.skillSources, collection: captured.collection, terminal: captured.terminal })
         if (skills.kind !== 'complete') return refusal(skills.diagnostics.map(row => row.message).join('; '), 'surfaces/skills')
         const cells: CapabilityCell[] = []
-        for (const row of restrictions.targets) cells.push(Object.freeze({ target: row.target, capability: 'guard-firing', skill: 'n/a',
-            state: row.capability, evidence: row.evidenceStatus, provenance: row.provenance, measuredOn: row.measuredOn, measuredVersion: row.measuredVersion }))
+        for (const row of restrictions.targets) {
+            const guard = harnessFact(row.target).guard
+            // A dated run of the real tool outranks the adapter's record, but never revives an adapter
+            // that no longer emits a hook.
+            const firing = row.capability !== 'unavailable' && 'firing' in guard ? guard.firing : undefined
+            cells.push(Object.freeze(firing
+                ? { target: row.target, capability: 'guard-firing', skill: 'n/a', state: firing.state, evidence: firing.evidence,
+                    provenance: firing.provenance, measuredOn: firing.measuredOn, measuredVersion: firing.measuredVersion }
+                : { target: row.target, capability: 'guard-firing', skill: 'n/a', state: row.capability, evidence: row.evidenceStatus,
+                    provenance: row.provenance, measuredOn: row.measuredOn, measuredVersion: row.measuredVersion }))
+        }
         // Without an adapter no guard is generated, so nothing was probed; the registry's date only
         // records when that was decided.
         for (const target of SURFACE_TARGETS) {

@@ -22,6 +22,17 @@ const noGuardAdapter = Object.freeze({
     measuredOn: '2026-10-28' as const,
     reason: 'no guard adapter is checked in, so cockpit generates no guard hook',
 })
+// A dated run of the real tool against the generated guard. It replaces the adapter's own record in
+// the capability matrix only while that adapter stays native; the adapter keeps recording the
+// transport shape it was written against.
+const codexFiring = Object.freeze({
+    state: 'enforced' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-01' as const, measuredVersion: '0.165.0',
+    provenance: 'only after a person trusts the hook: untrusted, Codex skipped it and git push ran; trusted (forced with --dangerously-bypass-hook-trust), it refused the push. Trust is per machine and cockpit doctor warns until it is given',
+})
+const openCodeFiring = Object.freeze({
+    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01' as const, measuredVersion: '1.19.4',
+    provenance: 'the plugin refused git push and a native read of a secrets file while an unprotected read stayed allowed; before read was routed through the guard, the same read returned the file',
+})
 const completeRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks', 'permissions'] as const)
 const nonPermissionRulesyncFeatures = Object.freeze(['rules', 'mcp', 'subagents', 'skills', 'hooks'] as const)
 
@@ -36,13 +47,13 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.agents/skills', mcp: '.codex/config.toml', permissions: Object.freeze(['.codex/config.toml']) }),
-        guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: codexFiring }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
         target: 'opencode', type: 'agent' as const, displayName: 'OpenCode', rulesyncTarget: 'opencodev1',
         rulesyncFeatures: nonPermissionRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'AGENTS.md', skills: '.opencode/skills', mcp: 'opencode.jsonc', permissions: Object.freeze(['opencode.jsonc']) }),
-        guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: openCodeFiring }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
         target: 'cursor', type: 'agent' as const, displayName: 'Cursor', rulesyncTarget: 'cursor',
