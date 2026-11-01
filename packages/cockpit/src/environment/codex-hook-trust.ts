@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { parse as parseToml } from 'smol-toml'
+import { parse as parseToml, TomlError } from 'smol-toml'
 
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
@@ -149,7 +149,12 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
             if (recorded !== undefined && !record(recorded)) return unverified(`hooks.state in ${codexConfig} is not a table`)
             states = recorded ?? {}
         }
-    } catch (error) { return unverified(`reading ${codexConfig} failed: ${(error as Error).message}`) }
+    } catch (error) {
+        // smol-toml quotes the lines around a syntax error, and Codex's configuration can hold
+        // credentials, so only the position is reported.
+        if (error instanceof TomlError) return unverified(`${codexConfig} is not valid TOML at line ${error.line}, column ${error.column}`)
+        return unverified(`reading ${codexConfig} failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'}`)
+    }
     // Codex keys trust by the hooks.json path as the session directory spells it, which may or may
     // not resolve symbolic links, so trust recorded under either spelling counts.
     let canonical = root

@@ -1872,8 +1872,8 @@ const OPENCODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json'
  * worktree, and its `*` matches across `/`, so each protected path is denied both as written and
  * below any prefix: that covers a cockpit root nested in a larger repository and siblings reached
  * through `../`. Only `*` and `?` are pattern characters there; either one in a path becomes `?`,
- * which over-matches a deny and so stays safe. The plugin's guard routing refuses the same reads;
- * these rules hold even when the plugin cannot load.
+ * which over-matches a deny and so stays safe. The plugin's guard routing refuses the same reads,
+ * case-folded; these rules still deny the declared spellings when the plugin cannot load.
  */
 function openCodeReadDenials(
     siblings: readonly { slug: string; path: string }[],

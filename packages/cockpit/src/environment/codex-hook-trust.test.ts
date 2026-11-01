@@ -69,8 +69,12 @@ describe('Codex hook trust', () => {
     it('says unverified, never trusted, when the hook or the Codex configuration cannot be read', async () => {
         const unverified = [expect.objectContaining({ code: 'CODEX_HOOK_UNTRUSTED', message: expect.stringContaining('could not verify') })]
         const malformed = await estate()
-        await writeFile(join(malformed.home, 'config.toml'), '[hooks.state\n')
-        expect(await malformed.inspect()).toEqual(unverified)
+        // A parse error quotes the lines around it, which may hold a credential, so none is reported.
+        await writeFile(join(malformed.home, 'config.toml'), 'API_TOKEN = "sentinel-credential"\n[hooks.state\n')
+        const reported = await malformed.inspect()
+        expect(reported).toEqual(unverified)
+        expect(JSON.stringify(reported)).not.toContain('sentinel-credential')
+        expect(reported[0]!.message).toContain('at line 2')
         expect(await (await estate('{')).inspect()).toEqual(unverified)
         expect(await (await estate({ hooks: { PreToolUse: [{ hooks: [{ type: 'prompt' }] }] } })).inspect()).toEqual(unverified)
         const homeless = await estate()
