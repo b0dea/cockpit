@@ -301,7 +301,7 @@ describe('lifecycle application contracts', () => {
         }, {
             up: async () => {
                 events.push('up')
-                return { kind: 'complete', status: 0, diagnostics: [], result: { stackId: stack, change: 'started', entrypoints: [] } }
+                return { kind: 'complete', status: 0, diagnostics: [], result: { stackId: stack, change: 'started', ports: {}, entrypoints: [] } }
             },
             resolveExecutable: async () => ({ state: 'available', value: {
                 canonicalPath: '/synthetic/bin/synthetic-agent', invocationPath: '/synthetic/bin/synthetic-agent',
@@ -340,7 +340,7 @@ describe('lifecycle application contracts', () => {
             configPath: '/synthetic/cockpit.toml', argv: ['sh', '-c', script], cwd: tmpdir(), env,
         }, {
             up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
-                stackId: stack, change: 'started', entrypoints: [],
+                stackId: stack, change: 'started', ports: {}, entrypoints: [],
             } }),
             resolveExecutable: (name) => resolveExecutable(name, env),
             executeForeground: executeForegroundProcess,
@@ -352,6 +352,43 @@ describe('lifecycle application contracts', () => {
             result: { child, sleep: { change: 'stopped' } } })
     })
 
+    it('hands the supervised command the leased ports and entrypoints, over values its caller set', async () => {
+        const stack = `stack:${'9'.repeat(64)}` as StackId
+        const children: Readonly<Record<string, string>>[] = []
+        const outcome = await runSession({
+            configPath: '/synthetic/cockpit.toml', argv: ['synthetic-agent'], cwd: '/synthetic',
+            env: { PATH: '/synthetic/bin', SHOP_HOST_PORT: '80', COCKPIT_ENTRYPOINT_APPLICATION: 'http://stale.localhost/' },
+        }, {
+            up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
+                stackId: stack, change: 'started', ports: { SHOP_HOST_PORT: 8180, ADMIN_HOST_PORT: 8181 },
+                entrypoints: [
+                    { name: 'shop-host-port', kind: 'entrypoint', port: 'SHOP_HOST_PORT', value: 'http://127.0.0.1:8180/' },
+                    { name: 'admin-host-port', kind: 'entrypoint', port: 'ADMIN_HOST_PORT', value: 'http://127.0.0.1:8181/' },
+                    { name: 'application', kind: 'origin', port: 'ADMIN_HOST_PORT', value: 'https://app.sample.localhost:8181/' },
+                ],
+            } }),
+            resolveExecutable: async () => ({ state: 'available', value: {
+                canonicalPath: '/synthetic/bin/synthetic-agent', invocationPath: '/synthetic/bin/synthetic-agent',
+                sha256: '9'.repeat(64), executionMode: 'verified-path',
+            } }),
+            executeForeground: async input => {
+                children.push(input.env)
+                return { kind: 'complete', exitCode: 0, signal: null, terminationConfirmed: true }
+            },
+            sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { stackId: stack, change: 'stopped' } }),
+        })
+
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
+        expect(children).toEqual([{
+            PATH: '/synthetic/bin',
+            SHOP_HOST_PORT: '8180',
+            ADMIN_HOST_PORT: '8181',
+            COCKPIT_ENTRYPOINT_SHOP_HOST_PORT: 'http://127.0.0.1:8180/',
+            COCKPIT_ENTRYPOINT_ADMIN_HOST_PORT: 'http://127.0.0.1:8181/',
+            COCKPIT_ENTRYPOINT_APPLICATION: 'https://app.sample.localhost:8181/',
+        }])
+    })
+
     it('runs a relative command path from its working directory and refuses one that escapes it or is missing', async () => {
         const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-session-relative-')))
         try {
@@ -361,7 +398,7 @@ describe('lifecycle application contracts', () => {
             const stack = `stack:${'8'.repeat(64)}` as StackId
             const env = { PATH: '/usr/bin:/bin' }
             const up = vi.fn(async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: {
-                stackId: stack, change: 'started' as const, entrypoints: [] } }))
+                stackId: stack, change: 'started' as const, ports: {}, entrypoints: [] } }))
             const sleep = vi.fn(async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [],
                 result: { stackId: stack, change: 'stopped' as const } }))
             const session = (argv0: string) => runSession({ configPath: '/synthetic/cockpit.toml', argv: [argv0], cwd: join(root, 'work'), env },
@@ -385,7 +422,7 @@ describe('lifecycle application contracts', () => {
             configPath: '/synthetic/cockpit.toml', argv: ['synthetic-agent'], cwd: '/synthetic', env: { PATH: '/synthetic/bin' },
         }, {
             up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
-                stackId: stack, change: 'started', entrypoints: [],
+                stackId: stack, change: 'started', ports: {}, entrypoints: [],
             } }),
             resolveExecutable: async () => ({ state: 'available', value: {
                 canonicalPath: '/synthetic/bin/synthetic-agent', invocationPath: '/synthetic/bin/synthetic-agent',
@@ -408,7 +445,7 @@ describe('lifecycle application contracts', () => {
             configPath: '/synthetic/cockpit.toml', argv: ['synthetic-agent'], cwd: '/synthetic', env: { PATH: '/synthetic/bin' },
         }, {
             up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
-                stackId: stack, change: 'started', entrypoints: [],
+                stackId: stack, change: 'started', ports: {}, entrypoints: [],
             } }),
             resolveExecutable: async () => ({ state: 'available', value: {
                 canonicalPath: '/synthetic/bin/synthetic-agent', invocationPath: '/synthetic/bin/synthetic-agent',
@@ -799,7 +836,7 @@ describe('lifecycle application contracts', () => {
         })
 
         expect(result).toMatchObject(expectedKind === 'complete'
-            ? { kind: 'complete', result: { change: 'started', entrypoints,
+            ? { kind: 'complete', result: { change: 'started', ports: { APP_PORT: 4100 }, entrypoints,
                 coldStart: { measuredMillis, limitMillis, headroomMillis: limitMillis - measuredMillis } } }
             : { kind: 'refusal', diagnostics: [{ code: 'MACHINE_COLD_START_EXCEEDED', target: 'api' }] })
         expect(executed).toEqual(['start', 'status', 'identity', 'inspect'])

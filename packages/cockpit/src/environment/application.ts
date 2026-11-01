@@ -925,6 +925,8 @@ export interface DestructiveRunContextInput {
 export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
     stackId: StackId
     change: 'started' | 'resumed' | 'unchanged'
+    /** Each `[ports.bases]` name with its leased port, the values the stack's Compose files read. */
+    ports: PortLeaseProjection['lease']['ports']
     entrypoints: PortLeaseProjection['entrypoints']
     coldStart?: Readonly<{ measuredMillis: number; limitMillis: number; headroomMillis: number }>
 }>> & { readonly progress?: GeneratedProgress }
@@ -2847,7 +2849,7 @@ async function executeUpRound(
             if (revalidated.kind === 'refusal') return { kind: 'complete', result: revalidated.result }
             return { kind: 'complete' as const, result: {
                 kind: 'complete', status: 0, diagnostics: [],
-                result: { stackId: context.stackId, change: 'unchanged', entrypoints: ports.projection.entrypoints },
+                result: { stackId: context.stackId, change: 'unchanged', ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints },
             } }
         }
 
@@ -2949,7 +2951,7 @@ async function executeUpRound(
             if (generatedCompletion) return { kind: 'complete' as const, result: generatedCompletion }
             return { kind: 'complete' as const, result: {
                 kind: 'complete', status: 0, diagnostics: planned.plan.diagnostics,
-                result: { stackId: context.stackId, change: 'unchanged', entrypoints: ports.projection.entrypoints },
+                result: { stackId: context.stackId, change: 'unchanged', ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints },
                 ...(generatedBringupProgress.has(context) ? { progress: generatedBringupProgress.get(context) } : {}),
             } satisfies UpCommandResult }
         }
@@ -3034,6 +3036,7 @@ async function executeUpRound(
             result: {
                 stackId: context.stackId,
                 change: planned.mode === 'start' ? 'started' : 'resumed',
+                ports: ports.projection.lease.ports,
                 entrypoints: ports.projection.entrypoints,
                 coldStart,
             },
@@ -3249,6 +3252,22 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
     ), ...(generatedBringupProgress.has(context) ? { progress: generatedBringupProgress.get(context) } : {}) }
 }
 
+// The wrapped agent reaches the stack the way its Compose files do: each `[ports.bases]` name holds
+// the leased port, and each entrypoint `up --json` reports is under COCKPIT_ENTRYPOINT_<NAME>.
+// Without them a command such as `curl "http://127.0.0.1:$API_HOST_PORT/"` falls back to port 80.
+// The lease is the truth for this stack, so it replaces a value the caller's shell already set.
+function sessionChildEnvironment(
+    env: Readonly<Record<string, string>>,
+    up: Extract<UpCommandResult, { kind: 'complete' }>['result'],
+): Readonly<Record<string, string>> {
+    return Object.freeze({
+        ...env,
+        ...Object.fromEntries(Object.entries(up.ports).map(([name, port]) => [name, String(port)])),
+        ...Object.fromEntries(up.entrypoints.map(({ name, value }) =>
+            [`COCKPIT_ENTRYPOINT_${name.toUpperCase().replaceAll('-', '_')}`, value])),
+    })
+}
+
 export async function runSession(
     input: SessionCommandInput,
     adapters: SessionCommandAdapters,
@@ -3286,7 +3305,7 @@ export async function runSession(
         executable: executable.value,
         argv: Object.freeze(input.argv.slice(1)),
         cwd: input.cwd,
-        env: input.env,
+        env: sessionChildEnvironment(input.env, up.result),
     }, { ...(adapters.signal ? { signal: adapters.signal } : {}) })
     if (!child.terminationConfirmed) return lifecycleRefusal(
         ENVIRONMENT_CODES.EXECUTION_TERMINATION_UNCONFIRMED,

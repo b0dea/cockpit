@@ -142,16 +142,18 @@ lease still occupies its port numbers. A retained lease keeps its original famil
 conflicting reservation. Other users and separate state roots, including different Linux
 `XDG_STATE_HOME` settings, are not coordinated.
 
-To change a running stack's ports, end every `cockpit session` or have each
-[holder](concepts.md#holder) run `cockpit sleep --config cockpit.toml --json` with the current
-declaration. Wait for the last holder to report `change: "stopped"`; `"retained"` means another
-holder remains. Then edit `[ports.bases]`, have a person run `cockpit sync --config cockpit.toml`
-in a terminal, and run `cockpit up --config cockpit.toml --json`. Use the newly returned
-entrypoints. Release the stack before editing, because the active lease is tied to the original
-port declaration. Until that `sync`, the agent guard holds every tool call, because the
-configuration no longer matches what it was generated for. Restoring `cockpit.toml` to the exact
-bytes `sync` last saw, for example with `git restore cockpit.toml`, clears the hold without a
-`sync`: the guard compares the file's content, not which file holds it.
+To change a stack's ports, edit `[ports.bases]`, have a person run
+`cockpit sync --config cockpit.toml` in a terminal, then run `cockpit down --config cockpit.toml`
+and `cockpit up --config cockpit.toml --json`, and use the newly returned ports and entrypoints. The
+edit can be made while the stack runs: `down` finds the stack and its port lease by the stack, not
+by the edited declaration, and removes the containers still publishing the old ports. Until that `down`, `up` refuses with `LIFECYCLE_PROGRESS_INVALID`
+rather than replace the running stack. `sleep` and `down` read the Compose files `sync` publishes, so
+they refuse until the `sync`. `down` also refuses with `CLAIM_CO_TENANT` while another holder, such
+as a running `cockpit session`, still holds the stack: end that session or run `cockpit sleep` from
+it first. Until that `sync`, the agent guard holds every tool call, because the configuration no
+longer matches what it was generated for. Restoring `cockpit.toml` to the exact bytes `sync` last
+saw, for example with `git restore cockpit.toml`, clears the hold without a `sync`: the guard
+compares the file's content, not which file holds it.
 
 When it first allocates ports, cockpit checks that nothing listens on each port on IPv4 loopback.
 This check does not reserve the port and does not see a listener bound only to IPv6, and another
@@ -278,6 +280,15 @@ session identity. A second `cockpit session` wrapper is refused. Once cleanup co
 exits with the command's own status, or 128 plus the signal number when a signal ended it, and
 names that signal, so a script can tell how its command finished. It exits 2 when cleanup fails
 and 130 when you cancel it.
+
+The command `session` runs gets the stack's addresses in its environment, so an agent started under
+it can reach the stack without rerunning `up --json`. Each `[ports.bases]` name holds the port
+leased for this stack, the same value the Compose files read, and each entrypoint `up --json`
+returns is under `COCKPIT_ENTRYPOINT_` followed by its name in upper case with hyphens as
+underscores: `API_HOST_PORT=4210` and `COCKPIT_ENTRYPOINT_API_HOST_PORT=http://127.0.0.1:4210/`, or
+`COCKPIT_ENTRYPOINT_APPLICATION` for a declared `application` entrypoint. The lease is the truth for
+the stack, so these replace a value of the same name already set in the calling shell. They are
+read once when the command starts and do not follow a later `down` and `up`.
 
 Each `sleep` and `down` stops containers with a stop grace: Docker sends SIGTERM and waits ten
 seconds before killing. A service whose PID 1 ignores SIGTERM, as `node` does unless the program

@@ -337,10 +337,11 @@ Review and commit the generated files, then start the stack and run the gate:
 `up` starts or resumes the stack. `preflight` is the gate: a successful `up` is not proof the
 environment is healthy, `preflight` is. It also fails with `GIT_STATE_UNHEALTHY` until the
 generated files are committed, and again on any later uncommitted change in the cockpit
-repository ([Preflight observations](environment.md#preflight-observations)). In `--json` mode a successful `up` reports the stack
-identifier, whether it `started`, `resumed` or was `unchanged`, the entrypoints with their leased
-ports, and, for services it started, the cold-start time against your configured limit. (This
-result shape is read from the source; the synthetic example has no runnable services.)
+repository ([Preflight observations](environment.md#preflight-observations)). In `--json` mode a
+successful `up` reports the stack identifier, whether it `started`, `resumed` or was `unchanged`,
+the leased port for each `[ports.bases]` name, the entrypoints built from them, and, for services
+it started, the cold-start time against your configured limit. (This result shape is read from the
+source; the synthetic example has no runnable services.)
 
 ## Add or remove a repository
 
@@ -448,9 +449,11 @@ releases it when the agent exits:
 ./node_modules/.bin/cockpit session --config ./cockpit.toml -- codex
 ```
 
-Put the agent command after `--`, with its own arguments. Once the command's process group has
-stopped, `session` calls `sleep`, which shuts the stack down only if no other checkout still
-holds it. Interrupting `session` stops only the process group it started. A second
+Put the agent command after `--`, with its own arguments. The command starts with each
+`[ports.bases]` name set to the stack's leased port and each entrypoint under `COCKPIT_ENTRYPOINT_`,
+as [Environment lifecycle](environment.md#lifecycle-and-ownership) describes. Once the command's
+process group has stopped, `session` calls `sleep`, which shuts the stack down only if no other
+checkout still holds it. Interrupting `session` stops only the process group it started. A second
 `cockpit session` inside the first is refused.
 Use plain `up` only when the stack should outlive one command.
 
