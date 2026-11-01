@@ -52,6 +52,22 @@ async function waitForPath(path: string, timeoutMs = 10_000): Promise<void> {
     }
 }
 
+// A fixture publishes a pid by rename because writeFileSync creates the file before it writes it: a
+// reader polling for the path can read it empty, and Number('') is 0, which kill() takes as the
+// caller's own process group — so a liveness probe passes and a cleanup SIGKILL hits the test runner.
+const publishPid = (path: string, pid = 'process.pid'): string => [
+    `require('node:fs').writeFileSync(${JSON.stringify(`${path}.pending`)}, String(${pid}))`,
+    `require('node:fs').renameSync(${JSON.stringify(`${path}.pending`)}, ${JSON.stringify(path)})`,
+].join(';')
+
+async function waitForPid(path: string): Promise<number> {
+    await waitForPath(path)
+    const raw = readFileSync(path, 'utf8')
+    const pid = Number(raw)
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`${path} holds ${JSON.stringify(raw)}, not a process id`)
+    return pid
+}
+
 async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() <= deadline) {
@@ -221,8 +237,7 @@ describe('mechanical environment executor', () => {
         }
         const effect = join(directory, 'effect')
         const step = nodeStep('fenced-orphan', [
-            "const { writeFileSync } = require('node:fs')",
-            `writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
+            publishPid(effect),
             "process.on('SIGTERM', () => {})",
             KEEP_ALIVE,
         ].join(';'), { timeoutMs: 30_000, executionFence: fence })
@@ -230,8 +245,7 @@ describe('mechanical environment executor', () => {
         const source = `import { executeProbe } from ${JSON.stringify(executeModule)}; await executeProbe(JSON.parse(process.argv[1]))`
         const parent = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', source, JSON.stringify(step)], { stdio: 'ignore' })
         try {
-            await waitForPath(effect)
-            const actionPid = Number(readFileSync(effect, 'utf8'))
+            const actionPid = await waitForPid(effect)
             expect(() => process.kill(actionPid, 0)).not.toThrow()
             parent.kill('SIGKILL')
             await new Promise<void>((resolve, reject) => { parent.once('exit', () => resolve()); parent.once('error', reject) })
@@ -264,7 +278,7 @@ describe('mechanical environment executor', () => {
         const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
         const effect = join(directory, 'effect')
         const outcome = await executeProbe(nodeStep('fenced-timeout', [
-            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
+            publishPid(effect),
             "process.on('SIGTERM', () => {})",
             KEEP_ALIVE,
         ].join(';'), {
@@ -313,10 +327,9 @@ describe('mechanical environment executor', () => {
         const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
         const script = [
             "const { spawn } = require('node:child_process')",
-            "const { writeFileSync } = require('node:fs')",
-            `writeFileSync(${JSON.stringify(action)}, String(process.pid))`,
+            publishPid(action),
             `const child = spawn(process.execPath, ['-e', ${JSON.stringify(`process.on('SIGTERM', () => {}); ${KEEP_ALIVE}`)}], { stdio: 'ignore' })`,
-            `writeFileSync(${JSON.stringify(descendant)}, String(child.pid))`,
+            publishPid(descendant, 'child.pid'),
             "process.on('SIGTERM', () => {})",
             KEEP_ALIVE,
         ].join(';')
@@ -324,10 +337,8 @@ describe('mechanical environment executor', () => {
         let actionPid: number | undefined
         let descendantPid: number | undefined
         try {
-            await waitForPath(action)
-            await waitForPath(descendant)
-            actionPid = Number(readFileSync(action, 'utf8'))
-            descendantPid = Number(readFileSync(descendant, 'utf8'))
+            actionPid = await waitForPid(action)
+            descendantPid = await waitForPid(descendant)
             const marker = JSON.parse(readFileSync(fence.markerPath, 'utf8')) as { supervisorPid: number }
             process.kill(marker.supervisorPid, 'SIGKILL')
             await execution
@@ -354,14 +365,13 @@ describe('mechanical environment executor', () => {
         const effect = join(directory, 'effect')
         const fence = { attemptId, markerPath: join(directory, 'executor.json'), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
         const execution = executeProbe(nodeStep('fenced-pipe-loss-refusal', [
-            `require('node:fs').writeFileSync(${JSON.stringify(effect)}, String(process.pid))`,
+            publishPid(effect),
             "process.on('SIGTERM', () => {})",
             KEEP_ALIVE,
         ].join(';'), { timeoutMs: 30_000, executionFence: fence }))
         let actionPid: number | undefined
         try {
-            await waitForPath(effect)
-            actionPid = Number(readFileSync(effect, 'utf8'))
+            actionPid = await waitForPid(effect)
             const marker = JSON.parse(readFileSync(fence.markerPath, 'utf8')) as { supervisorPid: number }
             chmodSync(directory, 0o500)
             process.kill(marker.supervisorPid, 'SIGKILL')
