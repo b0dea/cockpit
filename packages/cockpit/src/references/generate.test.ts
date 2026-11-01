@@ -229,10 +229,10 @@ describe('reference generation', () => {
         expect(matrix).not.toMatch(/inspectSkillSet|operator parity|unmeasured/)
         expect(matrix).not.toMatch(/\| (?:cursor|grokcli) \| (?:instruction-loading|skill-parity) \| [^|]+ \| unavailable \|/)
         // Guard firing is enforced only where a dated run of the real tool showed a refusal; Codex's
-        // depends on a person trusting the hook, and Claude Code's has no paired control yet.
+        // depends on a person trusting the hook.
         expect(matrix).toMatch(/\| codexcli \| guard-firing \| n\/a \| enforced \| human_needed \| only after a person trusts the hook: [^|]+ \| 2026-11-01 \| 0\.165\.0 \|/)
         expect(matrix).toMatch(/\| opencode \| guard-firing \| n\/a \| enforced \| not_applicable \| [^|]+ \| 2026-11-01 \| 1\.19\.4 \|/)
-        expect(matrix).toMatch(/\| claudecode \| guard-firing \| n\/a \| instructed \| pending_evidence \|/)
+        expect(matrix).toMatch(/\| claudecode \| guard-firing \| n\/a \| enforced \| not_applicable \| [^|]+ \| 2026-11-01 \| 2\.1\.316 \|/)
         expect(matrix).not.toMatch(/\| (?:instruction-loading|skill-parity) \| [^|]+ \| enforced \|/)
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')

@@ -25,6 +25,10 @@ const noGuardAdapter = Object.freeze({
 // A dated run of the real tool against the generated guard. It replaces the adapter's own record in
 // the capability matrix only while that adapter stays native; the adapter keeps recording the
 // transport shape it was written against.
+const claudeFiring = Object.freeze({
+    state: 'enforced' as const, evidence: 'not_applicable' as const, measuredOn: '2026-11-01' as const, measuredVersion: '2.1.316',
+    provenance: 'with the exact push pre-allowed by permissions, the hook refused git push to a protected branch and the remote stayed empty while git status ran; the same checkout without the hook pushed',
+})
 const codexFiring = Object.freeze({
     state: 'enforced' as const, evidence: 'human_needed' as const, measuredOn: '2026-11-01' as const, measuredVersion: '0.165.0',
     provenance: 'only after a person trusts the hook: untrusted, Codex skipped it and git push ran; trusted (forced with --dangerously-bypass-hook-trust), it refused the push. Trust is per machine and cockpit doctor warns until it is given',
@@ -41,7 +45,7 @@ export const HARNESS_REGISTRY = Object.freeze([
         target: 'claudecode', type: 'agent' as const, displayName: 'Claude Code', rulesyncTarget: 'claudecode',
         rulesyncFeatures: completeRulesyncFeatures,
         outputs: Object.freeze({ instruction: 'CLAUDE.md', skills: '.claude/skills', mcp: '.mcp.json', permissions: Object.freeze(['.claude/settings.json']) }),
-        guard: Object.freeze({ capability: 'instructed' as const }), native: pendingNative('2026-09-26'),
+        guard: Object.freeze({ capability: 'instructed' as const, firing: claudeFiring }), native: pendingNative('2026-09-26'),
     }),
     Object.freeze({
         target: 'codexcli', type: 'agent' as const, displayName: 'Codex', rulesyncTarget: 'codexcli',
