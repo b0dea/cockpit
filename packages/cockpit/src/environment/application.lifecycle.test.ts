@@ -352,6 +352,32 @@ describe('lifecycle application contracts', () => {
             result: { child, sleep: { change: 'stopped' } } })
     })
 
+    it('runs a relative command path from its working directory and refuses one that escapes it or is missing', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-session-relative-')))
+        try {
+            mkdirSync(join(root, 'work', 'node_modules', '.bin'), { recursive: true })
+            writeFileSync(join(root, 'work', 'node_modules', '.bin', 'tool'), '#!/bin/sh\nexit 3\n', { mode: 0o755 })
+            writeFileSync(join(root, 'outside'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+            const stack = `stack:${'8'.repeat(64)}` as StackId
+            const env = { PATH: '/usr/bin:/bin' }
+            const up = vi.fn(async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: {
+                stackId: stack, change: 'started' as const, entrypoints: [] } }))
+            const sleep = vi.fn(async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [],
+                result: { stackId: stack, change: 'stopped' as const } }))
+            const session = (argv0: string) => runSession({ configPath: '/synthetic/cockpit.toml', argv: [argv0], cwd: join(root, 'work'), env },
+                { up, sleep, resolveExecutable: (name) => resolveExecutable(name, env), executeForeground: executeForegroundProcess })
+
+            expect(await session('./node_modules/.bin/tool')).toMatchObject({ kind: 'complete', status: 3, result: { child: { exitCode: 3 } } })
+            expect(up).toHaveBeenCalledOnce()
+            for (const [argv0, reason] of [['../outside', /outside the session working directory/], ['./node_modules/.bin/missing', /unavailable/]] as const) {
+                expect(await session(argv0)).toMatchObject({ kind: 'refusal', diagnostics: [{ message: expect.stringMatching(reason), target: argv0 }] })
+            }
+            expect(up).toHaveBeenCalledOnce()
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+        }
+    })
+
     it('preserves lifecycle ownership when the owned session process group cannot be confirmed stopped', async () => {
         const sleep = vi.fn()
         const stack = `stack:${'3'.repeat(64)}` as StackId

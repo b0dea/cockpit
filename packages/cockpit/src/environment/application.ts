@@ -3232,7 +3232,17 @@ export async function runSession(
         diagnostics: Object.freeze([{ severity: 'error' as const, code: ENVIRONMENT_CODES.EXECUTION_ABORTED,
             message: 'the supervised session was cancelled before environment bring-up', target: input.argv[0] }]),
     })
-    const executable = await adapters.resolveExecutable(input.argv[0], input.env)
+    // A relative command path such as `./node_modules/.bin/tool` names a file under the directory the
+    // session runs in, so it resolves there; one that climbs out of it is refused rather than guessed.
+    const argv0 = input.argv[0]
+    const relativePath = !isAbsolute(argv0) && argv0.includes('/')
+    const commandPath = relativePath ? resolve(input.cwd, argv0) : argv0
+    if (relativePath && !commandPath.startsWith(`${input.cwd}${sep}`)) return lifecycleRefusal(
+        ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+        `the command path resolves to ${commandPath}, outside the session working directory ${input.cwd}; give an absolute path or a PATH entry name`,
+        argv0,
+    )
+    const executable = await adapters.resolveExecutable(commandPath, input.env)
     if (executable.state === 'unavailable') return lifecycleRefusal(
         ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         executable.reason,
