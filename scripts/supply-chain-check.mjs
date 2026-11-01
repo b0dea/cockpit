@@ -49,6 +49,7 @@ const OPERATOR_GAPS = Object.freeze([
 ])
 const MINIMUM_COOLDOWN_DAYS = 7
 const STATIC_PACKAGE_FILES = Object.freeze([
+    'CHANGELOG.md',
     'LICENSE',
     'README.md',
     'bin/cockpit.mjs',
@@ -116,7 +117,8 @@ function productionTypeScriptSources(root) {
             if (entry.isSymbolicLink()) throw new Error(`[PACKAGE_SOURCE_INVALID] source entry is linked: ${join(prefix, entry.name)}`)
             const relativePath = join(prefix, entry.name)
             if (entry.isDirectory()) {
-                if (relativePath !== 'test-support') visit(resolve(directory, entry.name), relativePath)
+                // Mirrors the exclusions in packages/cockpit/tsconfig.build.json.
+                if (relativePath !== 'test-support' && entry.name !== 'fixtures') visit(resolve(directory, entry.name), relativePath)
             } else if (entry.isFile() && relativePath.endsWith('.ts') && !relativePath.endsWith('.test.ts')) {
                 files.push(relativePath)
             }

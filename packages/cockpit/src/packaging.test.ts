@@ -236,10 +236,11 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         expect(packedFiles().length).toBeGreaterThan(3)
     })
 
-    it('ships no test file', () => {
+    it('ships no test file or test fixture', () => {
         // Tests name what the code must not do, which means they quote the material the
         // code exists to keep out. They are the last thing that should leave the repo.
-        expect(packedFiles().filter((f) => f.includes('.test.'))).toEqual([])
+        // Fixtures under src/ compile like source, so the build must exclude them too.
+        expect(packedFiles().filter((f) => f.includes('.test.') || f.includes('/fixtures/'))).toEqual([])
     })
 
     it('ships exactly the inventory derived from production sources and explicit static assets', () => {
@@ -601,6 +602,8 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
 
     it('ships package guidance and exact source and support links', () => {
         expect(packedFiles()).toContain('README.md')
+        // npm stopped packing CHANGELOG.md implicitly; upgraders read it from the installed package.
+        expect(packedFiles()).toContain('CHANGELOG.md')
         expect(readFileSync(join(packedPackageRoot(), 'README.md'), 'utf8'))
             .toContain('https://github.com/b0dea/cockpit#readme')
         const manifest = JSON.parse(read('packages/cockpit/package.json'))

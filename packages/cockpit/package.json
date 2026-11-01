@@ -4,7 +4,17 @@
   "cockpitSourceRevision": "development",
   "private": true,
   "type": "module",
-  "description": "One cockpit for your business's repos - boots the product your agent is editing, on any harness.",
+  "description": "Boots a multi-repository product from live checkouts and generates agent instructions, skills, guards and permissions for Claude Code, Codex CLI and OpenCode.",
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "opencode",
+    "docker-compose",
+    "developer-environment",
+    "multi-repo",
+    "cli"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -39,8 +49,13 @@
     "libexec",
     "surfaces",
     "cockpit.schema.json",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md"
+  ],
+  "os": [
+    "darwin",
+    "linux"
   ],
   "engines": {
     "node": "^22.22.0 || ^24.0.0 || ^26.0.0"
