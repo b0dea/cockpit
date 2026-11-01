@@ -33,7 +33,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/tutorial.md', [operator, operator, operator, operator, runtime]],
     ['docs/work-and-browser.md', [operator]],
     ['packages/cockpit/README.md', [packageInstall]],
-    ['examples/synthetic/README.md', [packageInstall, operator, executed, operator, executed, runtime]],
+    ['examples/synthetic/README.md', [packageInstall, operator, executed, operator, executed]],
     ['examples/minimal/README.md', [executed, runtime]],
     ['examples/docs-only/README.md', [executed]],
     ['examples/compose-first/README.md', [executed, runtime]],
@@ -159,8 +159,6 @@ describe('the public synthetic cockpit', () => {
             ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
             ['git', '-C'], ['git', '-C'],
-            ['./node_modules/.bin/cockpit', 'preflight'], ['./node_modules/.bin/cockpit', 'up'],
-            ['./node_modules/.bin/cockpit', 'down'],
         ])
         for (const argv of executable) {
             if (argv[1] === 'setup') {

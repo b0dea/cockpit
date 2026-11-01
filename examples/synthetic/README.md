@@ -4,7 +4,8 @@ This example uses two synthetic working repositories and one local bare remote.
 
 <!-- cockpit:verified version=0.0.0 -->
 
-From this directory, [install the exact project-local cockpit package](../../docs/getting-started.md#install-cockpit):
+From this directory, [install the exact project-local cockpit package](../../docs/getting-started.md#install-cockpit).
+Until the first release, install from source: see [Install from source](../../docs/getting-started.md#install-from-source).
 
 ```sh human-only:package-install
 npm init --yes
@@ -53,11 +54,5 @@ tracked template. `check` verifies that the managed outputs remain current:
 ./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
-Starting or stopping a product runtime is intentionally outside this empty example. These
-commands are human-only because a consumer must first supply real service declarations:
-
-```sh human-only:runtime
-./node_modules/.bin/cockpit preflight --config cockpit.toml --json
-./node_modules/.bin/cockpit up --config cockpit.toml --json
-./node_modules/.bin/cockpit down --config cockpit.toml --json
-```
+This example declares no service code, so it stops at `check`. To bring a stack up, use
+[examples/minimal](../minimal/README.md), which declares one service.

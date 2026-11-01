@@ -157,8 +157,12 @@ chain is permitted only when every segment is. Redirecting output to `/dev/null`
 | `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `logs --service <service>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
 | `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
 | `npx --no cockpit up --config cockpit.toml`, and likewise `sleep` and `down` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
+| `npx --no cockpit runtime measure --config cockpit.toml --image <local-image>` | allowed | The probe runs a disposable stack under its own project, removes it, and records the result only in this machine's git-ignored state; `cockpit.toml` never changes. |
 | `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
-| `npx --no cockpit sync --config cockpit.toml`, `reset`, `runtime measure`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or the guard's own files, or delete data. |
+| `npx --no cockpit sync --config cockpit.toml`, `reset`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or the guard's own files, or delete data. |
+
+A prefix such as `env -u DOCKER_CONTEXT` makes any of these a wrapped invocation, which prompts;
+run the command without it from a shell where `DOCKER_CONTEXT` is not set.
 
 These count from the cockpit root with `--config` naming the configured `cockpit.toml`; `check`,
 `doctor` and help also count from any directory. Each spelling counts only where the guard proves it

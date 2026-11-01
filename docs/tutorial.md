@@ -18,7 +18,9 @@ The project-local package is installed below only after entering the copied demo
 ## Create the demo directory
 
 Copy the example outside the cockpit checkout so its generated files and Git repositories do not
-land in this repository:
+land in this repository. Until the first release, install from source: see
+[Install from source](getting-started.md#install-from-source), and install that tarball in place of
+`@b0dea/cockpit` below.
 
 ```sh
 rm -rf "${TMPDIR:-/tmp}/cockpit-demo" && cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo"
@@ -26,9 +28,6 @@ cd "${TMPDIR:-/tmp}/cockpit-demo"
 npm init --yes
 npm install --save-dev --save-exact @b0dea/cockpit
 ```
-
-cockpit is not on npm yet. Until its first release, install the tarball from
-[Install from source](getting-started.md#install-from-source) instead of `@b0dea/cockpit`.
 
 Now run the repository bootstrap block of
 [examples/synthetic/README.md](../examples/synthetic/README.md) in this directory. It creates the

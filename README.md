@@ -132,11 +132,12 @@ section.
 - **Preview before every write.** `sync --dry-run` and `reset` show the exact changes; deleting
   anything stale or resetting data needs an interactive confirmation of that exact preview.
 - **One guard policy.** When the agent tool runs cockpit's guard hook, it denies pushes to
-  protected branches, edits to the environment files declared in `cockpit.toml` and to `.secrets`,
-  and commands that reach declared hosted databases or vendor hosts, and it fails closed on input
-  it cannot read. The hook is installed for Claude Code, Codex CLI and OpenCode. A dated run
-  confirmed that OpenCode fires it, and Codex only after a person trusts the hook on that machine
-  (`cockpit doctor` warns until then); Claude Code's is unconfirmed. See
+  protected branches, reads and edits of the environment files declared in `cockpit.toml` and of
+  `.secrets`, and commands that reach declared hosted databases or vendor hosts, and it fails
+  closed on input it cannot read. The hook is installed for Claude Code, Codex CLI and OpenCode.
+  Dated runs confirmed that Claude Code and OpenCode fire it, and Codex only after a person trusts
+  the hook on that machine (`cockpit doctor` warns until then). Claude Code's own Read tool never
+  reaches the hook; generated `Read` deny rules cover it instead. See
   [Safety and autonomy](docs/safety-and-autonomy.md).
 - **Work orders with evaluator guidance (experimental).** Acceptance criteria and declared
   verification commands are generated with an evaluator surface that instructs a separate grading
@@ -191,13 +192,11 @@ repository carries only synthetic fixtures. What is true today:
 - **macOS and Linux.** CI runs both; supported Node versions are in
   [Getting started](docs/getting-started.md#install-cockpit). On native Windows every command
   stops at startup with `CLI_PLATFORM_UNSUPPORTED`.
-- **Runtime commands need a local Docker-compatible runtime that cockpit has measured.** `up`,
-  `session`, `preflight`, `down` and `reset` require Docker Compose and a successful
-  `cockpit runtime measure`.
-  Generation and surfaces-only `setup` and `check` work without a container runtime; validating
-  declared Compose files requires Docker Compose. See the
-  [prerequisites](docs/getting-started.md#install-cockpit) and the
-  [runtime identity and measurement table](docs/environment.md#measure-the-container-runtime).
+- **Runtime commands need a local Docker-compatible runtime that cockpit has measured.** The
+  commands that run the stack need Docker Compose and a successful `cockpit runtime measure`;
+  [Measure the container runtime](docs/environment.md#measure-the-container-runtime) lists which
+  refuse without one and which only report it. Generation and surfaces-only `setup` and `check`
+  work without a container runtime; validating declared Compose files requires Docker Compose.
 - **Generating a file does not prove the tool uses it.** The
   [capability matrix](docs/capability-matrix.md) records each feature as *enforced*, *instructed*,
   *generated* or *unavailable* for its target. Generated files and passing tests alone do not prove

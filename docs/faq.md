@@ -9,7 +9,7 @@ to the page with the detail.
 
 A CLI that boots a multi-repository product from your local checkouts and gives Claude Code,
 Codex CLI and OpenCode the same generated instructions, skills, guards and permissions for it,
-with an independent evaluator for finished work.
+with an independent evaluator (experimental) for finished work.
 
 ## When should I not use cockpit?
 
@@ -38,12 +38,21 @@ receives the cockpit-setup skill first. Custom harnesses can be declared under `
 
 ## Are the guards actually enforced?
 
-Not confirmed yet. cockpit's guard script denies the operation whenever the tool runs it, and
-fails closed on input it cannot read. cockpit installs the guard hook only for Claude Code, Codex
-CLI and OpenCode, and whether each tool actually fires the hook is still unconfirmed. For Cursor
-and Grok Build cockpit writes files but installs no guard, and nobody has confirmed those tools
-load them. The [capability matrix](capability-matrix.md) shows each cell and the date it was last
-measured; `cockpit selftest` checks supported tools installed on your machine.
+It depends on the tool. cockpit's guard script denies the operation whenever a tool runs it, and
+fails closed on input it cannot read; what differs is whether the tool runs it. The
+[capability matrix](capability-matrix.md) records each tool's state and when it was last probed:
+
+- Claude Code: `enforced`. Its hook refused a push to a protected branch that ran once the hook
+  was removed. Its own Read tool never reaches the hook; generated `Read` deny rules cover
+  secrets there.
+- OpenCode: `enforced`. Its plugin refused a protected push and a native read of a secrets file.
+- Codex CLI: `enforced` only after a person trusts the hook on that machine. Codex silently skips
+  an untrusted hook, and `cockpit doctor` and `cockpit check` report `CODEX_HOOK_UNTRUSTED` until it
+  is trusted; see [Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
+- Cursor and Grok Build: no guard. cockpit writes their files but installs no hook, and nobody has
+  confirmed those tools load them.
+
+`cockpit selftest` checks the supported tools installed on your machine.
 
 ## Does cockpit change my product code?
 

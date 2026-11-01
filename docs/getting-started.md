@@ -10,10 +10,10 @@ work first on a throwaway example, follow the [tutorial](tutorial.md).
 
 You need a Node.js release listed in the
 [`engines` field in the package manifest](../packages/cockpit/package.json), Git, and macOS or
-Linux. The commands that run the stack (`up`, `session`, `preflight`, `down`, `reset`) also need Docker Compose and a
-local runtime that has passed `cockpit runtime measure`. The
-[runtime identity table and measurement procedure](environment.md#measure-the-container-runtime)
-are the one record of supported runtimes. Configuration, generation and surfaces-only `setup` and
+Linux. The commands that run the stack also need Docker Compose and a local runtime that has
+passed `cockpit runtime measure`.
+[Measure the container runtime](environment.md#measure-the-container-runtime) lists those commands
+and is the one record of supported runtimes. Configuration, generation and surfaces-only `setup` and
 `check` work without a container runtime; validating declared Compose files requires Docker Compose.
 
 For an existing product, the cockpit lives in a dedicated directory beside the product
@@ -26,7 +26,8 @@ the product sees nothing to run there and builds a cockpit that does not know th
 empty directory or a new product, follow
 [Bootstrap without a project manifest](#bootstrap-without-a-project-manifest) instead; it explains
 why the first install is temporary. Once the cockpit directory has its own `package.json`, install
-cockpit in it:
+cockpit in it. Until the first release, install from source: see
+[Install from source](#install-from-source).
 
 ```sh
 npm install --save-dev --save-exact @b0dea/cockpit
@@ -83,7 +84,9 @@ Compose filename as a product repository before it decides whether that source i
 installation-only manifest and a dependency-free library can look identical, so this conservative
 root choice prevents `init` from writing into a possible product checkout.
 
-From the intended cockpit directory, install a temporary, explicit executable and preview:
+From the intended cockpit directory, install a temporary, explicit executable and preview. Until
+the first release, install from source: replace `@b0dea/cockpit` in the install command with
+`"$COCKPIT_PACKAGE_DIR"/*.tgz` from [Install from source](#install-from-source).
 
 ```sh
 COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
@@ -91,9 +94,7 @@ npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/coc
 "$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target codexcli --json
 ```
 
-For an unpublished source package, replace `@b0dea/cockpit` in that install command with
-`"$COCKPIT_PACKAGE_DIR"/*.tgz` from [Install from source](#install-from-source). Use that exact
-temporary executable for the remaining `init` commands below, including preview and defaults
+Use that exact temporary executable for the remaining `init` commands below, including preview and defaults
 acceptance. It is an installed package, not a command runner that downloads a missing binary.
 
 After `init` writes the cockpit's package manifest, install its dependency in the cockpit directory
@@ -112,7 +113,8 @@ files or classify a library as tooling just to change discovery.
 
 ### Bootstrap an existing product
 
-From inside the product repository, install the same temporary executable and preview:
+From inside the product repository, install the same temporary executable and preview (until the
+first release, from source as above):
 
 ```sh
 COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"

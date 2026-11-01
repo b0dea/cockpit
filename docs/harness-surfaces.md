@@ -90,8 +90,11 @@ each harness actually runs them on a tool call is recorded per harness in the
 - Codex 0.165.0 is `enforced` only after a person trusts the hook on that machine (evidence
   `human_needed`). Codex silently skips a project hook nobody has trusted, so the same push ran
   until the hook was trusted. See [Trust the Codex hook](#trust-the-codex-hook).
-- Claude Code refused the same push and read in that run, but without a paired broken control, so its
-  cell stays `instructed`.
+- Claude Code 2.1.316 is `enforced`: its generated hook refused `git push` to a protected branch
+  while `git status` stayed allowed, and in an identical copy without the hook the same push ran.
+  Claude's own Read, Grep and Glob tools never reach the hook; the generated `Read` deny rules in
+  `.claude/settings.json` keep them off secrets (see
+  [Safety and autonomy](safety-and-autonomy.md#cockpit-commands-an-agent-can-run)).
 
 ### Trust the Codex hook
 

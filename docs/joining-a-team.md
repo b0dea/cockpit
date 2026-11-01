@@ -35,6 +35,10 @@ writes its machine identity under `.cockpit/local/`, and refreshes generated fil
 different directory does not rewrite them. The Docker label values that depend on the checkout path enter
 Compose only when a command runs; they are not committed.
 
+If you use Codex, trust its guard hook once on this machine: Codex silently skips a project hook
+nobody has trusted, and `check` reports `CODEX_HOOK_UNTRUSTED` until you do. Follow
+[Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook).
+
 Runtime measurements are not committed either: each machine measures its own container runtime
 once before its first `up`, as described in
 [Measure the container runtime](environment.md#measure-the-container-runtime).

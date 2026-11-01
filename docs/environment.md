@@ -380,10 +380,12 @@ addresses a different project and stack, so run `down` before renaming, as
 
 ## Measure the container runtime
 
-`up` and `down` run only on a container runtime that has been measured on this machine, and
-`preflight` and `doctor` report a runtime that has not. A measurement is a fact about one machine,
-not something the team declares: teammates run different runtimes and versions, so it is never
-written to `cockpit.toml`. cockpit identifies the runtime from one `docker info` reading of
+`up`, `session`, `down` and `reset` refuse with `RUNTIME_UNMEASURED` unless the container runtime
+Docker selects has been measured on this machine. `sleep` and `logs` act on a running stack and
+fail while its runtime no longer matches a measurement, for example after an engine upgrade.
+`preflight` and `doctor` only report an unmeasured runtime, as an unavailable check. A measurement
+is a fact about one machine, not something the team declares: teammates run different runtimes
+and versions, so it is never written to `cockpit.toml`. cockpit identifies the runtime from one `docker info` reading of
 `OperatingSystem`, `Name` and `OSType`:
 
 | Runtime identity | Recognised by | Provenance |
