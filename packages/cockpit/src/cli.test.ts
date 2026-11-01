@@ -293,6 +293,15 @@ describe('CLI help', () => {
         expect(stable.stdout).not.toContain('Status: experimental.')
     })
 
+    it('tells `down --help` and `reset --help` readers to name the Docker daemon they delete from', async () => {
+        // Both refuse without DOCKER_CONTEXT, so help that leaves it out describes a command that fails as typed.
+        for (const command of ['down', 'reset']) {
+            const help = await runInProcess([command, '--help'])
+            expect(help.status).toBe(0)
+            expect(help.stdout).toContain('DOCKER_CONTEXT')
+        }
+    })
+
     it('lists every sibling flag in `sibling --help` and routes add and remove to their handlers', async () => {
         const help = await runInProcess(['sibling', '--help'])
         expect(help.status).toBe(0)
@@ -405,8 +414,8 @@ describe('CLI help', () => {
             '  up                     Start or resume the declared environment\n' +
             '  sleep                  Release this checkout and stop the stack if no other holder remains\n' +
             '  session                Keep the environment available for one command, then release it\n' +
-            '  down                   Stop and remove the stack\n' +
-            '  reset                  Preview a reset, or approve that exact preview interactively\n' +
+            '  down                   Stop and remove the stack (run with DOCKER_CONTEXT set)\n' +
+            '  reset                  Preview a reset, or approve that exact preview interactively (run with DOCKER_CONTEXT set)\n' +
             '  runtime                Measure the local container runtime (runtime measure) and record the result\n' +
             '  sibling                Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  preflight              Check that the environment is healthy and ready for work\n' +

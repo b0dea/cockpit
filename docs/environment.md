@@ -286,8 +286,8 @@ confirming those removals, which lets the next `up` use a new generated identity
 retires a stack that `sleep` or an ended `session` left stopped: with no holder left, it claims the
 stack for this checkout without starting anything and removes it, so you do not have to run `up`
 first. While another session still holds the stack, `down` refuses with `CLAIM_CO_TENANT`; end
-that `cockpit session` or run `cockpit sleep` from it, then retry. Run `cockpit down --config cockpit.toml` before changing generated
-declarations, then `cockpit sync --config cockpit.toml` and `cockpit up --config cockpit.toml`.
+that `cockpit session` or run `cockpit sleep` from it, then retry. Run `DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml` before changing generated
+declarations, then `npx --no cockpit sync --config cockpit.toml` and `npx --no cockpit up --config cockpit.toml`.
 `sleep` and `reset` keep the previous generated identity so the stack can resume.
 
 `reset` first shows an exact preview of the generated volumes and declared generated host paths
