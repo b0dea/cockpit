@@ -45,6 +45,8 @@ import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 const scenario = process.env.COCKPIT_RUNNER_SCENARIO
+// Published by rename: the test polls for this path, and a file seen between creation and write reads as pid 0.
+const publish = (path, value) => { writeFileSync(path + '.pending', value); renameSync(path + '.pending', path) }
 const report = process.argv.find(argument => argument.startsWith('--outputFile.json='))?.split('=', 2)[1]
 let invocationTemp
 if (process.env.COCKPIT_RUNNER_TEMP_PATH) {
@@ -96,7 +98,7 @@ if (scenario === 'hang') {
   process.on('SIGTERM', () => {})
   const child = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});${KEEP_ALIVE}'], { detached: true, stdio: 'ignore' })
   child.unref()
-  writeFileSync(process.env.COCKPIT_RUNNER_PID_PATH, String(child.pid))
+  publish(process.env.COCKPIT_RUNNER_PID_PATH, String(child.pid))
   ${KEEP_ALIVE}
 } else if (scenario === 'late-descendant') {
   const gate = process.env.COCKPIT_RUNNER_GATE_PATH
@@ -110,10 +112,10 @@ if (scenario === 'hang') {
 } else if (scenario === 'signal') {
   process.on('SIGTERM', () => {})
   process.on('SIGINT', () => {
-    writeFileSync(process.env.COCKPIT_RUNNER_PID_PATH, 'SIGINT:' + process.pid)
+    publish(process.env.COCKPIT_RUNNER_PID_PATH, 'SIGINT:' + process.pid)
     process.exit(0)
   })
-  writeFileSync(process.env.COCKPIT_RUNNER_PID_PATH, String(process.pid))
+  publish(process.env.COCKPIT_RUNNER_PID_PATH, String(process.pid))
   ${KEEP_ALIVE}
 } else {
   if (scenario === 'replace-temp') {
@@ -168,6 +170,13 @@ async function waitForFile(path: string, child: ReturnType<typeof spawn>, timeou
         if (Date.now() >= deadline) throw new Error(`child did not write ${path} within ${timeoutMs}ms`)
         await new Promise(resolve => setTimeout(resolve, 10))
     }
+}
+
+function readPid(path: string): number {
+    const raw = readFileSync(path, 'utf8')
+    const pid = Number(raw)
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`${path} holds ${JSON.stringify(raw)}, not a process id`)
+    return pid
 }
 
 async function cleanupOwned(child: ReturnType<typeof spawn>, closed: ReturnType<typeof closeOf>, ownedPid?: number) {
@@ -359,7 +368,7 @@ process.exitCode = await runTestsCli([], {
             cwd: root, encoding: 'utf8', env: process.env, timeout: 20_000,
         })
 
-        const descendant = Number(readFileSync(pidPath, 'utf8'))
+        const descendant = readPid(pidPath)
         let temp: InvocationTemp | undefined
         try {
             temp = invocationTemp(tempPath)
@@ -400,7 +409,7 @@ process.exitCode = await runTestsCli(${JSON.stringify(selected)}, {
         const deadline = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
             cwd: root, encoding: 'utf8', env: process.env, timeout: 20_000,
         })
-        const descendant = Number(readFileSync(process.env.COCKPIT_RUNNER_PID_PATH, 'utf8'))
+        const descendant = readPid(process.env.COCKPIT_RUNNER_PID_PATH)
         try {
             expect(deadline.status, deadline.stderr).toBe(2)
             expect(deadline.stderr).toContain('selected test run exceeded its 13 minute 45 second execution deadline')
@@ -421,14 +430,15 @@ process.exitCode = await runTestsCli(${JSON.stringify(selected)}, {
         const lateChildPath = join(root, 'late-descendant.cjs')
         writeFileSync(lateChildPath, [
             "const { spawn } = require('node:child_process')",
-            "const { writeFileSync } = require('node:fs')",
+            "const { renameSync, writeFileSync } = require('node:fs')",
+            "const publish = (path, value) => { writeFileSync(path + '.pending', value); renameSync(path + '.pending', path) }",
             "process.on('SIGTERM', () => {",
             "  const fork = spawn(process.execPath, ['-e', 'process.on(\\\"SIGTERM\\\",()=>{});" + KEEP_ALIVE + "'], { stdio: 'ignore' })",
             '  fork.unref()',
-            '  writeFileSync(process.env.COCKPIT_RUNNER_FORK_PID_PATH, String(fork.pid))',
+            '  publish(process.env.COCKPIT_RUNNER_FORK_PID_PATH, String(fork.pid))',
             '  process.exit(0)',
             '})',
-            'writeFileSync(process.env.COCKPIT_RUNNER_PID_PATH, String(process.pid))',
+            'publish(process.env.COCKPIT_RUNNER_PID_PATH, String(process.pid))',
             'setInterval(() => {}, 1000)',
             '',
         ].join('\n'))
@@ -465,15 +475,15 @@ process.exitCode = await runTestsCli([], {
         try {
             expect(result.error).toBeUndefined()
             expect(result.status, result.stderr).toBe(0)
-            descendant = Number(readFileSync(pidPath, 'utf8'))
+            descendant = readPid(pidPath)
             temp = invocationTemp(tempPath)
             expect(alive(descendant)).toBe(false)
-            fork = Number(readFileSync(forkPidPath, 'utf8'))
+            fork = readPid(forkPidPath)
             expect(alive(fork)).toBe(false)
             expectOwnedTempRemoved(temp)
         } finally {
-            if (descendant === undefined && existsSync(pidPath)) descendant = Number(readFileSync(pidPath, 'utf8'))
-            if (fork === undefined && existsSync(forkPidPath)) fork = Number(readFileSync(forkPidPath, 'utf8'))
+            if (descendant === undefined && existsSync(pidPath)) descendant = readPid(pidPath)
+            if (fork === undefined && existsSync(forkPidPath)) fork = readPid(forkPidPath)
             if (temp === undefined && existsSync(tempPath)) temp = invocationTemp(tempPath)
             if (descendant && alive(descendant)) process.kill(descendant, 'SIGKILL')
             if (fork && alive(fork)) process.kill(fork, 'SIGKILL')
@@ -557,7 +567,7 @@ process.exitCode = status
             cwd: root, encoding: 'utf8', env: process.env, timeout: 4_000,
         })
 
-        const descendant = Number(readFileSync(pidPath, 'utf8'))
+        const descendant = readPid(pidPath)
         const temp = invocationTemp(tempPath)
         try {
             expect(result.error).toBeUndefined()
@@ -620,7 +630,7 @@ process.exitCode = status
         let temp: InvocationTemp | undefined
         try {
             await waitForFile(pidPath, child)
-            descendant = Number(readFileSync(pidPath, 'utf8'))
+            descendant = readPid(pidPath)
             temp = invocationTemp(tempPath)
             const started = Date.now()
             const outcome = await within(closed, 8_000, 'runner did not stop after process observation failed')
@@ -663,7 +673,7 @@ process.exitCode = status
             cwd: root, encoding: 'utf8', env: process.env, timeout: 20_000,
         })
 
-        const descendant = Number(readFileSync(pidPath, 'utf8'))
+        const descendant = readPid(pidPath)
         const temp = invocationTemp(tempPath)
         try {
             expect(result.error).toBeUndefined()
@@ -746,7 +756,7 @@ process.exitCode = await runTestsCli([], {
         let temp: InvocationTemp | undefined
         try {
             await waitForFile(pidPath, child)
-            descendant = Number(readFileSync(pidPath, 'utf8'))
+            descendant = readPid(pidPath)
             temp = invocationTemp(tempPath)
             child.kill('SIGTERM')
             await new Promise(resolve => setTimeout(resolve, 20))
@@ -793,7 +803,7 @@ process.exitCode = await runTestsCli([], {
         let temp: InvocationTemp | undefined
         try {
             await waitForFile(pidPath, child)
-            runnerPid = Number(readFileSync(pidPath, 'utf8'))
+            runnerPid = readPid(pidPath)
             temp = invocationTemp(tempPath)
             child.kill('SIGINT')
             const outcome = await within(closed, 5_000, 'runner did not exit after SIGINT')
