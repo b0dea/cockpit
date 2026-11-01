@@ -316,6 +316,17 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it('names every other cockpit state folder it cannot read in one doctor warning with one cleanup command', async () => {
+        const cockpits = '/synthetic/state/v1/cockpits'
+        const skipped = [{ path: `${cockpits}/one`, reason: 'format is not supported' }, { path: `${cockpits}/two`, reason: 'format is not supported' }]
+        const result = await runDoctor({ configPath: '/synthetic/cockpit.toml' }, { load: async () => undefined, execute: vi.fn(),
+            readUnreadableState: async () => skipped })
+        expect(result.diagnostics.filter(row => row.code === 'STATE_RECORD_MALFORMED')).toEqual([{ severity: 'warning',
+            code: 'STATE_RECORD_MALFORMED', target: cockpits,
+            message: `2 state folders of other cockpits under ${cockpits} cannot be read by this cockpit version (format is not supported), so their claims and port leases were ignored`,
+            fix: `if no cockpit still uses them, stop any stack they started (docker compose ls lists them), then delete them: rm -rf '${cockpits}/one' '${cockpits}/two'` }])
+    })
+
     it.each(['authenticated', 'bootstrap', 'missing', 'throwing'] as const)(
         'starts doctor health loading during surface inspection and awaits both for a %s source',
         async (sourceKind) => {

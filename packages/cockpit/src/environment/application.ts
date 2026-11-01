@@ -58,6 +58,7 @@ import {
     type StateRecord,
     type StateResult,
     type StateNamespace,
+    type SkippedStateNamespace,
 } from './state.js'
 import {
     decodeLifecycleRecord,
@@ -3095,24 +3096,33 @@ function shellQuote(value: string): string {
     return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-// Port leases are machine-wide, so up and sleep read every cockpit's state. Another cockpit's
-// namespace this version cannot read is skipped there rather than refused, and named here once so a
-// person can remove it; this cockpit's own unreadable state still refuses in the command itself.
+// Port leases are machine-wide, so up reads every cockpit's state. Another cockpit's namespace this
+// version cannot read is skipped there rather than refused; this cockpit's own unreadable state still
+// refuses in the command itself. The skipped ones are named in a single warning with one cleanup
+// command, and only by up (session runs it) and doctor: a warning per directory on every command
+// buried each command's own result under lines about cockpits the person was not working on.
+function unreadableStateWarning(skipped: readonly SkippedStateNamespace[]): EnvironmentDiagnostic | undefined {
+    if (skipped.length === 0) return undefined
+    const directory = dirname(skipped[0]!.path)
+    const reasons = [...new Set(skipped.map(({ reason }) => reason))].join('; ')
+    const count = skipped.length === 1 ? '1 state folder of another cockpit' : `${skipped.length} state folders of other cockpits`
+    return Object.freeze({
+        severity: 'warning',
+        code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+        message: `${count} under ${directory} cannot be read by this cockpit version (${reasons}), so their claims and port leases were ignored`,
+        target: directory,
+        fix: `if no cockpit still uses them, stop any stack they started (docker compose ls lists them), then delete them: rm -rf ${skipped.map(({ path }) => shellQuote(path)).join(' ')}`,
+    })
+}
+
 async function withSkippedStateWarnings<Result extends Readonly<{ diagnostics: readonly EnvironmentDiagnostic[] }>>(
     namespace: StateNamespace,
     run: () => Promise<Result>,
 ): Promise<Result> {
     const inventory = await readRootPortInventory(namespace)
     const result = await run()
-    if (inventory.kind !== 'complete' || inventory.skipped.length === 0) return result
-    const warnings = inventory.skipped.map(({ path, reason }): EnvironmentDiagnostic => Object.freeze({
-        severity: 'warning',
-        code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-        message: `another cockpit's state cannot be read by this cockpit version (${reason}), so its claims and port leases were ignored`,
-        target: path,
-        fix: `if no cockpit still uses this state, stop any stack it started (docker compose ls lists them), then delete it: rm -rf ${shellQuote(path)}`,
-    }))
-    return { ...result, diagnostics: uniqueDiagnostics([...warnings, ...result.diagnostics]) }
+    const warning = inventory.kind === 'complete' ? unreadableStateWarning(inventory.skipped) : undefined
+    return warning ? { ...result, diagnostics: uniqueDiagnostics([warning, ...result.diagnostics]) } : result
 }
 
 export async function runUp(
@@ -3325,7 +3335,7 @@ export async function runSleep(
         )
     }
     const context = loaded.result
-    return withSkippedStateWarnings(context.namespace, () => sleepWithContext(context, adapters))
+    return sleepWithContext(context, adapters)
 }
 
 async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCommandAdapters): Promise<SleepCommandResult> {
@@ -4274,6 +4284,8 @@ export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly discoverReleaseFreshness?: () => Promise<ReleaseFreshness>
     /** Warnings when an agent tool on this machine would skip the generated guard hook. */
     readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
+    /** Other cockpits' state namespaces this version skipped; read after load has selected this cockpit's state root. */
+    readonly readUnreadableState?: () => Promise<readonly SkippedStateNamespace[]>
 }
 
 interface DoctorFreshness {
@@ -4889,7 +4901,8 @@ export async function runDoctor(
     const config = loadCockpitConfig(input.configPath)
     const [outcome, guardHosts, hookTrust] = await Promise.all([doctorHealth(input, adapters, config), doctorGuardHostDiagnostics(config),
         adapters.inspectHookTrust?.() ?? Object.freeze([])])
-    const warnings = [...guardHosts, ...hookTrust]
+    const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
+    const warnings = [...guardHosts, ...hookTrust, ...unreadableState ? [unreadableState] : []]
     return warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
 }

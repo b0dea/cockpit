@@ -10,7 +10,7 @@ import {
     type PreflightCommandAdapters,
     withLifecycleConfiguration,
 } from './application.js'
-import { decodeCoordinationRecord, observeClaimState } from './claims.js'
+import { decodeCoordinationRecord, observeClaimState, readRootPortInventory } from './claims.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
@@ -74,7 +74,7 @@ import {
     withSetupCheckoutProjection,
     type ConsumedSetupCheckoutObservation,
 } from './setup-observation.js'
-import { observeConfiguration, readState, selectStateRoot } from './state.js'
+import { observeConfiguration, readState, selectStateRoot, type StateNamespace } from './state.js'
 import {
     externalDependencyTemplateFragments,
     inspectEnvironmentKeys,
@@ -611,6 +611,7 @@ export function createHealthCommandAdapters(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): HealthCommandAdapterComposition {
     const input = captureInput(rawInput)
+    let selectedNamespace: StateNamespace | undefined
     const load: HealthCommandAdapterComposition['load'] = async (command, issue, refuse) => {
         const requestedPath = commandConfigPath(command)
         if (!input || typeof execute !== 'function' || typeof issue !== 'function'
@@ -634,6 +635,7 @@ export function createHealthCommandAdapters(
             cockpitId: checkout.cockpitId,
         })
         if (namespace.kind !== 'complete') return undefined
+        selectedNamespace = namespace.value
         const currentStack = stackId({
             cockpitId: checkout.cockpitId,
             checkoutId: checkout.checkoutId,
@@ -773,5 +775,12 @@ export function createHealthCommandAdapters(
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
     const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), configPath: input.configPath, env: input.env })
         : undefined
-    return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), execute: (step: ExecutionStep) => execute(step) })
+    // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
+    const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {
+        if (!selectedNamespace) return Object.freeze([])
+        const inventory = await readRootPortInventory(selectedNamespace)
+        return inventory.kind === 'complete' ? inventory.skipped : Object.freeze([])
+    }
+    return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), readUnreadableState,
+        execute: (step: ExecutionStep) => execute(step) })
 }
