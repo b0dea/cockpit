@@ -13,11 +13,11 @@ The Evidence column names what would confirm a cell: `pending_evidence` needs a 
 
 Last probed and Probed version say when cockpit's mechanism was last tested against that tool and at which version, or `never`. A probe date is not a confirmation: only the State column says what is confirmed.
 
-Source manifest: `2993f357c60b0f595dbb6245268b8f3851a61636e293bbe052640dc127d8a0b8`.
+Source manifest: `06f896f181a438b8f954e3de75b66eca5e4eeff9db1f5feb2a85fefadf3df563`.
 
 | Harness | Capability | Skill | State | Evidence | Provenance | Last probed | Probed version |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| claudecode | guard-firing | n/a | instructed | pending_evidence | paired native PreToolUse payload and decision probe | 2026-08-25 | 2.1.220 |
+| claudecode | guard-firing | n/a | enforced | not_applicable | with the exact push pre-allowed by permissions, the hook refused git push to a protected branch and the remote stayed empty while git status ran; the same checkout without the hook pushed | 2026-11-01 | 2.1.316 |
 | codexcli | guard-firing | n/a | enforced | human_needed | only after a person trusts the hook: untrusted, Codex skipped it and git push ran; trusted (forced with --dangerously-bypass-hook-trust), it refused the push. Trust is per machine and cockpit doctor warns until it is given | 2026-11-01 | 0.165.0 |
 | opencode | guard-firing | n/a | enforced | not_applicable | the plugin refused git push and a native read of a secrets file while an unprotected read stayed allowed; before read was routed through the guard, the same read returned the file | 2026-11-01 | 1.19.4 |
 | cursor | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | never | never |
