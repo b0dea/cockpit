@@ -367,7 +367,6 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const list = documentHeading('Command list')
             + 'This generated index is for users choosing the command that owns their next operation. The command table supplies this list.\n\n'
             + commands.map(command => `- ${code(`cockpit ${command.name}`)}${'experimental' in command && command.experimental ? ' (experimental)' : ''}: ${command.summary}.\n`).join('')
-            + '\n## Consumer documentation pipeline\n\n```yaml\ndocumentation-pipeline:\n  generate: <declared producer command>\n  check: <declared byte comparison command>\n  named-references: <declared reference validation command>\n```\n'
         const matrixOpening = 'This generated matrix is for users checking how far each harness feature is confirmed to work. The State column has four values:\n\n'
             + '- `enforced`: a dated test with a deliberately broken control showed the harness refusing the forbidden operation.\n'
             + '- `instructed`: cockpit writes guidance or a harness setting, but nobody has confirmed that the harness obeys it.\n'

@@ -289,7 +289,10 @@ describe('reference generation', () => {
         expect(first.troubleshooting.document.slice(0, prose.indexOf(begin))).toBe(prose.slice(0, prose.indexOf(begin)))
         expect(first.troubleshooting.document.slice(first.troubleshooting.document.indexOf(end) + end.length)).toBe(prose.slice(prose.indexOf(end) + end.length))
         expect(validateTroubleshootingIndex(input().diagnostics, first.troubleshooting.bytes)).toEqual([])
-        expect(first.files[2]!.bytes).toContain('documentation-pipeline')
+        // The command list holds commands only: an unexplained block of placeholders gave its reader nothing to act on.
+        expect(first.files[2]!.path).toBe('docs/command-list.md')
+        expect(first.files[2]!.bytes.split('\n').filter(line => line !== '' && !/^(?:#|<!--|This generated index)/.test(line)))
+            .toEqual(commands.map(command => expect.stringMatching(new RegExp(`^- \`cockpit ${command.name}\``))))
     })
 
     it('copies shipped procedure sections into the adopt-cockpit skill and refuses a template every harness would not load', () => {
