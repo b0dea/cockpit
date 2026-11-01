@@ -7,13 +7,12 @@ export const mechanism = {
     exports: ['admitDiagnosticFix', 'formatShellCommand', 'cockpitCommand', 'initCommand', 'bindConfigPath'],
 } as const
 
-// A printed command has to run as printed. Every configured command refuses without --config, so a
-// remedy written where the path is unknown names this placeholder, and bindConfigPath replaces it
-// with the resolved path wherever the command line supplied one.
+// A printed command has to run as printed. Nothing goes in front of npx: the guard asks before a
+// wrapped command such as `env -u NAME …`, and Codex and OpenCode treat an ask as a denial. Every
+// configured command refuses without --config, so a remedy written where the path is unknown names
+// this placeholder, and bindConfigPath replaces it with the resolved path wherever the command line
+// supplied one.
 const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
-// runtime measure needs the opposite: it measures the context Docker itself selected and refuses an
-// override, so a remedy printed to a shell that exports DOCKER_CONTEXT failed as printed.
-const DAEMON_UNSET = 'env -u DOCKER_CONTEXT'
 
 export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'selftest' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
     | 'reset' | 'preflight' | 'doctor' | 'logs' | 'runtime measure' | 'sibling add' | 'sibling remove'
@@ -47,9 +46,8 @@ export function formatShellCommand(argv: readonly string[]): string {
 export function cockpitCommand(command: ConfiguredCommand,
     options: Readonly<{ config?: string; operand?: string; args?: string }> = {}): string {
     const config = options.config === undefined ? CONFIG_PLACEHOLDER : formatShellCommand([options.config])
-    const daemon = command === 'runtime measure' ? `${DAEMON_UNSET} ` : ''
     const operand = options.operand === undefined ? '' : ` ${formatShellCommand([options.operand])}`
-    return `${daemon}npx --no cockpit ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
+    return `npx --no cockpit ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
 }
 
 /**

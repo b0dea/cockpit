@@ -476,11 +476,11 @@ Done when `runtime measure` exits 0 and names `.cockpit/local/runtime-measuremen
 Before the first `up`, measure the local container runtime on this machine:
 
 ```sh
-env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json
+./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json
 ```
 
-`DOCKER_CONTEXT` must be unset here, because the probe measures the context Docker has selected;
-[Choose the Docker daemon](environment.md#choose-the-docker-daemon) has both daemon rules. Name an
+It measures the local daemon `up` will use, chosen as
+[Choose the Docker daemon](environment.md#choose-the-docker-daemon) describes. Name an
 image already on the machine; the probe never pulls. The probe runs only from an installed
 `@b0dea/cockpit` package, not from a linked source checkout. The supported runtime identities
 and the checks a measurement must pass are in

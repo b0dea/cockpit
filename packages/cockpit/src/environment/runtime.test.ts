@@ -202,7 +202,7 @@ fi
                 expect(refused).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
                 expect(refused.kind === 'unavailable' ? refused.reason : '').toMatch(reason)
                 expect(refused.kind === 'unavailable' ? refused.reason : '')
-                    .toMatch(/Measure it on this machine with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
+                    .toMatch(/Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
             }
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })

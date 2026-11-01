@@ -341,26 +341,30 @@ because that destroys the records cockpit needs to repair it safely.
 
 ## Choose the Docker daemon
 
-Two commands read the Docker daemon selection strictly, and in opposite directions. This is the
-one statement of both rules:
+Every command uses the daemon Docker itself would select: a `DOCKER_HOST` when set, otherwise the
+context `DOCKER_CONTEXT` names, otherwise the active context `docker context show` reports. Three
+commands fix that daemon once, before their first step, and address only it:
 
-| Command | `DOCKER_CONTEXT` | Why |
-|---|---|---|
-| `down`, `reset` | either | they delete, so they fix one daemon before the first step and address only it: `DOCKER_CONTEXT` when set, otherwise a local `DOCKER_HOST`, otherwise the context `docker context show` reports, read once. Reading the context per step could list one daemon and delete from another if `docker context use` ran mid-command; an active context that is not local is refused with `RUNTIME_UNAVAILABLE` |
-| `runtime measure` | must be unset | the probe authenticates the context Docker itself has selected, and an override would measure a daemon other than the one it records; it refuses with `RUNTIME_UNAVAILABLE` |
-| every other command | either | they use whatever daemon Docker selects |
+| Command | Why it fixes the daemon |
+|---|---|
+| `down`, `reset` | they delete; reading the context per step could list one daemon and delete from another if `docker context use` ran mid-command |
+| `runtime measure` | the measurement must describe the daemon `up` will use, not one selected while the probe ran |
+
+None of them needs a prefix, so they run as printed:
 
 ```sh
 npx --no cockpit down --config cockpit.toml
-env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine
+npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine
 ```
 
-For `down` and `reset`, discovery and deletion then address the same daemon. However it was
-chosen, its endpoint must be an absolute `unix://` socket path; TCP, SSH and other transports are refused
-because a remote daemon could receive the deletion. Conflicting selections are refused. Socket
-paths keep literal spaces and punctuation, and cockpit uses the exact spelling when it binds the
-context and runs discovery or deletion. A TLS override is refused. For `runtime measure`, select
-the context with `docker context use <name>` first.
+However the daemon was chosen, its endpoint must be an absolute `unix://` socket path. TCP, SSH
+and other transports are refused, because a remote daemon could receive a deletion, and its
+behaviour says nothing about this machine. A `DOCKER_HOST` that is not local is refused with
+`CLI_USAGE_INVALID`; a named or active context that is not local, or whose endpoint cannot be read,
+is refused with `RUNTIME_UNAVAILABLE`, naming the context and its endpoint. For `down` and `reset`,
+conflicting selections are refused, and so is a TLS override. Socket paths keep literal spaces and
+punctuation, and cockpit uses the exact spelling when it binds the context and runs discovery or
+deletion.
 
 ## Compose project name
 
@@ -403,7 +407,7 @@ Measure the runtime on this machine:
 
 ```sh
 docker pull node:22-alpine
-env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config ./cockpit.toml --image node:22-alpine
+./node_modules/.bin/cockpit runtime measure --config ./cockpit.toml --image node:22-alpine
 ```
 
 The command runs a probe in a throwaway directory: a candidate stack that exercises profiles, bind
@@ -426,7 +430,7 @@ measurement that admitted the runtime in the `RUNTIME_UNMEASURED` check's source
 
 The probe runs only from an installed `@b0dea/cockpit` package and only against a local runtime:
 the selected Docker context or `DOCKER_HOST` must pass the
-[local endpoint rules](#choose-the-docker-daemon), and `DOCKER_CONTEXT` must be unset.
+[local endpoint rules](#choose-the-docker-daemon).
 
 ## Secret sources and environment schemas
 

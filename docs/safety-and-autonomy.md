@@ -161,8 +161,10 @@ chain is permitted only when every segment is. Redirecting output to `/dev/null`
 | `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
 | `npx --no cockpit sync --config cockpit.toml`, `reset`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or the guard's own files, or delete data. |
 
-A prefix such as `env -u DOCKER_CONTEXT` makes any of these a wrapped invocation, which prompts;
-run the command without it from a shell where `DOCKER_CONTEXT` is not set.
+Run these exactly as shown. A prefix such as `env -u NAME` or `nohup` makes any of them a wrapped
+invocation, which prompts. No cockpit command needs one: `down`, `reset` and `runtime measure` choose
+their Docker daemon themselves, as
+[Choose the Docker daemon](environment.md#choose-the-docker-daemon) describes.
 
 These count from the cockpit root with `--config` naming the configured `cockpit.toml`; `check`,
 `doctor` and help also count from any directory. Each spelling counts only where the guard proves it

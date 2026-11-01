@@ -20,10 +20,10 @@ describe('diagnostic envelope', () => {
         }
     })
 
-    it('prints the runtime measure remedy with DOCKER_CONTEXT cleared, since runtime measure refuses an override', () => {
+    it('prints the runtime measure remedy bare, since a wrapped command prompts and some agents treat a prompt as a denial', () => {
         expect(renderHumanDiagnostics([{ severity: 'error', code: 'RUNTIME_UNMEASURED', message: 'synthetic failure' }],
             undefined, { resolvedConfigPath: '/synthetic/cockpit.toml', generatedTargets: [] }))
-            .toContain('Fix: run env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config /synthetic/cockpit.toml --image <local-image>, which records the result for this machine only, then retry\n')
+            .toContain('Fix: run npx --no cockpit runtime measure --config /synthetic/cockpit.toml --image <local-image>, which records the result for this machine only, then retry\n')
     })
 
     it('summarises a successful lifecycle command and preflight in one readable line', () => {

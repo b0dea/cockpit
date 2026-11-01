@@ -766,7 +766,7 @@ else process.exit(64)
                 reason: 'Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine (docker info: OperatingSystem "Docker Desktop", '
                     + `Name "docker-desktop", OSType "linux"; engine 27.1.2; host ${process.platform}; `
                     + `measured in ${join(dirname(candidate.configPath), '.cockpit', 'local', 'runtime-measurements.json')}: none). `
-                    + 'Measure it on this machine with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>',
+                    + 'Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>',
             }),
         ]))
     })

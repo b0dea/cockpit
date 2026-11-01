@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { runCli, type CliHandlerOverrides } from './cli.js'
 import { commands as cliCommands } from './command-table.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
-import { admitDiagnosticFix, formatShellCommand } from './fix-catalogue.js'
+import { admitDiagnosticFix, cockpitCommand, formatShellCommand, type ConfiguredCommand } from './fix-catalogue.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './generated-environment/command.js'
 
 const roots: string[] = []
@@ -141,10 +141,28 @@ describe('printed cockpit commands', () => {
     const npxOwnFlag = /npx --no cockpit --(?:help|version)\b/g
 
     // The guard refuses a command substitution, so a printed `VAR="$(…)" npx --no cockpit …` line is
-    // one an agent can never run as printed; down and reset once printed their daemon that way.
-    const substitutedPrefix = (before: string) => /\$\(|`/.test(/(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*) +)*$/.exec(before)![0])
+    // one an agent can never run as printed; down and reset once printed their daemon that way. It
+    // asks before any wrapped command, such as `env -u NAME …`, and Codex and OpenCode treat an ask
+    // as a denial; runtime measure once printed its daemon that way.
+    const unrunnablePrefix = (before: string): string | undefined => {
+        const assignments = /(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*) +)*$/.exec(before)!
+        if (/\$\(|`/.test(assignments[0])) return 'a substituted environment prefix'
+        return /(?:^|[\s;&|(`'"])(?:env|timeout|nice|nohup|setsid|command|exec)(?: +(?:-\S+|[A-Z_][A-Z0-9_]*|[A-Za-z_]\w*=\S*|\d+[smhd]?))* +$/
+            .test(before.slice(0, assignments.index)) ? 'a wrapper prefix' : undefined
+    }
 
-    it('name the configuration everywhere a diagnostic, instruction or skill spells one, carry no substituted environment prefix, and name the root and target for init', () => {
+    it('spell every configured command from npx itself, with no wrapper or environment prefix', () => {
+        for (const verb of VERBS.split('|').filter(verb => verb !== 'baseline-record') as ConfiguredCommand[]) {
+            expect(cockpitCommand(verb, { config: '/synthetic/cockpit.toml' })).toMatch(new RegExp(`^npx --no cockpit ${verb} --config `))
+        }
+        for (const [before, reason] of [['env -u DOCKER_CONTEXT ', 'a wrapper prefix'], ['run `env FOO=1 ', 'a wrapper prefix'],
+            ['nohup ', 'a wrapper prefix'], ['DOCKER_CONTEXT="$(docker context show)" ', 'a substituted environment prefix'],
+            ['run ', undefined], ['DEBUG=1 ', undefined], ['set the env to X, then run ', undefined]] as const) {
+            expect(unrunnablePrefix(before), before).toBe(reason)
+        }
+    })
+
+    it('name the configuration everywhere a diagnostic, instruction or skill spells one, carry no substituted or wrapper prefix, and name the root and target for init', () => {
         const paths = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard',
             'packages/cockpit/src', 'packages/cockpit/surfaces'], { encoding: 'utf8' }).split('\0')
             .filter(path => /\.(?:ts|md|sh|json|cjs|mjs)$/.test(path) && !path.endsWith('.test.ts'))
@@ -158,7 +176,8 @@ describe('printed cockpit commands', () => {
                     const rest = line.slice(match.index + match[0].length)
                     if (rest.startsWith(' --help')) continue
                     if (!/--config (?!<file>|<cockpit\.toml>)/.test(rest.split(commandEnd)[0]!)) unrunnable.push(`${at}: ${match[0]} without --config`)
-                    if (substitutedPrefix(line.slice(0, match.index))) unrunnable.push(`${at}: ${match[0]} behind a substituted environment prefix`)
+                    const prefixed = unrunnablePrefix(line.slice(0, match.index))
+                    if (prefixed) unrunnable.push(`${at}: ${match[0]} behind ${prefixed}`)
                 }
                 for (const match of line.matchAll(bare)) unrunnable.push(`${at}: bare ${match[0]}`)
                 for (const match of line.matchAll(runnableInit)) {
@@ -270,7 +289,8 @@ describe('printed cockpit commands', () => {
                 for (const match of snippet.matchAll(prefix)) {
                     const command = snippet.slice(match.index).split(/\s(?:&&|\|\||\||;|#)\s|;\s/)[0]!.trim()
                     printed.push({ at: `${path} (${kind})`, command })
-                    if (substitutedPrefix(snippet.slice(0, match.index))) unrunnable.push(`${path}: ${command} behind a substituted environment prefix`)
+                    const prefixed = unrunnablePrefix(snippet.slice(0, match.index))
+                    if (prefixed) unrunnable.push(`${path}: ${command} behind ${prefixed}`)
                 }
             }
             for (const line of fenced.join('\n').replace(/\\\n/g, ' ').split('\n')) {

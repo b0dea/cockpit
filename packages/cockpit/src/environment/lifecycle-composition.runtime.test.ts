@@ -394,8 +394,8 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(message).toContain('Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine')
         expect(message).toContain('OperatingSystem "Docker Desktop", Name "docker-desktop", OSType "linux"; engine 27.1.2')
         expect(message).toContain(`measured in ${join(candidate.checkout, '.cockpit', 'local', 'runtime-measurements.json')}: none`)
-        // runtime measure refuses an exported DOCKER_CONTEXT, so the printed remedy clears it.
-        expect(message).toMatch(/Measure it on this machine with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
+        // The remedy runs as printed: runtime measure selects the daemon up uses, with no prefix.
+        expect(message).toMatch(/Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
         expect(execute.mock.calls.some(([step]) => step.id.includes('topology'))).toBe(false)
     })
 

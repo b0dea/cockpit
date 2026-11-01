@@ -129,9 +129,9 @@ guesses. So derive each value from what the repository shows, record it as infer
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
    the check exits 0. Where a runtime is declared, measure it with
-   `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image>`,
-   using an image already on this machine because the probe never pulls; it refuses a
-   `DOCKER_CONTEXT` override because it measures the context Docker has selected. It records the
+   `./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image>`,
+   using an image already on this machine because the probe never pulls. It measures the local
+   daemon `up` will use: the context `DOCKER_CONTEXT` names, or else the active one. It records the
    result for this machine only and leaves `cockpit.toml` unchanged, so no `sync` is needed. Then start the stack with
    `./node_modules/.bin/cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
    Report the actual result. Done when the stack reports healthy, or you have named what stopped it.
