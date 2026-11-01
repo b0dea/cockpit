@@ -130,8 +130,7 @@ directory, environment names, and sources. `MCP_APPROVAL_UNKNOWN` means the allo
 declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 
-For `RESTRICTION_INPUT_INVALID`, `RESTRICTION_POLICY_UNSUPPORTED`,
-`RESTRICTION_ADAPTER_INVALID`, `RESTRICTION_EVENT_UNADAPTED`,
+For `RESTRICTION_INPUT_INVALID`, `RESTRICTION_ADAPTER_INVALID`, `RESTRICTION_EVENT_UNADAPTED`,
 `RESTRICTION_TEMPLATE_INVALID`, or `RESTRICTION_OUTPUT_LIMIT`, correct the named guard policy,
 adapter, template, or output. An unadapted event remains unavailable. Do not
 replace it with an instruction and describe it as enforced.

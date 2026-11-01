@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { lstatSync, readFileSync, writeFileSync } from 'node:fs'
 import { posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from '@typescript/typescript6'
@@ -784,7 +784,7 @@ function headingAnchor(value) {
     return value.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
 }
 
-export function inspectMaintainedProse({ documents, currentVersion, staleMinorThreshold = 1, mechanismExists = () => false, today = new Date().toISOString().slice(0, 10) }) {
+export function inspectMaintainedProse({ documents, currentVersion, staleMinorThreshold = 1, mechanismExists = () => false, identifierExists = () => false, today = new Date().toISOString().slice(0, 10) }) {
     const diagnostics = []
     const reports = []
     const byPath = new Map(documents.map(document => [document.path, document.body]))
@@ -840,6 +840,15 @@ export function inspectMaintainedProse({ documents, currentVersion, staleMinorTh
                     && !mechanism.split('/').some(part => part === '.' || part === '..')
                 if (!contained || !mechanismExists(mechanism)) {
                     diagnostics.push(diagnostic(document.path, row.line, 'DOC066_ENFORCEMENT_MECHANISM_MISSING', mechanism))
+                }
+            }
+            // A code the docs name but nothing outside docs and tests defines sends the reader after
+            // a diagnostic cockpit can never print.
+            let remaining = row.references
+            for (let span = firstInlineCodeSpan(remaining); span; remaining = remaining.slice(span.end), span = firstInlineCodeSpan(remaining)) {
+                const value = remaining.slice(span.start, span.end).replace(/^`+|`+$/g, '')
+                if (/^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(value) && !identifierExists(value)) {
+                    diagnostics.push(diagnostic(document.path, row.line, 'DOC071_CODE_UNDEFINED', value))
                 }
             }
             if (document.path === 'docs/concepts.md') continue
@@ -2465,10 +2474,17 @@ async function run() {
             }
         }
         const trackedPaths = new Set(git(ROOT, ['ls-files', '-z']).split('\0').filter(Boolean))
+        const definedIdentifiers = new Set()
+        for (const path of trackedPaths) {
+            if (path.endsWith('.md') || /\.test\.[cm]?[jt]s$/.test(path) || path.startsWith('packages/cockpit/test-support/')
+                || !lstatSync(resolve(ROOT, path)).isFile()) continue
+            for (const match of readDocument(path).matchAll(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/g)) definedIdentifiers.add(match[0])
+        }
         const maintained = inspectMaintainedProse({
             currentVersion: JSON.parse(readDocument('packages/cockpit/package.json')).version,
             mechanismExists: path => !path.startsWith('/') && !path.includes('\\')
                 && !path.split('/').some(part => part === '.' || part === '..') && trackedPaths.has(path),
+            identifierExists: identifier => definedIdentifiers.has(identifier),
             documents: subjects
                 .filter(subject => ['human', 'executable'].includes(classifyMarkdownPath(subject.path)))
                 .map(subject => ({ path: subject.path, body: readDocument(subject.path) })),

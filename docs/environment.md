@@ -889,7 +889,6 @@ declared agent inputs; make them readable.
 For `MACHINE_MEMORY_BELOW_FLOOR`, `MACHINE_CPU_BELOW_FLOOR`,
 `MACHINE_DISK_BELOW_FLOOR`, or `MACHINE_COLD_START_EXCEEDED`, make the host capacity or startup
 time meet its declared floor or limit, or deliberately change the declaration.
-`DISK_BUDGET_EXCEEDED` means you must free space or change the declared budget.
 `DIRECTORY_GRANTS_UNAVAILABLE` means you must restore the declared grants.
 `MOUNT_POSTURE_UNAVAILABLE` and `MOUNT_MATERIALIZATION_UNAVAILABLE` mean cockpit could not confirm
 the mounts; fix them so they can be checked. `REGISTRY_AUTH_UNAVAILABLE` means the registry

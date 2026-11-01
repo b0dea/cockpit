@@ -527,7 +527,7 @@ describe('maintained prose detectors', () => {
                 check(url: string): Promise<{ status: 'ok' | 'broken' | 'unavailable'; httpStatus?: number }>
             }): Promise<{ checkedAt: string; summary: { checked: number; ok: number; broken: number; unavailable: number }; links: Array<{ url: string; sources: unknown[]; status: string }> }>
             requestExternalLink(url: string): Promise<{ status: string; httpStatus?: number }>
-            inspectMaintainedProse(input: { documents: Array<{ path: string; body: string }>; currentVersion: string; staleMinorThreshold?: number; mechanismExists?(path: string): boolean; today?: string }): {
+            inspectMaintainedProse(input: { documents: Array<{ path: string; body: string }>; currentVersion: string; staleMinorThreshold?: number; mechanismExists?(path: string): boolean; identifierExists?(identifier: string): boolean; today?: string }): {
                 diagnostics: Array<{ code: string }>; reports: Array<{ code: string }>
             }
         }
@@ -644,13 +644,17 @@ describe('maintained prose detectors', () => {
             currentVersion: '2.4.0',
             today: '2026-10-25',
             mechanismExists: path => path === 'scripts/docs-lint.mjs',
+            identifierExists: identifier => identifier === 'SYNTHETIC_DEFINED',
             documents: [
                 { path: 'docs/concepts.md', body: '# Concepts\n\n<!-- cockpit:verified version=2.4.0 -->\n\n## Registry\n\nA registry declares resources.\n' },
                 { path: 'docs/guide.md', body: [
                     '# Guide',
                     '<!-- cockpit:verified version=2.2.0 -->',
                     '',
-                    'Use the [Registry][registry].',
+                    'Use the [Registry][registry]; `SYNTHETIC_DEFINED` names a code the source defines.',
+                    '```text',
+                    'SYNTHETIC_FENCED is sample output, not a reference: `SYNTHETIC_FENCED`',
+                    '```',
                     '<!-- cockpit:capture date=2026-10-25 version=2.4.0 --> ![terminal](terminal.png)',
                     '<!-- cockpit:ref path=scripts/docs-lint.mjs --> The linter enforces this rule.',
                     'Checked in CI.',
@@ -672,8 +676,12 @@ describe('maintained prose detectors', () => {
             currentVersion: '2.4.0',
             today: '2026-10-25',
             mechanismExists: () => true,
+            identifierExists: identifier => identifier === 'SYNTHETIC_DEFINED',
             documents: [
                 { path: 'docs/concepts.md', body: '# Concepts\n\n## Registry\n\n## Registry\n' },
+                // A documented code that nothing outside documentation and tests defines tells the
+                // reader to look for a diagnostic cockpit can never print.
+                { path: 'docs/codes.md', body: '# Codes\n<!-- cockpit:verified version=2.4.0 -->\n\n`SYNTHETIC_UNDEFINED` means a retired budget was exceeded; `SYNTHETIC_DEFINED` is current.\n' },
                 { path: '.changeset/README.md', body: '# Changesets\n\nHow to write a release fragment.\n' },
                 { path: 'docs/guide.md', body: '# Guide\n<!-- cockpit:verified version=2.5.0 -->\n\n[Registry](concepts.md#registry) and Registry is a list.\n\n![screenshot: terminal](terminal.png)\n\n~~~console\noutput\n~~~\n\n<!-- cockpit:capture date=2026-02-30 version=2.4.0 --> Evidence.\n\n<!-- cockpit:ref path=../outside --> The check enforces it.\n' },
             ],
@@ -686,6 +694,7 @@ describe('maintained prose detectors', () => {
             'DOC068_CONCEPT_REDEFINED',
             'DOC063_VERIFIED_VERSION_INVALID',
         ]))
+        expect(broken.diagnostics.filter(row => row.code === 'DOC071_CODE_UNDEFINED')).toMatchObject([{ path: 'docs/codes.md', line: 4, message: 'SYNTHETIC_UNDEFINED' }])
         expect(broken.diagnostics.filter(row => row.code === 'DOC067_CONCEPT_UNLINKED')).toHaveLength(1)
         expect(broken.diagnostics.filter(row => row.code === 'DOC065_CAPTURE_METADATA_MISSING')).toHaveLength(3)
         expect(broken.reports).toMatchObject([
