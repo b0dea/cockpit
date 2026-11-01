@@ -144,6 +144,13 @@ The automation above needs these settings, done once by the maintainer:
   environment and registers the release workflow in it as the package's trusted publisher.
 - **Package:** remove `"private": true` from the package manifest and set `access` to `public` in
   the Changesets configuration.
+- **Pre-publication wording:** in the same change, rewrite every statement that the package is not
+  yet published or that sends readers to the source install first: `README.md`, `llms.txt`,
+  `docs/faq.md`, `docs/tutorial.md`, `docs/getting-started.md`, `docs/release-policy.md`,
+  `SECURITY.md`, `examples/synthetic/README.md` and the adopt skill source
+  `packages/cockpit/src/references/adopt-cockpit.skill.md`, then run `npm run references`.
+  `docs-ownership.test.ts` fails while this list misses a file with such wording, and fails on any
+  that remains once the package is public.
 - **GitHub:** allow auto-merge, allow GitHub Actions to create pull requests, require the `ci-ok`
   check on main, and create the `no-changeset` label. Once the repository is public, enable secret
   scanning with push protection and CodeQL default setup; the dependency-review job in CI starts

@@ -32,6 +32,12 @@ function headings(page: string): string[] {
         .flatMap((row) => /^#{1,6}\s+(.+?)\s*$/.exec(row.prose)?.[1] ?? [])
 }
 
+// Wording that is true only while the package is unpublished. Whoever makes the package public
+// must find every instance, so the release checklist names each file that holds one.
+const PRE_PUBLICATION = new RegExp(['not yet published', 'not yet on npm', 'not on npm yet', 'nothing is published yet',
+    'nothing has been released yet', 'until the first release', 'until its first release', 'after the first npm release',
+    'package publication is pending', 'before publication'].map(phrase => phrase.replaceAll(' ', '\\s+')).join('|'), 'i')
+
 function trackedDocumentation(): string[] {
     return execFileSync('git', ['ls-files', '-z', '*.md'], { cwd: ROOT, encoding: 'utf8' })
         .split('\0')
@@ -68,6 +74,22 @@ describe('effective documentation ownership', () => {
         expect(security).toContain('| Acknowledgement | within 7 days |')
         expect(security).toContain('**90 days**')
         expect(security).toContain('## Consumer-identifying leaks')
+    })
+
+    it('keeps pre-publication wording only where the release checklist lists it, and nowhere once the package is public', () => {
+        const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+        const checklist = readFileSync(new URL('../../../docs/contributing/releasing.md', import.meta.url), 'utf8')
+        // The checklist itself, the changelogs, and the adopt skill regenerated from its listed source.
+        const exempt = /^(?:docs\/contributing\/releasing\.md|skills\/adopt-cockpit\/SKILL\.md|\.changeset\/.*|(?:.*\/)?CHANGELOG\.md)$/
+        const pending = [...trackedDocumentation(), 'llms.txt'].filter(path => !exempt.test(path)
+            && PRE_PUBLICATION.test(readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8')))
+        if (manifest.private !== true) {
+            expect(pending).toEqual([])
+            return
+        }
+        const item = /^- \*\*Pre-publication wording:\*\*[^\n]*(?:\n {2}[^\n]*)*/m.exec(checklist)?.[0] ?? ''
+        expect(pending).toContain('README.md')
+        expect(pending.filter(path => !item.includes(`\`${path}\``))).toEqual([])
     })
 
     it('points the llms.txt agent index only at tracked pages, starting with the agent adoption guide', () => {
