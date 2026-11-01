@@ -323,12 +323,27 @@ a `[ports.bases]` variable, and a service without a healthcheck warns. The rules
 [examples/compose-first](../examples/compose-first/README.md). Changing the Compose file is a
 product change: ask first.
 
-When the Compose file lives inside a product repository, declare that repository as a sibling and
-point `environment.compose_files` at the Compose file inside the sibling checkout.
-cockpit reads and runs that file in place and writes only its label override. Compose paths must
-stay inside the cockpit root, so this works when siblings are checked out under it
-(`siblings_root = "."`); with a dedicated cockpit beside the product (`siblings_root = ".."`),
-use the generated environment mode or ask the human before moving the Compose file.
+When the Compose file lives inside a product repository checked out under the cockpit root
+(`siblings_root = "."`), declare that repository as a sibling and point
+`environment.compose_files` at its file, as in `compose_files = ["shop/compose.yml"]`. cockpit runs
+that file in place and writes only its label override. Relative paths in it, such as `build: ./api`
+and `"./api:/app"`, resolve against `shop/`, exactly as `docker compose -f shop/compose.yml` resolves
+them, so the product's file needs no change. Check it with
+`docker compose -f shop/compose.yml config` before answering.
+
+Two layouts need a cockpit-root `compose.yml` of their own instead, because every relative path in
+the listed files resolves against the first file's directory and every listed file must stay inside
+the cockpit root:
+
+- Compose files in two or more product repositories, each with its own `./` paths.
+- A dedicated cockpit beside the product (`siblings_root = ".."`), whose repositories sit outside
+  its root.
+
+In that file, reach each checkout through its sibling variable, as in `build: ${SHOP_DIR}/api` and
+`"${SHOP_DIR}/api:/app"`, and publish ports from `[ports.bases]` variables. Write the services
+from the product's own files and tell the human which ones you copied. A Compose `include` of the
+product's file is refused: Compose would read it outside the files cockpit verifies and labels. The
+generated environment mode is the other choice.
 
 `init` then asks `environment.machine`: the floor the product needs from the container runtime
 (`runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`). These are product

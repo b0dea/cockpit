@@ -48,7 +48,17 @@ result lists resource ceilings, data modes and vendor guards as not declared unl
 generated. [`examples/docs-only`](../examples/docs-only/README.md) and
 [`examples/compose-first`](../examples/compose-first/README.md) show the first two modes.
 
-In compose-first mode, `check` reads your Compose topology with `docker compose config`, without
+In compose-first mode, `environment.compose_files` lists paths relative to the cockpit root, and
+each must stay inside it. Compose resolves every relative path in those files, such as `build: ./api`
+or `"./api:/app"`, against the directory of the first listed file, exactly as
+`docker compose -f <first> -f <second>` does. So `compose_files = ["shop/compose.yml"]` runs a
+product repository's own file with its `./` paths meaning what they mean in that repository. Every
+command passes that directory to Compose as `--project-directory`, because Compose reads verified
+snapshots of the files and could not otherwise tell where they came from. List files from two
+directories only when the later ones name no relative paths: theirs resolve against the first file's
+directory too, just as with several `-f` flags.
+
+`check` reads your Compose topology with `docker compose config`, without
 interpolation. If Docker cannot produce it, `check` refuses with `COMPOSE_TOPOLOGY_UNAVAILABLE`.
 It also checks three things:
 
@@ -64,8 +74,9 @@ adds cockpit's ownership labels to every service, the default network and every 
 is not `external`. Volumes also get a generation label, so `reset` can account for each
 `resettable_volumes` entry. `check` drift-checks the override, and runtime commands pass it after
 your declared files only while it matches what cockpit would generate now. cockpit never edits
-your Compose files. A Compose `include` is refused, because cockpit cannot label the services it
-brings in.
+your Compose files. A Compose `include` is refused with `GENERATED_DECLARATION_INVALID`, because
+Compose reads an included file from disk, outside the verified snapshot, and cockpit could not label
+the services it brings in. List the file in `environment.compose_files` instead.
 
 Runtime commands give Compose only these variables: the leased `[ports.bases]` variables, each
 `[[sibling]] var` set to that sibling's absolute directory, and cockpit's own stack and holder
@@ -77,8 +88,9 @@ containers when the stack runs. Any other `${VAR}` reference needs a `:-default`
 declared with `mount = "always"` must be bind-mounted, whole or a directory inside it, because that
 is what the declaration promises: `check` fails with `COMPOSE_SIBLING_NOT_MOUNTED` when no service
 mounts one, and `up` refuses to start the stack. Mount it through its variable, as in
-`"${WORKER_DIR}:/srv/worker"` or `"${WORKER_DIR}/src:/app"`, through a path relative to the cockpit
-root, as in `"./worker:/srv/worker"`, or set `mount = "none"` on the row. The reverse holds too:
+`"${WORKER_DIR}:/srv/worker"` or `"${WORKER_DIR}/src:/app"`, through a path relative to the first
+Compose file's directory, as in `"./worker:/srv/worker"` from a `compose.yml` in the cockpit root,
+or set `mount = "none"` on the row. The reverse holds too:
 a container gets only what `cockpit.toml` declares, so a bind outside every `mount = "always"`
 sibling and every `environment.generated_host_paths` entry, or one that leaves its sibling through
 a symbolic link, fails `check` with `COMPOSE_BIND_UNDECLARED`, and `up` refuses it.
