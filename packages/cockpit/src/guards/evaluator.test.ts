@@ -32,6 +32,7 @@ function policy() {
         secretFileIdentities: [] as string[] | null,
         protectedFilesLinked: false,
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
+        cockpitLaunchers: [candidate('cockpit', [])],
         projectCommands: [
             { checkoutRoot: root, kind: 'test', executable: 'npm', argv: ['test'] },
             { checkoutRoot: other, kind: 'build', executable: 'npm', argv: ['run', 'build'] },
@@ -512,6 +513,64 @@ describe('built-in read-only profile', () => {
             'rg needle src | head -n 5', 'ls && pwd', 'grep --context=2 needle src/a.ts', 'git diff main -- src/a.ts']) {
             expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
+    })
+
+    it('judges every launcher spelling by the one proof that it starts the installed cockpit', () => {
+        // The application proves each spelling, with its exact launcher words, from one directory.
+        const script = './node_modules/@b0dea/cockpit/bin/cockpit.mjs'
+        const launched = () => ({ ...policy(), cockpitLaunchers: [candidate('cockpit', []), candidate('npx', ['--no', 'cockpit']),
+            candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script])] })
+        const decideLaunched = (command: string, configured = launched(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
+        for (const command of ['cockpit check', 'npx --no cockpit doctor --config cockpit.toml', 'npx --no cockpit check --json', 'npx --no -- cockpit --help',
+            'npx --no -- cockpit --version', 'npx --no cockpit session --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`]) {
+            expect(decideLaunched(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
+            expect(decideLaunched(command, { ...launched(), cockpitLaunchers: [] }).decision, command).toBe('ask')
+        }
+        expect(decideLaunched('cockpit check', { ...launched(), cockpitLaunchers: [] }).reason).toContain('could not prove it starts the installed cockpit')
+        for (const command of [
+            // Without --no, npx may download a package; any other npx option picks another package, command or shell.
+            'npx cockpit doctor', 'npx --yes cockpit doctor', 'npx --no --package other cockpit doctor', 'npx --no -p other cockpit doctor',
+            'npx --no --call other cockpit doctor', 'npx --no -c other cockpit doctor', 'npx --no other doctor',
+            // npx reads every option before the first operand after the package name as its own.
+            'npx --no cockpit --script-shell=/bin/sh doctor', 'npx --no cockpit --help',
+            // A proof covers its own script only, and node options run code before the script.
+            'node ./other.mjs doctor', `node --require ./other.cjs ${script} doctor`,
+            'npx --no cockpit sync --config cockpit.toml', './node_modules/.bin/cockpit sync --config cockpit.toml',
+        ]) expect(decideLaunched(command).decision, command).not.toBe('allow')
+        expect(decideLaunched('npx --no cockpit doctor', launched(), `${root}/src`).decision).toBe('ask')
+        expect(decideLaunched('npx --no cockpit check --config env/.secrets/token').decision).toBe('deny')
+        // The package name is not an operand naming the cockpit/ control directory, and an exact
+        // profile under the npx spelling admits only where the spelling is proven.
+        const admitted = launched()
+        admitted.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'sync', '--config', 'cockpit.toml', '--dry-run']))
+        expect(decideLaunched('npx --no cockpit sync --config cockpit.toml --dry-run', admitted).decision).toBe('allow')
+        expect(decideLaunched('npx --no cockpit sync --config cockpit.toml --dry-run', { ...admitted, cockpitLaunchers: [] }))
+            .toEqual({ decision: 'ask', reason: expect.stringContaining('npx --no cockpit counts only from the cockpit root') })
+        // An admitted session is judged by its command, which runs as written with no shell.
+        const session = (command: string[]) => {
+            const configured = launched()
+            configured.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'session', '--config', 'cockpit.toml', '--', ...command]))
+            return decideLaunched(['npx --no cockpit session --config cockpit.toml --', ...command.map(word => `'${word}'`)].join(' '), configured).decision
+        }
+        expect(session(['cat', 'README.md'])).toBe('allow')
+        expect(session(['cat', 'README.md;rm', 'src'])).toBe('allow')
+        expect(session(['rm', '-rf', 'src'])).toBe('ask')
+        expect(session(['sh', '-c', 'cat README.md'])).toBe('ask')
+        expect(session(['cat', 'config/active.instance'])).toBe('deny')
+        for (const malformed of [candidate('npx', ['--no']), candidate('npx', ['--no', 'cockpit'], '/outside'), candidate('sh', [])]) {
+            expect(decideLaunched('npx --no cockpit doctor', { ...launched(), cockpitLaunchers: [malformed] }).decision).toBe('unavailable')
+        }
+    })
+
+    it('treats redirects to the null device and standard streams as no file access', () => {
+        for (const command of ['cat README.md 2>/dev/null', 'ls > /dev/null 2>&1', 'rg needle src 2>/dev/stderr', 'cat README.md >/dev/stdout', 'wc -l < /dev/null']) {
+            expect(decideInRepositories(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
+        }
+        expect(decide('printf x 2>/dev/null').decision).toBe('ask')
+        for (const command of ['cat README.md 2>/dev/tty', 'cat README.md > /tmp/out', 'cat README.md 2>/dev/null/x']) {
+            expect(decideInRepositories(command).decision, command).toBe('unavailable')
+        }
+        expect(decideInRepositories('wc -l < /dev/zero').decision).toBe('ask')
     })
 
     it('runs read-only Git only where the directory has its own .git', () => {

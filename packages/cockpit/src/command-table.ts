@@ -9,7 +9,7 @@ import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 export const mechanism = {
     id: 'command-metadata',
     module: 'packages/cockpit/src/command-table.ts',
-    exports: ['commands', 'internalCommands', 'describePublicOption', 'resolveOrdinaryInvocation', 'isWorkHandler', 'isRecordedAnswerField'],
+    exports: ['commands', 'internalCommands', 'describePublicOption', 'resolveOrdinaryInvocation', 'ordinarySessionCommand', 'isWorkHandler', 'isRecordedAnswerField'],
 } as const
 
 export function isRecordedAnswerField(value: string): boolean {
@@ -210,8 +210,9 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Write the generated stack and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
-        // Adoption rewrites cockpit.toml and moves a team's harness settings, so it is never an ordinary agent invocation.
-        ordinary: ordinary('sync', { ...configured, 'dry-run': flag }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']), values: Object.freeze([]) }) }),
+        // Adoption rewrites cockpit.toml and moves a team's harness settings, and a real sync rewrites
+        // the guard's own files, so only the dry run is an ordinary agent invocation.
+        ordinary: ordinary('sync', { ...configured, 'dry-run': Object.freeze({ ...flag, required: true as const }) }, { forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'adopt']), values: Object.freeze([]) }) }),
         options: {
             config: { type: 'string' },
             'dry-run': { type: 'boolean', default: false },
@@ -287,6 +288,7 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Keep the environment available for one command, then release it',
         handler: 'session',
         visibility: 'public',
+        // The guard admits `session --config <file> -- <command>` only when it admits the inner command.
         ordinary: unavailable('session wraps an arbitrary foreground command'),
         options: {
             config: { type: 'string' },
@@ -297,7 +299,8 @@ export const commands: readonly CommandDefinition[] = [
         summary: 'Stop and remove the stack (run with DOCKER_CONTEXT set)',
         handler: 'down',
         visibility: 'public',
-        ordinary: unavailable('destructive commands require separate approval'),
+        // down removes only the containers and networks cockpit created; reset, which deletes data, stays out.
+        ordinary: ordinary('down'),
         options: {
             config: { type: 'string' },
             json: { type: 'boolean', default: false },
@@ -486,6 +489,21 @@ function canonicalPath(path: unknown): path is string {
 
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * The inner command of an exact `session --config <configured file> -- <command…>` run from the
+ * cockpit root, or undefined. The guard admits the session only when it admits the inner command,
+ * so a session never runs what the agent could not run directly.
+ */
+export function ordinarySessionCommand(argv: readonly string[], cwd: string,
+    authority: Readonly<{ canonicalRoot: string; configPath: string }>): readonly string[] | undefined {
+    const separator = argv.indexOf('--')
+    if (argv[0] !== 'session' || separator < 0 || separator === argv.length - 1 || cwd !== authority.canonicalRoot) return undefined
+    const options = argv.slice(1, separator)
+    const config = options.length === 2 && options[0] === '--config' ? options[1]
+        : options.length === 1 && options[0]!.startsWith('--config=') ? options[0]!.slice('--config='.length) : undefined
+    return config && resolve(cwd, config) === authority.configPath ? argv.slice(separator + 1) : undefined
 }
 
 /** Classify one exact candidate; the caller authenticates filesystem and executable authority. */

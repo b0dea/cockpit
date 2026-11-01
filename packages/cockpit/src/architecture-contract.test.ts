@@ -2723,7 +2723,7 @@ function guardArchitectureViolations(
     ])
     const declarations = analysis.declarations
     const runtimeFields = new Set(['protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies',
-        'cockpitInvocations', 'projectCommands'])
+        'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
     const fieldConsumers = new Map([
         ['protected_branches', { path: APPLICATION_MODULE, target: 'protectedBranches' }],
         ['hosted_db_hosts', { path: APPLICATION_MODULE, target: 'hostedDatabaseHosts' }],

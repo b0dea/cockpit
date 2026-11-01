@@ -693,6 +693,7 @@ describe('guard policy construction', () => {
             ripgrepConfigActive: false,
             // The running package lives outside this checkout, so no installed directory is in reach.
             executionDirectories: [], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
+            cockpitLaunchers: [],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'test', argv: ['test', '--', 'unit.test.ts'] },

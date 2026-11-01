@@ -38,13 +38,14 @@ import type { InstructionPointerResult } from './instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity, type GuardDecision, type GuardEvaluationPolicy, type GuardProtectedIdentity, type GuardInvocationProfile, type GuardProjectCommand } from '../guards/evaluator.js'
-import { resolveOrdinaryInvocation } from '../command-table.js'
+import { ordinarySessionCommand, resolveOrdinaryInvocation } from '../command-table.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
-import { guardInstalledDirectories, guardSearchDirectories, guardSecretFiles } from '../guards/protected-locations.js'
+import { guardInstalledDirectories, guardLauncherEvidence, guardSearchDirectories, guardSecretFiles } from '../guards/protected-locations.js'
+import { cockpitLauncherPrefix } from '../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../environment-exec/verified-digest.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
 import { cockpitCommand, formatShellCommand, type FixContext } from '../fix-catalogue.js'
@@ -501,8 +502,29 @@ export async function runGuardEvaluationApplication(
         }
         const cockpitInvocations: GuardInvocationProfile[] = []
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
+        const searchPath = data.searchPath ?? ''
+        // Skills and fix hints print `npx --no cockpit …` and the onboarding procedure the installed
+        // bin link; every spelling counts as the launcher only where it provably starts this installation.
+        type Launched = { readonly executable: string; readonly cwd: string; readonly argv: readonly string[]; readonly prefix: number; readonly session: boolean }
+        const launched: Launched[] = []
+        const prove = (executable: string | null, cwd: string, argv: readonly string[], session: boolean) => {
+            const prefix = executable === null ? undefined : cockpitLauncherPrefix(executable, argv)
+            const evidence = prefix === undefined ? undefined : guardLauncherEvidence(executable!, argv.slice(0, prefix), cwd, identity.root, launcher, searchPath)
+            if (evidence === undefined) return undefined
+            inspected.set(evidence, lstatSync(evidence))
+            const proven = { executable: executable!, cwd, argv, prefix: prefix!, session }
+            launched.push(proven)
+            return proven
+        }
+        const configured = { canonicalRoot: identity.root, configPath: identity.configPath }
+        for (const { executable, cwd, argv } of parsed.invocations) {
+            const proven = prove(executable, cwd, argv, true)
+            // The evaluator judges a session's command as one more invocation, so its spelling needs proof too.
+            const inner = proven && ordinarySessionCommand(argv.slice(proven.prefix), cwd, configured)
+            if (inner) prove(inner[0]!, cwd, inner.slice(1), false)
+        }
         let launcherSha256: string | undefined
-        if (parsed.invocations.some(invocation => invocation.executable === launcher)) {
+        if (launched.length) {
             const status = lstatSync(launcher)
             if (!status.isFile() || status.isSymbolicLink() || !(status.mode & 0o111) || realpathSync(launcher) !== launcher) {
                 return unavailable('Guard ordinary command executable is unavailable or ambiguous.')
@@ -512,20 +534,24 @@ export async function runGuardEvaluationApplication(
             const services = await guardServiceIds(config, identity.root,
                 { node, resolveDocker: adapters.resolveDocker, execute: adapters.execute ?? executeProbe })
             if (typeof services === 'string') return unavailable(`Guard could not read the Compose service list: ${services}`)
-            const authority = { executable: launcher, canonicalRoot: identity.root, configPath: identity.configPath,
-                allowedRoots: prepared.result.policy.allowedRoots, services }
-            for (const invocation of parsed.invocations) {
-                const candidate = resolveOrdinaryInvocation({ executable: invocation.executable ?? '', cwd: invocation.cwd, argv: invocation.argv }, authority, path => {
-                    const fact = inspect({ path, cwd: invocation.cwd, operation: 'write' })
-                    return !!fact && typeof fact === 'object' && 'status' in fact && fact.status === 'resolved'
-                        && 'symlink' in fact && fact.symlink === false
-                })
-                if (candidate) cockpitInvocations.push(candidate)
+            const authority = { executable: launcher, ...configured, allowedRoots: prepared.result.policy.allowedRoots, services }
+            for (const { executable, cwd, argv, prefix, session } of launched) {
+                const args = argv.slice(prefix)
+                // A session inside a session would run a command the evaluator never sees.
+                const admitted = session && ordinarySessionCommand(args, cwd, configured)
+                    || resolveOrdinaryInvocation({ executable: launcher, cwd, argv: args }, authority, path => {
+                        const fact = inspect({ path, cwd, operation: 'write' })
+                        return !!fact && typeof fact === 'object' && 'status' in fact && fact.status === 'resolved'
+                            && 'symlink' in fact && fact.symlink === false
+                    })
+                // The evaluator matches the invocation as the agent spelled it.
+                if (admitted) cockpitInvocations.push({ executable, cwd, argv })
             }
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
-            searchDirectories: guardSearchDirectories(data.searchPath ?? '', prepared.result.policy.allowedRoots),
+            cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
+            searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
         const current = await adapters.loadConfig(identity.configPath)
         if (current.kind !== 'complete' || current.result.source.sha256 !== identity.configSha256) return unavailable('Guard configuration changed during evaluation.')
@@ -677,7 +703,7 @@ export async function prepareGuardEvaluationPolicy(
                 ripgrepConfigActive: false,
                 executionDirectories: Object.freeze(executionDirectories), searchDirectories: Object.freeze([]),
                 secretFileIdentities: secretFiles.identities && Object.freeze([...secretFiles.identities]), protectedFilesLinked,
-                cockpitInvocations: Object.freeze([]), projectCommands: Object.freeze([]),
+                cockpitInvocations: Object.freeze([]), cockpitLaunchers: Object.freeze([]), projectCommands: Object.freeze([]),
             })
             return { kind: 'complete' as const, status: 0 as const, diagnostics: [],
                 result: Object.freeze({ policy }) }

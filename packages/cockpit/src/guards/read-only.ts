@@ -8,7 +8,7 @@ import type { ParsedInvocation } from './invocation-parser.js'
 
 export const mechanism = {
     id: 'guard-read-only-profile', module: 'packages/cockpit/src/guards/read-only.ts',
-    exports: ['classifyReadOnlyInvocation'],
+    exports: ['classifyReadOnlyInvocation', 'cockpitLauncherPrefix'],
 } as const
 
 /** Paths are as written; `cwd` is where they resolve, after any `git -C`. */
@@ -176,24 +176,48 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     return { cwd: directory, reads: args.filter(arg => !arg.startsWith('-')), trees: [], listings: [], requires }
 }
 
+/**
+ * How many leading words of `argv` belong to the launcher when `executable` may start cockpit, or
+ * undefined when it cannot: the bare `cockpit` name, a path, `node <path>`, and `npx --no [--]
+ * cockpit`. Every spelling is a candidate only; the application proves which one starts the guard's
+ * own installed cockpit, so all of them are judged by that one identity.
+ */
+export function cockpitLauncherPrefix(executable: string, argv: readonly string[]): number | undefined {
+    if (executable === 'cockpit' || executable.includes('/')) return 0
+    // `node --require … launcher` would run other code first, so the script must come first.
+    if (executable === 'node') return argv[0]?.includes('/') && !argv[0].startsWith('-') ? 1 : undefined
+    // Without --no, npx downloads and runs a missing package; any other npx option chooses the
+    // package, the command or the shell. npx also reads every option before the first operand after
+    // the package name as its own, so `npx --no cockpit --script-shell=… doctor` runs another program.
+    if (executable !== 'npx' || argv[0] !== '--no') return undefined
+    if (argv[1] === '--') return argv[2] === 'cockpit' ? 3 : undefined
+    return argv[1] === 'cockpit' && argv[2] !== undefined && !argv[2].startsWith('-') ? 2 : undefined
+}
+
 const COCKPIT_READ_VERBS = set('check', 'doctor')
 
+// Help and version print and exit before any command runs; `<verb> --help` does the same.
 function cockpit(argv: readonly string[]): Classified {
-    if (argv.length === 1 && argv[0] === '--help') return { reads: [], trees: [], listings: [] }
+    if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '--version')
+        || argv.length === 2 && argv[1] === '--help' && /^[a-z][a-z-]*$/.test(argv[0]!)) return { reads: [], trees: [], listings: [] }
     const [verb, ...rest] = argv
     if (verb === undefined || !COCKPIT_READ_VERBS.has(verb)) return undefined
     const parsed = parseOptions(rest, { flags: set('--json'), values: set('--config'), fileValues: set('--config') })
     return parsed && parsed.positionals.length === 0 ? { reads: parsed.files, trees: [], listings: [] } : undefined
 }
 
-/** The paths an exact read-only invocation touches, or undefined when it is not one. */
-export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
+/**
+ * The paths an exact read-only invocation touches, or undefined when it is not one. `cockpit` holds
+ * the cockpit arguments only when the application proved the invocation starts the installed cockpit.
+ */
+export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environment: { readonly ripgrepConfigActive: boolean; readonly cockpit?: readonly string[] } = { ripgrepConfigActive: false }): ReadOnlyAccess | undefined {
     if (invocation.executable === null || invocation.wrapped || invocation.redirects.some(redirect => redirect.write)
         || invocation.words.some(word => word.role === 'environment-assignment-value')) return undefined
     const argv = invocation.argv
     const inputs = invocation.redirects.map(redirect => redirect.target)
     const shape = (classified: Classified): ReadOnlyAccess | undefined =>
         classified && { cwd: invocation.cwd, ...classified, reads: [...classified.reads, ...inputs] }
+    if (environment.cockpit) return shape(cockpit(environment.cockpit))
     switch (invocation.executable) {
         case 'pwd': return argv.length === 0 || argv.length === 1 && ['-L', '-P'].includes(argv[0]!) ? shape({ reads: [], trees: [], listings: [] }) : undefined
         case 'ls': {
@@ -210,7 +234,6 @@ export function classifyReadOnlyInvocation(invocation: ParsedInvocation, environ
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length > 1 ? parsed.positionals.slice(1) : ['.'] })
         }
         case 'find': return shape(find(argv))
-        case 'cockpit': return shape(cockpit(argv))
         case 'git': {
             const access = git(argv, invocation.cwd)
             return access && inputs.length === 0 ? access : undefined

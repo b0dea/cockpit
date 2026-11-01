@@ -1,16 +1,17 @@
-// Owns the machine facts behind three guard protections: the directories holding the code the
-// running guard loads, the command search path directories inside the allowed roots, and the
-// identity of every file in the root secrets directory. It reads the filesystem and decides
+// Owns the machine facts behind the guard protections: the directories holding the code the
+// running guard loads, the command search path directories inside the allowed roots, the identity
+// of every file in the root secrets directory, and which launcher spellings start the installed
+// cockpit. It reads the filesystem and decides
 // nothing; the guard application filters these facts into the policy and the evaluator turns them
 // into hard denials.
-import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
 
 import { foldGuardSpelling, GUARD_PROTECTED_LOCATION_LIMIT, GUARD_SECRET_FILE_LIMIT, guardIdentity } from './evaluator.js'
 
 export const mechanism = {
     id: 'guard-protected-locations', module: 'packages/cockpit/src/guards/protected-locations.ts',
-    exports: ['guardInstalledDirectories', 'guardSearchDirectories', 'guardSecretFiles'],
+    exports: ['guardInstalledDirectories', 'guardLauncherEvidence', 'guardSearchDirectories', 'guardSecretFiles'],
 } as const
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
@@ -55,6 +56,54 @@ export function guardInstalledDirectories(packageRoot: string, consumerRoot: str
         for (const name of Object.keys(manifest.dependencies ?? {})) pending.push(installedPackage(real, name))
     }
     return [...found].sort()
+}
+
+/**
+ * The file whose identity proves that `executable` with the launcher `words` after it, run in `cwd`,
+ * starts `launcher`, the installed cockpit the guard runs from, or undefined when it may start
+ * something else. A path, or the script `node` is given, qualifies when it resolves to the launcher;
+ * the bare name when the first `cockpit` on the command search path does. `npx` qualifies only in
+ * `root`, where npm runs a `bin` the root package.json declares before any installed one and applies
+ * the root `.npmrc`, whose `script-shell` and `node-options` run other code first; with neither
+ * present it runs the root's `node_modules/.bin/cockpit`, which must resolve to the launcher.
+ */
+export function guardLauncherEvidence(executable: string, words: readonly string[], cwd: string, root: string, launcher: string, searchPath: string): string | undefined {
+    const resolving = (path: string) => {
+        try { return realpathSync(path) === launcher ? path : undefined } catch (error) {
+            if (missing(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return undefined
+            throw error
+        }
+    }
+    if (executable.includes('/')) return resolving(posix.resolve(cwd, executable))
+    if (executable === 'node') return resolving(posix.resolve(cwd, words[0]!))
+    if (executable === 'cockpit') {
+        // The shell runs the first executable file the search path names; an empty entry is `cwd`.
+        for (const entry of searchPath.split(':')) {
+            const candidate = posix.resolve(cwd, entry, 'cockpit')
+            let status
+            try { status = statSync(candidate) } catch (error) {
+                if (missing(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR') continue
+                throw error
+            }
+            if (status.isFile() && status.mode & 0o111) return resolving(candidate)
+        }
+        return undefined
+    }
+    if (executable !== 'npx' || cwd !== root) return undefined
+    try {
+        lstatSync(join(root, '.npmrc'))
+        return undefined
+    } catch (error) {
+        if (!missing(error)) throw error
+    }
+    let manifest: unknown = {}
+    try { manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (error) {
+        if (error instanceof SyntaxError) return undefined
+        if (!missing(error)) throw error
+    }
+    // npm reads a bin from `bin`, or from every file in `directories.bin`.
+    if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest) || 'bin' in manifest || 'directories' in manifest) return undefined
+    return resolving(join(root, 'node_modules/.bin/cockpit'))
 }
 
 /**

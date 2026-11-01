@@ -138,16 +138,36 @@ the evaluator accepts only input that parser produced, so a hand-built lookalike
 A built-in read-only profile lets agents inspect the checkout without a prompt, which matters most
 on Codex and OpenCode, where a prompt becomes a denial. It covers exact argument shapes of `ls`,
 `pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `fd`, `find`, `git status`, `git diff`, `git log`,
-`git show`, `git branch` with no argument or `--list`, `cockpit check`, `cockpit doctor` and
-`cockpit --help`; the [read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each
-permitted option. Any other option falls back to the ordinary rules, including the ones that run
-programs or write files: `rg --pre`, `find -exec`, `find -delete`, `fd --exec`, `git -c`,
+`git show`, `git branch` with no argument or `--list`, and the cockpit commands in
+[Cockpit commands an agent can run](#cockpit-commands-an-agent-can-run); the
+[read-only profile](../packages/cockpit/src/guards/read-only.ts) lists each permitted option. Any
+other option falls back to the ordinary rules, including the ones that run programs or write files: `rg --pre`, `find -exec`, `find -delete`, `fd --exec`, `git -c`,
 `git --output`, `git --ext-diff` and `git diff --no-index`. Options whose value is optional, such
 as `grep --context` on macOS, are accepted only in their attached `--option=value` form, so the
 next word can never be misread. Git runs read-only only in a directory with its own `.git`, because
 Git otherwise treats a directory holding `HEAD`, `objects` and `refs` as a repository and honours
 its configuration; Git operands are inspected as files whose content may be printed. A pipeline or
-chain is permitted only when every segment is.
+chain is permitted only when every segment is. Redirecting output to `/dev/null`, `/dev/stdout` or
+`/dev/stderr`, or input from `/dev/null`, touches no file, so it does not change the decision.
+
+### Cockpit commands an agent can run
+
+| Command | Decision | Why |
+| --- | --- | --- |
+| `npx --no cockpit check --config cockpit.toml`, and likewise `doctor`, `preflight`, `logs --service <service>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. |
+| `npx --no -- cockpit --help`, `npx --no cockpit up --help`, and the version | allowed | They print and exit before any command runs. |
+| `npx --no cockpit up --config cockpit.toml`, and likewise `sleep` and `down` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and refuses to run unless `DOCKER_CONTEXT` or a local `DOCKER_HOST` is already set, because the printed `DOCKER_CONTEXT="$(docker context show)"` prefix is a command substitution the guard cannot evaluate and holds. |
+| `npx --no cockpit session --config cockpit.toml -- <command>` | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
+| `npx --no cockpit sync --config cockpit.toml`, `reset`, `runtime measure`, `sibling add` and every other command | a prompt, which Codex and OpenCode turn into a denial | They rewrite `cockpit.toml` or the guard's own files, or delete data. |
+
+These count from the cockpit root with `--config` naming the configured `cockpit.toml`; `check`,
+`doctor` and help also count from any directory. Each spelling counts only where the guard proves it
+starts its own installed package: a path such as `./node_modules/.bin/cockpit`, or one given to
+`node`, must resolve to it; bare `cockpit` must be what the command search path finds first; and
+the npx spellings in the table must run from the cockpit root with no root `.npmrc` and no `bin` in
+the root `package.json`, because npm would otherwise run that program or apply that
+configuration first. Any other npx option, or npx without `--no`, which may download a package, is
+not the installed cockpit.
 
 `rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent. An ambient ripgrep configuration can
 inject options such as a preprocessor, so its presence falls back to the ordinary prompt rules.

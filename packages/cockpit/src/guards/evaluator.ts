@@ -5,7 +5,7 @@ import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
-import { classifyReadOnlyInvocation, type ReadOnlyAccess } from './read-only.js'
+import { classifyReadOnlyInvocation, cockpitLauncherPrefix, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 
 export const mechanism = {
@@ -66,6 +66,12 @@ export interface GuardEvaluationPolicy {
     /** Some instance or secrets file has another hard link, which a recursive search can read under an unprotected name. */
     readonly protectedFilesLinked: boolean
     readonly cockpitInvocations: readonly GuardInvocationProfile[]
+    /**
+     * Launcher spellings the application proved start the guard's own installed cockpit when run in
+     * `cwd`: the executable and the launcher words after it, such as `npx` with `--no cockpit`. A
+     * matching invocation is evaluated as cockpit with the remaining words; no other one is.
+     */
+    readonly cockpitLaunchers: readonly GuardInvocationProfile[]
     readonly projectCommands: readonly GuardProjectCommand[]
 }
 export interface PathInspectionRequest {
@@ -119,6 +125,9 @@ export function foldGuardSpelling(path: string): string {
 const fold = foldGuardSpelling
 const unavailable = (reason: string): GuardDecision => ({ decision: 'unavailable', reason })
 const ask = (reason: string): GuardDecision => ({ decision: 'ask', reason })
+const UNPROVEN_LAUNCHER = 'This cockpit command requires human approval: the guard could not prove it starts the installed cockpit. '
+    + 'npx --no cockpit counts only from the cockpit root with no root .npmrc and no bin in the root package.json, and bare cockpit only when '
+    + 'the command search path finds the installed package; a path such as ./node_modules/.bin/cockpit counts whenever it resolves to the installed package.'
 const deny = (reason: string): GuardDecision => ({ decision: 'deny', reason })
 const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every invocation matches an exact permitted profile or bounded data operation.' })
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
@@ -153,11 +162,11 @@ function projectTuple(value: JsonSnapshotObject): boolean {
 }
 function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
     const p = snapshotJson(value)
-    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'projectCommands'])
+    if (!record(p) || !keys(p, ['canonicalRoot', 'configPath', 'allowedRoots', 'instances', 'protectedIdentities', 'protectedBranches', 'hostedDatabaseHosts', 'vendorHosts', 'declaredAllows', 'declaredDenies', 'ripgrepConfigActive', 'executionDirectories', 'searchDirectories', 'secretFileIdentities', 'protectedFilesLinked', 'cockpitInvocations', 'cockpitLaunchers', 'projectCommands'])
         || !canonical(p.canonicalRoot) || !canonical(p.configPath) || posix.dirname(p.configPath) !== p.canonicalRoot || !strings(p.allowedRoots) || !p.allowedRoots.includes(p.canonicalRoot) || !p.allowedRoots.every(canonical)
         || !strings(p.protectedBranches) || !strings(p.hostedDatabaseHosts) || !strings(p.vendorHosts)
         || !Array.isArray(p.instances) || !Array.isArray(p.protectedIdentities) || !Array.isArray(p.declaredAllows) || !Array.isArray(p.declaredDenies)
-        || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.projectCommands)
+        || typeof p.ripgrepConfigActive !== 'boolean' || typeof p.protectedFilesLinked !== 'boolean' || !Array.isArray(p.cockpitInvocations) || !Array.isArray(p.cockpitLaunchers) || !Array.isArray(p.projectCommands)
         || !strings(p.executionDirectories) || p.executionDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
         || !strings(p.searchDirectories) || p.searchDirectories.length > GUARD_PROTECTED_LOCATION_LIMIT
         || p.secretFileIdentities !== null && (!Array.isArray(p.secretFileIdentities) || p.secretFileIdentities.length > GUARD_SECRET_FILE_LIMIT || !p.secretFileIdentities.every(identity))) return undefined
@@ -176,6 +185,8 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
             || !['prefix', 'contains'].includes(String(item.match)) || !ruleArgv(item.argv) || !scalar(item.reason)
             || item.fix !== undefined && !scalar(item.fix))
         || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv']) || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv))
+        || p.cockpitLaunchers.length > GUARD_INPUT_LIMITS.invocations || p.cockpitLaunchers.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv'])
+            || !scalar(item.executable) || !argv(item.argv) || cockpitLauncherPrefix(item.executable, [...item.argv, 'check']) !== item.argv.length || !confined(item.cwd))
         || p.projectCommands.some((item) => !record(item) || !keys(item, ['executable', 'checkoutRoot', 'kind', 'argv']) || !confined(item.checkoutRoot) || !['build', 'test'].includes(String(item.kind)) || !projectTuple(item))
         || p.protectedIdentities.some((item) => !record(item) || !keys(item, ['path', 'identity', 'ancestors']) || !confined(item.path)
             || item.identity !== null && !identity(item.identity) || !Array.isArray(item.ancestors) || !item.ancestors.every(identity))) return undefined
@@ -809,13 +820,39 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         return safe
     }
     const readOnly = new Set<ParsedInvocation>()
+    // Launcher words name a package or the launcher, never an operand. Only a proven spelling runs
+    // the installed cockpit, so only it is evaluated as cockpit; any other may run other code.
+    const launcherPrefix = (invocation: ParsedInvocation) => invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
+    const provenCockpit = (invocation: ParsedInvocation): readonly string[] | undefined => {
+        const prefix = launcherPrefix(invocation)
+        return prefix !== undefined && resolved.cockpitLaunchers.some((item) => item.executable === invocation.executable && item.cwd === invocation.cwd
+            && item.argv.length === prefix && item.argv.every((word, index) => word === invocation.argv[index])) ? invocation.argv.slice(prefix) : undefined
+    }
+    const launchedCockpit = (invocation: ParsedInvocation): { readonly cockpit?: readonly string[]; readonly operands: readonly string[] } => {
+        const cockpit = provenCockpit(invocation)
+        if (cockpit) return { cockpit, operands: cockpit }
+        const prefix = launcherPrefix(invocation)
+        if (prefix === undefined || !['npx', 'cockpit'].includes(invocation.executable!)) return { operands: invocation.argv }
+        holdAsk(invocation, ask(UNPROVEN_LAUNCHER))
+        return { operands: invocation.argv.slice(prefix) }
+    }
+    // A session runs the words after `--` as a command, with no shell, in its own directory, so
+    // that command is judged as one more invocation: the session never admits more than it would.
+    const invocations = input.invocations.flatMap((invocation): ParsedInvocation[] => {
+        const cockpit = provenCockpit(invocation)
+        const separator = cockpit?.[0] === 'session' ? cockpit.indexOf('--') : -1
+        const command = separator < 0 ? [] : cockpit!.slice(separator + 1)
+        if (!command.length) return [invocation]
+        return [invocation, { executable: command[0]!, argv: command.slice(1), cwd: invocation.cwd, wrapped: false, redirects: [],
+            words: command.map((value, index) => ({ role: index ? 'argument' as const : 'executable' as const, value })) }]
+    })
     let possibleControlCount = 0
     inspectPath({ path: input.cwd, cwd: input.cwd, operation: 'cwd' })
     for (const path of input.removed) {
         if (inspectRemoval(path, input.cwd)) hold(unavailable('Removal path escapes configured roots.'))
     }
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })
-    for (const invocation of input.invocations) {
+    for (const invocation of invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
         // A host passed to printf is still an argument and remains a hard denial.
         for (const word of invocation.words) {
@@ -836,7 +873,8 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
                 approvalBarriers.set(invocation, ask('Removal outside configured roots requires human approval.'))
             }
         }
-        const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive })
+        const { cockpit, operands } = launchedCockpit(invocation)
+        const access = classifyReadOnlyInvocation(invocation, { ripgrepConfigActive: resolved.ripgrepConfigActive, ...(cockpit ? { cockpit } : {}) })
         const writes: VisibleWrites | undefined = git?.verb === 'mv' ? (() => {
             const transfer = transferOperands('mv', git.args)
             return { paths: transfer.writes, reads: [], removes: false, uncertain: transfer.uncertain }
@@ -854,7 +892,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
             }
             if (writes.uncertain) hold(unavailable('Unsupported visible writer option.'))
         } else if (!access) {
-            for (const arg of git?.args ?? invocation.argv) {
+            for (const arg of git?.args ?? operands) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
                     inspectPossibleControlOperand(arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd)
                 }
@@ -894,13 +932,13 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     }
     if (pathCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Guard path limit exceeded.'))
     if (hardDeny) return hardDeny
-    for (const invocation of input.invocations) {
+    for (const invocation of invocations) {
         const declared = resolved.declaredDenies.find(rule => ruleMatches(invocation, rule))
         if (declared) return deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
     }
     if (authorityUnavailable) return authorityUnavailable
     const declaredReasons: string[] = []
-    for (const invocation of input.invocations) {
+    for (const invocation of invocations) {
         const barrier = approvalBarriers.get(invocation)
         if (barrier) return barrier
         const declared = !invocation.wrapped && !invocation.words.some((word) => word.role === 'environment-assignment-value')

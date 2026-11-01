@@ -147,6 +147,9 @@ const separators = new Set([';', '\n', '&&', '||', '|', '&'])
 const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
 const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command', 'exec'])
 const dynamicExecutables = new Set(['eval', 'source', '.', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'sudo', 'doas', 'xargs', 'cd'])
+// Writing to these discards or forwards output and reading /dev/null yields nothing, so they touch
+// no file; only these exact spellings qualify.
+const DEVICE_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr'])
 const reserved = new Set(['if', 'then', 'else', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select', 'time', '!'])
 
 function invocation(tokens: Token[], cwd: string, definitions: Set<string>): ParsedInvocation {
@@ -163,7 +166,8 @@ function invocation(tokens: Token[], cwd: string, definitions: Set<string>): Par
             const target = tokens[++i]
             if (!target || target.kind !== 'word' || target.dynamic) refuse('Missing or dynamic redirect target.')
             words.push({ role: 'redirect-target', value: target.value })
-            if (!token.value.startsWith('<<') && !['>&', '<&'].includes(token.value)) {
+            if (!token.value.startsWith('<<') && !['>&', '<&'].includes(token.value)
+                && !(token.value === '<' ? target.value === '/dev/null' : DEVICE_SINKS.has(target.value))) {
                 redirectPaths.push({ target: path(target.value), write: token.value !== '<', truncate: token.value === '>' || token.value === '>|' })
             } else if (['>&', '<&'].includes(token.value) && !/^(?:\d+|-)$/.test(target.value)) refuse('Unsupported descriptor redirect.')
         } else if (token.kind !== 'word') refuse('Unsupported shell operator.')
