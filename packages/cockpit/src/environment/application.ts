@@ -120,6 +120,7 @@ import {
     inspectPortLeaseProjection,
     revalidatePortLeaseProjection,
     observeRetainedPortFamily,
+    inspectRecordedPortDeclaration,
     projectRetainedPortFamilyResult,
     releasePortFamily,
     type LeasePortFamilyResult,
@@ -2132,6 +2133,13 @@ function lifecycleRefusal(
     }
 }
 
+function runtimeChangedRefusal(context: LifecycleRunContext): ReturnType<typeof lifecycleRefusal> {
+    return lifecycleRefusal(
+        ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
+        `the recorded stack runs an earlier version of the services, ports, mounts or images in ${basename(context.source.path)}, and up does not replace a running stack — fix: run \`${lifecycleSuggestion(context, 'down')}\`, then \`${lifecycleSuggestion(context, 'up')}\``,
+        context.stackId)
+}
+
 function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
     return cockpitCommand(command, { config: context.source.path })
 }
@@ -2754,10 +2762,7 @@ async function executeUpRound(
             // The replay names the runtime declarations, so only a change that reaches the containers
             // lands here. `up` never recreates a running stack in place; `down` removes it by its
             // ownership labels whatever the configuration says now.
-            return { kind: 'complete' as const, result: lifecycleRefusal(
-                ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                `the recorded stack runs an earlier version of the services, ports, mounts or images in ${basename(context.source.path)}, and up does not replace a running stack — fix: run \`${lifecycleSuggestion(context, 'down')}\`, then \`${lifecycleSuggestion(context, 'up')}\``,
-                context.stackId) }
+            return { kind: 'complete' as const, result: runtimeChangedRefusal(context) }
         }
         if (teardownComplete) {
             const acquisition = initialAcquisition ?? (ports.leaseResult.kind === 'complete' && ports.leaseResult.change === 'acquired'
@@ -3167,6 +3172,9 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
     let runtimeStarted = false
     const rememberRuntimeStart = () => { runtimeStarted = true }
     const releasable = () => acquired !== undefined && !runtimeStarted
+    const declaration = await inspectRecordedPortDeclaration({ namespace: context.namespace, stackId: context.stackId, config: context.ports })
+    if (declaration.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: declaration.diagnostics }
+    if (declaration.changed) return runtimeChangedRefusal(context)
     const generatedPreparation = await prepareGeneratedBringup(context, adapters, rememberAcquisition)
     if (generatedPreparation) {
         if (!acquired) return generatedPreparation
@@ -3372,7 +3380,7 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
         stackId: context.stackId,
         holderId: context.holderId,
         checkoutId: context.checkoutId,
-        config: context.ports,
+        config: 'recorded',
     })
     if (retained.kind !== 'complete') return lifecycleRefusal(
         retained.diagnostics[0]?.code ?? ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,

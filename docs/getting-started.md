@@ -408,11 +408,9 @@ first.
 Editing `cockpit.toml` by hand works the same way. A change that never reaches a container, such
 as a sibling's `purpose`, the guards, MCP, skills, surfaces, comments or formatting, leaves the
 running stack alone: run `sync` and keep working, and the next `up` resumes the same stack. A
-change to services, mounts, images or anything else the containers receive makes `up` refuse with
-`LIFECYCLE_PROGRESS_INVALID`, because `up` never replaces a running stack in place; run the `down`
-it prints, then `up`. Change `[ports.bases]` only after `sleep`, as
-[Local URLs and port families](environment.md#local-urls-and-port-families) describes: the
-running stack holds a lease on its ports.
+change to services, ports, mounts, images or anything else the containers receive makes `up` refuse
+with `LIFECYCLE_PROGRESS_INVALID`, because `up` never replaces a running stack in place; run the
+`down` it prints, then `up`.
 
 ## Rename a cockpit
 

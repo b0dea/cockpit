@@ -544,7 +544,7 @@ export function createDestructiveCommandAdapters(
                 stackId: context.stackId,
                 holderId: context.holderId,
                 checkoutId: context.checkoutId,
-                config: context.ports,
+                config: 'recorded',
             })
             if (retained.kind !== 'complete') return observationRefusal(retained.diagnostics)
             const entrypoints = deriveEntrypoints({

@@ -44,7 +44,7 @@ import {
 export const mechanism = {
     id: 'environment-port-coordination',
     module: 'packages/cockpit/src/environment/ports.ts',
-    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'revalidatePortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'observePortListeners', 'isPortObservation'],
+    exports: ['leasePortFamily', 'acquirePortProjection', 'observeRetainedPortFamily', 'inspectRecordedPortDeclaration', 'projectRetainedPortFamilyResult', 'inspectPortLeaseProjection', 'revalidatePortLeaseProjection', 'inspectPortLeaseTransfer', 'compensateAcquiredPortHolder', 'releasePortFamily', 'deriveEntrypoints', 'projectPortLeaseResult', 'consumePortLeaseProjection', 'observePortFamily', 'observePortListeners', 'isPortObservation'],
 } as const
 
 const issuedObservations = new WeakMap<object, number>()
@@ -322,18 +322,22 @@ export type RetainedPortFamilyResult =
       }>
     | PortRefusal
 
+// `config: 'recorded'` is for the commands that stop or remove a stack. The lease belongs to the
+// stack, and its containers publish the ports it was started with, so editing [ports.bases] while it
+// runs must not strand it: comparing against the edited declaration made sleep and down refuse the
+// very stack the recovery tells the operator to remove.
 export async function observeRetainedPortFamily(supplied: {
     readonly namespace: StateNamespace
     readonly stackId: StackId
     readonly holderId: HolderId
     readonly checkoutId: import('./contract.js').CheckoutId
-    readonly config: PortFamilyConfig
+    readonly config: PortFamilyConfig | 'recorded'
 }): Promise<RetainedPortFamilyResult> {
     let namespace: StateNamespace | undefined
     let stackId: StackId | undefined
     let holderId: HolderId | undefined
     let checkoutId: import('./contract.js').CheckoutId | undefined
-    let config: PortFamilyConfig | undefined
+    let config: PortFamilyConfig | 'recorded' | undefined
     try {
         if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) throw new Error('invalid input')
         const descriptors = Object.getOwnPropertyDescriptors(supplied)
@@ -344,8 +348,8 @@ export async function observeRetainedPortFamily(supplied: {
         stackId = descriptors.stackId!.value as StackId
         holderId = descriptors.holderId!.value as HolderId
         checkoutId = descriptors.checkoutId!.value as import('./contract.js').CheckoutId
-        const configSnapshot = snapshotPortConfig(descriptors.config!.value)
-        if (typeof configSnapshot === 'string') throw new Error(configSnapshot)
+        const configSnapshot = descriptors.config!.value === 'recorded' ? 'recorded' : snapshotPortConfig(descriptors.config!.value)
+        if (typeof configSnapshot === 'string' && configSnapshot !== 'recorded') throw new Error(configSnapshot)
         config = configSnapshot
     } catch {
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'retained port-family input is malformed', 'retained port family')
@@ -368,8 +372,7 @@ export async function observeRetainedPortFamily(supplied: {
     if (!holder || holder.checkoutId !== checkoutId || value.lease === null || value.lease.released) {
         return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'retained port-family observation requires the exact current holder and active lease', stackId)
     }
-    if (value.lease.declaration.step !== config.step || value.lease.declaration.count !== config.count
-        || !sameValues(value.lease.declaration.bases, config.bases)) {
+    if (config !== 'recorded' && !sameDeclaration(value.lease.declaration, config)) {
         return refuse(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'active port lease declaration changed during execution', stackId)
     }
     const inventory = await readRootPortInventory(namespace)
@@ -395,6 +398,24 @@ export async function observeRetainedPortFamily(supplied: {
     }))
     availableRetainedPortFamilies.add(result)
     return result
+}
+
+// Whether the stack still holds a lease taken under a different [ports] declaration. `up` asks
+// before leasing so that editing the port family of a recorded stack meets the same down-then-up
+// recovery as any other runtime change, instead of the lease's mid-execution refusal.
+export async function inspectRecordedPortDeclaration(input: {
+    readonly namespace: StateNamespace
+    readonly stackId: StackId
+    readonly config: PortFamilyConfig
+}): Promise<Readonly<{ kind: 'complete'; changed: boolean }> | PortRefusal> {
+    const address = input.namespace.paths.coordination(input.stackId)
+    const stored = await readState(address)
+    if (stored.kind === 'missing') return Object.freeze({ kind: 'complete', changed: false })
+    if (stored.kind !== 'complete') return stateRefusal(stored)
+    const value = decodeCoordinationRecord(stored.value, input.stackId)
+    if (!value) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', address.path)
+    const lease = value.lease
+    return Object.freeze({ kind: 'complete', changed: lease !== null && !lease.released && !sameDeclaration(lease.declaration, input.config) })
 }
 
 export async function projectRetainedPortFamilyResult(input: {
@@ -571,6 +592,10 @@ function stateRefusal(result: Exclude<StateResult<unknown>, { kind: 'complete' |
 function sameValues(left: Readonly<Record<string, number>>, right: Readonly<Record<string, number>>): boolean {
     const keys = Object.keys(left)
     return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key])
+}
+
+function sameDeclaration(recorded: PortFamilyConfig, declared: PortFamilyConfig): boolean {
+    return recorded.step === declared.step && recorded.count === declared.count && sameValues(recorded.bases, declared.bases)
 }
 
 function validateConfig(config: PortFamilyConfig): string | undefined {
@@ -1097,12 +1122,7 @@ export async function leasePortFamily(supplied: {
         }
 
         if (currentLease && !currentLease.released) {
-            const declaration = currentLease.declaration
-            if (
-                declaration.step !== input.config.step
-                || declaration.count !== input.config.count
-                || !sameValues(declaration.bases, input.config.bases)
-            ) {
+            if (!sameDeclaration(currentLease.declaration, input.config)) {
                 return abortStateTransaction(refuse(
                     ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION,
                     'active port lease declaration changed during execution',

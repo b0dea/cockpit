@@ -297,7 +297,7 @@ describe('lifecycle application contracts', () => {
                 ],
                 lease: {
                     offset: lease.offset, ports: lease.ports, released: false,
-                    declaration: { step: 100, count: 4, bases: { APP_PORT: 4100 } },
+                    declaration: { step: context.ports.step, count: context.ports.count, bases: { ...context.ports.bases } },
                 },
                 lastReleasedHolder: null,
                 drain: null,

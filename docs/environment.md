@@ -303,14 +303,14 @@ that `cockpit session` or run `cockpit sleep` from it, then retry.
 A stack's identity, carried in its ownership labels and saved progress, is a digest of the
 declarations that reach its containers, not of the bytes of `cockpit.toml`. Editing a sibling's
 `purpose`, the guards, MCP, surfaces, comments or formatting therefore leaves a running stack
-alone, and the next `up` resumes it. A change to services, mounts, images or anything else the
-containers receive gives the stack a new identity: `up` refuses with `LIFECYCLE_PROGRESS_INVALID`
-rather than replace a running stack in place, and the fix it prints is
-`npx --no cockpit down --config cockpit.toml`, then
-`npx --no cockpit up --config cockpit.toml`. A `[ports.bases]` change also needs the stack released
-with `sleep` before the edit, because the running stack holds a lease on its ports (see
-[Local URLs and port families](#local-urls-and-port-families)). `sleep` and `reset` keep the
-previous generated identity so the stack can resume.
+alone, and the next `up` resumes it. A change to services, ports, mounts, images or anything else
+the containers receive gives the stack a new identity: `up` refuses with
+`LIFECYCLE_PROGRESS_INVALID` rather than replace a running stack in place, and the fix it prints
+is `npx --no cockpit down --config cockpit.toml`, then
+`npx --no cockpit up --config cockpit.toml`. `down` and `sleep` find the stack and its port lease
+by the stack, not by the edited declaration, so a `[ports.bases]` edit made while the stack is up
+recovers the same way. `sleep` and `reset` keep the previous generated identity so the stack can
+resume.
 
 `reset` first shows an exact preview of the generated volumes and declared generated host paths
 it would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at

@@ -1030,4 +1030,48 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const restarted = await runUp({ configPath: input.configPath }, resumed)
         expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
     })
+
+    it.each([['up', false], ['asleep', true]])('refuses an up after a port base change while the stack is %s with the same down-then-up recovery, and the new port is leased', async (_state, sleepFirst) => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = {
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000,
+        }
+        const previous = await readFile(input.configPath, 'utf8')
+        const intended = previous.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4200')
+        expect(intended).not.toBe(previous)
+        await writeFile(input.configPath, intended)
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'complete', status: 0 })
+        const adapters = createLifecycleCommandAdapters(input, executeProbe)
+        const loaded = await adapters.load({ configPath: input.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        const path = loaded.result.source.path
+        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
+        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+
+        if (sleepFirst) {
+            // The running stack holds its lease on the old port family; sleep releases it by stack,
+            // not by the edited declaration.
+            const slept = await runSleep({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
+            expect(slept, JSON.stringify(slept)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'stopped' } })
+        }
+        const refused = await runUp({ configPath: input.configPath }, adapters)
+
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'LIFECYCLE_PROGRESS_INVALID',
+            message: `the recorded stack runs an earlier version of the services, ports, mounts or images in cockpit.toml, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\``,
+        }] })
+        // A running stack still holds its lease on the old port family; down removes it by stack,
+        // not by the edited declaration.
+        const down = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
+        expect(down, JSON.stringify(down)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
+        const restarted = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
+        expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+        const coordination = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (coordination.kind !== 'complete') throw new Error(JSON.stringify(coordination))
+        expect(decodeCoordinationRecord(coordination.value, first.context.stackId)?.lease).toMatchObject({ released: false, ports: { APP_HOST_PORT: 4200 } })
+    })
 })
