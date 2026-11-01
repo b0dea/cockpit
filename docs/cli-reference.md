@@ -405,6 +405,7 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
+| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
 | `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
@@ -425,7 +426,6 @@ Reads `cockpit.toml` from `--config`.
 | `CLI_INTERNAL_ERROR` |
 | `CLI_USAGE_INVALID` |
 | `COCKPIT_VERSION_MISMATCH` |
-| `CODEX_HOOK_UNTRUSTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
 | `CONFIG_ENCODING_INVALID` |
 | `CONFIG_NOT_FOUND` |

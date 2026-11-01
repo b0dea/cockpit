@@ -13,7 +13,7 @@ The Evidence column names what would confirm a cell: `pending_evidence` needs a 
 
 Last probed and Probed version say when cockpit's mechanism was last tested against that tool and at which version, or `never`. A probe date is not a confirmation: only the State column says what is confirmed.
 
-Source manifest: `06f896f181a438b8f954e3de75b66eca5e4eeff9db1f5feb2a85fefadf3df563`.
+Source manifest: `61da5b9df084a4af229fd1d19cfba80f706d7360ed12e544d8f79f02a95cee4a`.
 
 | Harness | Capability | Skill | State | Evidence | Provenance | Last probed | Probed version |
 | --- | --- | --- | --- | --- | --- | --- | --- |

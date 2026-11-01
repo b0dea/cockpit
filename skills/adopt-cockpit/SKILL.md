@@ -162,7 +162,10 @@ init for `--help` to list its flags. The step is done when the result reports
 `environment-verified`. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
-named gaps. Native discovery, a real interview and a clean-machine run each still need their own check.
+named gaps. Preflight passes only once the cockpit repository is committed and clean, so a new one
+reports `GIT_STATE_UNHEALTHY` (no commits yet) with the commands that commit the generated files.
+Show the human `git status --short` and ask before committing, unless they asked you to commit;
+then re-run the same command. Native discovery, a real interview and a clean-machine run each still need their own check.
 
 If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine, and
 again whenever sync changes the hook: Codex silently skips a project hook nobody has trusted, so
@@ -174,7 +177,8 @@ every tool call would run unguarded. An agent cannot give that trust. Ask the hu
 `init` asks `cockpit.name` first and proposes the cockpit root's directory name. Ask the human for
 the name before accepting: it scopes the cockpit's Compose projects, state and generated files, so
 changing it after the first sync means bringing the stack down and syncing again. Never edit
-`cockpit.name` in `cockpit.toml` by hand to rename a running cockpit.
+`cockpit.name` while the stack is up; to rename, follow the *Rename a cockpit* section of
+`./node_modules/@b0dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
 
 Being told to "use sensible defaults" or "proceed without asking" covers interview answers only.
 It never extends to writing inside a product repository: an **AGENTS.md** pointer, a Compose file,

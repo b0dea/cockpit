@@ -244,7 +244,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `CLI_USAGE_INVALID` | see the message |
 | `COCKPIT_REVISION_INVALID` | see the message |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
-| `CODEX_HOOK_UNTRUSTED` | see the message |
+| `CODEX_HOOK_UNTRUSTED` | if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml> |
 | `COMPOSE_BIND_UNDECLARED` | see the message |
 | `COMPOSE_HEALTHCHECK_MISSING` | see the message |
 | `COMPOSE_IMAGE_UNPINNED` | see the message |
