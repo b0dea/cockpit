@@ -56,7 +56,8 @@ every tool call would run unguarded. An agent cannot give that trust. Ask the hu
 `init` asks `cockpit.name` first and proposes the cockpit root's directory name. Ask the human for
 the name before accepting: it scopes the cockpit's Compose projects, state and generated files, so
 changing it after the first sync means bringing the stack down and syncing again. Never edit
-`cockpit.name` in `cockpit.toml` by hand to rename a running cockpit.
+`cockpit.name` while the stack is up; to rename, follow the *Rename a cockpit* section of
+`./node_modules/@b0dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
 
 Being told to "use sensible defaults" or "proceed without asking" covers interview answers only.
 It never extends to writing inside a product repository: an **AGENTS.md** pointer, a Compose file,
