@@ -866,7 +866,12 @@ snapshot, and run interactive `baseline-record`; `doctor` and `preflight` cannot
 `CONFIG_STALE`, `SIBLING_MISSING`, `GIT_STATE_UNHEALTHY`, `CHECKOUT_ADJACENCY_UNHEALTHY`, and
 `GIT_COMPARISON_REMOTE_MISMATCH` mean the configuration or a checkout has drifted. Inspect the
 reported path and result, and restore the declared checkout or upstream remote yourself; cockpit
-does not rewrite Git state. `GUIDE_CAP_EXCEEDED` means you must shrink the selected guide set.
+does not rewrite Git state. `GIT_STATE_UNHEALTHY` covers the cockpit repository itself: preflight
+passes only when it has a commit and no modified or untracked file outside `.gitignore`, because
+the gate vouches for the cockpit as committed, not for local edits. A repository with no commits
+yet, such as one `init` has just created, fails this one row with "has no commits yet"; the row's
+fix names the `git -C <cockpit root> status --short` review and the `git add -A` and `git commit`
+that make the first commit. `GUIDE_CAP_EXCEEDED` means you must shrink the selected guide set.
 `SKILL_BUDGET_UNAVAILABLE` and `HARNESS_SURFACE_UNAVAILABLE` mean cockpit could not read the
 declared agent inputs; make them readable.
 

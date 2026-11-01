@@ -41,7 +41,10 @@ init for `--help` to list its flags. The step is done when the result reports
 `environment-verified`. Re-run the same explicit root and target to
 resume; changed bytes or ownership require repair. The command validates the configuration,
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
-named gaps. Native discovery, a real interview and a clean-machine run each still need their own check.
+named gaps. Preflight passes only once the cockpit repository is committed and clean, so a new one
+reports `GIT_STATE_UNHEALTHY` (no commits yet) with the commands that commit the generated files.
+Show the human `git status --short` and ask before committing, unless they asked you to commit;
+then re-run the same command. Native discovery, a real interview and a clean-machine run each still need their own check.
 
 If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine, and
 again whenever sync changes the hook: Codex silently skips a project hook nobody has trusted, so

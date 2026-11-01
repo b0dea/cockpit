@@ -335,7 +335,9 @@ Review and commit the generated files, then start the stack and run the gate:
 ```
 
 `up` starts or resumes the stack. `preflight` is the gate: a successful `up` is not proof the
-environment is healthy, `preflight` is. In `--json` mode a successful `up` reports the stack
+environment is healthy, `preflight` is. It also fails with `GIT_STATE_UNHEALTHY` until the
+generated files are committed, and again on any later uncommitted change in the cockpit
+repository ([Preflight observations](environment.md#preflight-observations)). In `--json` mode a successful `up` reports the stack
 identifier, whether it `started`, `resumed` or was `unchanged`, the entrypoints with their leased
 ports, and, for services it started, the cold-start time against your configured limit. (This
 result shape is read from the source; the synthetic example has no runnable services.)

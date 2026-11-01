@@ -20,7 +20,8 @@ rules for the whole adoption:
    - creating a Git remote or a hosted repository;
    - any destructive command (`down`, `reset`, `sync --interactive` removals, deleting files);
    - `cockpit sync --adopt`, which moves the team's own agent settings;
-   - accepting an `init` digest (`--accept-preview`, `--accept-defaults`).
+   - accepting an `init` digest (`--accept-preview`, `--accept-defaults`);
+   - committing in the cockpit repository, unless the human asked you to commit.
 2. **Show the exact preview** before you ask: the `sync --dry-run` listing, the `init` preview
    with its `previewSha256`, the answers file, or the defaults digest the run printed. Consent
    binds to those bytes; a digest copied from anywhere but the latest pending run is refused.
@@ -289,7 +290,12 @@ Run from the directory that holds the repositories. Each step stops for the huma
 
    This writes `cockpit.toml`, syncs, checks and runs `preflight`. Where a runtime is declared,
    `preflight` needs a measured runtime ([Measure the runtime](#measure-the-runtime)); until then
-   the run stops there and resumes when you rerun the same command.
+   the run stops there and resumes when you rerun the same command. `preflight` also needs the
+   cockpit repository committed and clean
+   ([Preflight observations](environment.md#preflight-observations)): a new one reports
+   `GIT_STATE_UNHEALTHY` because it has no commits yet, and the row's fix stages and commits
+   every file Git does not ignore. Show the human `git status --short` and ask before committing
+   (rule 1 of the [Safety contract](#safety-contract)), then rerun the same command.
 
 Rerunning with the same answers file resumes. A changed value for a recorded answer is refused
 with `INIT_ANSWER_CONFLICT`: drop that key to keep the recorded answer, or follow the canonical
