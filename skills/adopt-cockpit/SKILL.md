@@ -10,14 +10,16 @@ description: "Set up or adopt cockpit for a project, bring a multi-repo product 
 Use this when a human asks you to set cockpit up, adopt it, or bring their product up for
 agents. cockpit declares a product's repositories once in `cockpit.toml`, generates the same agent
 instructions, skills, guards and permissions for every harness, and runs the stack against the
-live checkouts. The complete guide, with every situation and its completion criteria, is
-<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md>; read the section a
-step below points to.
+live checkouts. The complete guide, with every situation and its completion criteria, ships with
+cockpit: once it is installed (below), open `./node_modules/@b0dea/cockpit/docs/agent-adoption.md`
+with a file read; until then, read
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md>. Read the section a
+step below points to. Guide pages cited after the install step are in that installed directory.
 
 ## Safety contract
 
 cockpit exists so that an agent's environment holds no guesses: a clean-looking configuration
-with invented values in it is the failure it is built to prevent. Work under five rules:
+with invented values in it is the failure it is built to prevent. Work under six rules:
 
 1. Ask the human before writing into a product repository, creating a Git remote or hosted
    repository, running a destructive command (`down`, `reset`, approving removals), running
@@ -30,6 +32,11 @@ with invented values in it is the failure it is built to prevent. Work under fiv
    `provenance.kind = "inferred"`. It becomes an answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
+6. Permission to "use sensible defaults" covers `init` answers only. It never covers writing inside
+   a product repository: an **AGENTS.md** pointer, a Compose file or a `package.json` there needs
+   the human's explicit yes to that change, even when told to proceed with defaults. Mark every
+   answer you chose yourself as `"agent-default"` in the answers file's `[provenance]` table, and
+   end your report with every default you chose, its field and its value.
 
 ## Install cockpit if it is missing
 
@@ -45,11 +52,11 @@ repositories; leave the product repositories untouched unless the human agrees. 
 ./node_modules/.bin/cockpit --help
 ```
 
-Choose your tool's target identifier from the
-<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>.
-It separates generated files from native enforcement that has been confirmed. For example, Codex uses
-`codexcli`; substitute the appropriate target below. For an instructions-only tool, follow
-<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/harness-surfaces.md#capability-states>.
+Choose your tool's target identifier from the capability matrix,
+`./node_modules/@b0dea/cockpit/docs/capability-matrix.md`. It separates generated files from native
+enforcement that has been confirmed. For example, Codex uses
+`codexcli`; substitute the appropriate target below. For an instructions-only tool, follow the
+*Capability states* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
 
 Run commands from the cockpit root through `./node_modules/.bin/cockpit`; if that file is absent,
 stop and repair the project-local install. Read flags from
@@ -106,16 +113,18 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes.
 
 - Before the first `up`, measure the runtime with
-  `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`;
+  `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json`;
   the probe refuses a `DOCKER_CONTEXT` override. The guide's *Measure the runtime* says which
-  runtimes are recognised. A measurement takes a few
-  minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check --config cockpit.toml` fail and the guard hold
-  tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml`.
+  runtimes are recognised. A measurement takes a few minutes with no progress output. It records
+  the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
+- Codex: a person runs `codex -C <cockpit root>` once per machine and chooses **Trust all and
+  continue** at **Hooks need review**; until then Codex silently skips the guard hook, and
+  `./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold;
-  `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`
-  removes its runtime, so ask first; `down` refuses unless `DOCKER_CONTEXT` names the daemon it
-  deletes from.
+  `./node_modules/.bin/cockpit down --config cockpit.toml`
+  removes its runtime, so ask first; `down` deletes only from the local Docker daemon it fixes at
+  the start of the run.
 - Upgrade: install the new version, then run `./node_modules/.bin/cockpit check --config cockpit.toml`,
   `./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run` and `./node_modules/.bin/cockpit sync --config cockpit.toml`. The guard
   trusts only the CLI it was generated for, so after an upgrade the human may need to run
@@ -128,9 +137,9 @@ by its reference generator so this skill and the installed one cannot disagree.
 
 ### Bootstrap
 
-Choose the current harness target explicitly from the
-[capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
-which separates what cockpit generates from what has been tested as enforced.
+Choose the current harness target explicitly from the capability matrix,
+`./node_modules/@b0dea/cockpit/docs/capability-matrix.md`, which separates what cockpit generates
+from what has been tested as enforced.
 For Codex CLI, preview with `./node_modules/.bin/cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
 The CLI reads the registry, shows the preview, keeps state, writes the generated files and checks the environment.
@@ -155,6 +164,29 @@ resume; changed bytes or ownership require repair. The command validates the con
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
 named gaps. Native discovery, a real interview and a clean-machine run each still need their own check.
 
+If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine, and
+again whenever sync changes the hook: Codex silently skips a project hook nobody has trusted, so
+every tool call would run unguarded. An agent cannot give that trust. Ask the human to run
+`codex -C <cockpit root>` in a terminal (not `codex exec`), trust the folder if asked, and choose
+**Trust all and continue** when Codex shows **Hooks need review**.
+`./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED` until it is done.
+
+`init` asks `cockpit.name` first and proposes the cockpit root's directory name. Ask the human for
+the name before accepting: it scopes the cockpit's Compose projects, state and generated files, so
+changing it after the first sync means bringing the stack down and syncing again. Never edit
+`cockpit.name` in `cockpit.toml` by hand to rename a running cockpit.
+
+Being told to "use sensible defaults" or "proceed without asking" covers interview answers only.
+It never extends to writing inside a product repository: an **AGENTS.md** pointer, a Compose file,
+a `package.json`, a Dockerfile or a `.env.schema` in a sibling checkout each needs the human's
+explicit yes to that exact change, because it changes the product for everyone who works on it.
+For every answer you choose yourself, record that you chose it in the answers file's `[provenance]`
+table, for example `"environment.machine" = "agent-default"`. init then writes the field under
+`unconfirmed` in `cockpit.toml` with a comment saying the setup agent chose it, and `doctor` warns
+until a person confirms it; an unmarked answer is recorded as the human's, so never leave one you
+chose unmarked. End your report by listing every default you chose, with its field and value, so the
+human can confirm or replace each.
+
 For a dedicated cockpit, offer an instruction pointer for each product repository during the
 preview. Do not enable or write one without a person's approval: it changes what every agent session in
 that repository loads. If the product has no **AGENTS.md**, show the exact proposed file as a draft;
@@ -170,7 +202,8 @@ Relay that question to the human and write their answer under the `cockpit.root`
 file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
 lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
-Explain the trade-off in a sentence or two from [root placement choices](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
+Explain the trade-off in a sentence or two from the root placement choices in
+`./node_modules/@b0dea/cockpit/docs/concepts.md`.
 
 After accepted initialization, and only with explicit permission to change the product's fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
@@ -213,9 +246,10 @@ guesses. So derive each value from what the repository shows, record it as infer
 6. Finish the configuration with the init flow in **Bootstrap**, or on an existing cockpit run
    `./node_modules/.bin/cockpit sync --config cockpit.toml` then `./node_modules/.bin/cockpit check --config cockpit.toml --json`. Done when
    the check exits 0. Where a runtime is declared, measure it with
-   `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write`,
+   `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image>`,
    using an image already on this machine because the probe never pulls; it refuses a
-   `DOCKER_CONTEXT` override because it measures the context Docker has selected. Then start the stack with
+   `DOCKER_CONTEXT` override because it measures the context Docker has selected. It records the
+   result for this machine only and leaves `cockpit.toml` unchanged, so no `sync` is needed. Then start the stack with
    `./node_modules/.bin/cockpit up --config cockpit.toml`, or hold it for one agent command with the session command.
    Report the actual result. Done when the stack reports healthy, or you have named what stopped it.
 

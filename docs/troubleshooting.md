@@ -245,6 +245,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `CLI_USAGE_INVALID` | see the message |
 | `COCKPIT_REVISION_INVALID` | see the message |
 | `COCKPIT_VERSION_MISMATCH` | see the message |
+| `CODEX_HOOK_UNTRUSTED` | see the message |
 | `COMPOSE_BIND_UNDECLARED` | see the message |
 | `COMPOSE_HEALTHCHECK_MISSING` | see the message |
 | `COMPOSE_IMAGE_UNPINNED` | see the message |
@@ -259,12 +260,14 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `CONFIG_STALE` | see the message |
 | `CONFIG_UNREADABLE` | see the message |
 | `DATA_MODE_UNAVAILABLE` | see the message |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `DEPENDENCY_RUNTIME_INCOMPATIBLE` | see the message |
 | `DEPENDENCY_RUNTIME_STALE` | see the message |
 | `DEPENDENCY_RUNTIME_UNAVAILABLE` | see the message |
 | `DEPENDENCY_RUNTIME_UNMOUNTED` | see the message |
 | `DIRECTORY_GRANTS_UNAVAILABLE` | see the message |
 | `DOCEV050_NAMED_REFERENCE_MISSING` | see the message |
+| `DOCUMENT_ANSWER_UNCONFIRMED` | see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_STALE` | see the message |
@@ -528,6 +531,7 @@ Each diagnostic message names what failed and how to fix it. Where a code always
 | `SKILL_STANDING_COST_EXCEEDED` | see the message |
 | `SKILL_TOOL_EQUIVALENCE_MISSING` | see the message |
 | `STACK_NOT_RUNNING` | see the message |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` | see the message |
 | `STATE_DURABILITY_INDETERMINATE` | see the message |
 | `STATE_FORMAT_UNSUPPORTED` | see the message |
 | `STATE_LOCKED` | see the message |

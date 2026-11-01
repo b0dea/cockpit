@@ -15,9 +15,9 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit up`: Start or resume the declared environment.
 - `cockpit sleep`: Release this checkout and stop the stack if no other holder remains.
 - `cockpit session`: Keep the environment available for one command, then release it.
-- `cockpit down`: Stop and remove the stack.
-- `cockpit reset`: Preview a reset, or approve that exact preview interactively.
-- `cockpit runtime`: Measure the local container runtime (runtime measure) and record the result.
+- `cockpit down`: Stop and remove the stack (on the active local Docker context).
+- `cockpit reset`: Preview a reset, or approve that exact preview interactively (on the active local Docker context).
+- `cockpit runtime`: Measure the local container runtime (runtime measure) and record the result for this machine.
 - `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
 - `cockpit preflight`: Check that the environment is healthy and ready for work.
 - `cockpit doctor`: Report environment problems without changing anything.

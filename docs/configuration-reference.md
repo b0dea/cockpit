@@ -48,8 +48,7 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. It 
     "generated_host_paths": [],
     "compose_files": [],
     "entrypoint_derivatives": [],
-    "install_policies": [],
-    "runtime_measurements": []
+    "install_policies": []
   },
   "surfaces": {
     "overlays": [],
@@ -79,7 +78,7 @@ Agent tools load every skill's frontmatter into each session and its entry point
 | `packages/cockpit/surfaces/skills/cockpit-fix.skill.md` | lines | 14 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 | `packages/cockpit/surfaces/skills/cockpit-work.skill.md` | lines | 10 | `packages/cockpit/surfaces/skills/procedures/onboarding.md` |
 
-The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `af3b4aca43b5fe658d4b4a86c1e12a56952e726c916ca5073fdf1f97ad3b1976`.
+The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is read on demand and has no size limit; SHA-256 `f8e205ecc3ef338b69845a4db392c9552e435ad3e6e6d187ab7db8214cf79ed0`.
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
 
@@ -91,6 +90,27 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
   "$schema": "http://json-schema.org/draft-04/schema#",
   "type": "object",
   "properties": {
+    "unconfirmed": {
+      "minItems": 1,
+      "maxItems": 11,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "cockpit.name",
+          "sibling",
+          "estate.runnable",
+          "ports.bases",
+          "environment.install_policies",
+          "environment.test_data",
+          "environment.generated",
+          "environment.compose_files",
+          "environment.machine",
+          "environment.posture",
+          "guards"
+        ]
+      }
+    },
     "cockpit": {
       "type": "object",
       "properties": {
@@ -3813,176 +3833,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
               "load_probe"
             ],
             "additionalProperties": false
-          }
-        },
-        "runtime_measurements": {
-          "default": [],
-          "type": "array",
-          "items": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "compose_floor": {
-                    "type": "string",
-                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                  },
-                  "measured_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "candidate": {
-                    "type": "string",
-                    "enum": [
-                      "passed"
-                    ]
-                  },
-                  "broken_control": {
-                    "type": "string",
-                    "enum": [
-                      "rejected"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "supported"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "compose_floor",
-                  "measured_on",
-                  "candidate",
-                  "broken_control",
-                  "status"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "compose_floor": {
-                    "type": "string",
-                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                  },
-                  "measured_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "candidate": {
-                    "type": "string",
-                    "enum": [
-                      "failed"
-                    ]
-                  },
-                  "broken_control": {
-                    "type": "string",
-                    "enum": [
-                      "rejected",
-                      "accepted"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "unavailable"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "compose_floor",
-                  "measured_on",
-                  "candidate",
-                  "broken_control",
-                  "status"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "compose_floor": {
-                    "type": "string",
-                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                  },
-                  "measured_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "candidate": {
-                    "type": "string",
-                    "enum": [
-                      "passed"
-                    ]
-                  },
-                  "broken_control": {
-                    "type": "string",
-                    "enum": [
-                      "accepted"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "unavailable"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "compose_floor",
-                  "measured_on",
-                  "candidate",
-                  "broken_control",
-                  "status"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "recorded_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "unmeasured"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "recorded_on",
-                  "status"
-                ],
-                "additionalProperties": false
-              }
-            ]
           }
         },
         "generated": {
@@ -10911,10 +10761,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
       "rule": "unique"
     },
     {
-      "path": "environment.runtime_measurements[].runtime",
-      "rule": "unique"
-    },
-    {
       "path": "environment.posture_requirements[].requirement",
       "rule": "unique"
     },
@@ -11091,10 +10937,6 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
     },
     {
       "path": "environment.install_policies[].toolchain+lockfile",
-      "rule": "unique"
-    },
-    {
-      "path": "environment.runtime_measurements[].runtime",
       "rule": "unique"
     },
     {

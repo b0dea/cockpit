@@ -4,7 +4,7 @@
 
 This generated reference is for users looking up an exact command, flag, exit code or diagnostic. It is generated from the CLI, so it matches this version; `cockpit <command> --help` shows the same flags.
 
-Each diagnostic message names what failed and how to fix it. Where a code always has the same fix, the table repeats it; otherwise it says "see the message". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
+Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.
 
 ## cockpit init
 
@@ -32,135 +32,141 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CLI_INTERNAL_ERROR` | see the message |
-| `CLI_USAGE_INVALID` | see the message |
-| `COCKPIT_VERSION_MISMATCH` | see the message |
-| `COMPOSE_BIND_UNDECLARED` | see the message |
-| `COMPOSE_HEALTHCHECK_MISSING` | see the message |
-| `COMPOSE_IMAGE_UNPINNED` | see the message |
-| `COMPOSE_PORT_NOT_LEASED` | see the message |
-| `COMPOSE_SIBLING_NOT_MOUNTED` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `CONFIG_ENCODING_INVALID` | see the message |
-| `CONFIG_NOT_FOUND` | see the message |
-| `CONFIG_PARSE_INVALID` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
-| `CONFIG_UNREADABLE` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_STALE` | see the message |
-| `DOCUMENT_CONFIGURATION_APPLICABILITY_INVALID` | see the message |
-| `DOCUMENT_CONFIGURATION_INVALID` | see the message |
-| `DOCUMENT_DEFAULT` | see the message |
-| `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` | see the message |
-| `DOCUMENT_ESTATE_GAPS_INVALID` | see the message |
-| `DOCUMENT_ESTATE_INCOMPLETE` | see the message |
-| `DOCUMENT_ESTATE_OBSERVATION_CHANGED` | see the message |
-| `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
-| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
-| `DOCUMENT_INFERRED` | see the message |
-| `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
-| `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
-| `DOCUMENT_SOURCE_REQUIRED` | see the message |
-| `DOCUMENT_STDOUT_TARGET` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_SPAWN_FAILED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ARTIFACT_DRIFT` | see the message |
-| `GENERATED_ARTIFACT_MISSING` | see the message |
-| `GENERATED_COMPENSATION_FAILED` | see the message |
-| `GENERATED_DECISIONS_UNDECIDED` | see the message |
-| `GENERATED_DECLARATION_INVALID` | see the message |
-| `GENERATED_DECLARATION_MISSING` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | see the message |
-| `GENERATED_INPUT_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_DRIFT` | see the message |
-| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | see the message |
-| `GENERATED_OWNERSHIP_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_MISSING` | see the message |
-| `GENERATED_PATH_DUPLICATE` | see the message |
-| `GENERATED_PATH_UNSAFE` | see the message |
-| `GENERATED_PERSONA_INVALID` | see the message |
-| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` | see the message |
-| `GENERATED_PUBLICATION_FAILED` | see the message |
-| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` | see the message |
-| `GENERATED_REFERENCE_OWNERSHIP_INVALID` | see the message |
-| `GENERATED_RENDER_UNAUTHENTICATED` | see the message |
-| `GENERATED_SIBLING_ROOT_INVALID` | see the message |
-| `GENERATED_SOURCE_CHANGED` | see the message |
-| `GENERATED_STALE_APPROVAL_INVALID` | see the message |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | see the message |
-| `GENERATED_STALE_ARTIFACT` | see the message |
-| `GENERATED_STALE_ARTIFACT_DRIFT` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GREENFIELD_ANSWER_INVALID` | see the message |
-| `GREENFIELD_ANSWER_UNEXPECTED` | see the message |
-| `GREENFIELD_DISCOVERY_UNAVAILABLE` | see the message |
-| `GREENFIELD_OBSERVATION_CHANGED` | see the message |
-| `GREENFIELD_OBSERVATION_INVALID` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INIT_ANSWER_RESET_CONFLICT` | see the message |
-| `INIT_BOOTSTRAP_IDENTITY_CHANGED` | see the message |
-| `INIT_CANONICAL_OWNERSHIP_MISSING` | see the message |
-| `INIT_COCKPIT_ROOT_REQUIRED` | see the message |
-| `INIT_DRAFT_CHANGED` | see the message |
-| `INIT_DRAFT_INVALID` | see the message |
-| `INIT_DRAFT_SOURCE_CHANGED` | see the message |
-| `INIT_INTERVIEW_PREVIEW_UNAVAILABLE` | see the message |
-| `INIT_PREVIEW_CHANGED` | see the message |
-| `INIT_ROOT_INVALID` | see the message |
-| `INIT_ROOT_OBSERVATION_FAILED` | see the message |
-| `INIT_STATE_DURABILITY_INDETERMINATE` | see the message |
-| `INIT_STATE_STALE` | see the message |
-| `INIT_STATE_UNAUTHENTICATED` | see the message |
-| `INIT_TARGET_CHANGED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `MCP_DECLARATION_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `REGISTRY_EMPTY` | see the message |
-| `REGISTRY_ENCODING_INVALID` | see the message |
-| `REGISTRY_NOT_FOUND` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `INIT_CANONICAL_OWNERSHIP_MISSING` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
-| `REGISTRY_TOO_LARGE` | see the message |
-| `REGISTRY_UNREADABLE` | see the message |
-| `RESET_CONFIRMATION_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `SKILL_RENDER_INVALID` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `STATE_ROOT_UNAVAILABLE` | see the message |
-| `SURFACE_ADOPTION_REFUSED` | see the message |
-| `SURFACE_BOUNDS` | see the message |
-| `SURFACE_CUSTOM_REFUSED` | see the message |
-| `SURFACE_GENERATION_FAILED` | see the message |
-| `SURFACE_INPUT_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
-| `SURFACE_PATH_CONFLICT` | see the message |
-| `SURFACE_SOURCE_UNAVAILABLE` | see the message |
-| `SURFACE_STATE_CONFLICT` | see the message |
-| `TEAM_METADATA_UNAVAILABLE` | see the message |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+
+| Other diagnostics |
+| --- |
+| `CLI_INTERNAL_ERROR` |
+| `CLI_USAGE_INVALID` |
+| `COCKPIT_VERSION_MISMATCH` |
+| `COMPOSE_BIND_UNDECLARED` |
+| `COMPOSE_HEALTHCHECK_MISSING` |
+| `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_NOT_LEASED` |
+| `COMPOSE_SIBLING_NOT_MOUNTED` |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `DOCUMENT_ANSWER_UNCONFIRMED` |
+| `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` |
+| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` |
+| `DOCUMENT_CONFIGURATION_ANSWER_STALE` |
+| `DOCUMENT_CONFIGURATION_APPLICABILITY_INVALID` |
+| `DOCUMENT_CONFIGURATION_INVALID` |
+| `DOCUMENT_DEFAULT` |
+| `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` |
+| `DOCUMENT_ESTATE_GAPS_INVALID` |
+| `DOCUMENT_ESTATE_INCOMPLETE` |
+| `DOCUMENT_ESTATE_OBSERVATION_CHANGED` |
+| `DOCUMENT_ESTATE_OBSERVATION_INVALID` |
+| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_INFERRED` |
+| `DOCUMENT_NO_RUNNABLE_PRODUCT` |
+| `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_SOURCE_REQUIRED` |
+| `DOCUMENT_STDOUT_TARGET` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_COMPENSATION_TIMEOUT` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_COMPENSATION_FAILED` |
+| `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_REFERENCE_BOOTSTRAP_INVALID` |
+| `GENERATED_REFERENCE_OWNERSHIP_INVALID` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `GREENFIELD_ANSWER_INVALID` |
+| `GREENFIELD_ANSWER_UNEXPECTED` |
+| `GREENFIELD_DISCOVERY_UNAVAILABLE` |
+| `GREENFIELD_OBSERVATION_CHANGED` |
+| `GREENFIELD_OBSERVATION_INVALID` |
+| `INIT_ANSWER_RESET_CONFLICT` |
+| `INIT_BOOTSTRAP_IDENTITY_CHANGED` |
+| `INIT_COCKPIT_ROOT_REQUIRED` |
+| `INIT_DRAFT_CHANGED` |
+| `INIT_DRAFT_INVALID` |
+| `INIT_DRAFT_SOURCE_CHANGED` |
+| `INIT_INTERVIEW_PREVIEW_UNAVAILABLE` |
+| `INIT_PREVIEW_CHANGED` |
+| `INIT_ROOT_INVALID` |
+| `INIT_ROOT_OBSERVATION_FAILED` |
+| `INIT_STATE_DURABILITY_INDETERMINATE` |
+| `INIT_STATE_STALE` |
+| `INIT_STATE_UNAUTHENTICATED` |
+| `INIT_TARGET_CHANGED` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `REGISTRY_EMPTY` |
+| `REGISTRY_ENCODING_INVALID` |
+| `REGISTRY_NOT_FOUND` |
+| `REGISTRY_TOO_LARGE` |
+| `REGISTRY_UNREADABLE` |
+| `RESET_CONFIRMATION_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `TEAM_METADATA_UNAVAILABLE` |
 
 ## cockpit document
 
@@ -182,32 +188,36 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | see the message |
-| `DOCUMENT_CONFIGURATION_ANSWER_STALE` | see the message |
-| `DOCUMENT_CONFIGURATION_APPLICABILITY_INVALID` | see the message |
-| `DOCUMENT_CONFIGURATION_INVALID` | see the message |
-| `DOCUMENT_DEFAULT` | see the message |
-| `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` | see the message |
-| `DOCUMENT_ESTATE_GAPS_INVALID` | see the message |
-| `DOCUMENT_ESTATE_INCOMPLETE` | see the message |
-| `DOCUMENT_ESTATE_OBSERVATION_CHANGED` | see the message |
-| `DOCUMENT_ESTATE_OBSERVATION_INVALID` | see the message |
-| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_GAP` | confirm or replace the attributed default; supply this value before treating the draft as valid |
 | `DOCUMENT_GUARD_HOSTS_NONE` | list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists |
-| `DOCUMENT_INFERRED` | see the message |
-| `DOCUMENT_NO_RUNNABLE_PRODUCT` | see the message |
-| `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` | see the message |
 | `DOCUMENT_RUNTIME_NOT_DECLARED` | once a product runs, declare environment.compose_files or [environment.generated] and run npx --no cockpit sync --config <your cockpit.toml> |
-| `DOCUMENT_SOURCE_REQUIRED` | see the message |
-| `DOCUMENT_STDOUT_TARGET` | see the message |
-| `REGISTRY_EMPTY` | see the message |
-| `REGISTRY_ENCODING_INVALID` | see the message |
-| `REGISTRY_NOT_FOUND` | see the message |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
-| `REGISTRY_TOO_LARGE` | see the message |
-| `REGISTRY_UNREADABLE` | see the message |
+
+| Other diagnostics |
+| --- |
+| `DOCUMENT_ANSWER_UNCONFIRMED` |
+| `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` |
+| `DOCUMENT_CONFIGURATION_ANSWER_INVALID` |
+| `DOCUMENT_CONFIGURATION_ANSWER_STALE` |
+| `DOCUMENT_CONFIGURATION_APPLICABILITY_INVALID` |
+| `DOCUMENT_CONFIGURATION_INVALID` |
+| `DOCUMENT_DEFAULT` |
+| `DOCUMENT_DEFAULT_CONFIRMATION_INVALID` |
+| `DOCUMENT_ESTATE_GAPS_INVALID` |
+| `DOCUMENT_ESTATE_INCOMPLETE` |
+| `DOCUMENT_ESTATE_OBSERVATION_CHANGED` |
+| `DOCUMENT_ESTATE_OBSERVATION_INVALID` |
+| `DOCUMENT_ESTATE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_INFERRED` |
+| `DOCUMENT_NO_RUNNABLE_PRODUCT` |
+| `DOCUMENT_RUNNABLE_TOPOLOGY_MISMATCH` |
+| `DOCUMENT_SOURCE_REQUIRED` |
+| `DOCUMENT_STDOUT_TARGET` |
+| `REGISTRY_EMPTY` |
+| `REGISTRY_ENCODING_INVALID` |
+| `REGISTRY_NOT_FOUND` |
+| `REGISTRY_TOO_LARGE` |
+| `REGISTRY_UNREADABLE` |
 
 ## cockpit registry-resolve
 
@@ -230,25 +240,28 @@ Does not read `cockpit.toml`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `ADOPTION_EMPTY` | see the message |
-| `ADOPTION_ENCODING_INVALID` | see the message |
-| `ADOPTION_NOT_FOUND` | see the message |
-| `ADOPTION_ORDER_INVALID` | see the message |
-| `ADOPTION_RECORD_INVALID` | see the message |
-| `ADOPTION_STATE_INVALID` | see the message |
-| `ADOPTION_TOO_LARGE` | see the message |
-| `ADOPTION_UNREADABLE` | see the message |
-| `COCKPIT_REVISION_INVALID` | see the message |
-| `REGISTRY_ARTIFACT_UNSAFE` | see the message |
-| `REGISTRY_DIR_DUPLICATE` | see the message |
-| `REGISTRY_DIR_OUTSIDE_SIBLINGS_ROOT` | see the message |
-| `REGISTRY_EMPTY` | see the message |
-| `REGISTRY_ENCODING_INVALID` | see the message |
-| `REGISTRY_NOT_FOUND` | see the message |
 | `REGISTRY_ROW_SKIPPED` | repair every skipped row before documenting repository scope |
-| `REGISTRY_TOO_LARGE` | see the message |
-| `REGISTRY_UNREADABLE` | see the message |
-| `REGISTRY_VARIABLE_INVALID` | see the message |
+
+| Other diagnostics |
+| --- |
+| `ADOPTION_EMPTY` |
+| `ADOPTION_ENCODING_INVALID` |
+| `ADOPTION_NOT_FOUND` |
+| `ADOPTION_ORDER_INVALID` |
+| `ADOPTION_RECORD_INVALID` |
+| `ADOPTION_STATE_INVALID` |
+| `ADOPTION_TOO_LARGE` |
+| `ADOPTION_UNREADABLE` |
+| `COCKPIT_REVISION_INVALID` |
+| `REGISTRY_ARTIFACT_UNSAFE` |
+| `REGISTRY_DIR_DUPLICATE` |
+| `REGISTRY_DIR_OUTSIDE_SIBLINGS_ROOT` |
+| `REGISTRY_EMPTY` |
+| `REGISTRY_ENCODING_INVALID` |
+| `REGISTRY_NOT_FOUND` |
+| `REGISTRY_TOO_LARGE` |
+| `REGISTRY_UNREADABLE` |
+| `REGISTRY_VARIABLE_INVALID` |
 
 ## cockpit setup
 
@@ -270,34 +283,39 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit sync
 
@@ -321,47 +339,52 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLI_INTERNAL_ERROR` | see the message |
-| `CLI_USAGE_INVALID` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `CONFIG_PARSE_INVALID` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `GENERATED_ARTIFACT_DRIFT` | see the message |
-| `GENERATED_ARTIFACT_MISSING` | see the message |
-| `GENERATED_DECISIONS_UNDECIDED` | see the message |
-| `GENERATED_DECLARATION_INVALID` | see the message |
-| `GENERATED_DECLARATION_MISSING` | see the message |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | see the message |
-| `GENERATED_INPUT_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_DRIFT` | see the message |
-| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | see the message |
-| `GENERATED_OWNERSHIP_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_MISSING` | see the message |
-| `GENERATED_PATH_DUPLICATE` | see the message |
-| `GENERATED_PATH_UNSAFE` | see the message |
-| `GENERATED_PERSONA_INVALID` | see the message |
-| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` | see the message |
-| `GENERATED_PUBLICATION_FAILED` | see the message |
-| `GENERATED_RENDER_UNAUTHENTICATED` | see the message |
-| `GENERATED_SIBLING_ROOT_INVALID` | see the message |
-| `GENERATED_SOURCE_CHANGED` | see the message |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | see the message |
-| `GENERATED_STALE_ARTIFACT` | see the message |
-| `GENERATED_STALE_ARTIFACT_DRIFT` | see the message |
-| `MCP_DECLARATION_INVALID` | see the message |
-| `RESET_CONFIRMATION_MISMATCH` | see the message |
-| `SKILL_RENDER_INVALID` | see the message |
-| `SURFACE_ADOPTION_REFUSED` | see the message |
-| `SURFACE_BOUNDS` | see the message |
-| `SURFACE_CUSTOM_REFUSED` | see the message |
-| `SURFACE_GENERATION_FAILED` | see the message |
-| `SURFACE_INPUT_INVALID` | see the message |
-| `SURFACE_PATH_CONFLICT` | see the message |
-| `SURFACE_SOURCE_UNAVAILABLE` | see the message |
-| `SURFACE_STATE_CONFLICT` | see the message |
-| `TEAM_METADATA_UNAVAILABLE` | see the message |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+
+| Other diagnostics |
+| --- |
+| `CLI_INTERNAL_ERROR` |
+| `CLI_USAGE_INVALID` |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `EVIDENCE_UNAVAILABLE` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `RESET_CONFIRMATION_MISMATCH` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `TEAM_METADATA_UNAVAILABLE` |
 
 ## cockpit check
 
@@ -382,51 +405,57 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLI_INTERNAL_ERROR` | see the message |
-| `CLI_USAGE_INVALID` | see the message |
-| `COCKPIT_VERSION_MISMATCH` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `CONFIG_ENCODING_INVALID` | see the message |
-| `CONFIG_NOT_FOUND` | see the message |
-| `CONFIG_PARSE_INVALID` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
-| `CONFIG_UNREADABLE` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `GENERATED_ARTIFACT_DRIFT` | see the message |
-| `GENERATED_ARTIFACT_MISSING` | see the message |
-| `GENERATED_DECISIONS_UNDECIDED` | see the message |
-| `GENERATED_DECLARATION_INVALID` | see the message |
-| `GENERATED_DECLARATION_MISSING` | see the message |
-| `GENERATED_EXECUTABLE_UNAVAILABLE` | see the message |
-| `GENERATED_INPUT_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_DRIFT` | see the message |
-| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` | see the message |
-| `GENERATED_OWNERSHIP_INVALID` | see the message |
-| `GENERATED_OWNERSHIP_MISSING` | see the message |
-| `GENERATED_PATH_DUPLICATE` | see the message |
-| `GENERATED_PATH_UNSAFE` | see the message |
-| `GENERATED_PERSONA_INVALID` | see the message |
-| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` | see the message |
-| `GENERATED_PUBLICATION_FAILED` | see the message |
-| `GENERATED_RENDER_UNAUTHENTICATED` | see the message |
-| `GENERATED_SIBLING_ROOT_INVALID` | see the message |
-| `GENERATED_SOURCE_CHANGED` | see the message |
-| `GENERATED_STALE_APPROVAL_REQUIRED` | see the message |
-| `GENERATED_STALE_ARTIFACT` | see the message |
-| `GENERATED_STALE_ARTIFACT_DRIFT` | see the message |
-| `MCP_DECLARATION_INVALID` | see the message |
-| `RESET_CONFIRMATION_MISMATCH` | see the message |
-| `SKILL_RENDER_INVALID` | see the message |
-| `SURFACE_ADOPTION_REFUSED` | see the message |
-| `SURFACE_BOUNDS` | see the message |
-| `SURFACE_CUSTOM_REFUSED` | see the message |
-| `SURFACE_GENERATION_FAILED` | see the message |
-| `SURFACE_INPUT_INVALID` | see the message |
-| `SURFACE_PATH_CONFLICT` | see the message |
-| `SURFACE_SOURCE_UNAVAILABLE` | see the message |
-| `SURFACE_STATE_CONFLICT` | see the message |
-| `TEAM_METADATA_UNAVAILABLE` | see the message |
+| `GENERATED_ARTIFACT_DRIFT` | [Troubleshooting](troubleshooting.md#generated_artifact_drift) |
+| `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `GENERATED_STALE_APPROVAL_REQUIRED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `MCP_DECLARATION_INVALID` | [Troubleshooting](troubleshooting.md#mcp-and-restrictions) |
+| `SKILL_RENDER_INVALID` | [Troubleshooting](troubleshooting.md#sibling-projection-and-skills) |
+| `SURFACE_ADOPTION_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_BOUNDS` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_CUSTOM_REFUSED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_GENERATION_FAILED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_INPUT_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_PATH_CONFLICT` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `SURFACE_SOURCE_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SURFACE_STATE_CONFLICT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+
+| Other diagnostics |
+| --- |
+| `CLI_INTERNAL_ERROR` |
+| `CLI_USAGE_INVALID` |
+| `COCKPIT_VERSION_MISMATCH` |
+| `CODEX_HOOK_UNTRUSTED` |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_ENCODING_INVALID` |
+| `CONFIG_NOT_FOUND` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `CONFIG_UNREADABLE` |
+| `EVIDENCE_UNAVAILABLE` |
+| `GENERATED_ARTIFACT_MISSING` |
+| `GENERATED_DECISIONS_UNDECIDED` |
+| `GENERATED_DECLARATION_INVALID` |
+| `GENERATED_DECLARATION_MISSING` |
+| `GENERATED_EXECUTABLE_UNAVAILABLE` |
+| `GENERATED_INPUT_INVALID` |
+| `GENERATED_OWNERSHIP_DRIFT` |
+| `GENERATED_OWNERSHIP_FORMAT_UNSUPPORTED` |
+| `GENERATED_OWNERSHIP_MISSING` |
+| `GENERATED_PATH_DUPLICATE` |
+| `GENERATED_PATH_UNSAFE` |
+| `GENERATED_PERSONA_INVALID` |
+| `GENERATED_PERSONA_SOURCE_UNAVAILABLE` |
+| `GENERATED_PUBLICATION_FAILED` |
+| `GENERATED_RENDER_UNAUTHENTICATED` |
+| `GENERATED_SIBLING_ROOT_INVALID` |
+| `GENERATED_SOURCE_CHANGED` |
+| `GENERATED_STALE_ARTIFACT` |
+| `GENERATED_STALE_ARTIFACT_DRIFT` |
+| `RESET_CONFIRMATION_MISMATCH` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_ROOT_UNAVAILABLE` |
+| `TEAM_METADATA_UNAVAILABLE` |
 
 ## cockpit selftest
 
@@ -449,9 +478,12 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `SELFTEST_EXECUTION_INVALID` | see the message |
-| `SELFTEST_SOURCE_INVALID` | see the message |
+| `SELFTEST_EXECUTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SELFTEST_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `EVIDENCE_UNAVAILABLE` |
 
 ## cockpit upgrade
 
@@ -476,12 +508,12 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `UPGRADE_AUTH_FAILED` | see the message |
-| `UPGRADE_DISCOVERY_INVALID` | see the message |
-| `UPGRADE_NETWORK_FAILED` | see the message |
-| `UPGRADE_REPAIR_UNVERIFIED` | see the message |
-| `UPGRADE_SOURCE_INVALID` | see the message |
-| `UPGRADE_VERSION_AMBIGUOUS` | see the message |
+| `UPGRADE_AUTH_FAILED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `UPGRADE_DISCOVERY_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `UPGRADE_NETWORK_FAILED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `UPGRADE_REPAIR_UNVERIFIED` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `UPGRADE_SOURCE_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `UPGRADE_VERSION_AMBIGUOUS` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
 
 ## cockpit up
 
@@ -502,34 +534,39 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit sleep
 
@@ -550,34 +587,39 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit session
 
@@ -597,43 +639,48 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_SPAWN_FAILED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `MOUNT_POSTURE_UNAVAILABLE` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNAVAILABLE` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_SCHEMA_INVALID` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_COMPENSATION_TIMEOUT` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `MOUNT_POSTURE_UNAVAILABLE` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit down
 
-Stop and remove the stack.
+Stop and remove the stack (on the active local Docker context).
 
 Reads `cockpit.toml` from `--config`.
 
@@ -650,38 +697,43 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit reset
 
-Preview a reset, or approve that exact preview interactively.
+Preview a reset, or approve that exact preview interactively (on the active local Docker context).
 
 Reads `cockpit.toml` from `--config`.
 
@@ -699,38 +751,43 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit runtime
 
-Measure the local container runtime (runtime measure) and record the result.
+Measure the local container runtime (runtime measure) and record the result for this machine.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -738,7 +795,6 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--image` | string | unset |
-| `--write` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -749,17 +805,19 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLI_USAGE_INVALID` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_SPAWN_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `RUNTIME_UNAVAILABLE` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+
+| Other diagnostics |
+| --- |
+| `CLI_USAGE_INVALID` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_COMPENSATION_TIMEOUT` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
 
 ## cockpit sibling
 
@@ -788,31 +846,34 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLI_USAGE_INVALID` | see the message |
 | `COMPOSE_TOPOLOGY_UNAVAILABLE` | install Docker with the Compose plugin on PATH and make `docker compose config` succeed for environment.compose_files |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `CONFIG_PARSE_INVALID` | see the message |
-| `CONFIG_SCHEMA_INVALID` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_COMPENSATION_TIMEOUT` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_SPAWN_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `RUNTIME_UNAVAILABLE` | see the message |
-| `SIBLING_DIRECTORY_MISSING` | see the message |
-| `SIBLING_DIR_DUPLICATE` | see the message |
-| `SIBLING_GIT_FAILED` | see the message |
-| `SIBLING_NOT_FOUND` | see the message |
-| `SIBLING_PATH_NOT_EMPTY` | see the message |
-| `SIBLING_REFERENCED` | see the message |
-| `SIBLING_REMOTE_MISSING` | see the message |
-| `SIBLING_SLUG_DUPLICATE` | see the message |
-| `SIBLING_STACK_RECORDED` | see the message |
-| `SIBLING_VAR_DUPLICATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `STATE_ROOT_UNAVAILABLE` | see the message |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `RUNTIME_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+
+| Other diagnostics |
+| --- |
+| `CLI_USAGE_INVALID` |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `CONFIG_PARSE_INVALID` |
+| `CONFIG_SCHEMA_INVALID` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_COMPENSATION_TIMEOUT` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_SPAWN_FAILED` |
+| `SIBLING_DIRECTORY_MISSING` |
+| `SIBLING_DIR_DUPLICATE` |
+| `SIBLING_GIT_FAILED` |
+| `SIBLING_NOT_FOUND` |
+| `SIBLING_PATH_NOT_EMPTY` |
+| `SIBLING_REFERENCED` |
+| `SIBLING_REMOTE_MISSING` |
+| `SIBLING_SLUG_DUPLICATE` |
+| `SIBLING_STACK_RECORDED` |
+| `SIBLING_VAR_DUPLICATE` |
+| `STATE_ROOT_UNAVAILABLE` |
 
 ## cockpit preflight
 
@@ -833,34 +894,39 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit doctor
 
@@ -881,34 +947,39 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit logs
 
@@ -933,34 +1004,39 @@ Reads `cockpit.toml` from `--config`.
 
 | Diagnostic | What to do |
 | --- | --- |
-| `CLAIM_CO_TENANT` | see the message |
-| `CONFIG_CHANGED_DURING_EXECUTION` | see the message |
-| `DRAIN_ATTEMPT_REPAIR_REQUIRED` | see the message |
-| `ENV_SCHEMA_TOOL_MISSING` | see the message |
-| `EVIDENCE_UNAVAILABLE` | see the message |
-| `EXECUTION_ABORTED` | see the message |
-| `EXECUTION_COMPENSATION_STEP_FAILED` | see the message |
-| `EXECUTION_PRECONDITION_CHANGED` | see the message |
-| `EXECUTION_STEP_FAILED` | see the message |
-| `EXECUTION_TERMINATION_UNCONFIRMED` | see the message |
-| `GENERATED_ENVIRONMENT_UNAVAILABLE` | see the message |
-| `GIT_COMPARISON_REMOTE_MISMATCH` | see the message |
-| `GUARD_AUTHORITY_UNAVAILABLE` | see the message |
+| `CLAIM_CO_TENANT` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `DECLARATION_UNCONFIRMED` | confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml> |
+| `EXECUTION_TERMINATION_UNCONFIRMED` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `GUARD_AUTHORITY_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run npx --no cockpit sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
-| `GUARD_REFUSED` | see the message |
-| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` | see the message |
-| `LIFECYCLE_EVIDENCE_INVALID` | see the message |
-| `LIFECYCLE_PROGRESS_INVALID` | see the message |
-| `RECLAIM_ACCOUNTING_MISMATCH` | see the message |
-| `RUNTIME_UNMEASURED` | see the message |
-| `SETUP_INSTRUCTION_POINTER_INVALID` | see the message |
-| `SETUP_PATH_TYPE_INVALID` | see the message |
-| `SETUP_POSTCHECK_FAILED` | see the message |
-| `STACK_NOT_RUNNING` | see the message |
-| `STATE_DURABILITY_INDETERMINATE` | see the message |
-| `STATE_RECORD_MALFORMED` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_INVALID` | see the message |
-| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | see the message |
+| `GUARD_REFUSED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `RUNTIME_UNMEASURED` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
+| `SURFACE_OVERRIDE_INSPECTION_INVALID` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+| `SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE` | [Troubleshooting](troubleshooting.md#selftest-and-upgrade) |
+
+| Other diagnostics |
+| --- |
+| `CONFIG_CHANGED_DURING_EXECUTION` |
+| `DRAIN_ATTEMPT_REPAIR_REQUIRED` |
+| `ENV_SCHEMA_TOOL_MISSING` |
+| `EVIDENCE_UNAVAILABLE` |
+| `EXECUTION_ABORTED` |
+| `EXECUTION_COMPENSATION_STEP_FAILED` |
+| `EXECUTION_PRECONDITION_CHANGED` |
+| `EXECUTION_STEP_FAILED` |
+| `GENERATED_ENVIRONMENT_UNAVAILABLE` |
+| `GIT_COMPARISON_REMOTE_MISMATCH` |
+| `INSTALL_POLICY_OBSERVATION_UNAVAILABLE` |
+| `LIFECYCLE_EVIDENCE_INVALID` |
+| `LIFECYCLE_PROGRESS_INVALID` |
+| `RECLAIM_ACCOUNTING_MISMATCH` |
+| `SETUP_INSTRUCTION_POINTER_INVALID` |
+| `SETUP_PATH_TYPE_INVALID` |
+| `SETUP_POSTCHECK_FAILED` |
+| `STACK_NOT_RUNNING` |
+| `STACK_RECORDED_UNDER_EARLIER_NAME` |
+| `STATE_DURABILITY_INDETERMINATE` |
 
 ## cockpit baseline-record
 
