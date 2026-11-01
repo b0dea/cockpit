@@ -346,7 +346,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             if (document !== undefined) {
                 if (source === '..' || source.startsWith('../') || isAbsolute(source)) {
                     skipped.push({ source,
-                        reason: `is outside the cockpit root, so environment.compose_files cannot represent it; choose generated environment configuration, or place a reviewed Compose file inside the cockpit root and rerun ${initCommand({ root: configurationRoot })} with the options you ran it with` })
+                        reason: `is outside the cockpit root, so environment.compose_files cannot represent it; write a compose.yml at the cockpit root that reaches each checkout through its sibling variable${slug === undefined ? '' : ` (such as \${${deriveSiblingVariable(slug)}})`} and answer environment.compose_files = ["compose.yml"], or choose generated environment configuration; then rerun ${initCommand({ root: configurationRoot })} with the options you ran it with` })
                 } else composeFiles.push({ source, document })
             }
             break
@@ -420,9 +420,12 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
     if (compose.bases.size > 0) facts.push({ fields: ['ports.bases'], target: 'ports.bases', value: Object.fromEntries(compose.bases),
         provenance: { kind: 'inferred', source: compose.basesSource!,
             reason: 'the Compose file publishes these host ports from variables with these defaults; check requires every published host port to come from a [ports.bases] variable, so each stack leases its own' } })
-    if (composeFiles.length > 0) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: composeFiles.map(file => file.source),
+    // compose-first resolves every relative path against the first listed file's directory, so one
+    // product Compose file can be run in place but several cannot be listed together.
+    if (composeFiles.length === 1) facts.unshift({ fields: ['environment.generated'], target: 'environment.compose_files', value: [composeFiles[0]!.source],
         provenance: { kind: 'inferred', source: composeFiles[0]!.source,
-            reason: composeFiles.length === 1 ? 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment'
-                : 'these Compose files already exist, so compose-first mode can run them instead of a rendered environment' } })
+            reason: 'a Compose file already exists, so compose-first mode can run it instead of a rendered environment' } })
+    else if (composeFiles.length > 1) skipped.push({ source: composeFiles.map(file => file.source).join(', '),
+        reason: `are Compose files in different repositories, and compose-first resolves every relative path against the first listed file's directory, so they cannot be listed together; write one compose.yml at the cockpit root that runs their services, reaching each checkout through its sibling variable (${[...siblingPaths.keys()].map(name => `\${${name}}`).join(', ')}), and answer environment.compose_files = ["compose.yml"], or choose generated environment configuration` })
     return Object.freeze({ facts: Object.freeze(facts), skipped: Object.freeze(skipped) })
 }

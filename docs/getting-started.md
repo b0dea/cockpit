@@ -290,9 +290,13 @@ cheap, exact sources only: a Dockerfile's `EXPOSE`, `CMD` and `ENTRYPOINT`, the 
 existing Compose file, and the `services:` of GitHub workflows. A variable whose name suggests a
 database or a vendor endpoint, such as `DATABASE_URL`, is proposed under `guards` as a question
 about which host it points at, not as a host. Each is a proposal to confirm, not an answer; an unreadable source is listed in
-`interview.inferenceSkipped`. Compose files outside the cockpit directory are listed there too:
-`environment.compose_files` accepts confined paths inside the cockpit. Choose a generated
-environment, or place a reviewed Compose file inside the cockpit and rerun the same `init` command.
+`interview.inferenceSkipped`. A Compose file is proposed for `environment.compose_files` only when
+it is the one product Compose file inside the cockpit directory. Compose files outside the cockpit
+directory, or in several repositories, are listed under `interview.inferenceSkipped` instead,
+because compose-first accepts only paths inside the cockpit and resolves every relative path
+against the first listed file's directory. Choose a generated environment, or write one
+`compose.yml` at the cockpit root that reaches each checkout through its sibling variable
+([Existing Compose file](agent-adoption.md#existing-compose-file)) and rerun the same `init` command.
 A run that declares a runtime ends with `preflight`, which requires a completed first bring-up;
 if it reports `STATE_UNSEEDED`, follow [Bring the product up](#bring-the-product-up), then rerun
 the same accepted `init` command to resume verification.

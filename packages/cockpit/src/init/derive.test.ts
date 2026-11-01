@@ -70,6 +70,16 @@ describe('inferred interview answers', () => {
         expect(byTarget(facts, 'services.cache')).toMatchObject({ value: { image: 'redis:7' } })
     })
 
+    it('proposes no compose_files when Compose files sit in several repositories, and points at a cockpit-root compose.yml', async () => {
+        // compose-first resolves every relative path against the first listed file's directory, so
+        // listing both files would run the second one's ./ paths against the first repository.
+        const root = estate({ 'api/compose.yml': 'services:\n  api:\n    build: .\n', 'web/compose.yml': 'services:\n  web:\n    build: .\n' })
+        const { facts, skipped } = await deriveInferredFacts({ root, repositories: [...api, { slug: 'web', path: 'web' }] })
+        expect(byTarget(facts, 'environment.compose_files')).toBeUndefined()
+        expect(skipped).toContainEqual({ source: 'api/compose.yml, web/compose.yml', reason: expect.stringMatching(
+            /resolves every relative path against the first listed file's directory.*compose\.yml at the cockpit root.*\$\{API_DIR\}/) })
+    })
+
     it('does not infer facts through a symlinked repository directory ancestor', async () => {
         const root = estate({})
         const outside = estate({

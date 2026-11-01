@@ -341,8 +341,10 @@ refuses a checkout with no `origin`. `--from` needs an existing `cockpit.toml`, 
 Done when `cockpit check --config cockpit.toml --json` exits 0 with no `COMPOSE_PORT_NOT_LEASED`.
 
 Keep the product's Compose file and let cockpit run it. In the answers file, answer
-`environment.generated` with the file instead of a generated stack; `init` proposes it under
-`inferred` when it finds one:
+`environment.generated` with the file instead of a generated stack. `init` proposes it under
+`inferred` only when exactly one product Compose file sits inside the cockpit root; with Compose
+files in several repositories, or outside the root, it proposes none and names them under
+`interview.inferenceSkipped` with the cockpit-root `compose.yml` route described below:
 
 ```toml
 [environment]
