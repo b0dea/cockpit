@@ -763,8 +763,9 @@ async function authenticateBuiltReferenceOwner(record) {
         throw new Error('[REFERENCE_BUILD_UNAUTHENTICATED] installed TypeScript does not match captured package-lock.json')
     }
     for (const row of record.rows) {
+        // Mirrors the exclusions in packages/cockpit/tsconfig.build.json: those sources are never built.
         if (!row.path.startsWith('packages/cockpit/src/') || !row.path.endsWith('.ts')
-            || row.path.startsWith('packages/cockpit/src/test-support/')) continue
+            || row.path.startsWith('packages/cockpit/src/test-support/') || row.path.includes('/fixtures/')) continue
         const source = textBlob(record, row.path)
         const emitted = ts.transpileModule(source, {
             fileName: row.path,
