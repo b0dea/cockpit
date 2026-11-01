@@ -1063,6 +1063,23 @@ describe('installed code, search path and secret links', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('node node_modules/.bin/tsc')), configured(), inspect).decision).toBe('ask')
     })
 
+    it('denies every write channel that would plant an .npmrc inside an allowed root', () => {
+        // npm applies a project .npmrc to `npx --no cockpit`, so its script-shell or node-options would
+        // run other code as the launcher the guard trusts, within the same compound command.
+        const npmrc = 'Refusing to write an .npmrc inside the configured roots: npm applies it to `npx --no cockpit`, and its script-shell or node-options would run other code as the cockpit launcher the guard trusts. A person edits .npmrc.'
+        for (const path of [`${root}/.npmrc`, `${other}/.npmrc`, `${root}/packages/app/.npmrc`, `${root}/.NPMRC`]) {
+            for (const input of [payload('Write', { file_path: path, content: 'script-shell=./evil' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
+                payload('apply_patch', { command: `*** Begin Patch\n*** Add File: ${path}\n+node-options=--require ./evil.js\n*** End Patch` }), shellPayload(`printf x >> ${path}`)]) {
+                expect(evaluateGuard(parseGuardInput(input), configured(), inspect), `${input.tool_name} ${path}`).toEqual({ decision: 'deny', reason: npmrc })
+            }
+        }
+        for (const command of ['printf script-shell=./evil > .npmrc && npx --no cockpit up --config cockpit.toml', 'cp evil .npmrc', 'mv evil packages/app/.npmrc',
+            'tee .npmrc', 'ln -s evil .npmrc', 'cp -t . other/.npmrc']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect), command).toEqual({ decision: 'deny', reason: npmrc })
+        }
+        expect(evaluateGuard(parseGuardInput(payload('Write', { file_path: `${root}/notes/npmrc.txt`, content: 'x' })), configured(), inspect).decision).toBe('allow')
+    })
+
     it('denies links to secrets, instances, guard controls and installed code', () => {
         for (const command of ['ln env/.secrets/token notes/token', 'ln -s ../env/.secrets/token notes/token', 'ln -s env/.SECRETS notes/secrets',
             'ln config/active.instance notes/copy', 'ln -s ../config/active.instance notes/copy', 'ln -s config notes/config', 'ln -s ../other/.secrets/key notes/key',

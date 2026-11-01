@@ -166,7 +166,8 @@ starts its own installed package: a path such as `./node_modules/.bin/cockpit`, 
 `node`, must resolve to it; bare `cockpit` must be what the command search path finds first; and
 the npx spellings in the table must run from the cockpit root with no root `.npmrc` and no `bin` in
 the root `package.json`, because npm would otherwise run that program or apply that
-configuration first. Any other npx option, or npx without `--no`, which may download a package, is
+configuration first. Writing an `.npmrc` anywhere inside the configured roots is denied, so one
+cannot be planted in the same command after that check. Any other npx option, or npx without `--no`, which may download a package, is
 not the installed cockpit.
 
 `rg` is read-only only when `RIPGREP_CONFIG_PATH` is absent. An ambient ripgrep configuration can

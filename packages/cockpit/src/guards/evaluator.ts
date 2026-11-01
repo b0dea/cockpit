@@ -641,6 +641,9 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
     const structuralDenial = deny(`Refusing to delete, rename, truncate, relink or make unreadable ${posix.basename(resolved.configPath)} or ${GUARD_CONTROL_FILES[1]}: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit ${posix.basename(resolved.configPath)} in place instead.`)
     const executionDenial = deny('Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory: code there runs as the guard or in place of a permitted command.')
     const linkDenial = deny('Refusing to link to a secrets directory, a declared environment instance, a guard control or the installed cockpit: the link would reach it under a name the guard does not protect.')
+    // The guard admits `npx --no cockpit` only from a root without an .npmrc, but checks that before
+    // the command runs: `printf … > .npmrc && npx --no cockpit …` planted one in between.
+    const npmrcDenial = deny('Refusing to write an .npmrc inside the configured roots: npm applies it to `npx --no cockpit`, and its script-shell or node-options would run other code as the cockpit launcher the guard trusts. A person edits .npmrc.')
     // The guard authenticates only its entry point, so every module it loads is as much a control as
     // its hook registration; an edited adapter once turned every hard denial into an allow.
     const installedDirectories = resolved.executionDirectories.map(fold)
@@ -702,6 +705,7 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         if (request.operation === 'write' && (controlFiles.some((path) => folded === fold(path) || controlCoverage && within(fold(path), folded))
             || controlDirectories.some((path) => within(folded, fold(path)) || controlCoverage && within(fold(path), folded)))) hold(controlDenial)
         if (request.operation === 'write' && executes(folded, controlCoverage)) hold(executionDenial)
+        if (request.operation === 'write' && posix.basename(folded) === '.npmrc') hold(npmrcDenial)
         if (mutating && folded.split('/').includes('.git')) hold(gitMetadataDenial)
         if (!resolved.allowedRoots.some((root) => within(lexical, root))) {
             hold(unavailable('Guard path escapes configured roots.'))
