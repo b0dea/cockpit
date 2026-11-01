@@ -911,6 +911,35 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
     })
 
+    it('gives two cockpits with the same name their own Compose project, kept across a cosmetic edit', async () => {
+        const projectOf = (steps: readonly ExecutionStep[]) => [...new Set(steps.flatMap(({ argv }) => {
+            const index = argv.indexOf('--project-name')
+            return index === -1 ? [] : [argv[index + 1]!]
+        }))]
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        const second = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(second.result, JSON.stringify(second.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const [firstProject, ...otherFirst] = projectOf(first.steps)
+        const [secondProject, ...otherSecond] = projectOf(second.steps)
+        expect([otherFirst, otherSecond]).toEqual([[], []])
+        expect(firstProject).toMatch(/^generated-environment-[a-f0-9]{12}$/)
+        expect(secondProject).toMatch(/^generated-environment-[a-f0-9]{12}$/)
+        expect(firstProject).not.toBe(secondProject)
+        // The committed Compose file stays portable between checkouts, so it names no project.
+        const compose = await readFile(join(first.candidate.checkout, 'generated/compose.yml'), 'utf8')
+        expect(compose).not.toMatch(/^name:/m)
+
+        const configPath = first.candidate.configPath
+        await writeFile(configPath, (await readFile(configPath, 'utf8')).replace('purpose = "Synthetic application"', 'purpose = "Synthetic application, described again"'))
+        const steps: ExecutionStep[] = []
+        const resumed = await runUp({ configPath }, createLifecycleCommandAdapters({ configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000 }, async (step) => { steps.push(step); return executeProbe(step) }))
+        expect(resumed, JSON.stringify(resumed)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(projectOf(steps)).toEqual([firstProject])
+    })
+
     it.each([
         ['a sibling purpose', (text: string) => text.replace('purpose = "Synthetic application"', 'purpose = "Synthetic application, described again"')],
         ['the guards', (text: string) => text.replace('[guards]\n', '[guards]\nprotected_branches = [ "main", "release" ]\n')],

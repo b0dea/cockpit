@@ -261,11 +261,6 @@ function buildContext(build: NonNullable<GeneratedEnvironmentDeclaration['servic
     return { context, ...(build.dockerfile === undefined ? {} : { dockerfile: build.dockerfile }) }
 }
 
-// A cockpit id is `cockpit:<cockpit.name>:<digest>`, already validated by COCKPIT_ID.
-function composeProjectName(id: string): string {
-    return id.split(':')[1]!
-}
-
 function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: GeneratedEnvironmentInput, hostInputDirectories: Readonly<Record<string, string>>): string | undefined {
     const ownershipLabels = {
         'dev.b0dea.cockpit.stack-id': '${COCKPIT_STACK_ID:?cockpit runtime stack identity is unavailable}',
@@ -358,10 +353,9 @@ function renderCompose(declaration: GeneratedEnvironmentDeclaration, input: Gene
             'dev.b0.cockpit.purpose': volume.purpose,
         },
     }]))
+    // No top-level `name`: the file is committed and shared by every checkout, while the project is
+    // per stack (`composeProjectName`), and every cockpit command passes it with `--project-name`.
     return stringifyYaml({
-        // Lifecycle commands pass `--project-name <cockpit.name>`; naming the same project here keeps
-        // a plain `docker compose -f <this file>` on that stack instead of starting a second one.
-        name: composeProjectName(input.cockpitId),
         services: sortedRecord(Object.entries(services)),
         ...(Object.keys(volumes).length === 0 ? {} : { volumes }),
         networks: { default: { labels: ownershipLabels } },

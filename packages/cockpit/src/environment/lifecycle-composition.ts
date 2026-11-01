@@ -56,7 +56,7 @@ import {
     planExternalDependency,
     verifyExternalDependency,
 } from './external-dependencies.js'
-import { checkoutId, holderId, stackId } from './identity.js'
+import { checkoutId, composeProjectName, holderId, stackId } from './identity.js'
 import { observeDependencyInstall, planInstall, resolveInstallExecutables } from './installs.js'
 import {
     projectLifecycleStage,
@@ -980,7 +980,7 @@ export function createLifecycleCommandAdapters(
             operation: 'validate',
             cwd: currentBinding.checkoutRoot,
             composeFiles: artifacts,
-            projectName: currentBinding.config.cockpit.name,
+            projectName: composeProjectName({ cockpitName: currentBinding.config.cockpit.name, stackId: context.stackId }),
             env,
             ports: ports ? Object.freeze(Object.values(ports.lease.ports)) : Object.freeze([]),
             labels: { stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256, batchId },
@@ -1036,7 +1036,7 @@ export function createLifecycleCommandAdapters(
                 root: currentBinding.checkoutRoot,
                 executable: docker.value,
                 composeFiles: Object.freeze(artifacts.map(({ canonicalPath: path, sha256 }) => Object.freeze({ path, sha256 }))),
-                projectName: currentBinding.config.cockpit.name,
+                projectName: composeProjectName({ cockpitName: currentBinding.config.cockpit.name, stackId: context.stackId }),
                 publicEnv,
                 stdoutLimitBytes: step.stdoutLimitBytes,
                 stderrLimitBytes: step.stderrLimitBytes,

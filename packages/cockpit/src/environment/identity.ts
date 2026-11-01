@@ -5,7 +5,7 @@ import type { CheckoutId, CockpitId, HolderId, StackId } from './contract.js'
 export const mechanism = {
     id: 'environment-identity',
     module: 'packages/cockpit/src/environment/identity.ts',
-    exports: ['cockpitId', 'publicationCockpitId', 'checkoutId', 'stackId', 'holderId', 'bootstrapHolderId'],
+    exports: ['cockpitId', 'publicationCockpitId', 'checkoutId', 'stackId', 'composeProjectName', 'holderId', 'bootstrapHolderId'],
 } as const
 
 declare const bootstrapLockOwnerBrand: unique symbol
@@ -88,6 +88,19 @@ export function stackId(input: {
         return `stack:${digest([cockpit, checkout, 'named', variant.name])}` as StackId
     }
     throw new TypeError('identity: stack variant is malformed')
+}
+
+/**
+ * The Compose project a stack runs as. Named after the cockpit alone, two checkouts or two cockpits
+ * sharing a name became one project on one daemon and replaced each other's containers. The stack
+ * id is per checkout and never follows the configuration's bytes, so the name survives every edit.
+ */
+export function composeProjectName(input: { readonly cockpitName: string; readonly stackId: StackId }): string {
+    if (typeof input?.cockpitName !== 'string' || !COCKPIT_NAME.test(input.cockpitName)) {
+        throw new TypeError('identity: cockpit name must use lowercase letters, digits, and hyphens')
+    }
+    const stack = closedIdentity(input.stackId, STACK_ID, 'stackId')
+    return `${input.cockpitName}-${stack.slice('stack:'.length, 'stack:'.length + 12)}`
 }
 
 export function holderId(input: {

@@ -6,12 +6,12 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { executeProbe } from '../src/environment-exec/execute.js'
 import { runUp } from '../src/environment/application.js'
-import type { ExecutionStep } from '../src/environment/contract.js'
+import type { ExecutionStep, StackId } from '../src/environment/contract.js'
 import { createLifecycleCommandAdapters } from '../src/environment/lifecycle-composition.js'
 import { recordLifecycleStarted } from '../src/environment/lifecycle-stage.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from '../src/environment/dependency-runtime.js'
 import { observeDependencyLoad } from '../src/environment/installs.js'
-import { checkoutId } from '../src/environment/identity.js'
+import { checkoutId, composeProjectName } from '../src/environment/identity.js'
 import { projectDependencyRuntime } from '../src/environment/runtime.js'
 
 const run = promisify(execFile)
@@ -243,7 +243,7 @@ async function configureGeneratedDocker(
     const dockerFixture = {
         containerId,
         shortId,
-        projectName: 'generated-environment',
+        projectName: composeProjectName({ cockpitName: 'generated-environment', stackId: context.stackId as StackId }),
         stackId: context.stackId,
         sourceSha256: context.runtimeSha256,
         generation,

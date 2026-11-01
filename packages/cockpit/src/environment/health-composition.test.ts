@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { runDoctor, runPreflight, runUp } from './application.js'
 import { recordLifecycleSeeded, recordLifecycleStarted } from './lifecycle-stage.js'
-import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
+import { checkoutId, cockpitId, composeProjectName, holderId, stackId } from './identity.js'
 import { lifecycleHistoryAddress, selectStateRoot, transactState } from './state.js'
 import { COMPOSE_OWNERSHIP_FILE } from './compose-ownership.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -233,12 +233,13 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         const loadedConfig = await loadCockpitConfig(candidate.configPath)
         if (loadedConfig.kind !== 'complete') throw new Error(JSON.stringify(loadedConfig.diagnostics))
         const digest = loadedConfig.result.runtimeSha256
+        const project = composeProjectName({ cockpitName: 'synthetic-cockpit', stackId: candidate.stack })
         const docker = join(candidate.root, 'docker')
         await writeFile(docker, `#!${process.execPath}
 const args = process.argv.slice(2)
 const port = process.env.APP_PORT || '${port}'
 const labels = { 'dev.b0dea.cockpit.stack-id': '${candidate.stack}', 'dev.b0dea.cockpit.config-sha256': '${digest}',
-    'com.docker.compose.project': 'synthetic-cockpit', 'com.docker.compose.service': 'api' }
+    'com.docker.compose.project': '${project}', 'com.docker.compose.service': 'api' }
 const id = '${'a'.repeat(64)}'
 const output = value => process.stdout.write(typeof value === 'string' ? value : JSON.stringify(value))
 if (args[0] === 'version') output('27.1.2')
@@ -246,7 +247,7 @@ else if (args[0] === 'info') output(args.join(' ').includes('OperatingSystem') ?
 else if (args[0] === 'compose' && args[1] === 'version') output('2.39.2')
 else if (args[0] === 'compose' && args.includes('config')) output({ services: { api: { image: '${image}', healthcheck: { test: ['CMD', 'true'] }, labels,
     ports: [{ target: 3000, published: args.includes('--no-interpolate') ? '$' + '{APP_PORT}' : port, host_ip: '127.0.0.1', protocol: 'tcp' }] } } })
-else if (args[0] === 'compose' && args.includes('ps')) output(args.includes('--quiet') ? id : { ID: id.slice(0, 12), Project: 'synthetic-cockpit', Service: 'api', State: 'running', Health: 'healthy', ExitCode: 0 })
+else if (args[0] === 'compose' && args.includes('ps')) output(args.includes('--quiet') ? id : { ID: id.slice(0, 12), Project: '${project}', Service: 'api', State: 'running', Health: 'healthy', ExitCode: 0 })
 else if (args[0] === 'container' && args[1] === 'inspect') output({ ID: id, State: 'running', Health: 'healthy', Labels: labels, Mounts: [],
     Ports: { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: port }] } })
 else if (args[0] === 'compose' && args.includes('up')) process.exit(0)
@@ -280,7 +281,7 @@ else process.exit(64)
             }, execute))
             expect(up, JSON.stringify(up)).toMatchObject({ kind: 'complete', status: 0 })
             expect(execute.mock.calls.map(([step]) => step.id)).toEqual(expect.arrayContaining([
-                'runtime:docker-compose:topology:synthetic-cockpit', 'runtime:measure:resources', 'runtime:measure:free-disk',
+                `runtime:docker-compose:topology:${project}`, 'runtime:measure:resources', 'runtime:measure:free-disk',
             ]))
             const checked = await checkGeneratedEnvironment({ configPath: candidate.configPath })
             expect(checked, JSON.stringify(checked)).toMatchObject({ kind: 'complete', status: 0 })

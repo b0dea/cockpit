@@ -106,8 +106,9 @@ describe('generated browser runner rendering', () => {
             { type: 'bind', source: '.cockpit/browser', target: '/browser', read_only: false },
         ])
         // A pinned image runs its command from the mounted checkout under an init that forwards
-        // signals; the Compose project is the one lifecycle commands name with --project-name.
-        expect(compose.name).toBe('mounts')
+        // signals. The committed file names no project: each stack's project is passed with
+        // --project-name, so checkouts sharing the file cannot share a project.
+        expect(compose).not.toHaveProperty('name')
         expect(compose.services.app).toMatchObject({ working_dir: '/workspace/source', init: true })
         expect(compose.services.browser.working_dir).toBeUndefined()
         expect(compose.services.browser.init).toBe(true)

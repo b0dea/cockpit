@@ -20,7 +20,7 @@ import { readState } from './state.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { deriveCacheKey, observeDependencyLoad } from './installs.js'
 import { generatedApplicationProjection, syncGeneratedEnvironment } from './generated-application.js'
-import { checkoutId, cockpitId } from './identity.js'
+import { checkoutId, cockpitId, composeProjectName } from './identity.js'
 import {
     issueRuntimeMeasurementProbeAuthority,
     observeDockerRuntime,
@@ -179,7 +179,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             'seeded',
         ]))
         expect(passed.steps.map(({ id }) => id)).toEqual(expect.arrayContaining([
-            'runtime:docker-compose:topology:generated-environment',
+            `runtime:docker-compose:topology:${composeProjectName({ cockpitName: 'generated-environment', stackId: passed.context.stackId })}`,
             'generated-observation:compose-variables',
             'dependency-runtime:inspect:app',
             'data:seeded:seeded-schema',
@@ -428,7 +428,8 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const ids = steps.map(({ id }) => id)
         expect.soft(ids).toContain('runtime:docker-compose-version')
         expect.soft(ids).toContain('runtime:docker-operating-system')
-        expect.soft(ids).toContain('runtime:docker-compose:topology:generated-environment')
+        const topologyId = `runtime:docker-compose:topology:${composeProjectName({ cockpitName: 'generated-environment', stackId: loaded.result.stackId })}`
+        expect.soft(ids).toContain(topologyId)
         expect.soft(ids).toContain('runtime:measure:resources')
         expect.soft(ids).toContain('runtime:measure:free-disk')
         expect.soft(executions.filter(({ id }) => id.startsWith('runtime:')).every(({ kind }) => kind === 'complete')).toBe(true)
@@ -443,7 +444,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             }) }))
         await expect(adapters.withGeneratedRuntime(loaded.result, { ...readiness } as never, async (value) => value))
             .resolves.toBeUndefined()
-        const topologyStep = steps.find((step) => step.id === 'runtime:docker-compose:topology:generated-environment')
+        const topologyStep = steps.find((step) => step.id === topologyId)
         expect(topologyStep?.env).toEqual(expect.objectContaining({
             COCKPIT_OWNER_ID: loaded.result.cockpitId,
             COCKPIT_STACK_ID: loaded.result.stackId,

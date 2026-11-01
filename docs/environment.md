@@ -351,14 +351,18 @@ the context with `docker context use <name>` first.
 
 ## Compose project name
 
-Every command that runs Docker Compose passes `--project-name` with `cockpit.name`, in both
-compose-first and generated mode. Containers, networks and named volumes therefore carry that
-name: a cockpit named `shop-cockpit` runs containers such as `shop-cockpit-api-1` and a volume
-`shop-cockpit_dependencies`. The generated Compose file names the same project in its `name:`
-field, so nothing that reads the file sees a different project than the one running. In
-compose-first mode your own file's `name:` is overridden. To look at the stack with Docker
-directly, name the project: `docker compose --project-name shop-cockpit ps`. Renaming
-`cockpit.name` addresses a different project, so run `down` before renaming.
+Every command that runs Docker Compose passes `--project-name <cockpit.name>-<stack>`, in both
+compose-first and generated mode, where `<stack>` is the first 12 hex digits of the stack ID.
+The stack ID comes from the cockpit's main checkout and the current checkout, so two cockpits that
+share a `cockpit.name`, or two checkouts of one cockpit, get separate projects on one Docker daemon
+instead of replacing each other's containers. It never depends on the bytes of `cockpit.toml`, so
+editing the file keeps the same project. Containers, networks and named volumes carry that name: a
+cockpit named `shop-cockpit` runs containers such as `shop-cockpit-3f2b3aead733-api-1` and a volume
+`shop-cockpit-3f2b3aead733_dependencies`. The generated Compose file has no `name:` field, because
+it is committed and shared by every checkout; in compose-first mode your own file's `name:` is
+overridden. To look at the stack with Docker directly, find the project with `docker compose ls`
+and name it: `docker compose --project-name shop-cockpit-3f2b3aead733 ps`. Renaming `cockpit.name`
+addresses a different project and stack, so run `down` before renaming.
 
 ## Measure the container runtime
 
@@ -486,8 +490,8 @@ Each generated service runs under `init: true`, so its command gets signals forw
 promptly on stop. A pinned-image service with exactly one bind mount of its checkout
 (`source = "."`) runs from that mount's target, because the image itself knows nothing about the
 checkout and a relative command such as `node server.js` would otherwise run from `/`. A built
-service keeps the `WORKDIR` its Dockerfile declares. The generated file names its Compose project
-as described in [Compose project name](#compose-project-name).
+service keeps the `WORKDIR` its Dockerfile declares. The generated file names no Compose project;
+see [Compose project name](#compose-project-name).
 
 Before using a running generated stack, cockpit checks that it matches the stack ID, configuration
 and source digests, generation, Compose project and Compose files. For installed dependencies it
