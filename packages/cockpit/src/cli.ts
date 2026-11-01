@@ -673,7 +673,7 @@ function renderCommandHelp(definition: CommandDefinition): string {
         return [usage, `${describePublicOption(name)}${fallback}`] as const
     })
     const width = Math.max(...optionLines.map(([usage]) => usage.length), '-h, --help'.length)
-    return [`Usage: cockpit ${definition.name} [options]`, '', definition.summary,
+    return [`Usage: cockpit ${definition.name} ${definition.usage ?? '[options]'}`, '', definition.summary,
         ...(definition.experimental ? ['', 'Status: experimental. This interface may change before a stable release.'] : []), '', 'Options:',
         ...optionLines.map(([usage, note]) => `  ${usage.padEnd(width)}  ${note}`.trimEnd()),
         `  ${'-h, --help'.padEnd(width)}  Show this help`, ''].join('\n')

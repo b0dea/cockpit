@@ -284,6 +284,19 @@ describe('CLI help', () => {
         expect(result.stdout).toContain('Emit one machine-readable JSON response')
     })
 
+    it.each([
+        ['session', 'Usage: cockpit session [options] -- <command> [args...]'],
+        ['init', 'Usage: cockpit init <root> [options]'],
+        ['document', 'Usage: cockpit document [<root>] [options]'],
+        ['runtime', 'Usage: cockpit runtime measure [options]'],
+        ['sibling', 'Usage: cockpit sibling add|remove <slug> [options]'],
+    ])('prints the operands `%s` takes besides its options', async (verb, usage) => {
+        const result = await runInProcess([verb, '--help'])
+
+        expect(result).toMatchObject({ status: 0, stderr: '' })
+        expect(result.stdout.split('\n')[0]).toBe(usage)
+    })
+
     it('keeps a command-table description for every public flag', () => {
         for (const command of commands) {
             for (const name of Object.keys(command.options)) expect(describePublicOption(name)).not.toBe('')

@@ -45,6 +45,8 @@ export type HandlerIdentifier = WorkHandlerIdentifier
 export interface CommandDefinition {
     name: string
     summary: string
+    /** What follows the command name in its help usage line, when it takes more than options. */
+    usage?: string
     handler: HandlerIdentifier
     options: NonNullable<ParseArgsConfig['options']>
     visibility: 'public'
@@ -152,6 +154,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'init',
         summary: 'Preview, then accept, a first cockpit setup for one agent tool',
+        usage: '<root> [options]',
         handler: 'init',
         visibility: 'public',
         ordinary: ordinary('init', { target: value('surface-target', true), registry: value('confined-path'),
@@ -168,6 +171,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'document',
         summary: 'Draft cockpit.toml from an existing cockpit, marking every inferred value',
+        usage: '[<root>] [options]',
         handler: 'document',
         visibility: 'public',
         ordinary: ordinary('document', { registry: value('confined-path'), json: flag }, {
@@ -286,6 +290,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'session',
         summary: 'Keep the environment available for one command, then release it',
+        usage: '[options] -- <command> [args...]',
         handler: 'session',
         visibility: 'public',
         // The guard admits `session --config <file> -- <command>` only when it admits the inner command.
@@ -321,6 +326,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'runtime',
         summary: 'Measure the local container runtime (runtime measure) and record the result for this machine',
+        usage: 'measure [options]',
         handler: 'runtime',
         visibility: 'public',
         // The probe runs a disposable stack under its own project, cleans it up, and records the result
@@ -337,6 +343,7 @@ export const commands: readonly CommandDefinition[] = [
     {
         name: 'sibling',
         summary: 'Add or remove a repository in cockpit.toml (sibling add, sibling remove)',
+        usage: 'add|remove <slug> [options]',
         handler: 'sibling',
         visibility: 'public',
         ordinary: unavailable('sibling add and remove rewrite cockpit.toml'),
