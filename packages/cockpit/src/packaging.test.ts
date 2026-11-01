@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { parseNpmPackJson, type NpmPackArtifact } from './test-support/npm-pack-json.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
 import { expectedPackageFiles } from '../../../scripts/supply-chain-check.mjs'
+import { inspectInternalLinks } from '../../../scripts/docs-lint.mjs'
 
 // What a consumer installs is a different surface from what this repository contains, and
 // only one of them is checked by reading the tree. Without an allow-list npm ships every
@@ -251,6 +252,39 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
         // The mirror of the check above: deny-by-default fails the other way too, and a
         // tarball that leaks nothing but renders nothing is equally broken.
         expect(packedFiles().some((f) => f.startsWith('surfaces/'))).toBe(true)
+    })
+
+    it('ships the user guide without contributor pages, and no shipped link leaves the installed copy', () => {
+        // Rendered surfaces point agents at these pages; an agent offline, or one that cannot reach
+        // the repository, has only what the installation carries.
+        const files = packedFiles()
+        expect(files).toEqual(expect.arrayContaining(['docs/README.md', 'docs/agent-adoption.md', 'docs/getting-started.md']))
+        expect(files.filter((f) => f.startsWith('docs/contributing/'))).toEqual([])
+        const installed = packedPackageRoot()
+        const tracked = new Set(execFileSync('git', ['ls-files', '-z'], { cwd: repoRoot, encoding: 'utf8' }).split('\0'))
+        const source = 'https://github.com/b0dea/cockpit/blob/main/'
+        const pages = files.filter((f) => f.startsWith('docs/') && f.endsWith('.md'))
+        for (const page of pages) {
+            const body = readFileSync(join(installed, page), 'utf8')
+            const readInstalledPage = (path: string) => {
+                if (!path.startsWith('docs/')) throw new Error(`${path} is outside the installed guide`)
+                return readFileSync(join(installed, path), 'utf8')
+            }
+            expect(inspectInternalLinks({ path: page, body, readTarget: readInstalledPage })
+                .filter((row) => row.code !== 'DOC041_REFERENCE_UNRESOLVED'), page).toEqual([])
+            for (const [, path] of body.matchAll(/\]\(https:\/\/github\.com\/b0dea\/cockpit\/blob\/main\/([^)#\s]+)/g)) {
+                expect(tracked.has(path!) || [...tracked].some((file) => file.startsWith(`${path}/`)), `${page} -> ${source}${path}`).toBe(true)
+            }
+            // The copy differs from the source only where a link leaving the guide was redirected,
+            // never inside code: the configuration reference quotes schema patterns shaped like links.
+            const original = readFileSync(join(repoRoot, page), 'utf8').split('\n')
+            const changed = body.split('\n').flatMap((line, index) => line === original[index] ? [] : [[original[index], line]])
+            expect(body.split('\n')).toHaveLength(original.length)
+            for (const [before, after] of changed) {
+                expect(before, page).toContain('](../')
+                expect(after, page).toContain(`](${source}`)
+            }
+        }
     })
 
     it('ships every executable and editor artifact a consumer is owed', () => {

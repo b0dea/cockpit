@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -21,7 +21,7 @@ function packageFixture(): string {
 }
 
 describe('package build output ownership', () => {
-    it('cleans stale output before invoking the native compiler', () => {
+    it('cleans stale output and ships the user guide, redirecting only prose links that leave it, before invoking the native compiler', () => {
         const root = mkdtempSync(join(tmpdir(), 'cockpit-build-entry-'))
         scratch.push(root)
         const packageRoot = join(root, 'packages/cockpit')
@@ -32,6 +32,24 @@ describe('package build output ownership', () => {
         mkdirSync(dirname(compiler), { recursive: true })
         writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: '@b0dea/cockpit' }))
         writeFileSync(join(packageRoot, 'dist/stale-wrapper.js'), 'stale')
+        mkdirSync(join(packageRoot, 'docs'))
+        writeFileSync(join(packageRoot, 'docs/retired.md'), 'stale')
+        mkdirSync(join(root, 'docs/contributing'), { recursive: true })
+        mkdirSync(join(root, 'examples/demo'), { recursive: true })
+        writeFileSync(join(root, 'examples/demo/README.md'), '# Demo\n')
+        writeFileSync(join(root, 'docs/contributing/testing.md'), '# Testing\n')
+        const guide = [
+            '# Guide',
+            '',
+            'See [setup](setup.md#install), [the demo](../examples/demo/README.md#demo) and `[code](../x)`.',
+            '',
+            '```json',
+            '{ "pattern": "^(?:[a-z](?:[a-z0-9-]*[a-z0-9])?)$", "link": "[x](../examples/demo/README.md)" }',
+            '```',
+            '',
+        ].join('\n')
+        writeFileSync(join(root, 'docs/README.md'), guide)
+        writeFileSync(join(root, 'docs/setup.md'), '# Setup\n\n## Install\n')
         cpSync(join(repositoryRoot, 'scripts/build-cockpit.mjs'), buildScript)
         writeFileSync(compiler, [
             "const { existsSync, mkdirSync, writeFileSync } = require('node:fs')",
@@ -45,6 +63,11 @@ describe('package build output ownership', () => {
 
         expect(result.status, result.stderr).toBe(0)
         expect(readFileSync(join(packageRoot, 'dist/cli.js'), 'utf8')).toBe('emitted')
+        expect(readdirSync(join(packageRoot, 'docs')).sort()).toEqual(['README.md', 'setup.md'])
+        expect(readFileSync(join(packageRoot, 'docs/README.md'), 'utf8')).toBe(guide.replace(
+            '[the demo](../examples/demo/README.md#demo)',
+            '[the demo](https://github.com/b0dea/cockpit/blob/main/examples/demo/README.md#demo)',
+        ))
         expect(JSON.parse(readFileSync(join(packageRoot, 'compiler-arguments.json'), 'utf8'))).toEqual([
             '--project', 'tsconfig.build.json', '--declaration', '--singleThreaded',
         ])

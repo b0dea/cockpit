@@ -41,6 +41,7 @@ function fixture() {
         cpSync(join(repositoryRoot, path), join(root, path))
     }
     cpSync(join(repositoryRoot, 'packages/cockpit'), join(root, 'packages/cockpit'), { recursive: true })
+    cpSync(join(repositoryRoot, 'docs'), join(root, 'docs'), { recursive: true })
     cpSync(join(repositoryRoot, '.github/actions'), join(root, '.github/actions'), { recursive: true })
     cpSync(join(repositoryRoot, '.github/scripts'), join(root, '.github/scripts'), { recursive: true })
     return root

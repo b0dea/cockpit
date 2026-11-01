@@ -41,6 +41,10 @@ download a different package. The `npx --no` form, such as
 one; cockpit's fix hints print commands in that form. After `init` writes the `cockpit:*` package scripts, use those
 scripts for setup, sync and check.
 
+The installation carries this guide for its own version, without the contributor pages, under
+`./node_modules/@b0dea/cockpit/docs/`. The skills cockpit generates and its fix hints cite pages
+there, so an agent can read them offline.
+
 ### Install from source
 
 To test an unpublished checkout, pack the package and install that tarball. This exercises the

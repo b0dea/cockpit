@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
+import { packagedDocumentationPages } from './build-cockpit.mjs'
 
 export const mechanism = {
     id: 'supply-chain-readiness',
@@ -133,7 +134,7 @@ export function expectedPackageFiles(root) {
         const stem = path.slice(0, -'.ts'.length)
         return [`dist/${stem}.d.ts`, `dist/${stem}.js`]
     })
-    return Object.freeze([...STATIC_PACKAGE_FILES, ...generated].sort(compareCodeUnits))
+    return Object.freeze([...STATIC_PACKAGE_FILES, ...packagedDocumentationPages(root), ...generated].sort(compareCodeUnits))
 }
 
 function dependencyEntries(manifest) {

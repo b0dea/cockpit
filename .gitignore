@@ -9,6 +9,8 @@ coverage/
 .turbo/
 .rollup.cache/
 .vite/
+# The package's copy of the user guide, written from docs/ by the package build.
+packages/cockpit/docs/
 
 # ── Logs and crash output ────────────────────────────────────────────────────
 *.log

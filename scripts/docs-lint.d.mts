@@ -50,6 +50,7 @@ export interface ProseReferenceInput {
 
 export declare function walkMarkdownProse(path: string, body: string): MarkdownProseWalk
 export declare function inspectProseReferences(input: ProseReferenceInput): DocsLintDiagnostic[]
+export declare function inspectInternalLinks(input: { path: string; body: string; readTarget(path: string): string }): DocsLintDiagnostic[]
 
 export interface DocumentationInventoryOptions {
     candidate?: string
