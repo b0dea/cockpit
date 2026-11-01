@@ -8,8 +8,10 @@ budget: uncapped
 # Cockpit skill procedures
 
 Run from the cockpit root. Invoke each cockpit command through the exact project-local
-executable, `./node_modules/.bin/cockpit`. If that file is absent, stop:
-do not use a command runner that can download a missing package implicitly.
+executable, `./node_modules/.bin/cockpit`, or through its `npx --no` form, such as
+`npx --no cockpit check --config cockpit.toml`, which runs that same binary and never downloads
+one. If the binary is absent, stop: do not use a command runner that can download a missing
+package implicitly.
 
 ## Bootstrap
 

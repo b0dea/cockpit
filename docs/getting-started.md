@@ -36,7 +36,9 @@ npm install --save-dev --save-exact @b0dea/cockpit
 The install is project-local and recorded in that directory's lockfile. Run the exact installed
 executable as `./node_modules/.bin/cockpit <command>` from the cockpit directory; every command in
 this guide runs there. This path fails when the dependency is missing; it cannot implicitly
-download a different package. After `init` writes the `cockpit:*` package scripts, use those
+download a different package. The `npx --no` form, such as
+`npx --no cockpit check --config cockpit.toml`, runs the same installed binary and never downloads
+one; cockpit's fix hints print commands in that form. After `init` writes the `cockpit:*` package scripts, use those
 scripts for setup, sync and check.
 
 ### Install from source
