@@ -7,6 +7,7 @@ import { isProxy } from 'node:util/types'
 import { z } from 'zod'
 import { loadCockpitConfig } from '../config/load.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
+import { ANSWER_PROVENANCES } from '../document/render.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
 import { checkoutId as deriveCheckoutId, type BootstrapLockOwnerId } from './identity.js'
 import { redactSensitiveText } from './sensitive.js'
@@ -145,7 +146,7 @@ const GreenfieldAnswerSchema = z.object({
         .refine(value => Buffer.byteLength(value, 'utf8') <= 262_144)
         .refine(value => value.trim() === value && !/[\x00-\x1f\x7f]/.test(value) && redactSensitiveText(value) === value),
     sha256: z.string().regex(digest),
-    provenance: z.literal('operator-confirmed'),
+    provenance: z.enum(ANSWER_PROVENANCES),
 }).strict()
 const GreenfieldStateSchema = z.object({
     mode: z.enum(['estate', 'registry']).optional(),

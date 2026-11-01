@@ -12,6 +12,7 @@ export const mechanism = {
     id: 'configuration-schema',
     module: 'packages/cockpit/src/schema.ts',
     exports: [
+        'UNCONFIRMABLE_ANSWERS',
         'Mount',
         'Acquire',
         'AddressingPosture',
@@ -1165,8 +1166,20 @@ export function configurationDefaults() {
     }
 }
 
+/**
+ * The init interview answers a cockpit.toml records. `unconfirmed` lists those no person stated: the
+ * setup agent chose them as defaults, or the answers file did not say who chose them. doctor warns
+ * until a person confirms each one and deletes its entry, because a configuration whose values look
+ * stated but were guessed is the failure cockpit exists to prevent.
+ */
+export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
+    'environment.test_data', 'environment.generated', 'environment.compose_files', 'environment.machine', 'environment.posture',
+    'guards'] as const
+
 export const CockpitConfig = z
     .object({
+        unconfirmed: z.array(z.enum(UNCONFIRMABLE_ANSWERS)).min(1).max(UNCONFIRMABLE_ANSWERS.length)
+            .refine(rows => new Set(rows).size === rows.length, { message: 'unconfirmed lists an answer more than once' }).optional(),
         cockpit: CockpitMeta,
         sibling: z.array(Sibling).min(1),
         ports: Ports,

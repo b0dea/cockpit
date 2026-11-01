@@ -675,6 +675,7 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     })}\n`)
     const answers = join(packScratch, 'source-install-answers.toml')
     writeFileSync(answers, [
+        '[cockpit]', 'name = "synthetic"', '',
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
         'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
         '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',
@@ -765,6 +766,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
             confirmInit: async (shown: { previewSha256: string }) => shown.previewSha256,
             answerInitQuestion: async (question: { field: string; expectedSha256?: string }) => {
                 questions.push(question)
+                if (question.field === 'cockpit.name') return '"synthetic"'
                 if (question.field === 'sibling') return JSON.stringify(estate.repositories.map(repository => ({
                     slug: repository.slug, dir: repository.slug, mount: 'always', acquire: 'none',
                     var: `${repository.slug.toUpperCase()}_DIR`, purpose: `Synthetic ${repository.slug} service`,
@@ -791,7 +793,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
         if (classification === 'no-runnable-product') {
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
-            expect(questions.map(question => question.field)).toEqual(['sibling', 'ports.bases', 'guards', 'configuration.defaults'])
+            expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'configuration.defaults'])
             // The interactive answers are persisted, so a caller with no terminal finishes the same
             // init from the printed digests alone: it must not need a second interview.
             const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
@@ -818,7 +820,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
             expect(status, stderr).toBe(2)
             expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
             expect(questions.map(question => question.field)).toEqual([
-                'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.generated',
+                'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data', 'environment.generated',
             ])
             const resumed = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], {
                 cwd: root, env, encoding: 'utf8',
@@ -841,6 +843,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
     })}\n`)
     const changingAnswers = join(packScratch, 'changing-estate-answers.toml')
     writeFileSync(changingAnswers, [
+        '[cockpit]', 'name = "synthetic"', '',
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
         'var = "LIBRARY_DIR"', 'purpose = "Synthetic changing service"', '',
     ].join('\n'))
@@ -853,7 +856,8 @@ it('runs installed init for each isolated target and refuses missing roots or br
     const changingPending = changingRun('--accept-preview', changingPreview.previewSha256, '--answers', changingAnswers)
     expect(changingPending.status, changingPending.stdout + changingPending.stderr).toBe(0)
     expect(JSON.parse(changingPending.stdout).result).toMatchObject({
-        estate: { classification: 'no-runnable-product', answers: [expect.objectContaining({ provenance: 'operator-confirmed' })] },
+        estate: { classification: 'no-runnable-product', answers: [expect.objectContaining({ provenance: 'operator-confirmed' }),
+            expect.objectContaining({ provenance: 'operator-confirmed' })] },
         question: { field: 'ports.bases' },
     })
 
@@ -871,7 +875,8 @@ it('runs installed init for each isolated target and refuses missing roots or br
     expect(changedAccepted.status, changedAccepted.stdout + changedAccepted.stderr).toBe(0)
     const refreshed = JSON.parse(changedAccepted.stdout).result
     expect(refreshed).toMatchObject({
-        estate: { classification: 'one-sibling', answers: [expect.objectContaining({ provenance: 'operator-confirmed' })] },
+        estate: { classification: 'one-sibling', answers: [expect.objectContaining({ provenance: 'operator-confirmed' }),
+            expect.objectContaining({ provenance: 'operator-confirmed' })] },
         question: { field: 'ports.bases' },
     })
     mkdirSync(join(packScratch, 'init-headless'))
@@ -881,6 +886,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
     writeFileSync(join(headless, 'library/Dockerfile'), 'FROM node:22-slim\nEXPOSE 4100\nCMD ["node", "index.mjs"]\n')
     const answersFile = join(packScratch, 'headless-answers.toml')
     writeFileSync(answersFile, [
+        '[cockpit]', 'name = "synthetic"', '',
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
         'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
         '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', ''].join('\n'))
@@ -890,7 +896,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
     expect(first.status, first.stderr).toBe(0)
     const listed = JSON.parse(first.stdout).result
     expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
-        'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
+        'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
         'environment.generated', 'environment.machine', 'environment.posture', 'guards', 'configuration.defaults',
     ])
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').inferred).toEqual([
@@ -909,7 +915,7 @@ it('runs installed init for each isolated target and refuses missing roots or br
     expect(portableFirst.status, portableFirst.stderr).toBe(0)
     const portableListed = JSON.parse(portableFirst.stdout).result
     expect(portableListed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
-        'sibling', 'ports.bases', 'guards', 'configuration.defaults',
+        'cockpit.name', 'sibling', 'ports.bases', 'guards', 'configuration.defaults',
     ])
     const second = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile)
     expect(second.status, second.stderr).toBe(0)
@@ -990,7 +996,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
     const root = rootChoice === 'dedicated' ? `${product}-cockpit` : product
     const answers = join(parent, 'answers.toml')
     writeFileSync(answers, [
-        '[cockpit]', `root = "${rootChoice}"`, '',
+        '[cockpit]', `root = "${rootChoice}"`, 'name = "synthetic-store"', '',
         '[[sibling]]', 'slug = "store"', `dir = "${rootChoice === 'dedicated' ? 'store' : '.'}"`,
         'mount = "none"', 'acquire = "none"', 'var = "STORE_DIR"', 'purpose = "Synthetic store library"', '',
         '[ports]', 'bases = {}', '', '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '',

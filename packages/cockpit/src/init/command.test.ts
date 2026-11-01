@@ -274,6 +274,37 @@ describe('init operator command', () => {
             ])
         })
 
+        it('records who chose each answer: the human, the setup agent as a default, or for the machine floor no one said', async () => {
+            const provenances = async (answersFile: Record<string, unknown>) => {
+                const recorded: string[] = []
+                const { application } = walk([])
+                const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },
+                    { interactive: false, json: true, unattended: { previewSha256: digest, answers: answersFile, defaultsSha256: defaultsDigest } },
+                    noTerminal, async input => {
+                        if (input.greenfieldAnswer) recorded.push(input.greenfieldAnswer.provenance)
+                        return application(input)
+                    })
+                return { outcome, recorded }
+            }
+            const marked = await provenances({ ...answers, provenance: { 'environment.compose_files': 'agent-default',
+                environment: { machine: 'human' }, guards: 'agent-default' } })
+            expect(marked.outcome.kind).toBe('complete')
+            expect(marked.recorded).toEqual(['operator-confirmed', 'operator-confirmed', 'operator-confirmed', 'operator-confirmed',
+                'agent-default', 'operator-confirmed', 'operator-confirmed', 'agent-default', 'operator-confirmed'])
+            // cockpit never proposes a machine floor, so an unmarked one is not attributed to the human.
+            expect((await provenances(answers)).recorded[5]).toBe('unattributed')
+
+            for (const [provenance, message] of [
+                [{ guards: 'person' }, 'provenance.guards must be "human" or "agent-default"'],
+                [{ cockpit: { root: 'agent-default' } }, 'provenance names no recorded interview answer: cockpit.root'],
+                [{ 'cockpit.name': 'agent-default' }, 'provenance names cockpit.name, which the answers file does not answer'],
+            ] as const) {
+                const refused = await provenances({ ...answers, provenance })
+                expect(refused.outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_INVALID', message: expect.stringContaining(message) }] })
+                expect(refused.recorded).toEqual([])
+            }
+        })
+
         it('refuses a digest that is not the pending one before publishing anything', async () => {
             const accepted: boolean[] = []
             const outcome = await runInitOperatorCommand({ root: '/synthetic', target: 'codexcli' },

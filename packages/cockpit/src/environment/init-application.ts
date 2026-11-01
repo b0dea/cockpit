@@ -3,8 +3,10 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
 import { cockpitCommand, initCommand } from '../fix-catalogue.js'
 import {
+    isAnswerProvenance,
     plannedGreenfieldQuestions,
-    type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
+    type AnswerProvenance, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult,
+    type UnconfirmedAnswer,
     type EstateObservationInput,
 } from '../document/command.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from '../surfaces/contract.js'
@@ -48,7 +50,7 @@ export interface InitApplicationInput {
     readonly greenfieldAnswer?: Readonly<{
         questionId: string
         bytes: string
-        provenance: 'operator-confirmed'
+        provenance: AnswerProvenance
     }>
     readonly resetAnswer?: Readonly<{ field: string; acceptedPreviewSha256?: string }>
     /**
@@ -174,7 +176,7 @@ type IssuedEstateClassificationResult = EstateClassificationResult & Readonly<{
 export interface GreenfieldResult extends EstateClassificationResult {
     readonly sourceObservationSha256: string
     readonly answers: readonly Readonly<{
-        questionId: string; bytes: string; sha256: string; provenance: 'operator-confirmed'
+        questionId: string; bytes: string; sha256: string; provenance: AnswerProvenance
     }>[]
 }
 
@@ -213,6 +215,8 @@ export interface InitResult {
     readonly interview?: InterviewPlan
     readonly cockpitRoot?: CockpitRootQuestion
     readonly resetAnswer?: Readonly<{ field: string; revision: number; invalidatedFields: readonly string[]; previewSha256: string }>
+    /** Answers in cockpit.toml no person stated; each stays listed there, and doctor warns, until someone confirms it. */
+    readonly unconfirmed?: readonly UnconfirmedAnswer[]
 }
 
 interface InitOutcomeBase {
@@ -264,7 +268,7 @@ function result(
     projection: BootstrapProjection,
     ownerOutcome?: OwnerOutcome,
     greenfield?: Readonly<{ question?: GreenfieldQuestion; estate?: GreenfieldResult; interview?: InterviewPlan;
-        cockpitRoot?: CockpitRootQuestion; resetAnswer?: InitResult['resetAnswer'] }>,
+        cockpitRoot?: CockpitRootQuestion; resetAnswer?: InitResult['resetAnswer']; unconfirmed?: InitResult['unconfirmed'] }>,
 ): InitResult {
     return Object.freeze({ stage, root: projection.root, target: projection.target,
         previewSha256: projection.previewSha256, files: Object.freeze([...projection.files]),
@@ -273,7 +277,8 @@ function result(
         ...(greenfield?.estate === undefined ? {} : { estate: greenfield.estate }),
         ...(greenfield?.interview === undefined ? {} : { interview: greenfield.interview }),
         ...(greenfield?.cockpitRoot === undefined ? {} : { cockpitRoot: greenfield.cockpitRoot }),
-        ...(greenfield?.resetAnswer === undefined ? {} : { resetAnswer: greenfield.resetAnswer }) })
+        ...(greenfield?.resetAnswer === undefined ? {} : { resetAnswer: greenfield.resetAnswer }),
+        ...(greenfield?.unconfirmed === undefined ? {} : { unconfirmed: greenfield.unconfirmed }) })
 }
 
 // The repository's directory name becomes the first sibling's slug and the cockpit's name stem.
@@ -325,11 +330,19 @@ async function interviewPlan(
     return Object.freeze({
         answered: Object.freeze(planned.slice(0, answered).map(row => row.field)),
         outstanding: Object.freeze(planned.slice(answered).map(({ field, why }) => Object.freeze({ field, why,
-            inferred: Object.freeze((inference?.facts ?? []).filter(fact => fact.fields.includes(field))
-                .map(({ target, value, provenance }) => Object.freeze({ target, value, provenance }))) }))),
+            inferred: Object.freeze([...field === 'cockpit.name' ? nameProposal(input.root) : [],
+                ...(inference?.facts ?? []).filter(fact => fact.fields.includes(field))
+                    .map(({ target, value, provenance }) => Object.freeze({ target, value, provenance }))]) }))),
         inferenceSkipped: inference?.skipped ?? [],
         ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
     })
+}
+
+// The cockpit root's directory name is the proposed cockpit name when it is a valid one.
+function nameProposal(root: string): readonly InferredItem[] {
+    const name = basename(root)
+    return /^[a-z0-9][a-z0-9-]*$/.test(name) ? [Object.freeze({ target: 'cockpit.name', value: name,
+        provenance: Object.freeze({ kind: 'inferred' as const, source: root, reason: 'the cockpit root directory name' }) })] : []
 }
 
 function commandDigest(input: InitApplicationInput): string {
@@ -624,7 +637,7 @@ export async function runInitApplication(
         }
         const priorAnswers = state?.answers ?? []
         const proposed = input.greenfieldAnswer
-        if (proposed && (proposed.provenance !== 'operator-confirmed' || proposed.bytes.trim() !== proposed.bytes
+        if (proposed && (!isAnswerProvenance(proposed.provenance) || proposed.bytes.trim() !== proposed.bytes
             || proposed.bytes.length < 1 || proposed.bytes.includes('\0') || Buffer.byteLength(proposed.bytes) > DRAFT_BYTE_LIMIT
             || proposed.questionId !== state?.questions[state.answers.length]?.id)) {
             return refused('GREENFIELD_ANSWER_INVALID', 'configuration answer does not match the next persisted question and provenance', address.path)
@@ -723,7 +736,7 @@ export async function runInitApplication(
         if (persisted.kind !== 'complete') return stateFailure(persisted)
         current = persisted.value
         return { kind: 'artifact', status: 0, artifact: documented.artifact, destination,
-            diagnostics: documented.diagnostics, result: result('draft-prepared', projection) }
+            diagnostics: documented.diagnostics, result: result('draft-prepared', projection, undefined, unconfirmedOf(documented)) }
     }
 
     const persistedConfiguration = current.value.greenfield
@@ -758,7 +771,7 @@ export async function runInitApplication(
             diagnostics: observed.diagnostics, result: result(current.value.stage, projection) }
         if (observed.kind === 'absent') {
             return { kind: 'artifact', status: 0, artifact: current.value.artifactBytes!, destination,
-                diagnostics: [], result: result('draft-prepared', projection) }
+                diagnostics: [], result: result('draft-prepared', projection, undefined, unconfirmedOf(currentDocument)) }
         }
         if (observed.sha256 !== current.value.artifactSha256) {
             return refused('INIT_DRAFT_CHANGED', 'existing cockpit.toml bytes differ from the persisted draft', destination)
@@ -811,5 +824,11 @@ export async function runInitApplication(
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
         diagnostics: runtimeAbsent ? preflight.diagnostics.map(row => ({ ...row, severity: 'info' as const })) : preflight.diagnostics,
-        result: result('environment-verified', projection) }
+        result: result('environment-verified', projection, undefined, unconfirmedOf(currentDocument)) }
+}
+
+/** The review items a finished interview leaves: answers the setup agent chose or no one attributed. */
+function unconfirmedOf(document: DocumentOutcome): { unconfirmed?: InitResult['unconfirmed'] } {
+    const rows = document.kind === 'complete' ? document.result.unconfirmed : undefined
+    return rows === undefined || rows.length === 0 ? {} : { unconfirmed: rows }
 }

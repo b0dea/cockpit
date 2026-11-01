@@ -4367,6 +4367,21 @@ async function doctorGuardHostDiagnostics(loading: Promise<LoadedDoctorConfig>):
     })])
 }
 
+// init records answers no person stated under `unconfirmed`. They look exactly like stated values
+// in the file, so doctor keeps naming them until a person confirms each and deletes its entry.
+async function doctorUnconfirmedDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
+    const loaded = await loading
+    if (loaded.kind !== 'complete' || !loaded.result.config.unconfirmed) return Object.freeze([])
+    return Object.freeze([Object.freeze({
+        severity: 'warning' as const,
+        // A literal, so the diagnostic inventory captures the fix beside the code.
+        code: 'DECLARATION_UNCONFIRMED' satisfies typeof ENVIRONMENT_CODES.DECLARATION_UNCONFIRMED,
+        message: `${loaded.result.config.unconfirmed.join(', ')} in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product`,
+        target: 'unconfirmed',
+        fix: 'confirm each value with whoever owns the product and correct it in cockpit.toml if it is wrong, delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config <your cockpit.toml>',
+    })])
+}
+
 export type DoctorCommandResult = Readonly<{
     kind: 'complete'
     status: 0
@@ -4899,10 +4914,10 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
-    const [outcome, guardHosts, hookTrust] = await Promise.all([doctorHealth(input, adapters, config), doctorGuardHostDiagnostics(config),
-        adapters.inspectHookTrust?.() ?? Object.freeze([])])
+    const [outcome, guardHosts, unconfirmed, hookTrust] = await Promise.all([doctorHealth(input, adapters, config),
+        doctorGuardHostDiagnostics(config), doctorUnconfirmedDiagnostics(config), adapters.inspectHookTrust?.() ?? Object.freeze([])])
     const unreadableState = unreadableStateWarning(await adapters.readUnreadableState?.() ?? [])
-    const warnings = [...guardHosts, ...hookTrust, ...unreadableState ? [unreadableState] : []]
+    const warnings = [...unconfirmed, ...guardHosts, ...hookTrust, ...unreadableState ? [unreadableState] : []]
     return warnings.length === 0 ? outcome
         : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
 }

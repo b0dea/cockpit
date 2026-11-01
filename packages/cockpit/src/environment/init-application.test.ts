@@ -320,7 +320,7 @@ describe('init application', () => {
             applyBootstrap: async authority => rooted(await f.adapters.applyBootstrap(authority), preparedRoot),
             resumeBootstrap: async input => rooted(await f.adapters.resumeBootstrap(input), input.root),
             classifyEstate: async input => estate(input.root, 'one-sibling'),
-            document: interviewDocument(join(root, 'cockpit.toml')),
+            document: interviewDocument(join(root, 'cockpit.toml'), ['cockpit.name', 'sibling']),
         }
         const io: InitCommandIo = { terminal: false, confirm: async () => undefined,
             createCockpitRoot: async path => { mkdirSync(path, { recursive: true }) },
@@ -330,9 +330,9 @@ describe('init application', () => {
             sessionId: 'separate-public-invocation', platform: 'linux', home: f.input.home, xdgStateHome: f.input.xdgStateHome },
         { interactive: false, json: true, unattended: { previewSha256: digest('3'), answers } }, io,
         input => runInitApplication(input, adapters))
-        const answers = { cockpit: { root: placement }, sibling: [] }
+        const answers = { cockpit: { root: placement, name: 'checkout' }, sibling: [] }
 
-        expect(await run({ cockpit: answers.cockpit })).toMatchObject({ kind: 'pending', result: { root, question: { field: 'sibling' } } })
+        expect(await run({ cockpit: { root: placement } })).toMatchObject({ kind: 'pending', result: { root, question: { field: 'cockpit.name' } } })
         for (const attempt of ['completes', 'resumes']) {
             const outcome = await run(answers)
             expect(outcome, `${attempt}: ${JSON.stringify(outcome.diagnostics)}`).toMatchObject({ kind: 'complete', result: { root, stage: 'environment-verified' } })
@@ -699,8 +699,8 @@ describe('init application', () => {
 
     it('previews and accepts an exact recorded-answer reset while retaining earlier answers', async () => {
         const f = fixture()
-        const fields = ['sibling', 'estate.runnable', 'ports.bases']
-        const gaps = fields.map((field, index) => ({ field, source: `repository-${index}/package.json`, why: 'runnable command is unknown' }))
+        const fields = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases']
+        const gaps = fields.slice(1).map((field, index) => ({ field, source: `repository-${index}/package.json`, why: 'runnable command is unknown' }))
         const classified: EstateClassificationOutcome = { kind: 'complete', status: 0, diagnostics: [], result: {
             sourceObservationSha256: digest('9'), classification: 'incomplete-multi-repository',
             applicability: { stack: true, seed: true, postures: true, registry: true, projection: true, drift: true, compose: 'unknown' },
@@ -712,13 +712,13 @@ describe('init application', () => {
             document: interviewDocument(f.destination, fields) }
         const accepted = { ...f.input, registry: undefined, accepted: true, acceptedPreviewSha256: digest('3') }
         let outcome = await runInitApplication(accepted, adapters)
-        for (const value of ['first', 'second']) {
+        for (const value of ['synthetic', 'first', 'second']) {
             outcome = await runInitApplication({ ...accepted, greenfieldAnswer: {
                 questionId: outcome.result!.question!.id, bytes: JSON.stringify(value), provenance: 'operator-confirmed',
             } }, adapters)
         }
         expect(outcome).toMatchObject({ kind: 'pending', result: { question: { field: 'ports.bases' },
-            interview: { answered: ['sibling', 'estate.runnable'] } } })
+            interview: { answered: ['cockpit.name', 'sibling', 'estate.runnable'] } } })
 
         const selected = await selectBootstrapStateRoot({ platform: 'linux', home: f.input.home,
             xdgStateHome: f.input.xdgStateHome, checkoutRoot: f.root, target: 'codexcli' })
@@ -738,7 +738,7 @@ describe('init application', () => {
             field: reset.field, acceptedPreviewSha256: reset.previewSha256,
         } }, adapters)
         expect(applied).toMatchObject({ kind: 'pending', result: { question: { field: 'estate.runnable' },
-            interview: { answered: ['sibling'] }, resetAnswer: { previewSha256: reset.previewSha256 } } })
+            interview: { answered: ['cockpit.name', 'sibling'] }, resetAnswer: { previewSha256: reset.previewSha256 } } })
         expect(await runInitApplication({ ...f.input, registry: undefined, resetAnswer: {
             field: reset.field, acceptedPreviewSha256: reset.previewSha256,
         } }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'INIT_ANSWER_RESET_STALE' }] })
@@ -769,14 +769,18 @@ describe('init application', () => {
             skipped: [{ source: 'app/.github/workflows/ci.yml', reason: 'is not valid YAML' }],
         })
         const adapters: InitApplicationAdapters = { ...f.adapters, infer, classifyEstate: async ({ root }) => estate(root, 'one-sibling'),
-            document: interviewDocument(f.destination, ['sibling', 'ports.bases']) }
+            document: interviewDocument(f.destination, ['cockpit.name', 'sibling', 'ports.bases']) }
         const input = { ...f.input, registry: undefined }
         const preview = await runInitApplication(input, adapters)
         expect(preview).toMatchObject({ kind: 'pending', result: { stage: 'surface-previewed', interview: {
             answered: [], inferenceSkipped: [{ source: 'app/.github/workflows/ci.yml' }] } } })
         const planned = preview.result!.interview!.outstanding
-        expect(planned.map(row => row.field)).toEqual(['sibling', 'ports.bases', 'environment.install_policies',
+        // The name is asked even when the directory name is a valid one: agents renamed cockpits by hand
+        // afterwards, and a rename after sync is a migration, not an edit.
+        expect(planned.map(row => row.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies',
             'environment.test_data', 'environment.generated', 'environment.machine', 'environment.posture', 'guards', 'configuration.defaults'])
+        expect(planned.find(row => row.field === 'cockpit.name')!.inferred).toEqual([{ target: 'cockpit.name', value: 'checkout',
+            provenance: { kind: 'inferred', source: f.root, reason: 'the cockpit root directory name' } }])
         expect(planned.find(row => row.field === 'ports.bases')!.inferred).toEqual([{ target: 'app.container_ports', value: [3000],
             provenance: { kind: 'inferred', source: 'app/Dockerfile', reason: 'the Dockerfile EXPOSEs this port' } }])
         expect(planned.find(row => row.field === 'sibling')!.inferred).toEqual([])
@@ -784,9 +788,11 @@ describe('init application', () => {
 
         const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
         const first = await runInitApplication(accepted, adapters)
+        const named = await runInitApplication({ ...accepted, greenfieldAnswer: {
+            questionId: first.result!.question!.id, bytes: '"shop"', provenance: 'operator-confirmed' } }, adapters)
         const second = await runInitApplication({ ...accepted, greenfieldAnswer: {
-            questionId: first.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
-        expect(second.result!.interview).toMatchObject({ answered: ['sibling'] })
+            questionId: named.result!.question!.id, bytes: '[]', provenance: 'operator-confirmed' } }, adapters)
+        expect(second.result!.interview).toMatchObject({ answered: ['cockpit.name', 'sibling'] })
         expect(second.result!.interview!.outstanding.map(row => row.field)).toEqual(['ports.bases',
             'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.machine',
             'environment.posture', 'guards', 'configuration.defaults'])
@@ -913,7 +919,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
     const accepted = { ...greenfieldInput, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
-        expect(count).toBeLessThan(9)
+        expect(count).toBeLessThan(10)
         const question = outcome.result.question
         if (question.field === 'configuration.defaults') {
             if (largePurpose) expect(Buffer.byteLength(defaultsDocument!)).toBeGreaterThan(65_536)
@@ -961,7 +967,7 @@ it.each([false, true])('composes observed greenfield answers and surfaces review
             expect(existsSync(f.destination)).toBe(false)
             if (largePurpose) return
         }
-        const value = question.field === 'sibling' ? sourceConfig.sibling
+        const value = question.field === 'cockpit.name' ? 'checkout' : question.field === 'sibling' ? sourceConfig.sibling
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
                 : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }
@@ -1029,9 +1035,9 @@ it.each([
     const accepted = { ...input, accepted: true, acceptedPreviewSha256: preview.result!.previewSha256 }
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question; count += 1) {
-        expect(count).toBeLessThan(9)
+        expect(count).toBeLessThan(10)
         const question = outcome.result.question
-        const value = question.field === 'sibling'
+        const value = question.field === 'cockpit.name' ? 'synthetic-shop' : question.field === 'sibling'
             ? [{ slug: 'checkout', dir: '.', mount: 'none', acquire: 'none', var: 'CHECKOUT_DIR', purpose: 'Synthetic shop' }]
             : question.field === 'ports.bases' ? { WEB_HOST_PORT: 4100 }
                 : question.field === 'environment.install_policies' ? []
@@ -1044,11 +1050,22 @@ it.each([
                                         : question.field === 'configuration.defaults' ? { confirmed: true, sha256: question.expectedSha256 }
                                             : undefined
         expect(value, question.field).toBeDefined()
+        // The setup agent was told to pick sensible defaults, and said which answers it picked.
+        const provenance = question.field === 'environment.machine' || question.field === 'guards' ? 'agent-default' : 'operator-confirmed'
         outcome = await runInitApplication({ ...accepted, greenfieldAnswer: {
-            questionId: question.id, bytes: JSON.stringify(value), provenance: 'operator-confirmed',
+            questionId: question.id, bytes: JSON.stringify(value), provenance,
         } }, adapters)
     }
     expect(outcome.kind, JSON.stringify(outcome)).toBe('artifact')
+    const drafted = parseToml(outcome.artifact!) as { cockpit: { name: string }; unconfirmed: string[] }
+    expect(drafted.cockpit.name).toBe('synthetic-shop')
+    // Values the agent chose are not recorded as the operator's: each says who chose it, and stays listed until a person confirms it.
+    expect(drafted.unconfirmed).toEqual(['environment.machine', 'guards'])
+    expect(outcome.artifact).toMatch(/^# Unconfirmed: environment\.machine was chosen by the setup agent as a default/m)
+    expect(outcome.artifact).toContain('# Decision: guards: the setup agent assumed, as a default, that no non-local environment')
+    expect(outcome.artifact).not.toContain('the operator stated that no non-local environment')
+    expect(outcome.result).toMatchObject({ unconfirmed: [{ field: 'environment.machine', provenance: 'agent-default' },
+        { field: 'guards', provenance: 'agent-default' }] })
     await writeFile(f.destination, outcome.artifact!)
     expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_UNSEEDED' }] })
     expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({
@@ -1064,7 +1081,8 @@ it.each([
 
     preflight = f.adapters.preflight
     const resumed = await runInitApplication(accepted, adapters)
-    expect(resumed, JSON.stringify(resumed.diagnostics)).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified' } })
+    expect(resumed, JSON.stringify(resumed.diagnostics)).toMatchObject({ kind: 'complete', result: { stage: 'environment-verified',
+        unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }] } })
 }, 120_000)
 
 
@@ -1112,9 +1130,9 @@ it.each(['scalar', 'artifact'] as const)('refuses an unreviewable defaults draft
     let outcome = await runInitApplication(accepted, adapters)
     for (let count = 0; outcome.kind === 'pending' && outcome.result?.question
         && outcome.result.question.field !== 'configuration.defaults'; count += 1) {
-        expect(count).toBeLessThan(8)
+        expect(count).toBeLessThan(9)
         const question = outcome.result.question
-        const value = question.field === 'sibling' ? sourceConfig.sibling
+        const value = question.field === 'cockpit.name' ? 'checkout' : question.field === 'sibling' ? sourceConfig.sibling
             : question.field === 'ports.bases' ? sourceConfig.ports.bases
                 : question.field === 'environment.install_policies' ? sourceConfig.environment.install_policies
                     : question.field === 'environment.test_data' ? { seeded_data: false, signed_in_users: false }

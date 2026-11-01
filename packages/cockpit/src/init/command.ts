@@ -53,6 +53,8 @@ export interface InitCommandIo {
     readonly createCockpitRoot?: (path: string) => Promise<void>
 }
 
+type AnswerProvenance = NonNullable<InitApplicationInput['greenfieldAnswer']>['provenance']
+
 export type InitApplicationHandler = (input: InitApplicationInput) => Promise<InitApplicationOutcome>
 
 // Real interviews ask up to eleven questions; the bound only stops an application that never converges from looping forever.
@@ -61,6 +63,17 @@ const MAX_INTERVIEW_ANSWERS = 64
 const ANSWER_FIELDS = ['cockpit.root', 'cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
     'environment.install_policies', 'environment.test_data', 'environment.generated', 'environment.compose_files',
     'environment.machine', 'environment.posture', 'guards'] as const
+
+/**
+ * The answers file's optional [provenance] table says who chose an answer: "human" (the default) or
+ * "agent-default" when the setup agent picked it because the person let it choose. Without it, every
+ * value an agent invented was written into cockpit.toml as something the operator stated.
+ */
+const PROVENANCE_TABLE = 'provenance'
+const PROVENANCE_VALUES: Readonly<Record<string, AnswerProvenance>> = { human: 'operator-confirmed', 'agent-default': 'agent-default' }
+// cockpit never proposes these, and the docs say they come from a person; an answers file that does
+// not attribute one is recorded as unattributed rather than as the person's.
+const UNATTRIBUTED_UNLESS_MARKED: readonly string[] = ['environment.machine']
 
 const isTable = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)
@@ -72,6 +85,7 @@ function answersByField(answers: Readonly<Record<string, unknown>>): { fields: M
     const walk = (table: Record<string, unknown>, prefix: string) => {
         for (const [key, value] of Object.entries(table)) {
             const path = prefix === '' ? key : `${prefix}.${key}`
+            if (path === PROVENANCE_TABLE) continue
             if ((ANSWER_FIELDS as readonly string[]).includes(path)) fields.set(path, value)
             else if (isTable(value) && ANSWER_FIELDS.some(field => field.startsWith(`${path}.`))) walk(value, path)
             else unknown.push(path)
@@ -79,6 +93,39 @@ function answersByField(answers: Readonly<Record<string, unknown>>): { fields: M
     }
     walk(answers, '')
     return { fields, unknown }
+}
+
+/** Reads the [provenance] table into field -> provenance, or names what is wrong with it. */
+function answerProvenance(answers: Readonly<Record<string, unknown>>, answered: ReadonlyMap<string, unknown>):
+    { marks: Map<string, AnswerProvenance> } | { refusal: InitApplicationOutcome } {
+    const marks = new Map<string, AnswerProvenance>()
+    const table = answers[PROVENANCE_TABLE]
+    if (table === undefined) return { marks }
+    if (!isTable(table)) return { refusal: refusal('INIT_ANSWER_INVALID', `${PROVENANCE_TABLE} must be a table of answer field = "human" or "agent-default"`) }
+    const problems: string[] = []
+    const walk = (current: Record<string, unknown>, prefix: string) => {
+        for (const [key, value] of Object.entries(current)) {
+            const path = prefix === '' ? key : `${prefix}.${key}`
+            if (isTable(value)) { walk(value, path); continue }
+            if (!(ANSWER_FIELDS as readonly string[]).includes(path) || path === 'cockpit.root') {
+                problems.push(`provenance names no recorded interview answer: ${path}`)
+            } else if (typeof value !== 'string' || PROVENANCE_VALUES[value] === undefined) {
+                problems.push(`provenance.${path} must be "human" or "agent-default"`)
+            } else if (!answered.has(path)) {
+                problems.push(`provenance names ${path}, which the answers file does not answer`)
+            } else marks.set(path, PROVENANCE_VALUES[value]!)
+        }
+    }
+    walk(table, '')
+    return problems.length === 0 ? { marks }
+        : { refusal: refusal('INIT_ANSWER_INVALID', `${problems.join('; ')}; the [provenance] table says who chose each answer and is optional`) }
+}
+
+/** Who chose the answer to one question, as the answers file records it. */
+function provenanceFor(field: string, marks: ReadonlyMap<string, AnswerProvenance>): AnswerProvenance {
+    if (field === 'configuration.defaults') return 'operator-confirmed'
+    const mark = marks.get(field) ?? (field === 'environment.generated' ? marks.get('environment.compose_files') : undefined)
+    return mark ?? (UNATTRIBUTED_UNLESS_MARKED.includes(field) ? 'unattributed' : 'operator-confirmed')
 }
 
 function refusal(code: string, message: string): InitApplicationOutcome {
@@ -138,6 +185,7 @@ function recordedAnswerConflict(
     input: Pick<InitCommandInput, 'root' | 'target'>,
     preview: InitApplicationOutcome,
     supplied: ReadonlyMap<string, unknown>,
+    marks: ReadonlyMap<string, AnswerProvenance>,
     unattended: UnattendedInit,
 ): InitApplicationOutcome | undefined {
     const placement = preview.result?.interview?.cockpitRoot
@@ -154,6 +202,7 @@ function recordedAnswerConflict(
         if (now.kind !== 'answer' || recorded[index] === undefined) continue
         let same = false
         try { same = canonicalJson(JSON.parse(now.bytes)) === canonicalJson(JSON.parse(recorded[index]!.bytes)) } catch { same = false }
+        if (same && provenanceFor(field, marks) !== recorded[index]!.provenance) same = false
         if (!same) return refusal('INIT_ANSWER_CONFLICT',
             `the answers file gives a different value for ${field} than the answer an earlier run recorded; drop ${field} from the answers file to keep the recorded answer, or, before cockpit.toml is prepared, preview a reset with npx --no cockpit init ${input.root} --target ${input.target} --reset-answer ${field} --json`)
     }
@@ -219,7 +268,10 @@ async function drive(
     const unattended = options.unattended
     const supplied = unattended ? answersByField(unattended.answers) : undefined
     if (supplied && supplied.unknown.length > 0) return refusal('INIT_ANSWER_FIELD_UNKNOWN',
-        `the answers file names no interview field: ${supplied.unknown.join(', ')}; valid fields are ${ANSWER_FIELDS.join(', ')}`)
+        `the answers file names no interview field: ${supplied.unknown.join(', ')}; valid fields are ${ANSWER_FIELDS.join(', ')}, plus the optional [${PROVENANCE_TABLE}] table`)
+    const provenance = unattended && supplied ? answerProvenance(unattended.answers, supplied.fields) : { marks: new Map<string, AnswerProvenance>() }
+    if ('refusal' in provenance) return provenance.refusal
+    const { marks } = provenance
     let preview = await application({ ...shared, accepted: false })
     noteInterview(asked, preview)
     if (preview.kind !== 'pending' || preview.status !== 0) return preview
@@ -262,7 +314,7 @@ async function drive(
         return refusal('INIT_PREVIEW_NOT_ACCEPTED', '--accept-preview does not equal the digest of the pending preview; rerun without it to read the current digest')
     }
     if (unattended && supplied) {
-        const conflict = recordedAnswerConflict(input, preview, supplied.fields, unattended)
+        const conflict = recordedAnswerConflict(input, preview, supplied.fields, marks, unattended)
         if (conflict) return conflict
     }
     if (preview.result?.question === undefined && !unattended) {
@@ -278,19 +330,22 @@ async function drive(
             `the interview still asks questions after ${MAX_INTERVIEW_ANSWERS} answers; rerun ${initCommand({ root: input.root, target: input.target })} with the same options to resume from the persisted answers`)
         const question = outcome.result.question
         let bytes: string | undefined
+        // A person typing at the terminal states their own answer.
+        let answerProvenanceValue: AnswerProvenance = 'operator-confirmed'
         if (unattended && supplied) {
             const resolved = unattendedAnswer(question.field, question.expectedSha256, supplied.fields, unattended)
             if (resolved.kind === 'refusal') return resolved.outcome
             // An unanswered field is not a failure: the pending result lists what is still outstanding.
             if (resolved.kind === 'missing') return outcome
             bytes = resolved.bytes
+            answerProvenanceValue = provenanceFor(question.field, marks)
         } else {
             if (!io.answerQuestion) return outcome
             bytes = await io.answerQuestion(question)
             if (bytes === undefined) return refusal('GREENFIELD_ANSWER_REQUIRED', 'greenfield init requires an explicit answer to the named question')
         }
         outcome = await application({ ...accepted, greenfieldAnswer: {
-            questionId: question.id, bytes, provenance: 'operator-confirmed',
+            questionId: question.id, bytes, provenance: answerProvenanceValue,
         } })
         noteInterview(asked, outcome)
     }

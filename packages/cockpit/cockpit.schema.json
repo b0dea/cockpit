@@ -2,6 +2,27 @@
   "$schema": "http://json-schema.org/draft-04/schema#",
   "type": "object",
   "properties": {
+    "unconfirmed": {
+      "minItems": 1,
+      "maxItems": 11,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "cockpit.name",
+          "sibling",
+          "estate.runnable",
+          "ports.bases",
+          "environment.install_policies",
+          "environment.test_data",
+          "environment.generated",
+          "environment.compose_files",
+          "environment.machine",
+          "environment.posture",
+          "guards"
+        ]
+      }
+    },
     "cockpit": {
       "type": "object",
       "properties": {

@@ -316,6 +316,25 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it('warns about declarations no person has confirmed until they are removed from unconfirmed', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-unconfirmed-')))
+        try {
+            const doctorFor = async (head: string) => {
+                const configPath = join(directory, 'cockpit.toml')
+                writeFileSync(configPath, [head, '[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
+                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
+                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', ''].join('\n'))
+                const result = await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })
+                return result.diagnostics.filter(row => row.code === 'DECLARATION_UNCONFIRMED')
+            }
+            expect(await doctorFor('unconfirmed = ["environment.machine", "guards"]\n')).toEqual([{ severity: 'warning',
+                code: 'DECLARATION_UNCONFIRMED', target: 'unconfirmed',
+                message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
+                fix: expect.stringContaining('delete each confirmed entry from unconfirmed, then run npx --no cockpit sync --config') }])
+            expect(await doctorFor('')).toEqual([])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it('names every other cockpit state folder it cannot read in one doctor warning with one cleanup command', async () => {
         const cockpits = '/synthetic/state/v1/cockpits'
         const skipped = [{ path: `${cockpits}/one`, reason: 'format is not supported' }, { path: `${cockpits}/two`, reason: 'format is not supported' }]

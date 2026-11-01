@@ -11,14 +11,17 @@ import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.
 import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, configurationDefaults } from '../schema.js'
 import { toSiblingRows } from '../emit.js'
 import { gaps, parseRegistry, type DocumentedSibling, type Gap } from './registry.js'
-import { renderCompleteDocument, renderIncompleteDocument, type Attribution, type DocumentModel } from './render.js'
+import {
+    ANSWER_PROVENANCES, renderCompleteDocument, renderIncompleteDocument, UNCONFIRMED_FIX, unconfirmedReason,
+    type AnswerProvenance, type Attribution, type DocumentModel, type UnconfirmableAnswer, type UnconfirmedAnswer,
+} from './render.js'
 import { COMPOSE_NAMES, readDockerfileFacts } from '../init/derive.js'
 import { productPackageManifest } from '../team-metadata.js'
 
 export const mechanism = {
     id: 'document-outcome',
     module: 'packages/cockpit/src/document/command.ts',
-    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'observeCockpitRoot', 'plannedGreenfieldQuestions'],
+    exports: ['documentCommand', 'documentObservedCommand', 'classifyEstateObservation', 'observePublicEstate', 'observeCockpitRoot', 'plannedGreenfieldQuestions', 'isAnswerProvenance'],
 } as const
 
 /**
@@ -59,7 +62,7 @@ interface OutcomeBase {
     artifact: string | null
     destination: string | null
     diagnostics: Diagnostic[]
-    result: { document: string } | null
+    result: { document: string; unconfirmed?: readonly UnconfirmedAnswer[] } | null
     status: number
     question?: DocumentConfigurationQuestion | null
 }
@@ -67,7 +70,7 @@ interface OutcomeBase {
 export interface CompleteDocumentOutcome extends OutcomeBase {
     kind: 'complete'
     artifact: string
-    result: { document: string }
+    result: { document: string; unconfirmed?: readonly UnconfirmedAnswer[] }
     status: 0
 }
 
@@ -114,11 +117,16 @@ export interface DocumentConfigurationQuestion {
     readonly why: string
     readonly expectedSha256?: string
 }
+export type { AnswerProvenance, UnconfirmedAnswer } from './render.js'
+
+export function isAnswerProvenance(value: unknown): value is AnswerProvenance {
+    return (ANSWER_PROVENANCES as readonly unknown[]).includes(value)
+}
 export interface DocumentConfigurationAnswer {
     readonly questionId: string
     readonly bytes: string
     readonly sha256: string
-    readonly provenance: 'operator-confirmed'
+    readonly provenance: AnswerProvenance
 }
 export interface DocumentConfigurationInput {
     readonly sourceObservationSha256: string
@@ -736,9 +744,9 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
             || answer.bytes.includes('\0') || redactSensitiveText(answer.bytes) !== answer.bytes
             || typeof answer.sha256 !== 'string' || !SHA256.test(answer.sha256)
             || createHash('sha256').update(answer.bytes).digest('hex') !== answer.sha256
-            || answer.provenance !== 'operator-confirmed') return undefined
+            || !isAnswerProvenance(answer.provenance)) return undefined
         answers.push(Object.freeze({ questionId: answer.questionId, bytes: answer.bytes,
-            sha256: answer.sha256, provenance: 'operator-confirmed' }))
+            sha256: answer.sha256, provenance: answer.provenance as AnswerProvenance }))
     }
     return Object.freeze({ sourceObservationSha256: record.sourceObservationSha256,
         ...(record.classification === undefined ? {} : { classification: record.classification as EstateClassification }),
@@ -747,6 +755,7 @@ function configurationInput(value: unknown): DocumentConfigurationInput | undefi
 
 const QUESTION_WHY = {
     name: 'the source does not establish a schema-valid cockpit name',
+    nameProposed: 'name the cockpit: the name scopes its Compose projects, state and generated files, and renaming it after the first sync means bringing the stack down and syncing again; the cockpit root directory name is proposed',
     siblingEstate: 'the source does not establish schema-shaped sibling declarations',
     siblingRegistry: 'the registry leaves required sibling configuration unresolved',
     ports: 'no source establishes the host-published base port map; an explicit empty map means none',
@@ -760,7 +769,14 @@ const QUESTION_WHY = {
 } as const
 
 const GUARD_HOST_FIELDS = ['guards.hosted_db_hosts', 'guards.vendor_endpoint_hosts'] as const
-const NO_GUARD_HOSTS_DECISION = 'the operator stated that no non-local environment (production, staging, shared) has a database or live vendor host for the guard to deny'
+/** How a decision comment attributes an answer, so a value the agent chose never reads as one a person stated. */
+const STATED_BY: Readonly<Record<AnswerProvenance, string>> = {
+    'operator-confirmed': 'the operator stated that',
+    'agent-default': 'the setup agent assumed, as a default, that',
+    unattributed: 'the answers file, without saying who chose it, states that',
+}
+const noGuardHostsDecision = (provenance: AnswerProvenance) =>
+    `${STATED_BY[provenance]} no non-local environment (production, staging, shared) has a database or live vendor host for the guard to deny`
 
 const runnableWhy = (gaps: EstateClassificationResult['gaps']) =>
     `resolve the exact current runnable gaps: ${gaps.map(gap => `${gap.field} from ${gap.source}`).join('; ')}`
@@ -777,7 +793,7 @@ export function plannedGreenfieldQuestions(input: Readonly<{
 }>): readonly Readonly<{ field: DocumentConfigurationField; why: string }>[] {
     const surfacesOnly = input.classification === 'no-runnable-product'
     return Object.freeze([
-        ...(cockpitName(input.root) ? [] : [{ field: 'cockpit.name' as const, why: QUESTION_WHY.name }]),
+        { field: 'cockpit.name' as const, why: cockpitName(input.root) ? QUESTION_WHY.nameProposed : QUESTION_WHY.name },
         { field: 'sibling' as const, why: QUESTION_WHY.siblingEstate },
         ...(!surfacesOnly && input.gaps.length > 0 ? [{ field: 'estate.runnable' as const, why: runnableWhy(input.gaps) }] : []),
         { field: 'ports.bases' as const, why: QUESTION_WHY.ports },
@@ -816,7 +832,7 @@ function readConfigurationAnswer(
     answers: readonly DocumentConfigurationAnswer[],
     index: number,
     question: DocumentConfigurationQuestion,
-): { kind: 'pending' } | { kind: 'answer'; value: unknown } | { kind: 'refusal'; outcome: RefusedDocumentOutcome } {
+): { kind: 'pending' } | { kind: 'answer'; value: unknown; provenance: AnswerProvenance } | { kind: 'refusal'; outcome: RefusedDocumentOutcome } {
     const answer = answers[index]
     if (!answer) return { kind: 'pending' }
     if (answer.questionId !== question.id) return { kind: 'refusal', outcome: refusal(
@@ -829,7 +845,7 @@ function readConfigurationAnswer(
         if (containsSensitiveField(value)) return { kind: 'refusal', outcome: refusal(
             'DOCUMENT_CONFIGURATION_ANSWER_INVALID', 'operator answers cannot contain sensitive fields', question.field,
         ) }
-        return { kind: 'answer', value }
+        return { kind: 'answer', value, provenance: answer.provenance }
     }
     catch { return { kind: 'refusal', outcome: refusal(
         'DOCUMENT_CONFIGURATION_ANSWER_INVALID', 'the operator answer is not valid JSON', question.field,
@@ -887,7 +903,8 @@ function defaultAttributions(
     source: DefaultSource,
     siblingsRoot: GreenfieldSiblingsRoot = undefined,
 ): Attribution[] {
-    const attributions = buildAttributions({ name: cockpitName(root), siblings: detected, defaults }, root, source)
+    // The name is always an answer, so it is never surfaced as an inferred value to confirm.
+    const attributions = buildAttributions({ siblings: detected, defaults }, root, source)
         .filter(row => !row.target.startsWith('sibling.') || row.from !== 'default')
     for (const [field, value] of Object.entries(defaults.environment)) {
         if (field !== 'install_policies') attributions.push({ target: `environment.${field}`, value, from: 'default',
@@ -945,23 +962,30 @@ function completeConfigurationDocument(
         : input.estate && root ? relative(root, input.estate.root) || '.' : '.'
     const destination = input.output ? resolve(input.output) : null
     let answerIndex = 0
-    let name = cockpitName(root)
     let siblingRows: CockpitConfig['sibling'] | undefined
     let siblingAnswerRows: readonly Record<string, unknown>[] = []
-
-    if (!name) {
-        const question = configurationQuestion(context, 'cockpit.name', QUESTION_WHY.name)
-        const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
-        if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
-            attributions: inferGreenfieldSiblingRoot(
-                buildAttributions({ name, defaults, siblings: detected }, root, defaultSource), siblingsRoot), gaps: [] }, destination, question)
-        if (read.kind === 'refusal') return read.outcome
-        const parsed = CockpitConfig.shape.cockpit.safeParse({ ...defaults.cockpit, name: read.value })
-        if (!parsed.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
-            `the operator-confirmed cockpit name does not match the schema: ${issueSummary(parsed.error)}`, question.field)
-        name = parsed.data.name
-        answerIndex += 1
+    // Every answer a person did not state is listed in cockpit.toml, so it never reads as theirs.
+    const unconfirmed: UnconfirmedAnswer[] = []
+    const record = (field: UnconfirmableAnswer, provenance: AnswerProvenance) => {
+        if (provenance !== 'operator-confirmed') unconfirmed.push(Object.freeze({ field, provenance }))
     }
+
+    // Always asked, with the directory name as the proposal: the name scopes Compose projects, state
+    // and generated files, so renaming after sync is a migration, and setup agents that were never
+    // asked renamed the cockpit by hand afterwards.
+    const proposedName = cockpitName(root)
+    const nameQuestion = configurationQuestion(context, 'cockpit.name', proposedName ? QUESTION_WHY.nameProposed : QUESTION_WHY.name)
+    const nameRead = readConfigurationAnswer(configuration.answers, answerIndex, nameQuestion)
+    if (nameRead.kind === 'pending') return pendingConfiguration({ name: proposedName, defaults, siblings: detected,
+        attributions: inferGreenfieldSiblingRoot(
+            buildAttributions({ name: proposedName, defaults, siblings: detected }, root, defaultSource), siblingsRoot), gaps: [] }, destination, nameQuestion)
+    if (nameRead.kind === 'refusal') return nameRead.outcome
+    const parsedName = CockpitConfig.shape.cockpit.safeParse({ ...defaults.cockpit, name: nameRead.value })
+    if (!parsedName.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
+        `the cockpit name answer does not match the schema: ${issueSummary(parsedName.error)}`, nameQuestion.field)
+    const name = parsedName.data.name
+    record('cockpit.name', nameRead.provenance)
+    answerIndex += 1
 
     const detectedRows = toSiblingRows(detected)
     const needsSiblingAnswer = detected.length === 0 || gaps([...detected]).some(gap => gap.blocking)
@@ -971,7 +995,7 @@ function completeConfigurationDocument(
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: detected,
             attributions: inferGreenfieldSiblingRoot(
-                buildAttributions({ name, defaults, siblings: detected }, root, defaultSource), siblingsRoot), gaps: [] }, destination, question)
+                buildAttributions({ defaults, siblings: detected }, root, defaultSource), siblingsRoot), gaps: [] }, destination, question)
         if (read.kind === 'refusal') return read.outcome
         if (!Array.isArray(read.value) || read.value.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
             return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
@@ -987,6 +1011,7 @@ function completeConfigurationDocument(
                 'the operator-confirmed sibling declarations are invalid or change detected registry facts', question.field)
         }
         siblingRows = parsed.data
+        record('sibling', read.provenance)
         answerIndex += 1
     } else {
         const parsed = CockpitConfig.shape.sibling.safeParse(detectedRows)
@@ -1044,6 +1069,7 @@ function completeConfigurationDocument(
         if (configuration.classification === 'one-sibling'
             && [...runnableResolutions.values()].every(row => !row.runnable)) return refusal(
             'DOCUMENT_NO_RUNNABLE_PRODUCT', 'the operator-confirmed estate contains no runnable product', question.field)
+        record('estate.runnable', read.provenance)
         answerIndex += 1
     }
 
@@ -1057,10 +1083,11 @@ function completeConfigurationDocument(
     const parsedPorts = CockpitConfig.shape.ports.safeParse({ ...defaults.ports, bases: portRead.value })
     if (!parsedPorts.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
         `the operator-confirmed port bases do not match the schema: ${issueSummary(parsedPorts.error)}`, portQuestion.field)
+    record('ports.bases', portRead.provenance)
     answerIndex += 1
 
     let environment = defaults.environment
-    let testData: Readonly<{ seeded_data: boolean; signed_in_users: boolean }> | undefined
+    let testData: Readonly<{ seeded_data: boolean; signed_in_users: boolean; provenance: AnswerProvenance }> | undefined
     if (!surfacesOnly) {
         const policyQuestion = configurationQuestion(context, 'environment.install_policies', QUESTION_WHY.policies)
         const policyRead = readConfigurationAnswer(configuration.answers, answerIndex, policyQuestion)
@@ -1071,6 +1098,7 @@ function completeConfigurationDocument(
         if (!parsedPolicies.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             `the operator-confirmed dependency install protocols do not match the schema: ${issueSummary(parsedPolicies.error)}`,
             policyQuestion.field)
+        record('environment.install_policies', policyRead.provenance)
         answerIndex += 1
 
         if (registrySha256 === null) {
@@ -1089,7 +1117,8 @@ function completeConfigurationDocument(
                 testDataQuestion.field,
             )
             testData = Object.freeze({ seeded_data: (value as { seeded_data: boolean }).seeded_data,
-                signed_in_users: (value as { signed_in_users: boolean }).signed_in_users })
+                signed_in_users: (value as { signed_in_users: boolean }).signed_in_users, provenance: testDataRead.provenance })
+            record('environment.test_data', testDataRead.provenance)
             answerIndex += 1
         }
 
@@ -1136,6 +1165,7 @@ function completeConfigurationDocument(
             }
             environment = { ...defaults.environment, install_policies: parsedPolicies.data, generated: parsedGenerated.data }
         }
+        record(composeFirst ? 'environment.compose_files' : 'environment.generated', generatedRead.provenance)
         answerIndex += 1
 
         // Every runtime command refuses a declared runtime with no floor, so a configuration that
@@ -1151,6 +1181,7 @@ function completeConfigurationDocument(
         if (!parsedMachine.success) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             `the operator-confirmed machine floor does not match the schema: ${issueSummary(parsedMachine.error)}`, machineQuestion.field)
         environment = { ...environment, machine: parsedMachine.data }
+        record('environment.machine', machineRead.provenance)
         answerIndex += 1
 
         const postureQuestion = configurationQuestion(context, 'environment.posture', QUESTION_WHY.posture)
@@ -1172,6 +1203,7 @@ function completeConfigurationDocument(
         if (postureFailures.length > 0) return refusal('DOCUMENT_CONFIGURATION_ANSWER_INVALID',
             `the operator-confirmed posture would fail preflight: ${postureFailures.map(row => row.reason).join('; ')}`, postureQuestion.field)
         environment = parsedPosture.data
+        record('environment.posture', postureRead.provenance)
         answerIndex += 1
     }
 
@@ -1194,9 +1226,11 @@ function completeConfigurationDocument(
         if (index >= 0) attributions.splice(index, 1)
     }
     const noGuardHosts = parsedGuards.data.hosted_db_hosts.length === 0 && parsedGuards.data.vendor_endpoint_hosts.length === 0
+    record('guards', guardRead.provenance)
     answerIndex += 1
 
-    const candidate = CockpitConfig.safeParse({ ...defaults, cockpit: { ...defaults.cockpit, name,
+    const candidate = CockpitConfig.safeParse({ ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map(row => row.field) }),
+        ...defaults, cockpit: { ...defaults.cockpit, name,
         ...(siblingsRoot === undefined ? {} : { siblings_root: siblingsRoot }) },
         sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment })
     if (!candidate.success) return refusal('DOCUMENT_CONFIGURATION_INVALID',
@@ -1212,7 +1246,7 @@ function completeConfigurationDocument(
     const defaultsQuestion = configurationQuestion(context, 'configuration.defaults', QUESTION_WHY.defaults, expectedSha256)
     const defaultsRead = readConfigurationAnswer(configuration.answers, answerIndex, defaultsQuestion)
     if (defaultsRead.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: previewRows,
-        attributions, gaps: [] }, destination, defaultsQuestion, candidate.data)
+        attributions, gaps: [], unconfirmed }, destination, defaultsQuestion, candidate.data)
     if (defaultsRead.kind === 'refusal') return defaultsRead.outcome
     if (!defaultsRead.value || typeof defaultsRead.value !== 'object' || Array.isArray(defaultsRead.value)
         || Object.keys(defaultsRead.value).sort().join(',') !== 'confirmed,sha256'
@@ -1226,22 +1260,25 @@ function completeConfigurationDocument(
         'configuration completion received an answer for no current question')
 
     const decisions = [
-        ...(noGuardHosts ? [`guards: ${NO_GUARD_HOSTS_DECISION}; list those hosts under [guards] once one exists`] : []),
+        ...(noGuardHosts ? [`guards: ${noGuardHostsDecision(guardRead.provenance)}; list those hosts under [guards] once one exists`] : []),
         ...(testData ? [testData.seeded_data
             ? candidate.data.environment.generated?.data?.modes.some(mode => mode.mode === 'seeded')
                 ? 'seeded data: declared by the product-owned seeded mode in environment.generated.data'
                 : 'seeded data: required but unresolved; declare product-owned seed operations before claiming a seeded local setup'
-            : 'seeded data: not declared because the operator stated that this local setup does not need it',
+            : `seeded data: not declared because ${STATED_BY[testData.provenance]} this local setup does not need it`,
         testData.signed_in_users
             ? candidate.data.browser?.authentication.states.length
                 ? 'signed-in users: declared by browser.authentication states backed by seeded personas'
                 : 'signed-in users: required but unresolved; declare seeded personas and browser authentication states before claiming signed-in testing'
-            : 'signed-in users: not declared because the operator stated that this local setup does not need them'] : []),
+            : `signed-in users: not declared because ${STATED_BY[testData.provenance]} this local setup does not need them`] : []),
     ]
-    const artifact = renderCompleteDocument(candidate.data, SCHEMA_DIRECTIVE, decisions)
+    const artifact = renderCompleteDocument(candidate.data, SCHEMA_DIRECTIVE, decisions, unconfirmed)
     const diagnostics = diagnosticsFor(attributions, [])
+    for (const row of unconfirmed) diagnostics.push({ severity: 'warning', code: 'DOCUMENT_ANSWER_UNCONFIRMED', target: row.field,
+        message: `${unconfirmedReason(row)}, so cockpit.toml lists it under unconfirmed and doctor warns until a person confirms it`,
+        fix: UNCONFIRMED_FIX })
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
-        message: `${NO_GUARD_HOSTS_DECISION}, so the guard denies no command by host`,
+        message: `${noGuardHostsDecision(guardRead.provenance)}, so the guard denies no command by host`,
         fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run npx --no cockpit sync --config <your cockpit.toml> once a non-local environment exists' })
     if (surfacesOnly) diagnostics.push({ severity: 'info', code: 'DOCUMENT_RUNTIME_NOT_DECLARED', target: 'environment',
         message: 'no runnable product was observed, so this configuration declares no runtime environment and no Compose file: sync publishes the harness surfaces only, and up, logs and the other runtime commands refuse',
@@ -1249,7 +1286,8 @@ function completeConfigurationDocument(
     if (!destination) diagnostics.unshift({ severity: 'info', code: 'DOCUMENT_STDOUT_TARGET',
         message: 'stdout bytes are intended for the canonical cockpit.toml location; arbitrary redirection has no schema-location guarantee',
         target: '<cockpit-root>/cockpit.toml' })
-    return { kind: 'complete', artifact, destination, diagnostics, result: { document: artifact },
+    return { kind: 'complete', artifact, destination, diagnostics,
+        result: { document: artifact, ...(unconfirmed.length === 0 ? {} : { unconfirmed: Object.freeze(unconfirmed) }) },
         status: 0, question: null }
 }
 
