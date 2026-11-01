@@ -86,7 +86,7 @@ import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, snapshotExecutionSte
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
-import { assessComposeTopology, observeComposeTopology } from './compose-topology.js'
+import { assessComposeTopology, composeProjectDirectory, observeComposeTopology } from './compose-topology.js'
 import { declaredRuntime } from './declaration.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
@@ -3685,7 +3685,7 @@ async function composeTopologyDiagnostics(
     const root = dirname(loaded.result.source.path)
     const siblingsRoot = resolve(root, config.cockpit.siblings_root)
     return assessComposeTopology(observed.services, {
-        root,
+        projectDirectory: composeProjectDirectory(root, config.environment.compose_files),
         portVariables: Object.keys(config.ports.bases),
         siblings: config.sibling.map(sibling => Object.freeze({
             slug: sibling.slug, var: sibling.var, mount: sibling.mount, path: resolve(siblingsRoot, sibling.dir) })),

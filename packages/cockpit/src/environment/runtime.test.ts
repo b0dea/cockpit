@@ -318,6 +318,22 @@ describe('runtime plan construction', () => {
         })
     })
 
+    // Compose reads snapshots of the declared files, so it cannot default the project directory to
+    // the first file's directory itself; cockpit names that directory, or a product repository's
+    // `./` paths resolve against the cockpit root.
+    it('runs a cockpit\'s own Compose files from the directory of the first one', () => {
+        const owner = cockpitId({ name: 'synthetic', mainCheckoutPath: '/tmp/synthetic-cockpit' })
+        const outcome = createRuntimeAdapter({ ...runtimeInput, labels: {},
+            composeFiles: [artifact('shop/compose.yml'), artifact('compose.cockpit.yml')] }, {
+            ownComposeFiles: true, cockpitId: owner, stackId: stackId({ cockpitId: owner,
+                checkoutId: checkoutId({ checkoutPath: '/tmp/synthetic-cockpit' }), variant: { kind: 'shared' } }) })
+
+        expect(outcome.kind, JSON.stringify(outcome)).toBe('preview')
+        if (outcome.kind !== 'preview') return
+        expect(outcome.plan.steps[0]?.argv.slice(2, 4)).toEqual(['--project-directory', '/tmp/synthetic-cockpit/shop'])
+        expect(outcome.plan.steps[0]?.cwd).toBe('/tmp/synthetic-cockpit')
+    })
+
     it.each(['validate', 'up', 'down'] as const)('disables the unauthenticated default .env for %s', (operation) => {
         const outcome = createRuntimeAdapter({ ...runtimeInput, operation })
 

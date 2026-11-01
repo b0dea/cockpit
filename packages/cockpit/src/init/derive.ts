@@ -8,7 +8,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
-import { bindHolder, composeBindPath, splitComposeShort } from '../environment/compose-topology.js'
+import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
 import { initCommand } from '../fix-catalogue.js'
 import { deriveSiblingVariable } from '../schema.js'
 
@@ -201,8 +201,8 @@ function entries(value: unknown): readonly unknown[] {
 
 /**
  * Reads the bind sources and published host-port variables of the Compose files init proposes.
- * Bind sources resolve as `up` resolves them: against the cockpit root, with each proposed sibling
- * variable set to its directory and any other variable to its own default.
+ * Bind sources resolve as `up` resolves them: against the first file's directory, with each
+ * proposed sibling variable set to its directory and any other variable to its own default.
  */
 function composeFacts(
     files: readonly Readonly<{ source: string; document: unknown }>[],
@@ -224,7 +224,7 @@ function composeFacts(
                 const raw = segments && segments.length >= 2 ? segments[0]
                     : volume && typeof volume === 'object' && (volume as { type?: unknown }).type === 'bind'
                         ? (volume as { source?: unknown }).source : undefined
-                const path = typeof raw === 'string' ? composeBindPath(raw, root, variables) : undefined
+                const path = typeof raw === 'string' ? composeBindPath(raw, composeProjectDirectory(root, files.map(file => file.source)), variables) : undefined
                 if (path !== undefined && path !== 'volume') binds.push({ source, path })
             }
             for (const port of entries((service as { ports?: unknown }).ports)) {

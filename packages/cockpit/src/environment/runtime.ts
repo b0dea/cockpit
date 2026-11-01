@@ -33,7 +33,7 @@ import {
     type CockpitId,
     type StackId,
 } from './contract.js'
-import { compareBindSources } from './compose-topology.js'
+import { compareBindSources, composeProjectDirectory } from './compose-topology.js'
 import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutable, type ResolvedExecutable } from './executable.js'
 import {
     inspectDrainAttemptAuthority,
@@ -884,7 +884,7 @@ function localComposePath(cwd: string, source: ComposeArtifact): string | undefi
 function composeArgv(
     command: readonly [string, ...string[]],
     files: readonly string[],
-    cwd: string,
+    projectDirectory: string,
     projectName: string,
     operation: RuntimeOperation,
     activeProfiles: readonly string[],
@@ -896,18 +896,19 @@ function composeArgv(
         : operation === 'up'
             ? ['up', '--detach', '--wait']
             : ['down', '--remove-orphans']
-    return [...command, '--project-directory', cwd, ...fileArgs, '--project-name', projectName, ...profileArgs, ...operationArgs]
+    return [...command, '--project-directory', projectDirectory, ...fileArgs, '--project-name', projectName, ...profileArgs, ...operationArgs]
 }
 
 function composeStep(
     input: RuntimeAdapterInput,
     files: readonly string[],
+    projectDirectory: string,
     operation: RuntimeOperation,
     compensation: readonly ExecutionStep[],
 ): ExecutionStep {
     const step: ExecutionStep = {
         id: `runtime:docker-compose:${operation}:${input.projectName}`,
-        argv: Object.freeze([...composeArgv([input.executable.canonicalPath, 'compose'], files, input.cwd, input.projectName, operation, input.activeProfiles ?? [])]) as unknown as readonly [string, ...string[]],
+        argv: Object.freeze([...composeArgv([input.executable.canonicalPath, 'compose'], files, projectDirectory, input.projectName, operation, input.activeProfiles ?? [])]) as unknown as readonly [string, ...string[]],
         argv0: input.executable.invocationPath,
         cwd: input.cwd,
         env: Object.freeze({ ...input.env }),
@@ -1141,10 +1142,13 @@ export function createRuntimeAdapter(
         files.push(local)
     }
 
+    // A rendered file names its host paths absolutely and runs from the cockpit root; a cockpit's
+    // own files resolve their relative paths as Compose does for the first file it is given.
+    const projectDirectory = ownComposeFiles ? composeProjectDirectory(input.cwd, files) : input.cwd
     const compensation = input.operation === 'up'
-        ? [composeStep(input, files, 'down', [])]
+        ? [composeStep(input, files, projectDirectory, 'down', [])]
         : []
-    const step = composeStep(input, files, input.operation, compensation)
+    const step = composeStep(input, files, projectDirectory, input.operation, compensation)
     const plan = snapshotExecutionPlan({ steps: [step] })
     if (plan === undefined) return refusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'runtime input did not produce a valid execution plan', input.projectName)
     if (input.stackId && input.coldStartLimitMillis && input.expectedMountSources) {

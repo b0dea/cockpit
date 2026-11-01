@@ -429,6 +429,39 @@ describe('cockpits without a generated environment', () => {
         expect(mounted.status, `${mounted.stdout}\n${mounted.stderr}`).toBe(0)
     })
 
+    // A product repository's own Compose file names its paths relative to itself. Resolved against
+    // the cockpit root instead, `./` bound the root and `build: .` built it, so check refused the
+    // binds and up would have started the wrong tree.
+    it('resolves a sibling Compose file\'s relative paths against its own directory, as Compose does', () => {
+        const root = copyPlainExample('compose-first', 'compose-first-sibling-file')
+        rmSync(join(root, 'compose.yml'))
+        writeFileSync(join(root, 'api/compose.yml'), [
+            'services:',
+            '  api:',
+            '    build: .',
+            '    ports: ["127.0.0.1:${API_HOST_PORT:-4200}:3000"]',
+            '    volumes:',
+            '      - ".:/app"',
+            '      - "../web:/web"',
+            // Compose prefixes an uninterpolated variable source with the project directory.
+            '      - type: bind',
+            '        source: "${WEB_DIR:?run through cockpit}"',
+            '        target: /web-again',
+            '    healthcheck:',
+            '      test: ["CMD", "true"]',
+            '',
+        ].join('\n'))
+        const config = join(root, 'cockpit.toml')
+        writeFileSync(config, readFileSync(config, 'utf8')
+            .replace('compose_files = ["compose.yml"]', 'compose_files = ["api/compose.yml"]')
+            .replace('WEB_HOST_PORT = 4300\n', ''))
+        const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
+        expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
+        const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(check.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
+        expect(check.status, `${check.stdout}\n${check.stderr}`).toBe(0)
+    })
+
     it('warns, without failing check, that a service with no healthcheck is ready once running', () => {
         const root = syncedComposeFirst('compose-first-health')
         const path = join(root, 'compose.yml')

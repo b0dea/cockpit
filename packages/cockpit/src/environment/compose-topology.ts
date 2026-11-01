@@ -18,11 +18,21 @@ import { cockpitCommand } from '../fix-catalogue.js'
 export const mechanism = {
     id: 'compose-topology',
     module: 'packages/cockpit/src/environment/compose-topology.ts',
-    exports: ['observeComposeTopology', 'assessComposeTopology', 'composeBindPath', 'compareBindSources', 'redirectedBindSources', 'splitComposeShort', 'bindHolder'],
+    exports: ['composeProjectDirectory', 'observeComposeTopology', 'assessComposeTopology', 'composeBindPath', 'compareBindSources', 'redirectedBindSources', 'splitComposeShort', 'bindHolder'],
 } as const
 
+/**
+ * The directory every relative path in a cockpit's own Compose files resolves against: the first
+ * file's, as `docker compose -f first.yml -f second.yml` takes it. Compose cannot default it itself
+ * because it reads snapshots of the files, and the cockpit root is the wrong default: a product
+ * repository's Compose file names `./api` relative to the repository.
+ */
+export function composeProjectDirectory(root: string, references: readonly string[]): string {
+    return dirname(resolve(root, references[0]!))
+}
+
 export interface ComposeTopologyInput {
-    /** Canonical absolute project directory; relative paths in the Compose files resolve against it. */
+    /** Canonical absolute cockpit root. */
     readonly root: string
     /** The declared `environment.compose_files`, relative to `root`. */
     readonly references: readonly string[]
@@ -85,7 +95,7 @@ function topologyStep(input: ComposeTopologyInput, composeFiles: ComposeFiles): 
     const fileArgs = composeFiles.flatMap(({ path }) => ['--file', path])
     return snapshotExecutionStep({
         id: `compose-topology:${input.projectName}`,
-        argv: [input.docker.canonicalPath, 'compose', '--project-directory', input.root, ...fileArgs,
+        argv: [input.docker.canonicalPath, 'compose', '--project-directory', composeProjectDirectory(input.root, input.references), ...fileArgs,
             '--project-name', input.projectName, 'config', '--format', 'json', '--no-interpolate', '--no-env-resolution'],
         argv0: input.docker.invocationPath,
         cwd: input.root,
@@ -238,25 +248,31 @@ const LEADING_VARIABLE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?+])([^}]*))?\
 
 /**
  * Where a volume's host side lands, read from its source as written or as Compose reports it
- * uninterpolated. `variables` are the values cockpit hands Compose (the sibling directories); any
- * other variable resolves to its own default, as it does in `up`, or cannot be resolved at all.
- * Returns the absolute host path of a bind, `'volume'` for a named volume, and `undefined` when the
- * host side cannot be known.
+ * uninterpolated; a relative path resolves against `directory`, the Compose project directory.
+ * `variables` are the values cockpit hands Compose (the sibling directories); any other variable
+ * resolves to its own default, as it does in `up`, or cannot be resolved at all. Returns the
+ * absolute host path of a bind, `'volume'` for a named volume, and `undefined` when the host side
+ * cannot be known.
  */
-export function composeBindPath(source: string, root: string, variables: Readonly<Record<string, string>>): string | 'volume' | undefined {
-    let text = source
-    const lead = LEADING_VARIABLE.exec(source)
+export function composeBindPath(source: string, directory: string, variables: Readonly<Record<string, string>>): string | 'volume' | undefined {
+    // `config --no-interpolate` still resolves paths, so it joins a long-syntax source that starts
+    // with a variable to the project directory as if it were relative: `${API_DIR}` comes back as
+    // `<project>/${API_DIR}`. Interpolated, an absolute value replaces that directory and a relative
+    // one stays inside it, which is what resolving the variable form against `directory` does.
+    const written = directory !== sep && source.startsWith(`${directory}${sep}$`) ? source.slice(directory.length + 1) : source
+    let text = written
+    const lead = LEADING_VARIABLE.exec(written)
     if (lead) {
         const name = (lead[1] ?? lead[4])!
         const operator = lead[2]
         const base = Object.hasOwn(variables, name) && operator !== '+' && operator !== ':+' ? variables[name]
             : operator === '-' || operator === ':-' ? lead[3] : undefined
         if (base === undefined) return undefined
-        text = base + source.slice(lead[0].length)
+        text = base + written.slice(lead[0].length)
     }
     if (text.includes('$')) return undefined
     if (isAbsolute(text)) return resolve(text)
-    if (text === '.' || text === '..' || text.startsWith('./') || text.startsWith('../')) return resolve(root, text)
+    if (text === '.' || text === '..' || text.startsWith('./') || text.startsWith('../')) return resolve(directory, text)
     // `~` is the invoking user's home, which cockpit never hands a container; anything else is a volume name.
     return text.startsWith('~') ? undefined : 'volume'
 }
@@ -323,8 +339,8 @@ export async function redirectedBindSources(binds: readonly string[], declared: 
 }
 
 export interface ComposeTopologyDeclarations {
-    /** Canonical cockpit root; a relative bind source, or a variable's relative default, resolves against it. */
-    readonly root: string
+    /** From composeProjectDirectory; a relative bind source, or a variable's relative default, resolves against it. */
+    readonly projectDirectory: string
     readonly portVariables: readonly string[]
     readonly siblings: readonly ComposeSiblingMount[]
     /** The absolute `environment.generated_host_paths`, which `up` hands to containers beside the checkouts. */
@@ -350,7 +366,7 @@ export async function assessComposeTopology(
     const declared = [...always.map(sibling => sibling.path), ...declarations.hostPaths]
     const variables = Object.fromEntries(declarations.siblings.map(sibling => [sibling.var, sibling.path]))
     const binds = services.flatMap(service => service.mountSources.map(source => ({
-        service: service.id, source, path: composeBindPath(source, declarations.root, variables) })))
+        service: service.id, source, path: composeBindPath(source, declarations.projectDirectory, variables) })))
         .filter(bind => bind.path !== 'volume')
     const resolved = binds.flatMap(bind => bind.path === undefined ? [] : [bind.path])
     const { missing, unexpected } = compareBindSources(resolved, declared)
@@ -372,7 +388,7 @@ export async function assessComposeTopology(
         diagnostics.push(Object.freeze({
             severity: 'error' as const, code: 'COMPOSE_BIND_UNDECLARED', target: `compose:${bind.service}:${bind.source}`,
             message: `service ${bind.service} bind-mounts ${bind.path ?? bind.source}, ${why}; up hands a container only the checkouts and host paths cockpit.toml declares, so it would refuse to start`,
-            fix: `bind a directory inside a mount = "always" sibling (its variable, as in "\${VAR}/path", or a path relative to the cockpit root), list the path under environment.generated_host_paths, or remove the bind mount from service ${bind.service}; then run ${cockpitCommand('check')}`,
+            fix: `bind a directory inside a mount = "always" sibling (its variable, as in "\${VAR}/path", or a path relative to the first Compose file's directory), list the path under environment.generated_host_paths, or remove the bind mount from service ${bind.service}; then run ${cockpitCommand('check')}`,
         }))
     }
     for (const service of services) {

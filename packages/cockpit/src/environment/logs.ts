@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { isAbsolute, normalize } from 'node:path'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
+import { composeProjectDirectory } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
@@ -200,7 +201,9 @@ function unavailableFailurePlan(): FailureLogPlan {
 function composeFailurePrefix(context: RuntimeServiceFailureLogContext): readonly string[] | undefined {
     const prefix = context.composeArgvPrefix
     if (!Array.isArray(prefix) || prefix.length < 7 || prefix[0] !== 'compose'
-        || prefix[1] !== '--project-directory' || prefix[2] !== context.cwd
+        || prefix[1] !== '--project-directory'
+        // A rendered stack runs from the cockpit root, a cockpit's own files from the first one's directory.
+        || prefix[2] !== context.cwd && (context.paths.length === 0 || prefix[2] !== composeProjectDirectory(context.cwd, context.paths))
         || prefix.at(-2) !== '--project-name' || prefix.at(-1) !== context.projectName) return undefined
     const fileArgs = prefix.slice(3, -2)
     if (fileArgs.length !== context.paths.length * 2) return undefined

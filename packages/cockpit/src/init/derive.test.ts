@@ -153,6 +153,13 @@ describe('inferred interview answers', () => {
         const proposed = await deriveInferredFacts({ root: join(unmounted, 'shop'), repositories: [{ slug: 'shop', path: '.' }] })
         expect(byTarget(proposed.facts, 'sibling.shop')).toMatchObject({ value: { mount: 'none' } })
         expect(byTarget(proposed.facts, 'ports.bases')).toBeUndefined()
+
+        // A Compose file in another repository names `.` relative to that repository, not the root.
+        const beside = estate({ 'shop/api/compose.yml': 'services:\n  api:\n    build: .\n    volumes: [".:/app"]\n' })
+        const besideFacts = await deriveInferredFacts({ root: join(beside, 'shop'),
+            repositories: [{ slug: 'shop', path: '.' }, { slug: 'api', path: 'api' }] })
+        expect(byTarget(besideFacts.facts, 'environment.compose_files')).toMatchObject({ value: ['api/compose.yml'] })
+        expect(byTarget(besideFacts.facts, 'sibling.shop')).toMatchObject({ value: { mount: 'none' } })
     })
 
     it('reports an unreadable input instead of dropping it', async () => {

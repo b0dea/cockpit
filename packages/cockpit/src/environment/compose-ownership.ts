@@ -42,8 +42,9 @@ export function renderComposeOwnership(input: Readonly<{
         const root: unknown = document.toJS({ maxAliasCount: 100 })
         if (root === null || typeof root !== 'object' || Array.isArray(root)) return refuse('the Compose file is not a mapping')
         const record = root as Record<string, unknown>
-        // An included file declares services this file cannot name, so they would run unlabelled.
-        if (record.include !== undefined) return refuse('`include` is not supported: list each Compose file in environment.compose_files')
+        // An included file declares services this file cannot name, so they would run unlabelled, and
+        // Compose reads it from disk rather than from the snapshot cockpit verified.
+        if (record.include !== undefined) return refuse('`include` is not supported, because Compose reads an included file outside the bytes cockpit verifies and labels; list the file in environment.compose_files instead, where relative paths in every listed file resolve against the first file\'s directory')
         if (record.volumes !== undefined) {
             if (record.volumes === null || typeof record.volumes !== 'object' || Array.isArray(record.volumes)) return refuse('`volumes` is not a mapping')
             for (const [id, declaration] of Object.entries(record.volumes)) {

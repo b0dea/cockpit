@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,7 @@ import {
     createRuntimeServiceHealthPlan,
     createRuntimeServicePlan,
     createRuntimeTopologyPlan,
+    type RuntimeAdapterAuthority,
     type RuntimeObservationWindow,
     type RuntimeServiceFailureEvidence,
     type RuntimeServiceObservation,
@@ -177,6 +178,7 @@ async function earlyFailureEvidence(
     logOutput: string,
     logsExit = 0,
     composeFiles = input.composeFiles,
+    authority?: RuntimeAdapterAuthority,
 ): Promise<RuntimeServiceFailureEvidence> {
     const observationWindow: RuntimeObservationWindow = {
         startedAt: new Date(Date.now() - 10_000).toISOString(),
@@ -223,7 +225,7 @@ fi
         stackId: stack,
         coldStartLimitMillis: 60_000,
         expectedMountSources: [],
-    })
+    }, authority)
     if (runtime.kind !== 'preview') throw new Error(runtime.diagnostics[0]?.message ?? 'runtime fixture refused')
     const topologyPlan = createRuntimeTopologyPlan({ runtimePlan: runtime.plan, stackId: stack, configSha256, batchId: failureBatchId, observationWindow })
     if (topologyPlan.kind !== 'planned') throw new Error(topologyPlan.reason)
@@ -731,6 +733,18 @@ describe('authenticated failure logs', () => {
             kind: 'complete',
             records: [expect.objectContaining({ containerId: null, service: 'api', stream: 'combined', message: 'startup failed' })],
         })
+
+        // A cockpit's own Compose file inside a product repository runs from that repository.
+        mkdirSync(join(runtimeDirectory, 'shop'), { recursive: true })
+        const productPath = join(runtimeDirectory, 'shop', 'compose.yml')
+        writeFileSync(productPath, composeSource)
+        const product = await earlyFailureEvidence(`${timestamp} startup failed\n`, 0,
+            [{ reference: 'shop/compose.yml', canonicalPath: productPath, source: composeSource, sha256: sha(composeSource) }],
+            { ownComposeFiles: true, cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: '/tmp/main' }), stackId: stack })
+        const productPlan = planFailureLogs({ evidence: product, ...bounds })
+        expect(productPlan.kind).toBe('planned')
+        if (productPlan.kind !== 'planned') return
+        expect(productPlan.step.argv.slice(2, 4)).toEqual(['--project-directory', join(runtimeDirectory, 'shop')])
     })
 
     it('treats authenticated empty early-failure output as complete', async () => {

@@ -19,7 +19,7 @@ const service = (mountSources: readonly string[]): ComposeServiceTopology =>
 
 const mountCodes = async (root: string, mountSources: readonly string[], mount = 'always') =>
     (await assessComposeTopology([service(mountSources)], {
-        root, portVariables: [], hostPaths: [],
+        projectDirectory: root, portVariables: [], hostPaths: [],
         siblings: [{ slug: 'shop', var: 'SHOP_DIR', mount, path: root }],
     })).map(row => [row.code, row.target])
 
@@ -32,6 +32,8 @@ describe('compose topology mount posture', () => {
         expect(await mountCodes(root, ['${SHOP_DIR}/api'])).toEqual([])
         expect(await mountCodes(root, ['${SHOP_DIR:-.}/api'])).toEqual([])
         expect(await mountCodes(root, ['${SHOP_DIR:-.}'])).toEqual([])
+        // Compose reports a long-syntax variable source joined to the project directory.
+        expect(await mountCodes(root, [`${root}/\${SHOP_DIR:?run through cockpit}/api`])).toEqual([])
         expect(await mountCodes(root, ['pgdata'])).toEqual([['COMPOSE_SIBLING_NOT_MOUNTED', 'sibling:shop']])
     })
 
@@ -51,7 +53,7 @@ describe('compose topology mount posture', () => {
         expect(await mountCodes(root, [join(root, 'api')], 'none')).toEqual([undeclared(join(root, 'api'))])
         // A declared generated host path is admitted exactly where up admits it.
         expect((await assessComposeTopology([service([join(root, 'api'), join(outside, 'seed.sql')])], {
-            root, portVariables: [], hostPaths: [join(outside, 'seed.sql')],
+            projectDirectory: root, portVariables: [], hostPaths: [join(outside, 'seed.sql')],
             siblings: [{ slug: 'shop', var: 'SHOP_DIR', mount: 'always', path: root }],
         })).map(row => row.code)).toEqual([])
     })
