@@ -107,7 +107,7 @@ import {
 } from './generated-stack.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
 import { projectPersonaOutputs, type DataStepContext } from './data-plane.js'
-import { decodeLifecycleRecord, resolveLifecycleStage } from './lifecycle-stage.js'
+import { decodeLifecycleRecord, earlierNameRefusalMessage, findStackUnderEarlierName, resolveLifecycleStage } from './lifecycle-stage.js'
 import { authenticateStatePublication, observeConfiguration, readState, selectStateRoot,
     type BootstrapStateAddress, type BootstrapStateRecord, type StateNamespace, type StateResult } from './state.js'
 import {
@@ -1442,6 +1442,23 @@ async function projectBrowserRunner(
             provenance: 'declared' as const, reason }),
         lockfile: Object.freeze({ path: browser.project.lockfile, sha256: lockfile.sha256, identity: sourceIdentity(lockfile.identity) }),
     }) })
+}
+
+// A ledger recorded under another name means `cockpit.name` was renamed. Publishing under the new
+// name is safe for the files, but a stack still recorded under the old one would be left where
+// down cannot reach it, so the rename waits until that stack is down.
+async function renamedStackRefusal(prepared: PreparedEnvironment): Promise<RefusalOutcome | undefined> {
+    const checkout = prepared.runtimeCheckout
+    if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') return undefined
+    const namespace = await selectStateRoot({ platform: process.platform, home: process.env.HOME,
+        xdgStateHome: process.env.XDG_STATE_HOME,
+        checkoutRoots: [checkout.currentCheckoutPath, checkout.mainCheckoutPath], cockpitId: checkout.cockpitId })
+    if (namespace.kind !== 'complete') return refuse(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        `cannot tell whether a stack started before cockpit.name was renamed is still recorded: ${'message' in namespace ? namespace.message : 'the state root is missing'}; nothing was written`, prepared.configPath)
+    const earlier = await findStackUnderEarlierName({ namespace: namespace.value, cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId })
+    if (earlier.kind === 'refusal') return refuse(earlier.code, `${earlier.message}; nothing was written`, earlier.target)
+    return earlier.name === undefined ? undefined
+        : refuse(ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME, earlierNameRefusalMessage(prepared.configPath, earlier.name), prepared.configPath)
 }
 
 async function retainedPortLease(
@@ -3375,6 +3392,10 @@ async function preparePublication(
         'GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is malformed or unsafe', OWNERSHIP_PATH,
         'restore the last trusted ownership metadata before syncing',
     )
+    if (ownership.kind === 'complete' && ownership.manifest.cockpitId !== base.cockpitId) {
+        const recorded = await renamedStackRefusal(base)
+        if (recorded) return recorded
+    }
     const adoptedBootstrap = ownership.kind === 'missing' && request.bootstrapState
         ? await authenticatedBootstrapPriorSurfaces(base.root, request.bootstrapState, base.node, adapters) : undefined
     if (ownership.kind === 'missing' && request.bootstrapState && !adoptedBootstrap) return refuse(

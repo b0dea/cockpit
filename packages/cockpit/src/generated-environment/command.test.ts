@@ -532,6 +532,27 @@ it('recreates deleted shared-region outputs with only the cockpit region', async
     expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
 }, 120_000)
 
+it('re-keys ownership to a renamed cockpit on sync and keeps consumer text around its regions', async () => {
+    const { root, configPath } = await surfaceConsumer('renamed-cockpit')
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    await writeFile(join(root, 'AGENTS.md'), `Consumer preface.\n\n${await readFile(join(root, 'AGENTS.md'), 'utf8')}`)
+    await writeFile(configPath, (await readFile(configPath, 'utf8')).replace('name = "generated-environment"', 'name = "renamed-environment"'))
+
+    const renamed = await syncGeneratedEnvironment({ configPath })
+
+    expect(renamed, JSON.stringify(renamed.diagnostics)).toMatchObject({ kind: 'complete' })
+    expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    const ledger = JSON.parse(await readFile(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8'))
+    expect(ledger.cockpitId).toMatch(/^cockpit:renamed-environment:/)
+    const guide = await readFile(join(root, 'AGENTS.md'), 'utf8')
+    expect(guide.startsWith('Consumer preface.\n')).toBe(true)
+    for (const shared of [guide, await readFile(join(root, 'opencode.jsonc'), 'utf8')]) {
+        expect(shared).toContain('cockpit:renamed-environment:')
+        expect(shared).not.toContain('cockpit:generated-environment:')
+    }
+}, 120_000)
+
 it('consumes vendor and exact build/test authority through installed hook registrations', async () => {
     const { root, configPath } = await surfaceConsumer('installed-authority')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)

@@ -2093,7 +2093,7 @@ async function admitPlan(input: AdmittedPublicationPlanInput, adapters: Publicat
         return refuse('GENERATED_OWNERSHIP_INVALID', 'generated ownership metadata is not a regular file', OWNERSHIP_PATH)
     }
     const parsedNext = typeof captured.nextLedgerBytes === 'string' ? parseOwnershipManifest(captured.nextLedgerBytes, authority) : undefined
-    if (parsedNext?.kind !== 'complete' || parsedNext.manifest.generation !== captured.generation
+    if (parsedNext?.kind !== 'complete' || parsedNext.manifest.cockpitId !== authority.cockpitId || parsedNext.manifest.generation !== captured.generation
         || parsedNext.manifest.source.sha256 !== captured.sourceSha256) return refuse('GENERATED_OWNERSHIP_INVALID', 'publication ledger does not match its declared authority', OWNERSHIP_PATH)
     const next = parsedNext.manifest
     const priorProjection = prior && projectGeneratedPathFacts(prior, authority, [])

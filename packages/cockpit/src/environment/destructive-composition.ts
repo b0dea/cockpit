@@ -40,6 +40,7 @@ import {
     type ReclaimResourceKind,
 } from './reclaim.js'
 import { readState } from './state.js'
+import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycle-stage.js'
 import type { RuntimeMeasurementProbeAuthority } from './runtime.js'
 
 export const mechanism = {
@@ -501,6 +502,10 @@ export function createDestructiveCommandAdapters(
                 // coordination record itself says whether this stack ever ran.
                 const stored = await readState(context.namespace.paths.coordination(context.stackId))
                 if (stored.kind === 'missing') {
+                    const earlier = await findStackUnderEarlierName({ namespace: context.namespace, cockpitId: context.cockpitId, checkoutId: context.checkoutId })
+                    if (earlier.kind === 'refusal') return refusal(earlier.target, earlier.message, earlier.code)
+                    if (earlier.name !== undefined) return refusal(context.stackId,
+                        earlierNameRefusalMessage(context.source.path, earlier.name), ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME)
                     return refusal(context.stackId, `this checkout has never claimed the stack, so down and reset have nothing to act on; run \`${cockpitCommand('up')}\` first`)
                 }
                 const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined

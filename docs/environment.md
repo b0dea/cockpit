@@ -364,7 +364,8 @@ cockpit named `shop-cockpit` runs containers such as `shop-cockpit-3f2b3aead733-
 it is committed and shared by every checkout; in compose-first mode your own file's `name:` is
 overridden. To look at the stack with Docker directly, find the project with `docker compose ls`
 and name it: `docker compose --project-name shop-cockpit-3f2b3aead733 ps`. Renaming `cockpit.name`
-addresses a different project and stack, so run `down` before renaming.
+addresses a different project and stack, so run `down` before renaming, as
+[Rename a cockpit](getting-started.md#rename-a-cockpit) describes.
 
 ## Measure the container runtime
 

@@ -20,7 +20,7 @@ import { readState } from './state.js'
 import { decodeCoordinationRecord, inspectDestructiveDrainRecovery, readActiveStackInventory } from './claims.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import { observeDependencyLoad } from './installs.js'
-import { generatedApplicationProjection, syncGeneratedEnvironment } from './generated-application.js'
+import { checkGeneratedEnvironment, generatedApplicationProjection, syncGeneratedEnvironment } from './generated-application.js'
 import { checkoutId, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
 import {
@@ -80,6 +80,7 @@ vi.mock('node:net', async (importOriginal) => {
 })
 
 afterEach(async () => {
+    vi.unstubAllEnvs()
     expect(listenerProbeControl.active, 'listener probes must settle before fixture cleanup').toBe(0)
     listenerProbeControl.enabled = false
     listenerProbeControl.active = 0
@@ -1029,6 +1030,43 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const resumed = createLifecycleCommandAdapters(input, executeProbe)
         const restarted = await runUp({ configPath: input.configPath }, resumed)
         expect(restarted, JSON.stringify(restarted)).toMatchObject({ kind: 'complete', status: 0, progress: { notApplied: [] } })
+    })
+
+    it('refuses a rename while a stack is recorded under the old name until down runs under it, then syncs the rename', async () => {
+        const first = await runGeneratedScenario({ toolchain: 'none' })
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = {
+            configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'generated-production', timeoutMs: 5_000,
+        }
+        const path = first.context.source.path
+        const ledgerPath = join(first.candidate.checkout, '.cockpit/generated-environment-ownership.json')
+        const ledger = await readFile(ledgerPath, 'utf8')
+        const original = await readFile(input.configPath, 'utf8')
+        const renamed = original.replace('name = "generated-environment"', 'name = "renamed-environment"')
+        expect(renamed).not.toBe(original)
+        await writeFile(input.configPath, renamed)
+        const refusal = { code: 'STACK_RECORDED_UNDER_EARLIER_NAME', message: `cockpit.name was changed from "generated-environment" while a stack started under that name is still recorded; the stack keeps the earlier name, so only down run under that name removes its containers — fix: set name = "generated-environment" in ${path} again, run \`${cockpitCommand('down', { config: path })}\`, then rename the cockpit and run \`${cockpitCommand('sync', { config: path })}\`` }
+        const down = () => runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
+        // sync reads the state root from the process environment, as the CLI does.
+        vi.stubEnv('HOME', first.candidate.home)
+
+        expect(await syncGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [refusal] })
+        expect(await readFile(ledgerPath, 'utf8')).toBe(ledger)
+        expect(await checkGeneratedEnvironment({ configPath: input.configPath })).toMatchObject({ kind: 'refusal', diagnostics: [refusal] })
+        expect(await down()).toMatchObject({ kind: 'refusal', diagnostics: [refusal] })
+        expect(await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe)))
+            .toMatchObject({ kind: 'refusal', diagnostics: [refusal] })
+
+        // Follow the fix as printed: down under the old name, then rename again.
+        await writeFile(input.configPath, original)
+        const removed = await down()
+        expect(removed, JSON.stringify(removed)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'removed' } })
+        await writeFile(input.configPath, renamed)
+        const synced = await syncGeneratedEnvironment({ configPath: input.configPath })
+        expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(JSON.parse(await readFile(ledgerPath, 'utf8')).cockpitId).toMatch(/^cockpit:renamed-environment:/)
     })
 
     it.each([['up', false], ['asleep', true]])('refuses an up after a port base change while the stack is %s with the same down-then-up recovery, and the new port is leased', async (_state, sleepFirst) => {

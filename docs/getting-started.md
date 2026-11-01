@@ -414,9 +414,10 @@ with `LIFECYCLE_PROGRESS_INVALID`, because `up` never replaces a running stack i
 
 ## Rename a cockpit
 
-The cockpit name scopes its Compose project names, its state and its generated files, so it is an
-`init` answer rather than an edit to make afterwards. To rename an existing cockpit, bring its
-stack down first, then edit `cockpit.name` and regenerate in a terminal:
+`cockpit.name` is part of every identity cockpit records: the owner markers in generated files,
+the ownership ledger, the Compose project and the stack's saved state. Renaming it is supported;
+take the stack down first, because a running stack keeps the name it started under and only `down`
+run under that name removes its containers. In a terminal:
 
 ```sh
 ./node_modules/.bin/cockpit down --config ./cockpit.toml
@@ -425,8 +426,11 @@ stack down first, then edit `cockpit.name` and regenerate in a terminal:
 ./node_modules/.bin/cockpit check --config ./cockpit.toml
 ```
 
-Never delete or hand-edit cockpit's generated ownership files to push a rename through: they are
-how `sync` knows which files are its own, and `sync` names what to do when it cannot apply a change.
+`sync` rewrites the generated files and the ledger under the new name and keeps your own text
+around cockpit's regions. If you renamed while a stack was recorded, `sync`, `check`, `up` and
+`down` refuse with `STACK_RECORDED_UNDER_EARLIER_NAME` and print the earlier name: put it back, run
+`down`, then rename again. Never delete or hand-edit cockpit's generated ownership files to get past
+a refusal: they are how `sync` knows which files are its own.
 
 ## Run an agent inside the environment
 

@@ -5,6 +5,7 @@ import { isProxy, isUint8Array } from "node:util/types"
 import { createHash } from 'node:crypto'
 
 import { snapshotGeneratedJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
+import { publicationCockpitId } from '../environment/identity.js'
 import { safeSurfacePath as safePath } from './contract.js'
 import { SURFACE_TARGETS } from './harness-registry.js'
 
@@ -429,13 +430,17 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
     }
     if (Buffer.byteLength(existingBytes) > SHARED_FILE_MAX_BYTES || entry.kind !== 'shared-region'
         || priorOwned !== undefined && (priorOwned.kind !== 'shared-region' || priorOwned.path !== entry.path
-            || priorOwned.regionId !== entry.regionId && !(priorOwned.regionId === OPENCODE_REGION && openCodeOwner(entry.regionId)))) {
+            || priorOwned.regionId !== entry.regionId && !((priorOwned.regionId === OPENCODE_REGION || openCodeOwner(priorOwned.regionId)) && openCodeOwner(entry.regionId)))) {
         return refusal('SURFACE_STATE_CONFLICT', 'shared surface input is invalid', entry.path)
     }
     if (entry.path !== OPENCODE_PATH) {
         if (entry.region.format !== 'markdown-delimited') return refusal('SURFACE_STATE_CONFLICT', 'Markdown path has a non-Markdown region', entry.path)
         const current = markdownOwnedBytes(existingBytes, entry.region.begin, entry.region.end)
-        const expectedOwner = authority?.cockpitId ?? markdownOwner(entry.region.bytes)
+        // Bytes that match the prior record are cockpit's own under whatever id their markers carry,
+        // which differs from the desired one only after `cockpit.name` was renamed.
+        const recorded = current !== undefined && priorOwned?.kind === 'shared-region' && priorOwned.region.format === 'markdown-delimited'
+            && digest(current.bytes) === priorOwned.region.sha256
+        const expectedOwner = recorded ? markdownOwner(current.bytes) : authority?.cockpitId ?? markdownOwner(entry.region.bytes)
         if (existingBytes.includes(OWNER_PREFIX) && (!current || !markdownOwner(current.bytes)
             || existingBytes.split(OWNER_PREFIX).length !== 3 || expectedOwner !== undefined && markdownOwner(current.bytes) !== expectedOwner)) {
             return refusal('SURFACE_STATE_CONFLICT', 'Markdown owner markers are foreign or ambiguous', entry.path)
@@ -455,9 +460,12 @@ export function renderSharedPostimage(existingBytes: string, entry: SurfaceDesir
     if (!parsed) return refusal('SURFACE_STATE_CONFLICT', 'OpenCode surface must be strict duplicate-free JSON with a root object', entry.path)
     const desiredKeys = entry.region.members.map(member => member.key)
     const desiredOwner = openCodeOwner(entry.regionId)
+    // The prior record names the owner on disk; after a rename it differs from the desired one, and
+    // the group digest below still has to match what cockpit last wrote.
+    const priorOwner = priorOwned?.kind === 'shared-region' ? openCodeOwner(priorOwned.regionId) : undefined
     if (authority && desiredOwner !== authority.cockpitId
-        || parsed.owner && (authority && parsed.owner.id !== authority.cockpitId || desiredOwner && parsed.owner.id !== desiredOwner)
-        || priorOwned?.kind === 'shared-region' && openCodeOwner(priorOwned.regionId) && parsed.owner?.id !== openCodeOwner(priorOwned.regionId)) {
+        || parsed.owner && (authority && parsed.owner.id !== authority.cockpitId || desiredOwner && parsed.owner.id !== (priorOwner ?? desiredOwner))
+        || priorOwner && parsed.owner?.id !== priorOwner) {
         return refusal('SURFACE_STATE_CONFLICT', 'OpenCode owner markers are missing or belong to another cockpit', entry.path)
     }
     const owner = authority?.cockpitId ?? desiredOwner ?? parsed.owner?.id
@@ -484,14 +492,14 @@ export function removeSharedOwnership(existingBytes: string, priorOwned: Ownersh
     if (priorOwned.region.format === 'markdown-delimited') {
         const current = markdownOwnedBytes(existingBytes, priorOwned.region.begin, priorOwned.region.end)
         if (existingBytes.includes(OWNER_PREFIX) && (!current || !markdownOwner(current.bytes)
-            || existingBytes.split(OWNER_PREFIX).length !== 3 || authority && markdownOwner(current.bytes) !== authority.cockpitId)) {
+            || existingBytes.split(OWNER_PREFIX).length !== 3 || authority && markdownOwner(current.bytes) !== manifest?.cockpitId)) {
             return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown owner markers are foreign or ambiguous', priorOwned.path)
         }
         if (!current || digest(current.bytes) !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale Markdown region changed', priorOwned.path)
         return { kind: 'complete', bytes: `${existingBytes.slice(0, current.start)}${existingBytes.slice(current.finish)}` }
     }
     const parsed = rootObject(existingBytes)
-    if (authority && parsed?.owner && parsed.owner.id !== authority.cockpitId
+    if (authority && parsed?.owner && parsed.owner.id !== manifest?.cockpitId
         || openCodeOwner(priorOwned.regionId) && parsed?.owner?.id !== openCodeOwner(priorOwned.regionId)) return refusal('SURFACE_STATE_CONFLICT', 'stale OpenCode owner markers are missing or foreign', priorOwned.path)
     const current = openCodeOwnedGroup(existingBytes, priorOwned.region.keys)
     if (!parsed || !current || current.sha256 !== priorOwned.region.sha256) return refusal('SURFACE_STATE_CONFLICT', 'stale OpenCode group changed', priorOwned.path)
@@ -620,6 +628,17 @@ function exactKeys(record: Record<string, unknown>, expected: readonly string[])
     return keys.length === wanted.length && keys.every((key, index) => key === wanted[index])
 }
 
+// Renaming `cockpit.name` changes the publication identity the ledger and every owner marker carry.
+// The ledger sits at a fixed path under the configuration's own directory and names that file, so
+// one recorded under another well-formed name is this cockpit's before the rename: refusing it left
+// the operator nothing to do but delete the ledger and lose track of every file cockpit wrote.
+// Its entries keep the id they were written under, which classification compares with the markers
+// on disk; the next sync rewrites them under the new id.
+function renamedPublicationId(value: unknown): boolean {
+    const name = typeof value === 'string' ? /^cockpit:([a-z0-9][a-z0-9-]*):[a-f0-9]{64}$/.exec(value)?.[1] : undefined
+    return name !== undefined && publicationCockpitId({ name }) === value
+}
+
 function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipManifest | undefined {
     if (Buffer.byteLength(bytes, 'utf8') > MAX_OWNERSHIP_BYTES) return undefined
     try {
@@ -627,7 +646,7 @@ function parseOwnership(bytes: string, prepared: OwnershipAuthority): OwnershipM
         if (!uniqueJsonKeys(bytes)) return undefined
         if (!record || record.format !== 'cockpit-generated-ownership/v3'
             || !exactKeys(record, ['format', 'producer', 'cockpitId', 'generation', 'source', 'personaSource', 'entries', 'integrity'])
-            || record.cockpitId !== prepared.cockpitId
+            || record.cockpitId !== prepared.cockpitId && !renamedPublicationId(record.cockpitId)
             || typeof record.generation !== 'string' || !SHA256.test(record.generation)
             || typeof record.integrity !== 'string' || !SHA256.test(record.integrity)
             || !Array.isArray(record.entries) || record.entries.length > MAX_OWNED_FILES) return undefined
@@ -766,7 +785,8 @@ export function projectGeneratedPathFacts(
         }
         byPath.set(path, row as unknown as GeneratedPathDeclaration)
     }
-    const enclosing = Object.freeze({ ...issued, generation: manifest.generation, source: manifest.source, integrity: manifest.integrity })
+    // Classification compares the owner markers on disk with the id the ledger recorded them under.
+    const enclosing = Object.freeze({ ...issued, cockpitId: manifest.cockpitId, generation: manifest.generation, source: manifest.source, integrity: manifest.integrity })
     const facts = Object.freeze(manifest.entries.map(entry => {
         const declaration = byPath.get(entry.path) ?? null
         const fact = Object.freeze({ path: entry.path, authority: enclosing, entry, declaration,

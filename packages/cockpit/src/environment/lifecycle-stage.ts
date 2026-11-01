@@ -7,6 +7,7 @@ import {
     isCanonicalTimestamp,
     snapshotJson,
     snapshotEnvironmentObservation,
+    type CheckoutId,
     type CockpitId,
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
@@ -25,7 +26,10 @@ import {
     type StateRecord,
     type StateResult,
     type StateTransactionAbort,
+    withStateNamespaceInventory,
 } from './state.js'
+import { stackId as deriveStackId } from './identity.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
     id: 'lifecycle-stage',
@@ -34,7 +38,7 @@ export const mechanism = {
         'recordLifecycleStarted', 'recordLifecycleSeeded', 'resolveLifecycleStage',
         'observeStateSeed', 'isLifecycleStageObservation', 'authenticateLifecycleStageAuthority',
         'projectLifecycleStage', 'consumeLifecycleStageProjection',
-        'decodeLifecycleRecord',
+        'decodeLifecycleRecord', 'findStackUnderEarlierName', 'earlierNameRefusalMessage',
         'observationDeclarations',
     ],
 } as const
@@ -87,6 +91,47 @@ export interface CurrentLifecycleRecord {
 
 const lifecycleDigest = /^[a-f0-9]{64}$/
 const lifecycleService = /^[a-z0-9][a-z0-9_.-]*$/
+
+export type EarlierNameResult =
+    | Readonly<{ kind: 'complete'; name: string | undefined }>
+    | Readonly<{ kind: 'refusal'; code: EnvironmentDiagnostic['code']; message: string; target: string }>
+
+// A stack keeps the cockpit identity it started under, and that identity carries `cockpit.name`.
+// After a rename this checkout's stack is still recorded under the earlier name, where sync, up and
+// down no longer look: down reported nothing to act on while the containers kept running. This
+// returns that earlier name while such a stack is recorded and not torn down, so they can refuse
+// with the recovery instead.
+export async function findStackUnderEarlierName(input: Readonly<{
+    namespace: StateNamespace
+    cockpitId: CockpitId
+    checkoutId: CheckoutId
+}>): Promise<EarlierNameResult> {
+    const [, currentName, checkoutDigest] = input.cockpitId.split(':')
+    const placeholder = `stack:${'0'.repeat(64)}` as StackId
+    const found = await withStateNamespaceInventory(input.namespace, async (namespaces): Promise<EarlierNameResult> => {
+        for (const candidate of namespaces) {
+            const cockpitId = candidate.paths.lifecycle(placeholder).cockpitId
+            const [, name, digest] = cockpitId.split(':')
+            if (digest !== checkoutDigest || name === currentName || name === undefined) continue
+            const stack = deriveStackId({ cockpitId, checkoutId: input.checkoutId, variant: { kind: 'shared' } })
+            const address = candidate.paths.lifecycle(stack)
+            const stored = await readState(address)
+            if (stored.kind === 'missing') continue
+            if (stored.kind !== 'complete') return { kind: 'refusal', code: stored.code, message: stored.message, target: stored.target }
+            const lifecycle = decodeLifecycleRecord(stored.value, { cockpitId, stackId: stack })
+            if (!lifecycle) return { kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, message: 'lifecycle progress record is malformed', target: address.path }
+            if (lifecycle.value.teardownComplete !== true) return { kind: 'complete', name }
+        }
+        return { kind: 'complete', name: undefined }
+    })
+    if (found.kind === 'complete') return found.value
+    if (found.kind === 'missing') return { kind: 'complete', name: undefined }
+    return { kind: 'refusal', code: found.code, message: found.message, target: found.target }
+}
+
+export function earlierNameRefusalMessage(configPath: string, earlierName: string): string {
+    return `cockpit.name was changed from "${earlierName}" while a stack started under that name is still recorded; the stack keeps the earlier name, so only down run under that name removes its containers — fix: set name = "${earlierName}" in ${configPath} again, run \`${cockpitCommand('down', { config: configPath })}\`, then rename the cockpit and run \`${cockpitCommand('sync', { config: configPath })}\``
+}
 
 export function decodeLifecycleRecord(
     record: StateRecord,

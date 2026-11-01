@@ -62,6 +62,8 @@ import {
 } from './state.js'
 import {
     decodeLifecycleRecord,
+    earlierNameRefusalMessage,
+    findStackUnderEarlierName,
     recordLifecycleSeeded,
     recordLifecycleStarted,
     resolveLifecycleStage,
@@ -3175,6 +3177,12 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
     const declaration = await inspectRecordedPortDeclaration({ namespace: context.namespace, stackId: context.stackId, config: context.ports })
     if (declaration.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: declaration.diagnostics }
     if (declaration.changed) return runtimeChangedRefusal(context)
+    // Starting under the new name beside a stack recorded under the old one would run two stacks for
+    // one checkout, the old one beyond the reach of down.
+    const earlier = await findStackUnderEarlierName({ namespace: context.namespace, cockpitId: context.cockpitId, checkoutId: context.checkoutId })
+    if (earlier.kind === 'refusal') return lifecycleRefusal(earlier.code, earlier.message, earlier.target)
+    if (earlier.name !== undefined) return lifecycleRefusal(ENVIRONMENT_CODES.STACK_RECORDED_UNDER_EARLIER_NAME,
+        earlierNameRefusalMessage(context.source.path, earlier.name), context.stackId)
     const generatedPreparation = await prepareGeneratedBringup(context, adapters, rememberAcquisition)
     if (generatedPreparation) {
         if (!acquired) return generatedPreparation
