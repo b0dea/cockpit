@@ -285,8 +285,8 @@ The command `session` runs gets the stack's addresses in its environment, so an 
 it can reach the stack without rerunning `up --json`. Each `[ports.bases]` name holds the port
 leased for this stack, the same value the Compose files read, and each entrypoint `up --json`
 returns is under `COCKPIT_ENTRYPOINT_` followed by its name in upper case with hyphens as
-underscores: `API_HOST_PORT=4210` and `COCKPIT_ENTRYPOINT_API_HOST_PORT=http://127.0.0.1:4210/`, or
-`COCKPIT_ENTRYPOINT_APPLICATION` for a declared `application` entrypoint. The lease is the truth for
+underscores, as in `API_HOST_PORT=4210` and
+`COCKPIT_ENTRYPOINT_API_HOST_PORT=http://127.0.0.1:4210/`. The lease is the truth for
 the stack, so these replace a value of the same name already set in the calling shell. They are
 read once when the command starts and do not follow a later `down` and `up`.
 
