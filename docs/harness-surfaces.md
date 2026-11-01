@@ -104,27 +104,16 @@ cockpit also requires the named evidence file to match its declared SHA-256 befo
 module, and checks it again before publishing. That ties the declaration to one specific file;
 confirming real enforcement still needs a separate paired test of the tool.
 
-### Built-in capability matrix
+### Guard adapters
 
-The renderer writes output for all five built-in harnesses. Cursor and Grok Build read `generated`
-for the reason given in [Capability states](#capability-states).
-
-| Feature | Claude Code | Codex | OpenCode | Cursor | Grok Build | Still unconfirmed |
-|---|---|---|---|---|---|---|
-| Rules | instructed | instructed | instructed | generated | generated | Whether the tool loads the instructions needs a paired test. |
-| MCP | instructed | instructed | instructed | generated | generated | Your approval controls which servers are enabled in the generated files; loading by the tool is unproven. |
-| Subagents | instructed | instructed | instructed | generated | generated | How the tool applies the role needs a test. |
-| Skills | instructed | instructed | instructed | generated | generated | Matching behaviour across tools and the required human reviews are still pending. |
-| Hooks | instructed | instructed | instructed | generated | generated | A generated hook file does not show that the harness runs it. |
-| Permissions | instructed | instructed | instructed | generated | generated | A generated permission file does not show that the tool loads it. Cursor and Grok Build have no guard adapter, so no guard is generated for them. |
-
-The checked-in guard adapters (the
+The [capability matrix](capability-matrix.md) is the one record of each built-in harness's state;
+it is generated from the shipped sources. The checked-in guard adapters (the
 [Claude](../packages/cockpit/surfaces/guards/claude.adapter.json),
 [Codex](../packages/cockpit/surfaces/guards/codex.adapter.json) and
 [OpenCode](../packages/cockpit/surfaces/guards/opencode.adapter.json) adapters) record how the
-guard talks to each harness, tested on an older version. Each harness's recorded version, date and
-test are in the [capability matrix](capability-matrix.md). Those versions say nothing about the
-version you have installed.
+guard talks to each harness, tested on an older version. The matrix also records when each
+harness was last probed and at which version. Those versions say nothing about the version you
+have installed.
 
 [Restriction expansion](../packages/cockpit/src/surfaces/restrictions.ts) checks the adapter's
 recorded details but still emits `instructed` with a `pending_evidence` status, including

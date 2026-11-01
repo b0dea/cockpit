@@ -16,8 +16,9 @@ with an independent evaluator for finished work.
 - Your product is one repository and you only need a reproducible toolchain: a dev container or
   Devbox is simpler.
 - You need isolation from untrusted code: cockpit is not a sandbox.
-- You are on native Windows: every command stops at startup with `CLI_PLATFORM_UNSUPPORTED`; only
-  macOS and Linux are supported. Inside WSL2 cockpit runs as it does on Linux, but that setup has
+- You are on native Windows: every command stops at startup with `CLI_PLATFORM_UNSUPPORTED`, before
+  it reads or writes anything, because process management, file publication and the shell guards
+  assume macOS or Linux. Inside WSL2 cockpit runs as it does on Linux, but that setup has
   not been tested yet.
 - You need a published, stable tool today: cockpit is pre-alpha and not yet published.
 

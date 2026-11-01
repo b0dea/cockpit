@@ -82,12 +82,6 @@ Spec and workflow tools also generate files into repositories. cockpit adds thre
 typically lack: a drift check against installed generated files, a `--dry-run` preview of every
 write, and CLI and configuration references generated from the source so they cannot go stale.
 
-## Current platform limits
-
-On native Windows every command stops at startup with `CLI_PLATFORM_UNSUPPORTED`, before it reads
-or writes anything, because process management, file publication and the shell guards assume
-macOS or Linux; use a host meeting the [platform requirements](getting-started.md#install-cockpit).
-
 ## Non-goals
 
 - **Not a planner.** cockpit does not decide what work to do. Pair it with a spec or workflow tool.

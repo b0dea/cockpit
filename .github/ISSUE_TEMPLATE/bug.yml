@@ -9,7 +9,7 @@ body:
         [security policy](https://github.com/b0dea/cockpit/security/policy) to report it
         privately.
 
-        One defect per issue. A report that bundles three is triaged as none.
+        Please file one defect per issue.
   - type: textarea
     id: what-happened
     attributes:

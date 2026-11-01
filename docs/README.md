@@ -3,7 +3,8 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 This index lists every page for people using cockpit on their own products, grouped by what you
-are trying to do. Contributor documentation lives separately under docs/contributing/.
+are trying to do. To work on cockpit itself, start with [CONTRIBUTING.md](../CONTRIBUTING.md); the
+contributor pages live separately under docs/contributing/.
 
 ## Learn
 
@@ -36,6 +37,21 @@ hand-written recovery guidance with a generated diagnostic index.
 - [Capability matrix](capability-matrix.md)
 - [Troubleshooting](troubleshooting.md): hand-written remedies followed by the generated
   diagnostic index.
+
+## Examples
+
+Each example is a cockpit you can copy and run; its README gives the exact commands.
+
+- [examples/synthetic](../examples/synthetic/README.md): two throwaway repositories, from
+  configuration to a drift check, with no Docker.
+- [examples/minimal](../examples/minimal/README.md): one service, one port and one health probe,
+  for a running stack.
+- [examples/compose-first](../examples/compose-first/README.md): a cockpit that keeps its own
+  `compose.yml`.
+- [examples/docs-only](../examples/docs-only/README.md): no environment, for a repository of
+  documents or a product not yet built.
+- [examples/extended](../examples/extended/README.md): a custom Compose service and
+  product-specific checks kept beside cockpit.
 
 ## Background
 

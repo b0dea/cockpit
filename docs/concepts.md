@@ -15,8 +15,9 @@ Everyday terms, in plain language.
 The AI coding tool an agent runs in. The [capability matrix](capability-matrix.md) names the
 built-in target identifiers and records what is confirmed for each feature. An
 instructions-only tool can read the shared guide without gaining guard or permission enforcement;
-see [Capability states](harness-surfaces.md#capability-states). cockpit fully supports Claude
-Code, Codex CLI and OpenCode. It also writes Cursor and Grok Build files, which the matrix marks
+see [Capability states](harness-surfaces.md#capability-states). Claude Code, Codex CLI and
+OpenCode are the primary targets: cockpit installs its guard hook for them, and the matrix records
+what each one is measured to enforce. cockpit also writes Cursor and Grok Build files, which the matrix marks
 `generated`: nobody has confirmed those tools load them, and cockpit installs no guard for them.
 
 ### Sibling repository

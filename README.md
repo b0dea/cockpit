@@ -2,19 +2,19 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-![CI status](https://github.com/b0dea/cockpit/actions/workflows/ci.yml/badge.svg)
+<a href="https://github.com/b0dea/cockpit/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img alt="CI status" src="https://github.com/b0dea/cockpit/actions/workflows/ci.yml/badge.svg?branch=main&amp;event=push"></a>
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
-**One config for your product: the stack on your laptop, consistent instructions across agent
-tools, and grading by something other than the agent that did the work.**
+**One config for your product: the stack on your laptop and consistent instructions across agent
+tools, with experimental grading by something other than the agent that did the work.**
 
 cockpit runs the environment your AI coding agents work in. You declare your product's
 repositories once in <!-- cockpit:ref consumer=cockpit.toml --> `cockpit.toml`; cockpit starts the whole stack against your live local
-checkouts, renders each agent tool's instructions and skills, and hands finished work to an
-independent evaluator. Guard and permission support depends on the tool; see the
+checkouts, renders each agent tool's instructions and skills, and can hand finished work to an
+independent evaluator (experimental). Guard and permission support depends on the tool; see the
 [capability matrix](docs/capability-matrix.md). It holds none of your product code.
 
-> **Status: pre-alpha and not yet published.** Commands, configuration and the
+> **Status: pre-alpha, not yet on npm.** Commands, configuration and the
 > generated file layout may change without a compatibility layer before the first public release.
 > See [Status and limits](#status-and-limits).
 
@@ -35,8 +35,8 @@ prompting does not fix:
    instructions, skills, hooks and permissions in a different file and spelling. cockpit generates
    all of them from one declaration and fails `cockpit check` when any generated file changes.
 3. **Agents grade their own work.** "Done" is usually the author's own report. cockpit's work
-   orders end with a separate evaluator that reruns the declared checks and grades each
-   acceptance criterion from those results, not from the author's summary.
+   orders (experimental) end with a separate evaluator that reruns the declared checks and grades
+   each acceptance criterion from those results, not from the author's summary.
 
 ## How it works
 
@@ -47,7 +47,7 @@ flowchart LR
     sync --> surfaces["Agent surfaces<br/>instructions, skills, permissions"]
     compose --> session(("agent session"))
     surfaces --> session
-    session --> grade["independent evaluator<br/>reruns checks, grades criteria"]
+    session --> grade["independent evaluator (experimental)<br/>reruns checks, grades criteria"]
     check["cockpit check"] -. "fails on drift" .-> compose
     check -. "fails on drift" .-> surfaces
 ```
@@ -63,23 +63,35 @@ Requires Node.js, Git, and macOS or Linux; versions are in
 [Getting started](docs/getting-started.md#install-cockpit). The synthetic
 example needs no credentials and no Docker.
 
-**1. Copy the example** somewhere outside the checkout. It creates two throwaway Git repositories
-for cockpit to manage:
+**1. Clone cockpit and pack it.** cockpit is not on npm yet, so build the package from source; this
+is the same [source-package installation](docs/getting-started.md#install-from-source) the guides use:
 
 ```sh
-cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo" && cd "${TMPDIR:-/tmp}/cockpit-demo"
+git clone https://github.com/b0dea/cockpit && cd cockpit
+npm ci --ignore-scripts && npm run build
+COCKPIT_PACKAGE_DIR="$(mktemp -d)"
+npm pack --workspace @b0dea/cockpit --pack-destination "$COCKPIT_PACKAGE_DIR"
+```
+
+**2. Copy the example** outside the checkout and install the package there. Rerunning starts from
+a fresh copy:
+
+```sh
+rm -rf "${TMPDIR:-/tmp}/cockpit-demo" && cp -R examples/synthetic "${TMPDIR:-/tmp}/cockpit-demo"
+cd "${TMPDIR:-/tmp}/cockpit-demo"
 npm init --yes
-npm install --save-dev --save-exact @b0dea/cockpit
+npm install --save-dev "$COCKPIT_PACKAGE_DIR"/*.tgz
 ./node_modules/.bin/cockpit --help
 ```
 
-Until the package is published, use the verified
-[source-package installation](docs/getting-started.md#install-from-source) instead of an npm link.
+After the first npm release, replace the pack and the tarball install with
+`npm install --save-dev --save-exact @b0dea/cockpit`.
 
-**2. Run the repository bootstrap block** of
-[examples/synthetic/README.md](examples/synthetic/README.md) in that directory.
+**3. Run the repository bootstrap block** of
+[examples/synthetic/README.md](examples/synthetic/README.md) in that directory. It creates two
+throwaway Git repositories for cockpit to manage.
 
-**3. Preview what cockpit generates.** The dry run lists every file it would write for the
+**4. Preview what cockpit generates.** The dry run lists every file it would write for the
 agent tools and the stack, and writes none of them (output trimmed):
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
@@ -124,12 +136,13 @@ section.
   and commands that reach declared hosted databases or vendor hosts, and it fails closed on input
   it cannot read. The hook is installed for Claude Code, Codex CLI and OpenCode; that each tool
   fires it on its own is not yet confirmed. See [Safety and autonomy](docs/safety-and-autonomy.md).
-- **Work orders with evaluator guidance.** Acceptance criteria and declared verification commands
-  are generated with an evaluator surface that instructs a separate grading role. That the tool
-  keeps the role separate is unverified; see [Subagents in the built-in capability matrix](docs/harness-surfaces.md#built-in-capability-matrix).
+- **Work orders with evaluator guidance (experimental).** Acceptance criteria and declared
+  verification commands are generated with an evaluator surface that instructs a separate grading
+  role. That the tool keeps the role separate is unverified; see the
+  [capability matrix](docs/capability-matrix.md).
 - **Shared machines stay safe.** Port leases, holder tracking and `sleep` mean one agent cannot
   stop another agent's stack.
-- **Adopt what you already have.** `cockpit document` turns an existing shell-registry cockpit
+- **Adopt what you already have.** `cockpit document` turns an existing shell-script setup
   into an annotated draft, marking every value it inferred and every gap it could not fill.
 
 ## How cockpit compares
@@ -143,9 +156,10 @@ section.
 
 ## Generated agent-tool targets
 
-Claude Code, Codex CLI and OpenCode are the fully supported targets. cockpit also writes Cursor
-and Grok Build files, which the capability matrix marks `generated`: nobody has confirmed those
-tools load them, and cockpit installs no guard for them. Any other agent tool that reads
+Claude Code, Codex CLI and OpenCode are the primary targets: cockpit installs its guard hook for
+them; see the [capability matrix](docs/capability-matrix.md) for what each one is measured to
+enforce. cockpit also writes Cursor and Grok Build files, which the capability matrix marks
+`generated`: nobody has confirmed those tools load them, and cockpit installs no guard for them. Any other agent tool that reads
 `AGENTS.md` gets the same instructions, without skills, hooks or permissions.
 
 | Harness | Target name | Where cockpit writes its surfaces |
@@ -191,7 +205,9 @@ repository carries only synthetic fixtures. What is true today:
   code running as your user. [Safety and autonomy](docs/safety-and-autonomy.md) lists what each
   guard does.
 - **The synthetic example stops at `check`.** It declares services but ships no service code
-  to run, so it demonstrates configuration, generation and drift, not a running stack.
+  to run, so it demonstrates configuration, generation and drift, not a running stack. For a
+  running stack, use [examples/minimal](examples/minimal/README.md): one service, one port, one
+  health probe.
 - **One maintainer.** See [Governance](CONTRIBUTING.md#governance).
 
 ## Documentation
@@ -203,7 +219,7 @@ repository carries only synthetic fixtures. What is true today:
 | Move an existing setup over gradually | [Incremental adoption](docs/adoption.md) |
 | Look up a term | [Concepts](docs/concepts.md) |
 | Look up a command or flag | [CLI reference](docs/cli-reference.md) |
-| Look up a configuration field | [Configuration reference](docs/configuration-reference.md) |
+| Look up a configuration field | [The annotated configuration](docs/tutorial.md#read-the-configuration), then the full [Configuration reference](docs/configuration-reference.md) |
 | Fix a diagnostic | [Troubleshooting](docs/troubleshooting.md) |
 | Extend overlays, guards or harnesses | [Harness surfaces](docs/harness-surfaces.md#ownership-and-extension) and [Architecture](docs/architecture.md) |
 | Get a quick answer | [FAQ](docs/faq.md) |

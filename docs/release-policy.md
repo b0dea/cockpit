@@ -8,8 +8,10 @@ notice a breaking change gets, and what a migration note contains.
 ## Runtime support
 
 cockpit supports the Node.js versions listed in
-[Getting started](getting-started.md#install-cockpit), the range CI tests on macOS and
-Linux. The launcher refuses unsupported Node versions with
+[Getting started](getting-started.md#install-cockpit). After each merge to main, CI runs the full
+test suite on macOS and Linux at the lowest supported version, and a compatibility subset (the
+launcher, package metadata and runtime probe tests) on Linux at each other supported line. Once a
+week it runs the full suite on Linux at the newest supported line. The launcher refuses unsupported Node versions with
 [COCKPIT_NODE_VERSION_UNSUPPORTED](../packages/cockpit/bin/cockpit.mjs) before any compiled code
 loads. Environment commands also need Git and, for the stack, Docker with Compose; see the
 [prerequisites](getting-started.md#install-cockpit) for the current Docker runtime requirement.
@@ -18,10 +20,11 @@ Fixes land on the latest released minor only. Older minors are deprecated when a
 ships, so pin an exact version in each consumer lockfile and review an upgrade before applying
 its generated changes.
 
-Nothing is published yet. The development version is `0.0.0`, and the package stays private on
-the main development branch until a separate release branch deliberately prepares publication.
-Before the first public release, obsolete commands, paths and fields are removed without
-compatibility code or a migration promise. The policy below starts with published contracts;
+Nothing is published yet. The development version is `0.0.0`, and the package manifest stays
+private on main until a separate change prepares it for publication. Once that change merges,
+every release is published from main by merging the Version Packages pull request. Before the
+first public release, obsolete commands, paths and fields are removed without compatibility code
+or a migration promise. The policy below starts with published contracts;
 while the package remains pre-1.0, a minor release may still carry a breaking change.
 
 ## Deprecation
