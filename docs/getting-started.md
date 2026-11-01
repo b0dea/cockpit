@@ -421,7 +421,7 @@ The cockpit name scopes its Compose project names, its state and its generated f
 stack down first, then edit `cockpit.name` and regenerate in a terminal:
 
 ```sh
-DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml
+./node_modules/.bin/cockpit down --config ./cockpit.toml
 # edit name under [cockpit] in cockpit.toml, then:
 ./node_modules/.bin/cockpit sync --config ./cockpit.toml
 ./node_modules/.bin/cockpit check --config ./cockpit.toml
