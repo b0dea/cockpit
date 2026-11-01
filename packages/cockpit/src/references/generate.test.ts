@@ -406,6 +406,8 @@ describe('reference generation', () => {
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
         if (rendered.kind === 'complete') {
             expect(validateTroubleshootingIndex(inventory, rendered.troubleshooting.bytes)).toEqual([])
+            // A person looks this warning up to learn how to trust the hook, so the row carries the remedy.
+            expect(rendered.troubleshooting.bytes).toMatch(/^\| `CODEX_HOOK_UNTRUSTED` \| .*codex -C <cockpit root>.*Trust all and continue.* \|$/m)
             const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
             const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
             expect(documentSection).toContain('`DOCUMENT_GAP`')

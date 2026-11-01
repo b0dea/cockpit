@@ -575,7 +575,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
             if (metadata) return metadata
             const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
-                inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), configPath: resolve(input.configPath), env })])
+                inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), env })])
             return { ...outcome, diagnostics: [...outcome.diagnostics, ...hookTrust], result: outcome.report
                 ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
                 : outcome.result }

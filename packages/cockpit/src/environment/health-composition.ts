@@ -773,7 +773,7 @@ export function createHealthCommandAdapters(
         }
     }
     // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
-    const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), configPath: input.configPath, env: input.env })
+    const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), env: input.env })
         : undefined
     // Read after load, which selects this cockpit's state namespace; before that there is no state root to read.
     const readUnreadableState: NonNullable<HealthCommandAdapterComposition['readUnreadableState']> = async () => {

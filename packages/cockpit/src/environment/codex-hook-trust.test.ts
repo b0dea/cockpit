@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { renderHumanDiagnostics } from '../diagnostics.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 
 const scratch: string[] = []
@@ -36,10 +37,9 @@ async function estate(hooks: unknown = HOOKS) {
     if (hooks !== null) await writeFile(join(root, '.codex/hooks.json'), typeof hooks === 'string' ? hooks : JSON.stringify(hooks))
     const alias = join(base, 'alias')
     await symlink(root, alias)
-    const configPath = join(root, 'cockpit.toml')
     const trust = (source: string, hashes: Record<string, string>, extra = '') => writeFile(join(home, 'config.toml'),
         Object.entries(hashes).map(([suffix, hash]) => `[hooks.state."${source}/.codex/hooks.json:${suffix}"]\ntrusted_hash = "${hash}"\n${extra}`).join('\n'))
-    const inspect = (at = root) => inspectCodexHookTrust({ root: at, configPath, env: { CODEX_HOME: home } })
+    const inspect = (at = root) => inspectCodexHookTrust({ root: at, env: { CODEX_HOME: home } })
     return { root, alias, home, trust, inspect }
 }
 
@@ -49,8 +49,11 @@ describe('Codex hook trust', () => {
         const untrusted = await fixture.inspect()
         expect(untrusted).toEqual([expect.objectContaining({ severity: 'warning', code: 'CODEX_HOOK_UNTRUSTED', target: '.codex/hooks.json',
             message: expect.stringContaining('Codex has not trusted the guard hook'),
-            fix: expect.stringContaining(`codex -C ${fixture.root} in a terminal (not codex exec)`) })])
-        expect(untrusted[0]!.fix).toContain(`npx --no cockpit doctor --config ${join(fixture.root, 'cockpit.toml')}`)
+            fix: expect.stringContaining('codex -C <cockpit root> in a terminal (not codex exec)') })])
+        // The remedy is a literal so the troubleshooting index can repeat it; the printed fix still
+        // names this cockpit's configuration.
+        expect(renderHumanDiagnostics(untrusted, undefined, { resolvedConfigPath: join(fixture.root, 'cockpit.toml'), generatedTargets: [] }))
+            .toContain(`then run npx --no cockpit doctor --config ${join(fixture.root, 'cockpit.toml')}\n`)
 
         await fixture.trust(fixture.root, MEASURED)
         expect(await fixture.inspect()).toEqual([])
@@ -78,7 +81,7 @@ describe('Codex hook trust', () => {
         expect(await (await estate('{')).inspect()).toEqual(unverified)
         expect(await (await estate({ hooks: { PreToolUse: [{ hooks: [{ type: 'prompt' }] }] } })).inspect()).toEqual(unverified)
         const homeless = await estate()
-        expect(await inspectCodexHookTrust({ root: homeless.root, configPath: join(homeless.root, 'cockpit.toml'), env: {} })).toEqual(unverified)
+        expect(await inspectCodexHookTrust({ root: homeless.root, env: {} })).toEqual(unverified)
         // No published Codex hook means nothing to trust.
         expect(await (await estate(null)).inspect()).toEqual([])
     })

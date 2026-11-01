@@ -10,7 +10,6 @@ import { readFile, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { parse as parseToml, TomlError } from 'smol-toml'
 
-import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from './contract.js'
 
 export const mechanism = {
@@ -36,7 +35,6 @@ type Trust = 'trusted' | 'untrusted' | 'modified' | 'disabled'
 
 export interface CodexHookTrustInput {
     readonly root: string
-    readonly configPath: string
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
@@ -110,14 +108,16 @@ function trustFor(states: Record<string, unknown>, source: string, hooks: readon
     return trust
 }
 
-function warning(message: string, root: string, configPath: string): EnvironmentDiagnostic {
+function warning(message: string): EnvironmentDiagnostic {
     return Object.freeze({
         severity: 'warning' as const,
-        // A literal, so the diagnostic inventory captures the fix beside the code.
+        // Code and fix are literals, so the diagnostic inventory captures the fix beside the code and
+        // the troubleshooting index repeats it. The message names the hook's path, and the printed
+        // fix binds the configuration placeholder to the resolved path.
         code: 'CODEX_HOOK_UNTRUSTED' satisfies typeof ENVIRONMENT_CODES.CODEX_HOOK_UNTRUSTED,
         message,
         target: HOOKS_PATH,
-        fix: `if you use Codex in this cockpit, a person runs ${formatShellCommand(['codex', '-C', root])} in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run ${cockpitCommand('doctor', { config: configPath })}`,
+        fix: 'if you use Codex in this cockpit, a person runs codex -C <cockpit root> in a terminal (not codex exec), trusts the folder if asked, and chooses "Trust all and continue" when Codex shows "Hooks need review" (or enables and trusts the hook in its /hooks view); then run npx --no cockpit doctor --config <your cockpit.toml>',
     })
 }
 
@@ -129,8 +129,7 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     const root = resolve(input.root)
     const hooksPath = join(root, HOOKS_PATH)
     const unverified = (reason: string) => Object.freeze([warning(
-        `cockpit could not verify whether Codex trusts the guard hook in ${hooksPath} (${reason}); Codex skips a project hook until a person trusts it, and then runs tool calls without the guard`,
-        root, input.configPath)])
+        `cockpit could not verify whether Codex trusts the guard hook in ${hooksPath} (${reason}); Codex skips a project hook until a person trusts it, and then runs tool calls without the guard`)])
     let hooksBytes: string | 'missing'
     try { hooksBytes = await bounded(hooksPath) } catch (error) { return unverified(`reading it failed: ${(error as Error).message}`) }
     if (hooksBytes === 'missing') return Object.freeze([])
@@ -165,5 +164,5 @@ export async function inspectCodexHookTrust(input: CodexHookTrustInput): Promise
     const message = results.includes('disabled') ? `the guard hook in ${hooksPath} is disabled in ${codexConfig}, so ${consequence}`
         : results.includes('modified') ? `Codex trusted an earlier version of the guard hook in ${hooksPath}; until a person trusts the current one, ${consequence}`
             : `Codex has not trusted the guard hook in ${hooksPath} on this machine, so ${consequence}`
-    return Object.freeze([warning(message, root, input.configPath)])
+    return Object.freeze([warning(message)])
 }
