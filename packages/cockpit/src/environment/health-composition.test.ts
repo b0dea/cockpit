@@ -28,7 +28,7 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean; readonly unseeded?: boolean } = {}) {
+async function fixture(options: { readonly configuredRuntime?: boolean; readonly machineOnly?: boolean; readonly unmeasured?: boolean; readonly unseeded?: boolean; readonly uncommitted?: boolean } = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-composition-')))
     roots.push(root)
     const checkout = join(root, 'checkout')
@@ -76,8 +76,10 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
     await writeFile(configPath, config)
     if ((options.configuredRuntime || options.machineOnly) && !options.unmeasured) await recordSyntheticMeasurement(checkout)
     if (options.configuredRuntime) await writeFile(join(checkout, 'compose.yml'), 'services: {}\n')
-    await run('git', ['-C', checkout, 'add', 'cockpit.toml'])
-    await run('git', ['-C', checkout, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture'])
+    if (!options.uncommitted) {
+        await run('git', ['-C', checkout, 'add', 'cockpit.toml'])
+        await run('git', ['-C', checkout, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture'])
+    }
 
     const cockpit = cockpitId({ name: 'synthetic-cockpit', mainCheckoutPath: checkout })
     const currentCheckout = checkoutId({ checkoutPath: checkout })
@@ -399,6 +401,25 @@ else process.exit(64)
             severity: 'error', code: 'SETUP_PATH_TYPE_INVALID', target: candidate.configPath,
             message: expect.stringContaining(`git -C ${candidate.checkout} init`),
         }] })
+    })
+
+    it('names a cockpit repository with no commits yet once, with the commands that commit it', async () => {
+        const candidate = await fixture({ machineOnly: true, uncommitted: true })
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe)
+
+        const preflight = await runPreflight({ configPath: candidate.configPath }, adapters)
+
+        const git = preflight.diagnostics.filter(({ code, target }) => ['GIT_STATE_UNHEALTHY', 'CHECKOUT_ADJACENCY_UNHEALTHY',
+            'RUNNING_CHECKOUT_MISMATCH'].includes(code) || target === 'git')
+        expect(git).toEqual([expect.objectContaining({
+            code: 'GIT_STATE_UNHEALTHY',
+            message: expect.stringContaining('has no commits yet'),
+            fix: expect.stringContaining(`git -C ${candidate.checkout} add -A && git -C ${candidate.checkout} commit`),
+        })])
     })
 
     it('warns from doctor when Codex on this machine has not trusted the published guard hook', async () => {

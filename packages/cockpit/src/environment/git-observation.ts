@@ -1,8 +1,10 @@
 import { dirname } from 'node:path'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
+import { formatShellCommand } from '../fix-catalogue.js'
 import {
     ENVIRONMENT_CODES,
+    OBSERVATION_REASON_BYTE_LIMIT,
     snapshotEnvironmentObservation,
     isCanonicalTimestamp,
     snapshotExecutionStep,
@@ -47,7 +49,8 @@ function observationIssuedAt(value: unknown): number | undefined {
 }
 
 export interface GitObservationEvidence {
-    readonly revision: string
+    // null while HEAD is unborn: the repository was initialised and nothing is committed yet.
+    readonly revision: string | null
     readonly branch: string
     readonly upstream: string | null
     readonly ahead: number
@@ -55,7 +58,7 @@ export interface GitObservationEvidence {
     readonly trackedDirtyCount: number
     readonly untrackedCount: number
     readonly workingTree: 'clean' | 'dirty' | 'untracked' | 'dirty-and-untracked'
-    readonly adjacency: 'aligned' | 'ahead' | 'behind' | 'diverged' | 'untracked-upstream'
+    readonly adjacency: 'aligned' | 'ahead' | 'behind' | 'diverged' | 'untracked-upstream' | 'upstream-gone'
 }
 
 export type GitObservationResult =
@@ -128,12 +131,13 @@ function unavailable(reason: string): GitObservationResult {
 
 export function decodeGitObservation(
     bytes: Buffer,
-    context: { readonly stackId: StackId; readonly observedAt: string; readonly source: string },
+    context: { readonly stackId: StackId; readonly observedAt: string; readonly source: string; readonly checkoutRoot: string },
 ): GitObservationResult {
     if (bytes.byteLength > OUTPUT_LIMIT || !/^stack:[a-f0-9]{64}$/.test(context.stackId)
         || !isCanonicalTimestamp(context.observedAt) || typeof context.source !== 'string'
         || context.source.length === 0 || Buffer.byteLength(`${context.source}:working-tree`) > 1_024
-        || Buffer.byteLength(`${context.source}:adjacency`) > 1_024 || /[\x00-\x1f\x7f]/.test(context.source)) {
+        || Buffer.byteLength(`${context.source}:adjacency`) > 1_024 || /[\x00-\x1f\x7f]/.test(context.source)
+        || typeof context.checkoutRoot !== 'string' || context.checkoutRoot.length === 0 || /[\x00-\x1f\x7f]/.test(context.checkoutRoot)) {
         return unavailable('Git evidence exceeds its declared boundary')
     }
     let source: string
@@ -174,18 +178,33 @@ export function decodeGitObservation(
         else if (!line.startsWith('! ')) return unavailable('Git status evidence contains an unknown record')
     }
     const validIdentity = (value: string) => Buffer.byteLength(value) <= 1_024 && !/[\x00-\x1f\x7f]/.test(value)
-    if (!revision || !branch || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision) || !validIdentity(branch)
+    // `git init` leaves HEAD unborn, and Git reports that as `(initial)` rather than an object name.
+    const unborn = revision === '(initial)'
+    if (!revision || !branch || !unborn && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(revision) || !validIdentity(branch)
         || upstream !== null && !validIdentity(upstream)
-        || upstream === null && headers.has('adjacency')
-        || upstream !== null && !headers.has('adjacency')) {
+        || upstream === null && headers.has('adjacency')) {
         return unavailable('Git evidence omitted or malformed repository identity')
     }
+    const committed = unborn ? null : revision
     const workingTree = trackedDirtyCount > 0 && untrackedCount > 0 ? 'dirty-and-untracked'
         : trackedDirtyCount > 0 ? 'dirty' : untrackedCount > 0 ? 'untracked' : 'clean'
+    // Git names an upstream without counting against it when the upstream ref no longer exists,
+    // which is what a merged and deleted remote branch leaves behind.
     const adjacency = upstream === null ? 'untracked-upstream'
-        : ahead > 0 && behind > 0 ? 'diverged'
-            : ahead > 0 ? 'ahead' : behind > 0 ? 'behind' : 'aligned'
-    const evidence = Object.freeze({ revision, branch, upstream, ahead, behind, trackedDirtyCount, untrackedCount, workingTree, adjacency })
+        : !headers.has('adjacency') ? 'upstream-gone'
+            : ahead > 0 && behind > 0 ? 'diverged'
+                : ahead > 0 ? 'ahead' : behind > 0 ? 'behind' : 'aligned'
+    const evidence = Object.freeze({ revision: committed, branch, upstream, ahead, behind, trackedDirtyCount, untrackedCount, workingTree, adjacency })
+    const git = (...args: string[]) => formatShellCommand(['git', '-C', context.checkoutRoot, ...args])
+    const workingTreeRemedy = unborn
+        ? `review the files with \`${git('status', '--short')}\`, then commit them with \`${git('add', '-A')} && ${git('commit', '-m', 'Add the cockpit')}\``
+        : `review the changes with \`${git('status', '--short')}\`, then commit them, ignore them in .gitignore, or discard them`
+    const adjacencyRemedy = adjacency === 'upstream-gone'
+        ? `push the branch to recreate its upstream ${upstream}, or stop tracking it with \`${git('branch', '--unset-upstream')}\``
+        : 'reconcile the checkout with its declared upstream'
+    if ([workingTreeRemedy, adjacencyRemedy].some((remedy) => Buffer.byteLength(remedy) > OBSERVATION_REASON_BYTE_LIMIT)) {
+        return unavailable('Git checkout path is too long to name in its remedy')
+    }
     const common = {
         owner: mechanism.id,
         stackId: context.stackId,
@@ -193,10 +212,15 @@ export function decodeGitObservation(
         applicability: { state: 'required' as const, posture: 'environment' },
         freshness: { state: 'current' as const },
     }
-    const workingTreeValue = Object.freeze({ revision, branch, trackedDirtyCount, untrackedCount })
-    const workingTreeExpected = Object.freeze({ revision, branch, trackedDirtyCount: 0, untrackedCount: 0 })
-    const adjacencyValue = Object.freeze({ revision, branch, upstream, ahead, behind, adjacency })
-    const adjacencyExpected = Object.freeze({ revision, branch, upstream, ahead: 0, behind: 0,
+    const workingTreeValue = Object.freeze({ revision: committed, branch, trackedDirtyCount, untrackedCount })
+    const workingTreeExpected = Object.freeze({ revision: committed, branch, trackedDirtyCount: 0, untrackedCount: 0 })
+    // Without a commit there is no revision for the working tree to be clean against, so the missing
+    // commit is the one cause reported rather than a count of files that are all simply uncommitted.
+    const workingTreeObserved = unborn
+        ? { state: 'failed' as const, reason: `the repository at ${context.checkoutRoot} has no commits yet (${trackedDirtyCount} staged, ${untrackedCount} untracked), so there is no committed revision for its working tree to match`, observedAt: common.observedAt }
+        : { state: 'available' as const, value: workingTreeValue, observedAt: common.observedAt }
+    const adjacencyValue = Object.freeze({ revision: committed, branch, upstream, ahead, behind, adjacency })
+    const adjacencyExpected = Object.freeze({ revision: committed, branch, upstream, ahead: 0, behind: 0,
         adjacency: upstream === null ? 'untracked-upstream' : 'aligned' })
     const observations: readonly EnvironmentObservation[] = Object.freeze([
         {
@@ -204,11 +228,11 @@ export function decodeGitObservation(
             owner: common.owner,
             stackId: common.stackId,
             source: `${context.source}:working-tree`,
-            observed: { state: 'available', value: workingTreeValue, observedAt: common.observedAt },
+            observed: workingTreeObserved,
             expectation: { kind: 'equal', value: workingTreeExpected },
             applicability: common.applicability,
             freshness: common.freshness,
-            remedy: 'commit, discard, or deliberately retain the named checkout changes',
+            remedy: workingTreeRemedy,
         },
         {
             code: ENVIRONMENT_CODES.CHECKOUT_ADJACENCY_UNHEALTHY,
@@ -219,7 +243,7 @@ export function decodeGitObservation(
             expectation: { kind: 'equal', value: adjacencyExpected },
             applicability: common.applicability,
             freshness: common.freshness,
-            remedy: 'reconcile the checkout with its declared upstream',
+            remedy: adjacencyRemedy,
         },
     ])
     return { kind: 'complete', evidence, observations }
@@ -234,7 +258,8 @@ export function observeGit(
     if (!binding || binding.stackId !== context.stackId || binding.checkoutId !== context.checkoutId || binding.source !== context.source) return unavailable('Git observation context does not match its issued plan')
     const authenticated = authenticatedExecutionOutcome(outcome, step)
     if (!authenticated || authenticated.kind !== 'complete') return unavailable('Git execution evidence is unavailable or unauthenticated')
-    const decoded = decodeGitObservation(authenticated.stdout, { stackId: context.stackId, observedAt: authenticated.receipt.finishedAt, source: context.source })
+    const decoded = decodeGitObservation(authenticated.stdout, { stackId: context.stackId, observedAt: authenticated.receipt.finishedAt,
+        source: context.source, checkoutRoot: binding.checkoutRoot })
     if (decoded.kind !== 'complete') return decoded
     const result = Object.freeze({
         kind: 'complete' as const,
@@ -333,7 +358,7 @@ export function createGitAncestryObservationStep(input: {
     readonly ancestor: string
 }): ExecutionStep | undefined {
     const git = input.git.kind === 'complete' ? issuedGitResults.get(input.git) : undefined
-    if (!git || !/^[a-f0-9]{40}$/.test(input.ancestor) || !/^[a-f0-9]{40}$/.test(git.evidence.revision)) return undefined
+    if (!git || !/^[a-f0-9]{40}$/.test(input.ancestor) || git.evidence.revision === null || !/^[a-f0-9]{40}$/.test(git.evidence.revision)) return undefined
     const step = comparisonStep({
         id: 'git:comparison-ancestry', binding: git, env: git.env, timeoutMs: git.timeoutMs,
         argv: [git.executable.canonicalPath, '-C', git.checkoutRoot, 'merge-base', '--is-ancestor', input.ancestor, git.evidence.revision],
@@ -382,7 +407,7 @@ export function createComparisonRemoteRefStep(input: {
         return comparisonUnavailable(`Git status evidence is unavailable for sibling ${input.sibling}`)
     }
     const { branch, revision, upstream } = git.evidence
-    if (upstream === null || branch === '(detached)') {
+    if (upstream === null || revision === null || branch === '(detached)') {
         return comparisonUnavailable(`comparison upstream is unavailable for sibling ${input.sibling}`)
     }
     if (git.evidence.adjacency !== 'aligned') {

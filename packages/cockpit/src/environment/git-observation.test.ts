@@ -32,9 +32,10 @@ const stackId = `stack:${'4'.repeat(64)}` as StackId
 const checkoutId = `checkout:${'6'.repeat(64)}` as CheckoutId
 const observedAt = '2026-09-08T02:00:00.000Z'
 const revision = 'a'.repeat(40)
+const context = { stackId, observedAt, source: '/workspace/service', checkoutRoot: '/workspace' }
 
 function decode(lines: string) {
-    return decodeGitObservation(Buffer.from(lines.replaceAll('abcdef', revision)), { stackId, observedAt, source: '/workspace/service' })
+    return decodeGitObservation(Buffer.from(lines.replaceAll('abcdef', revision)), context)
 }
 
 describe('Git adjacency evidence', () => {
@@ -50,14 +51,29 @@ describe('Git adjacency evidence', () => {
     })
 
     it('refuses malformed UTF-8 and unbounded output', () => {
-        expect(decodeGitObservation(Buffer.from([0xff]), { stackId, observedAt, source: '/workspace/service' })).toMatchObject({ kind: 'unavailable' })
-        expect(decodeGitObservation(Buffer.alloc(65_537, 0x61), { stackId, observedAt, source: '/workspace/service' })).toMatchObject({ kind: 'unavailable' })
-        expect(decodeGitObservation(Buffer.from(`# branch.oid ${revision}\n# branch.head ${'é'.repeat(600)}\n`), { stackId, observedAt, source: '/workspace/service' })).toMatchObject({ kind: 'unavailable' })
+        expect(decodeGitObservation(Buffer.from([0xff]), context)).toMatchObject({ kind: 'unavailable' })
+        expect(decodeGitObservation(Buffer.alloc(65_537, 0x61), context)).toMatchObject({ kind: 'unavailable' })
+        expect(decodeGitObservation(Buffer.from(`# branch.oid ${revision}\n# branch.head ${'é'.repeat(600)}\n`), context)).toMatchObject({ kind: 'unavailable' })
     })
 
     it('rejects duplicate identity and adjacency headers', () => {
         expect(decode('# branch.oid one\n# branch.oid two\n# branch.head main\n')).toMatchObject({ kind: 'unavailable' })
         expect(decode('# branch.oid one\n# branch.head main\n# branch.ab +0 -0\n# branch.ab +0 -0\n')).toMatchObject({ kind: 'unavailable' })
+    })
+
+    it('observes a repository with no commits yet as one failed working tree with the commands that commit it', () => {
+        const result = decode('# branch.oid (initial)\n# branch.head main\n1 A. N... 000000 100644 100644 0 b cockpit.toml\n? AGENTS.md\n')
+        expect(result).toMatchObject({ kind: 'complete', evidence: { revision: null, branch: 'main', trackedDirtyCount: 1, untrackedCount: 1 } })
+        if (result.kind !== 'complete') throw new Error('unborn Git evidence is unavailable')
+        const [workingTree, adjacency] = result.observations
+        expect(workingTree).toMatchObject({
+            code: 'GIT_STATE_UNHEALTHY',
+            observed: { state: 'failed', reason: expect.stringContaining('/workspace has no commits yet') },
+            remedy: expect.stringContaining('`git -C /workspace add -A && git -C /workspace commit -m \'Add the cockpit\'`'),
+        })
+        expect(observationSatisfiesExpectation(workingTree!)).toBe(false)
+        expect(adjacency).toMatchObject({ observed: { state: 'available', value: { revision: null, adjacency: 'untracked-upstream' } } })
+        expect(observationSatisfiesExpectation(adjacency!)).toBe(true)
     })
 
     it('accepts only a bounded outcome issued for the resolved Git step', async () => {
@@ -92,7 +108,12 @@ describe('Git adjacency evidence', () => {
             if (ahead.kind !== 'complete') throw new Error('selected upstream evidence is unavailable')
             expect(observationSatisfiesExpectation(ahead.observations.find(({ code }) => code === 'CHECKOUT_ADJACENCY_UNHEALTHY')!)).toBe(false)
             execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: root })
-            expect(observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })).toMatchObject({ kind: 'unavailable' })
+            const gone = observeGit(step, await executeProbe(step), { stackId, checkoutId, source: root })
+            expect(gone).toMatchObject({ kind: 'complete', evidence: { upstream: 'origin/main', adjacency: 'upstream-gone' } })
+            if (gone.kind !== 'complete') throw new Error('gone upstream evidence is unavailable')
+            const goneAdjacency = gone.observations.find(({ code }) => code === 'CHECKOUT_ADJACENCY_UNHEALTHY')!
+            expect(observationSatisfiesExpectation(goneAdjacency)).toBe(false)
+            expect(goneAdjacency.remedy).toContain(`git -C ${root} branch --unset-upstream`)
             expect(observeGit(step, { ...outcome }, { stackId, checkoutId, source: root })).toEqual({
                 kind: 'unavailable', reason: 'Git execution evidence is unavailable or unauthenticated',
             })
@@ -177,7 +198,8 @@ describe('Git adjacency evidence', () => {
             kind: 'complete',
             evidence: { trackedDirtyCount: 1, untrackedCount: 1 },
             observations: [
-                { observed: { value: { revision, branch: 'main', trackedDirtyCount: 1, untrackedCount: 1 } } },
+                { observed: { value: { revision, branch: 'main', trackedDirtyCount: 1, untrackedCount: 1 } },
+                    remedy: expect.stringContaining('`git -C /workspace status --short`') },
                 { observed: { value: { revision, branch: 'main', adjacency: 'aligned' } } },
             ],
         })
