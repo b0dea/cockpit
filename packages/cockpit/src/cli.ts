@@ -98,6 +98,7 @@ import type {
     GeneratedStaleRemovalApproval,
     GeneratedStaleRemovalApprovalRequest,
 } from './environment/generated-application.js'
+import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
 import { runConfiguredUpgradeCommand } from './upgrade/command.js'
 import { createReleaseEvidenceDiscovery } from './upgrade/release-evidence.js'
 import {
@@ -586,8 +587,9 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             if (loaded.kind !== 'complete') return loaded
             const metadata = teamMetadataOutcome(await validateTeamMetadata(input.configPath))
             if (metadata) return metadata
-            const outcome = await checkGeneratedEnvironment(input)
-            return { ...outcome, result: outcome.report
+            const [outcome, hookTrust] = await Promise.all([checkGeneratedEnvironment(input),
+                inspectCodexHookTrust({ root: dirname(resolve(input.configPath)), configPath: resolve(input.configPath), env })])
+            return { ...outcome, diagnostics: [...outcome.diagnostics, ...hookTrust], result: outcome.report
                 ? outcome.kind === 'complete' ? { ...outcome.result, currentness: outcome.report } : outcome.report
                 : outcome.result }
         },

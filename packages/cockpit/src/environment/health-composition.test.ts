@@ -402,6 +402,23 @@ else process.exit(64)
         }] })
     })
 
+    it('warns from doctor when Codex on this machine has not trusted the published guard hook', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        await mkdir(join(candidate.checkout, '.codex'))
+        await writeFile(join(candidate.checkout, '.codex/hooks.json'), JSON.stringify({ hooks: { PreToolUse: [
+            { matcher: 'Bash', hooks: [{ type: 'command', command: 'exit 0' }] }] } }))
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe)
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'CODEX_HOOK_UNTRUSTED',
+            message: expect.stringContaining(`Codex has not trusted the guard hook in ${join(candidate.checkout, '.codex/hooks.json')}`) }))
+    })
+
     it('preserves a lifecycle owner refusal before observing Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true })
         const history = lifecycleHistoryAddress(candidate.namespace, candidate.stack)

@@ -4262,6 +4262,8 @@ export type DoctorSurfaceOverrideInspection =
 export interface DoctorCommandAdapters extends ObservationCommandAdapters {
     readonly inspectSurfaceOverrides?: (configPath: string) => Promise<DoctorSurfaceOverrideInspection>
     readonly discoverReleaseFreshness?: () => Promise<ReleaseFreshness>
+    /** Warnings when an agent tool on this machine would skip the generated guard hook. */
+    readonly inspectHookTrust?: () => Promise<readonly EnvironmentDiagnostic[]>
 }
 
 interface DoctorFreshness {
@@ -4875,9 +4877,11 @@ export async function runDoctor(
     adapters: DoctorCommandAdapters,
 ): Promise<DoctorCommandResult> {
     const config = loadCockpitConfig(input.configPath)
-    const [outcome, guardHosts] = await Promise.all([doctorHealth(input, adapters, config), doctorGuardHostDiagnostics(config)])
-    return guardHosts.length === 0 ? outcome
-        : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...guardHosts]) })
+    const [outcome, guardHosts, hookTrust] = await Promise.all([doctorHealth(input, adapters, config), doctorGuardHostDiagnostics(config),
+        adapters.inspectHookTrust?.() ?? Object.freeze([])])
+    const warnings = [...guardHosts, ...hookTrust]
+    return warnings.length === 0 ? outcome
+        : Object.freeze({ ...outcome, diagnostics: Object.freeze([...outcome.diagnostics, ...warnings]) })
 }
 
 async function doctorHealth(

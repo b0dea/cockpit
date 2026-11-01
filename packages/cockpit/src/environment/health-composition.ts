@@ -11,6 +11,7 @@ import {
     withLifecycleConfiguration,
 } from './application.js'
 import { decodeCoordinationRecord, observeClaimState } from './claims.js'
+import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
     ENVIRONMENT_CODES,
@@ -768,5 +769,8 @@ export function createHealthCommandAdapters(
             })
         }
     }
-    return Object.freeze({ load, inspectSurfaceOverrides, execute: (step: ExecutionStep) => execute(step) })
+    // Codex skips a project hook nobody on this machine has trusted, so doctor says so.
+    const inspectHookTrust = input ? () => inspectCodexHookTrust({ root: dirname(input.configPath), configPath: input.configPath, env: input.env })
+        : undefined
+    return Object.freeze({ load, inspectSurfaceOverrides, ...(inspectHookTrust ? { inspectHookTrust } : {}), execute: (step: ExecutionStep) => execute(step) })
 }
