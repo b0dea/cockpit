@@ -271,8 +271,9 @@ vendor_endpoint_hosts = []
 | `environment.generated` | the generated environment to render |
 | `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
 | `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |
+| `environment.posture` | exactly `addressing`, `authentication` and `posture_requirements`: how the product is reached locally and how sign-in works, asked only where a runtime is declared; a posture that would fail `preflight` is refused ([Declare environment postures](environment.md#declare-environment-postures)) |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; both `[]` records that none exists |
-| `provenance` | optional table saying who chose each answer, keyed by field: `"human"` (the default) or `"agent-default"`, for example `"environment.machine" = "agent-default"` |
+| `provenance` | optional table saying who chose each answer, keyed by field: `"human"` (the default) or `"agent-default"`, for example `"environment.machine" = "agent-default"`. Each key must be a field the same file answers; `cockpit.root` takes none |
 
 An answer is recorded in `cockpit.toml` as one a person stated unless `[provenance]` marks it
 `"agent-default"`. Each agent default, and an `environment.machine` floor the file does not
