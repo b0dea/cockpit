@@ -75,6 +75,7 @@ vi.mock('../config/load.js', async (importOriginal) => ({
     ...await importOriginal<typeof import('../config/load.js')>(),
     loadCockpitConfig: vi.fn(async () => ({ kind: 'complete', result: {
         source: { ...source, sha256: controls.configSha256 ?? source.sha256 },
+        runtimeSha256: controls.configSha256 ?? source.sha256,
         config: { cockpit: { siblings_root: '.' }, sibling: [{ var: 'APP_DIR', dir: 'app' }], environment: controls.generated
             ? { generated: controls.generated }
             : { compose_files: ['compose.yml'] } },
@@ -87,6 +88,7 @@ vi.mock('./lifecycle-composition.js', () => ({
         load: vi.fn(async () => ({ kind: 'complete', result: {
             configPath: source.path,
             source: { ...source, sha256: controls.configSha256 ?? source.sha256 },
+            runtimeSha256: controls.configSha256 ?? source.sha256,
             namespace: {
                 paths: {
                     lifecycle: () => ({ kind: 'lifecycle', path: '/state/lifecycle', cockpitId: lifecycleRecord.cockpitId, subjectId: stackId }),
@@ -186,7 +188,7 @@ vi.mock('./state.js', async (importOriginal) => ({
         controls.lifecycleReads += 1
         const application = controls.generatedApplication
         const selectedBase = controls.generatedReplay ? { ...lifecycleRecord, value: { ...lifecycleRecord.value, generatedReplay: {
-            sourceSha256: typeof application?.sourceSha256 === 'string' ? application.sourceSha256 : source.sha256,
+            runtimeSha256: typeof application?.runtimeSha256 === 'string' ? application.runtimeSha256 : source.sha256,
             generation: controls.generatedReplayGeneration
                 ?? (typeof application?.generation === 'string' ? application.generation : sha('8')),
             profiles: Array.isArray(application?.profiles) ? application.profiles : ['application'],
@@ -393,6 +395,7 @@ describe('production read command composition', () => {
         controls.generatedReplay = true
         controls.generatedApplication = Object.freeze({
             sourceSha256: source.sha256,
+            runtimeSha256: source.sha256,
             generation,
             generatedComposeAuthority: authority!,
             profiles: rendered.replay.profiles,

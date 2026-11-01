@@ -353,7 +353,7 @@ export function createDestructiveCommandAdapters(
         const common = Object.freeze({
             stackId: context.stackId,
             cockpitId: context.cockpitId,
-            configSha256: context.source.sha256,
+            configSha256: context.runtimeSha256,
             coordinationRecord: stored.value,
             coordinationAddress,
             requesterHolderId: context.holderId,

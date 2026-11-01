@@ -61,7 +61,7 @@ const issuedAuthorities = new WeakMap<object, LifecycleAuthorityBinding>()
 const issuedLifecycleStageProjections = new WeakMap<object, LifecycleStageEvidence>()
 
 export interface GeneratedLifecycleReplay {
-    readonly sourceSha256: string
+    readonly runtimeSha256: string
     readonly generation: string
     readonly profiles: readonly string[]
     readonly mounts: readonly string[]
@@ -109,14 +109,14 @@ export function decodeLifecycleRecord(
     if (Object.hasOwn(candidate, 'generatedReplay')) {
         const value = candidate.generatedReplay
         if (!value || typeof value !== 'object' || Array.isArray(value)
-            || Object.keys(value).sort().join('\0') !== ['generation', 'mounts', 'profiles', 'sourceSha256'].join('\0')) return undefined
+            || Object.keys(value).sort().join('\0') !== ['generation', 'mounts', 'profiles', 'runtimeSha256'].join('\0')) return undefined
         const record = value as Record<string, unknown>
-        if (typeof record.sourceSha256 !== 'string' || !lifecycleDigest.test(record.sourceSha256)
+        if (typeof record.runtimeSha256 !== 'string' || !lifecycleDigest.test(record.runtimeSha256)
             || typeof record.generation !== 'string' || !lifecycleDigest.test(record.generation)
             || !Array.isArray(record.profiles) || !Array.isArray(record.mounts)
             || record.profiles.length > 4_096 || record.mounts.length > 4_096
             || [...record.profiles, ...record.mounts].some((item) => typeof item !== 'string' || item.length === 0 || item.includes('\0'))) return undefined
-        replay = Object.freeze({ sourceSha256: record.sourceSha256, generation: record.generation,
+        replay = Object.freeze({ runtimeSha256: record.runtimeSha256, generation: record.generation,
             profiles: Object.freeze([...record.profiles]), mounts: Object.freeze([...record.mounts]) })
     }
     let progress: GeneratedLifecycleProgress | undefined

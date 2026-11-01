@@ -174,10 +174,37 @@ cold_start_seconds = 300
                     byteLength: Buffer.byteLength(validConfig),
                     sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
                 },
+                runtimeSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
                 // The fixture writes no guard host keys, so their empty defaults are not an operator statement.
                 guardHostsStated: false,
             },
         })
+    })
+
+    it('keeps the runtime identity across edits that reach no container and changes it with one that does', async () => {
+        const identity = async (bytes: string) => {
+            const loaded = await loadCockpitConfig(fixture(bytes))
+            if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded.diagnostics))
+            return { file: loaded.result.source.sha256, runtime: loaded.result.runtimeSha256 }
+        }
+        const base = await identity(validConfig)
+        const unused = '[[sibling]]\nslug = "docs"\ndir = "docs"\nmount = "none"\nacquire = "none"\nvar = "DOCS_DIR"\npurpose = "Synthetic docs"\n'
+        for (const cosmetic of [
+            validConfig.replace('purpose = "Synthetic API"', 'purpose = "Synthetic API, described again"'),
+            `# a comment\n${validConfig.replaceAll(' = ', '   =   ')}`,
+            `${validConfig}\n[guards]\nprotected_branches = ["main", "release"]\n`,
+            validConfig.replace('branch = "main"', 'branch = "trunk"'),
+            validConfig.replace('[ports]', `${unused}\n[ports]`),
+        ]) {
+            const edited = await identity(cosmetic)
+            expect(edited.file).not.toBe(base.file)
+            expect(edited.runtime, cosmetic).toBe(base.runtime)
+        }
+        for (const runtime of [
+            validConfig.replace('APP_PORT = 4100', 'APP_PORT = 4200'),
+            validConfig.replace('dir = "api-service"', 'dir = "api"'),
+            validConfig.replace('[ports]', `${unused.replace('mount = "none"', 'mount = "always"')}\n[ports]`),
+        ]) expect((await identity(runtime)).runtime, runtime).not.toBe(base.runtime)
     })
 
     it('reports provenance from the native canonical config path', async () => {
@@ -235,6 +262,7 @@ cold_start_seconds = 30
         expect(consumeMachineFloorConfigProjection(projection!)).toEqual({
             cockpitName: 'synthetic-cockpit',
             source: loaded.result.source,
+            runtimeSha256: loaded.result.runtimeSha256,
             floor: { runtimeMemoryMb: 4096, runtimeCpus: 2.5, freeDiskMb: 8192 },
         })
         expect(consumeMachineFloorConfigProjection(projection!)).toBeUndefined()

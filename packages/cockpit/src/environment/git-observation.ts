@@ -511,6 +511,7 @@ export type RunningCheckoutObservationResult =
 export function observeRunningCheckout(
     topology: RuntimeTopologyEvidence,
     checkoutProjection: SetupCheckoutProjection,
+    runtimeSha256: string,
     observedAt: string,
 ): RunningCheckoutObservationResult {
     const checkout = consumeSetupCheckoutProjection(checkoutProjection)
@@ -526,7 +527,7 @@ export function observeRunningCheckout(
     const expectedStack = deriveStackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } })
     const measured = Object.freeze({ stackId: topology.stackId, configSha256: topology.configSha256,
         checkoutMatches: topology.cwd === dirname(checkout.source.path) })
-    const expected = Object.freeze({ stackId: expectedStack, configSha256: checkout.source.sha256, checkoutMatches: true })
+    const expected = Object.freeze({ stackId: expectedStack, configSha256: runtimeSha256, checkoutMatches: true })
     const observation: EnvironmentObservation = {
         code: ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH, owner: mechanism.id, stackId: expectedStack,
         source: `${checkout.source.path}:running-checkout`, observed: { state: 'available', value: measured, observedAt },

@@ -219,6 +219,7 @@ interface PreparedEnvironment {
     readonly runtimeCheckout?: GeneratedCheckoutIdentity
     readonly configPath: string
     readonly sourceSha256: string
+    readonly runtimeSha256: string
     readonly personaSource: Readonly<{ path: string; sha256: string }>
     readonly personaSourceIdentity: PersonaSourceIdentity
     readonly generation: string
@@ -401,6 +402,8 @@ interface CommandResult {
 export interface GeneratedApplicationProjection {
     readonly generatedPaths: readonly GeneratedPathFact[]
     readonly sourceSha256: string
+    /** The stack identity the generated files were rendered for; see `runtimeDeclarationSha256`. */
+    readonly runtimeSha256: string
     readonly generation: string
     /** Absent when no generated environment is declared; there is then no cockpit-rendered Compose file to authenticate. */
     readonly generatedComposeAuthority?: GeneratedComposeArtifactAuthority
@@ -670,6 +673,7 @@ function complete(
     const application = Object.freeze({
         generatedPaths: generatedPaths.facts,
         sourceSha256: prepared.sourceSha256,
+        runtimeSha256: prepared.runtimeSha256,
         generation: prepared.generation,
         ...(prepared.generatedComposeAuthority ? { generatedComposeAuthority: prepared.generatedComposeAuthority } : {}),
         surfaceSelftest: prepared.surfaceSelftest,
@@ -1510,7 +1514,9 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     if (portLease !== undefined && (!suppliedPorts || suppliedPorts.lease.stackId !== currentStack)) {
         return refuse('GENERATED_INPUT_INVALID', 'the generated environment port lease authority is invalid', 'browser')
     }
-    const generation = sha256(`generated-environment\0${loaded.result.source.sha256}`)
+    // Derived from the runtime declarations, not the file bytes, so rewording a purpose or a guard
+    // keeps the running stack's identity.
+    const generation = sha256(`generated-environment\0${loaded.result.runtimeSha256}`)
     const node = await nodeAuthority()
     if (!node) return refuse(
         'GENERATED_EXECUTABLE_UNAVAILABLE',
@@ -1559,7 +1565,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     }
     const rendered = declaration ? renderGeneratedEnvironment({
         declaration,
-        sourceSha256: loaded.result.source.sha256,
+        sourceSha256: loaded.result.runtimeSha256,
         generation,
         stackId: currentStack,
         cockpitId: currentCockpit,
@@ -1585,7 +1591,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
             sources.push({ reference, source: read.bytes.toString('utf8') })
         }
         const ownership = renderComposeOwnership({ sources, stackId: currentStack, cockpitId: currentCockpit,
-            configSha256: loaded.result.source.sha256 })
+            configSha256: loaded.result.runtimeSha256 })
         if (ownership.kind !== 'complete') return refuse('GENERATED_DECLARATION_INVALID',
             `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target)
         composeOwnership = Object.freeze({ path: COMPOSE_OWNERSHIP_FILE, bytes: ownership.bytes, sha256: sha256(ownership.bytes) })
@@ -1659,6 +1665,7 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
         ...(runtimeCheckout ? { runtimeCheckout } : {}),
         configPath: loaded.result.source.path,
         sourceSha256: loaded.result.source.sha256,
+        runtimeSha256: loaded.result.runtimeSha256,
         personaSource: Object.freeze({ path: sourcePath, sha256: persona.source.sha256 }),
         personaSourceIdentity: source.identity,
         generation,

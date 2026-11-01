@@ -22,6 +22,7 @@ type Operation = GeneratedEnvironmentDeclaration['services'][number]['health']['
 
 export interface GeneratedEnvironmentInput {
     readonly declaration: unknown
+    /** `runtimeDeclarationSha256` of the configuration, not its file bytes: it becomes the stack's ownership labels. */
     readonly sourceSha256: string
     readonly generation: string
     readonly stackId: string
@@ -185,7 +186,7 @@ function renderDecisions(declaration: GeneratedEnvironmentDeclaration, sourceSha
         '',
         'This file is generated from the resolved environment declaration.',
         '',
-        `- Source SHA-256: ${decisionValue(sourceSha256)}`,
+        `- Runtime declaration SHA-256: ${decisionValue(sourceSha256)}`,
         `- Generation: ${decisionValue(generation)}`,
     ]
     lines.push('', '**Service resource ceilings**', '')

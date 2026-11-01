@@ -548,7 +548,7 @@ export function createLifecycleCommandAdapters(
             return undefined
         }
         const projection = generatedApplicationProjection(outcome.result.application)
-        if (!projection || projection.sourceSha256 !== context.source.sha256
+        if (!projection || projection.sourceSha256 !== context.source.sha256 || projection.runtimeSha256 !== context.runtimeSha256
             || !generatedProjectionMatches(generated, binding.config.browser, projection)) return undefined
         bindings.set(context, Object.freeze({ ...binding, generatedApplication: projection }))
         return projection
@@ -800,7 +800,7 @@ export function createLifecycleCommandAdapters(
         const durable = await readDataModeOutcome({
             namespace: context.namespace,
             stackId: context.stackId,
-            configSha256: context.source.sha256,
+            configSha256: context.runtimeSha256,
             generation: projection.generation,
             mode: data.default_mode,
         })
@@ -950,7 +950,7 @@ export function createLifecycleCommandAdapters(
             // publishes adds them, and it is admitted only while it equals a fresh render.
             const ownership = renderComposeOwnership({
                 sources: declared.map(({ reference, source }) => ({ reference, source })),
-                stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
+                stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
             })
             if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
                 `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
@@ -983,7 +983,7 @@ export function createLifecycleCommandAdapters(
             projectName: currentBinding.config.cockpit.name,
             env,
             ports: ports ? Object.freeze(Object.values(ports.lease.ports)) : Object.freeze([]),
-            labels: { stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256, batchId },
+            labels: { stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256, batchId },
             timeoutMs: input.timeoutMs,
             stackId: context.stackId,
             coldStartLimitMillis: machine.cold_start_seconds * 1_000,
@@ -1004,7 +1004,7 @@ export function createLifecycleCommandAdapters(
         const topologyPlan = createRuntimeTopologyPlan({
             runtimePlan: runtime.plan,
             stackId: context.stackId,
-            configSha256: context.source.sha256,
+            configSha256: context.runtimeSha256,
             batchId,
             observationWindow: {
                 startedAt,

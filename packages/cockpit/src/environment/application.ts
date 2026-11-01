@@ -770,6 +770,8 @@ export interface SessionCommandInput {
 export interface LifecycleRunContext {
     readonly configPath: string
     readonly source: SourceProvenance
+    /** Identifies the stack: its ownership labels, generation, saved progress and data history. */
+    readonly runtimeSha256: string
     readonly namespace: StateNamespace
     readonly cockpitId: ConsumedSetupCheckoutObservation['cockpitId']
     readonly checkoutId: CheckoutId
@@ -942,7 +944,7 @@ const lifecycleConfigurationSources = new WeakMap<object, Readonly<{ source: Sou
 const issuedDestructiveRuns = new WeakSet<object>()
 
 type EffectiveConfigurationResult =
-    | Readonly<{ kind: 'complete'; source: SourceProvenance; config: CockpitConfig }>
+    | Readonly<{ kind: 'complete'; source: SourceProvenance; runtimeSha256: string; config: CockpitConfig }>
     | Readonly<{ kind: 'unavailable' }>
     | Extract<RegistryDerivationResult, { kind: 'refusal' }>
 
@@ -951,7 +953,7 @@ function consumeEffectiveConfiguration(configuration: LoadedConfigProjection): E
     if (!loaded) return Object.freeze({ kind: 'unavailable' })
     const derived = deriveRegistry(loaded.config)
     return derived.kind === 'complete'
-        ? Object.freeze({ kind: 'complete', source: loaded.source, config: derived.result.config as CockpitConfig })
+        ? Object.freeze({ kind: 'complete', source: loaded.source, runtimeSha256: loaded.runtimeSha256, config: derived.result.config as CockpitConfig })
         : derived
 }
 
@@ -1018,6 +1020,7 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
         const context = Object.freeze({
             configPath: resolve(requestedConfigPath),
             source: Object.freeze({ ...loaded.source }),
+            runtimeSha256: loaded.runtimeSha256,
             namespace,
             cockpitId: checkout.cockpitId,
             checkoutId: checkout.checkoutId,
@@ -2142,7 +2145,7 @@ const generatedBringupRuns = new WeakMap<LifecycleRunContext, GeneratedApplicati
 const generatedBringupProgress = new WeakMap<LifecycleRunContext, GeneratedProgress>()
 
 function generatedReplay(projection: GeneratedApplicationProjection): GeneratedLifecycleReplay {
-    return Object.freeze({ sourceSha256: projection.sourceSha256, generation: projection.generation,
+    return Object.freeze({ runtimeSha256: projection.runtimeSha256, generation: projection.generation,
         profiles: projection.profiles, mounts: projection.mounts })
 }
 
@@ -2472,7 +2475,7 @@ async function prepareGeneratedBringup(
         `generated publication failed: ${error instanceof Error ? error.message : String(error)}`, context.configPath) }
     if (portRefusal) return forwardedRefusal(portRefusal)
     const projected = generatedApplicationProjection(prepared)
-    if (!projected || projected.sourceSha256 !== context.source.sha256) {
+    if (!projected || projected.sourceSha256 !== context.source.sha256 || projected.runtimeSha256 !== context.runtimeSha256) {
         return lifecycleRefusal(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
             'generated publication authority does not match lifecycle configuration', context.configPath)
     }
@@ -2532,9 +2535,9 @@ async function completeGeneratedBringup(
     if (selection?.kind === 'refusal') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         registryRefusalMessage(selection), context.stackId)
     if (!selection || selection.kind !== 'complete' || runtime.topology.stackId !== context.stackId
-        || runtime.topology.configSha256 !== projection.sourceSha256
+        || runtime.topology.configSha256 !== projection.runtimeSha256
         || runtime.topology.services.some((service) => service.generation !== projection.generation
-            || service.sourceSha256 !== projection.sourceSha256)) {
+            || service.sourceSha256 !== projection.runtimeSha256)) {
         return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
             'generated lifecycle source or runtime identity changed', context.stackId)
     }
@@ -2610,7 +2613,7 @@ async function completeGeneratedBringup(
         for (const observation of dependencyEvidence) {
             const matching = selection.dependencies.filter(({ checkoutId, lockfilePath, target, policy }) => isInstallObservation(observation, {
                 checkoutId, lockfilePath, target, policy, stackId: context.stackId,
-                configSha256: projection.sourceSha256, generation: projection.generation,
+                configSha256: projection.runtimeSha256, generation: projection.generation,
             }))
             if (matching.length !== 1 || !isInstallObservation(observation)
                 || observation.stackId !== context.stackId || observation.freshness.state !== 'current'
@@ -2644,7 +2647,7 @@ async function completeGeneratedBringup(
             const data = await adapters.completeGeneratedData!(context, runtime, services, projection)
             if (data.kind === 'refusal') {
                 const failed = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
-                    configSha256: projection.sourceSha256, generation: projection.generation, mode })
+                    configSha256: projection.runtimeSha256, generation: projection.generation, mode })
                 const recorded = failed && consumeDataModeOutcomeProjection(failed)
                 if (recorded?.outcome.kind === 'refusal' && isCanonicalTimestamp(recorded.observedAt)
                     && Date.parse(recorded.observedAt) >= Date.parse(runtime.topology.observationWindow.startedAt)
@@ -2655,16 +2658,16 @@ async function completeGeneratedBringup(
             }
             if (data.kind !== 'complete'
                 || !((isDataModeCompletion(data.result, {
-                        stackId: context.stackId, configSha256: projection.sourceSha256,
+                        stackId: context.stackId, configSha256: projection.runtimeSha256,
                         generation: projection.generation, mode,
                         earliestMs: Date.parse(runtime.topology.observationWindow.startedAt), latestMs: Date.now(),
                     }) && data.result.mode === mode)
                     || (isDataModeObservation(data.result) && current(data.result, isDataModeObservation)
-                        && data.result.source === `data-mode:${projection.sourceSha256}:${projection.generation}`))) {
+                        && data.result.source === `data-mode:${projection.runtimeSha256}:${projection.generation}`))) {
                 return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data')
             }
             const persisted = await readDataModeOutcome({ namespace: context.namespace, stackId: context.stackId,
-                configSha256: projection.sourceSha256, generation: projection.generation, mode })
+                configSha256: projection.runtimeSha256, generation: projection.generation, mode })
             const durable = persisted && consumeDataModeOutcomeProjection(persisted)
             if (!durable || durable.outcome.kind !== 'complete') return unavailable(ENVIRONMENT_CODES.DATA_MODE_UNAVAILABLE, 'data history')
             merge({ applied: ['data', ...durable.outcome.applied], notApplied: [] })
@@ -2683,7 +2686,7 @@ async function completeGeneratedBringup(
                 if (!isExternalDependencyObservationProjection(observation) || !observation.dependency
                     || !selection.vendors.includes(observation.dependency.id)
                     || !isExternalDependencyObservationProjection(observation, {
-                        stackId: context.stackId, sourceSha256: projection.sourceSha256, generation: projection.generation,
+                        stackId: context.stackId, sourceSha256: projection.runtimeSha256, generation: projection.generation,
                         purpose: 'startup', dependencyId: observation.dependency.id,
                     })
                     || !isCanonicalTimestamp(observation.observedAt)
@@ -2747,13 +2750,12 @@ async function executeUpRound(
         const generated = generatedBringupRuns.get(context)
         const teardownComplete = stored?.value.teardownComplete === true
         if (stored && generated && !teardownComplete && !isDeepStrictEqual(stored.value.generatedReplay, generatedReplay(generated))) {
-            // Stack resources carry the SHA-256 of the file that started them and `down` removes only
-            // matching ones, so the old file has to come back for one `down`; `up` is not needed for it.
-            const file = basename(context.source.path)
-            const sync = cockpitCommand('sync', { config: context.source.path })
+            // The replay names the runtime declarations, so only a change that reaches the containers
+            // lands here. `up` never recreates a running stack in place; `down` removes it by its
+            // ownership labels whatever the configuration says now.
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                `the recorded stack was started from a different ${file}, and cockpit removes a stack only under the exact configuration that started it — fix: restore the previous ${file}, run \`${sync}\` then \`${lifecycleSuggestion(context, 'down')}\`, restore the intended ${file}, then run \`${sync}\` and \`${lifecycleSuggestion(context, 'up')}\``,
+                `the recorded stack runs an earlier version of the services, ports, mounts or images in ${basename(context.source.path)}, and up does not replace a running stack — fix: run \`${lifecycleSuggestion(context, 'down')}\`, then \`${lifecycleSuggestion(context, 'up')}\``,
                 context.stackId) }
         }
         if (teardownComplete) {

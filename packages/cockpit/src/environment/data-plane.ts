@@ -79,7 +79,9 @@ interface PlannedContract {
     readonly stackId: StackId
     readonly holderId: HolderId
     readonly configPath: string
+    /** The file's bytes, which a restore reservation re-reads; data history is keyed by `runtimeSha256`. */
     readonly configSha256: string
+    readonly runtimeSha256: string
     readonly generation: string
     readonly observedAt: string
     readonly issuedAtMs: number
@@ -315,7 +317,7 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
     if (input.runtimeAuthority !== undefined && (!runtime
         || !runtimeEnvironment || !isDeepStrictEqual(runtimeEnvironment, runtime.runtime.publicEnv)
         || runtime.runtime.root !== input.checkoutRoot || dirname(configuration.source.path) !== input.checkoutRoot
-        || runtime.stackId !== input.stackId || runtime.sourceSha256 !== configuration.source.sha256
+        || runtime.stackId !== input.stackId || runtime.sourceSha256 !== configuration.runtimeSha256
         || runtime.generation !== input.generation
         || runtime.runtime.publicEnv.COCKPIT_OWNER_ID !== namespace.paths.coordination(input.stackId).cockpitId
         || !isDeepStrictEqual(snapshotJson(runtime.declaration), snapshotJson(parsed)))) {
@@ -442,7 +444,7 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
     issuedPlans.set(plan, Object.freeze({
         mode: input.mode, execution, steps: plan.steps, namespace,
         stackId: input.stackId, holderId: input.holderId,
-        configPath: configuration.source.path, configSha256: configuration.source.sha256,
+        configPath: configuration.source.path, configSha256: configuration.source.sha256, runtimeSha256: configuration.runtimeSha256,
         generation: input.generation, observedAt: input.observedAt, issuedAtMs: Date.now(),
         dataVolume: data.volume,
         ...(fixtures && fixtureVolume ? { fixtures: Object.freeze({
@@ -532,7 +534,7 @@ async function publishDataModeOutcome(
     const address = contract.namespace.paths.dataOutcome(contract.stackId)
     const snapshot = snapshotJson({
         stackId: contract.stackId,
-        configSha256: contract.configSha256,
+        configSha256: contract.runtimeSha256,
         generation: contract.generation,
         mode: contract.mode,
         outcome,
@@ -620,7 +622,7 @@ export function projectDataModeObservationSteps(input: {
     const contract = plan && typeof plan === 'object' ? issuedPlans.get(plan) : undefined
     const history = projection && typeof projection === 'object' ? issuedOutcomeProjections.get(projection) : undefined
     if (!contract || !history || contract.stackId !== history.stackId
-        || contract.configSha256 !== history.configSha256 || contract.generation !== history.generation
+        || contract.runtimeSha256 !== history.configSha256 || contract.generation !== history.generation
         || contract.mode !== history.mode) return undefined
     const includesFixtureVolume = history.outcome.kind === 'complete' && history.outcome.fixtureVolume?.included === true
     return Object.freeze(contract.steps.flatMap((metadata, index) => metadata.phase === 'probe'
@@ -650,7 +652,7 @@ export function observeDataMode(input: {
     }) : undefined
     if (!contract || !history || !Array.isArray(outcomes) || outcomes.length > 4_096
         || !probeSteps
-        || contract.stackId !== history.stackId || contract.configSha256 !== history.configSha256
+        || contract.stackId !== history.stackId || contract.runtimeSha256 !== history.configSha256
         || contract.generation !== history.generation || contract.mode !== history.mode) return undefined
     issuedPlans.delete(plan as object)
     issuedOutcomeProjections.delete(projection as object)
@@ -823,7 +825,7 @@ export async function executeDataMode(
     const persisted = await persist(result)
     if (persisted.kind === 'complete' && durableObservedAt !== undefined) issuedCompletions.set(persisted, Object.freeze({
         stackId: contract.stackId,
-        configSha256: contract.configSha256,
+        configSha256: contract.runtimeSha256,
         generation: contract.generation,
         mode: contract.mode,
         observedAt: durableObservedAt,

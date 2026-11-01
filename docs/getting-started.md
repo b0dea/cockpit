@@ -384,12 +384,18 @@ endpoints, mounts, its exported variable, or a declared Compose file that uses t
 Otherwise it lists every reference and changes nothing.
 It never deletes the checkout or any generated file. After either command, run
 `cockpit sync --config ./cockpit.toml --dry-run` to see which generated files change.
-Both commands refuse while a stack is up or asleep, because the change would alter the running
-environment underneath it: run
+While a stack is up or asleep, a repository the stack does not use (`mount = "none"`, named by
+no generated service) is added or removed at once. Any other row would change the environment
+underneath the running stack, so both commands refuse it and ask you to run
 `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml`
-first. Edit `cockpit.toml` by hand only with the stack down too: otherwise a generated
-environment's `up` refuses and prints the steps to restore the old file, remove the stack and
-start again.
+first.
+
+Editing `cockpit.toml` by hand works the same way. A change that never reaches a container, such
+as a sibling's `purpose`, the guards, MCP, skills, surfaces, comments or formatting, leaves the
+running stack alone: run `sync` and keep working, and the next `up` resumes the same stack. A
+change to services, ports, mounts, images or anything else the containers receive makes `up`
+refuse with `LIFECYCLE_PROGRESS_INVALID`, because `up` never replaces a running stack in place;
+run the `down` it prints, then `up`.
 
 ## Run an agent inside the environment
 

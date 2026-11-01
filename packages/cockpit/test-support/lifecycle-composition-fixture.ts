@@ -228,7 +228,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
 
 async function configureGeneratedDocker(
     candidate: Awaited<ReturnType<typeof generatedFixture>>,
-    context: Readonly<{ stackId: string; cockpitId: string; source: Readonly<{ sha256: string }> }>,
+    context: Readonly<{ stackId: string; cockpitId: string; runtimeSha256: string }>,
     generation: string,
     options: Readonly<{ portOffset?: number; failNeedle?: string; secondSibling?: boolean; sourceDirectory?: string; environmentFile?: string; build?: Readonly<{ context: string; dockerfile?: string }> }> = {},
 ) {
@@ -245,7 +245,7 @@ async function configureGeneratedDocker(
         shortId,
         projectName: 'generated-environment',
         stackId: context.stackId,
-        sourceSha256: context.source.sha256,
+        sourceSha256: context.runtimeSha256,
         generation,
         image,
         imageId: `sha256:${'b'.repeat(64)}`,
@@ -264,11 +264,11 @@ async function configureGeneratedDocker(
                 healthcheck: { test: ['CMD', 'true'] },
                 labels: {
                     'dev.b0dea.cockpit.stack-id': context.stackId,
-                    'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+                    'dev.b0dea.cockpit.config-sha256': context.runtimeSha256,
                     'dev.b0dea.cockpit.generation-id': generation,
                     'dev.b0.cockpit.generated': '1',
                     'dev.b0.cockpit.generation': generation,
-                    'dev.b0.cockpit.source-sha256': context.source.sha256,
+                    'dev.b0.cockpit.source-sha256': context.runtimeSha256,
                 },
                 volumes: [
                     { type: 'bind', source: join(candidate.checkout, service, options.sourceDirectory ?? '.'), target: '/workspace/source' },
@@ -314,7 +314,7 @@ async function configureGeneratedDocker(
     const removedPath = join(candidate.root, 'runtime-removed')
     const resource = JSON.stringify({ id: containerId, name: 'synthetic-app', labels: {
         'dev.b0dea.cockpit.stack-id': context.stackId,
-        'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+        'dev.b0dea.cockpit.config-sha256': context.runtimeSha256,
         'dev.b0dea.cockpit.owner-id': context.cockpitId,
     }, referenced: false, bytes: '0B' })
     const effectivePorts = JSON.stringify({ services: Object.fromEntries(services.map((service) =>
@@ -460,7 +460,7 @@ async function runGeneratedScenario(options: Readonly<{ portOffset?: number; fai
         observedAt: new Date().toISOString(),
     })
     if (started.kind === 'refusal') throw new Error(JSON.stringify(started))
-    const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+    const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
     const docker = await configureGeneratedDocker(candidate, loaded.result, generation, options)
     listenerProbeControl.enabled = true
     let dependencyOutcome: Awaited<ReturnType<typeof adapters.completeGeneratedDependencies>> | undefined

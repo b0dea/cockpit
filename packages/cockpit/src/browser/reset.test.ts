@@ -68,7 +68,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     if (loaded.kind !== 'complete') throw Error(`fixture lifecycle refused: ${JSON.stringify(loaded)}`)
     await publishComposeOwnership(root, loaded.result)
     await writeFile(join(root, 'topology.json'), JSON.stringify({ services: { web: {
-        labels: { 'dev.b0dea.cockpit.stack-id': loaded.result.stackId, 'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256 },
+        labels: { 'dev.b0dea.cockpit.stack-id': loaded.result.stackId, 'dev.b0dea.cockpit.config-sha256': loaded.result.runtimeSha256 },
         volumes: mounts,
     } } }))
     expect(await lifecycle.withAcquiredPorts(loaded.result, async (value) => value)).toBeDefined()

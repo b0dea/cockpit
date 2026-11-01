@@ -17,6 +17,7 @@ import { createHealthCommandAdapters } from './health-composition.js'
 import { syncGeneratedEnvironment, checkGeneratedEnvironment, observeGeneratedApplicationSurfaces } from './generated-application.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
+import { loadCockpitConfig } from '../config/load.js'
 
 const run = promisify(execFile)
 const roots: string[] = []
@@ -92,8 +93,10 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
         await recordLifecycleSeeded({ namespace: selected.value, stackId: stack, holderId: holder, observedAt: new Date().toISOString() })
     }
     if (options.configuredRuntime || options.machineOnly) {
-        const sourceSha256 = (await import('node:crypto')).createHash('sha256').update(await readFile(configPath)).digest('hex')
-        if (options.configuredRuntime) await publishComposeOwnership(checkout, { stackId: stack, cockpitId: cockpit, source: { sha256: sourceSha256 } })
+        const loaded = await loadCockpitConfig(configPath)
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded.diagnostics))
+        const sourceSha256 = loaded.result.runtimeSha256
+        if (options.configuredRuntime) await publishComposeOwnership(checkout, { stackId: stack, cockpitId: cockpit, runtimeSha256: sourceSha256 })
         await writeFile(join(checkout, 'topology.json'), JSON.stringify({ services: { api: { labels: {
             'dev.b0dea.cockpit.stack-id': stack,
             'dev.b0dea.cockpit.config-sha256': sourceSha256,
@@ -227,7 +230,9 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         await run('git', ['-C', api, 'update-ref', 'refs/remotes/origin/main', 'HEAD'])
         const branch = (await run('git', ['-C', api, 'branch', '--show-current'])).stdout.trim()
         await run('git', ['-C', api, 'branch', '--set-upstream-to=origin/main', branch])
-        const digest = createHash('sha256').update(config).digest('hex')
+        const loadedConfig = await loadCockpitConfig(candidate.configPath)
+        if (loadedConfig.kind !== 'complete') throw new Error(JSON.stringify(loadedConfig.diagnostics))
+        const digest = loadedConfig.result.runtimeSha256
         const docker = join(candidate.root, 'docker')
         await writeFile(docker, `#!${process.execPath}
 const args = process.argv.slice(2)

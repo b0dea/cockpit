@@ -422,7 +422,7 @@ describe('lifecycle application contracts', () => {
 
     it('restores generated progress only alongside its complete replay identity', async () => {
         const { context } = await lifecycleContextFixture()
-        const replay = { sourceSha256: 'a'.repeat(64), generation: 'b'.repeat(64), profiles: ['default'], mounts: ['app:/workspace/app'] }
+        const replay = { runtimeSha256: 'a'.repeat(64), generation: 'b'.repeat(64), profiles: ['default'], mounts: ['app:/workspace/app'] }
         const progress = { applied: ['publication', 'dependency:app:install', 'dependency:app:load'], notApplied: ['seeded'], attempted: ['dependency:app:stamp'] }
         const record = { format: 'cockpit-state/v1' as const, kind: 'lifecycle' as const,
             cockpitId: context.cockpitId, subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),

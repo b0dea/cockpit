@@ -318,14 +318,14 @@ export function createGeneratedCommandFixture() {
             composeVersion: '2.39.2', executable, operation: 'validate', cwd: root,
             composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: composePath, source: compose, sha256: composeSha256 }],
             projectName: 'synthetic', env: {}, ports: [effectivePort],
-            labels: { stackId: stack, configSha256: application.sourceSha256, batchId },
+            labels: { stackId: stack, configSha256: application.runtimeSha256, batchId },
             timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources,
         }, { generatedComposeAuthority: application.generatedComposeAuthority!, portLeaseProjection })
         if (preview.kind !== 'preview') throw new Error('runtime preview unavailable')
         const topologyPlan = createRuntimeTopologyPlan({
             runtimePlan: preview.plan,
             stackId: stack,
-            configSha256: application.sourceSha256,
+            configSha256: application.runtimeSha256,
             batchId,
             observationWindow: {
                 startedAt: new Date(Date.now() - 1_000).toISOString(),

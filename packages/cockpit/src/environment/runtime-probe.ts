@@ -530,9 +530,9 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         // refusal that no generated stack produces.
         const labels = {
             'dev.b0dea.cockpit.stack-id': context.stackId,
-            'dev.b0dea.cockpit.config-sha256': context.source.sha256,
+            'dev.b0dea.cockpit.config-sha256': context.runtimeSha256,
             'dev.b0dea.cockpit.owner-id': context.cockpitId,
-            'dev.b0dea.cockpit.generation-id': hash(`compose-volume-generation\0${context.source.sha256}`),
+            'dev.b0dea.cockpit.generation-id': hash(`compose-volume-generation\0${context.runtimeSha256}`),
             [ownerLabelName]: batchId,
         }
         ownerCleanup = async () => {
@@ -595,7 +595,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         // the same production render instead of running sync in its disposable checkout.
         const ownership = renderComposeOwnership({
             sources: [{ reference: basename(candidatePath), source: candidateSource }],
-            stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
+            stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
         })
         if (ownership.kind !== 'complete') fail(`the candidate's ownership override could not be rendered (${ownership.reason})`)
         await writeExclusive(ownershipPath, (ownership as Extract<typeof ownership, { kind: 'complete' }>).bytes)

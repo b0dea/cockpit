@@ -73,7 +73,7 @@ describe('lifecycle stage authority', () => {
             { teardownComplete: false },
             { teardownComplete: 'true' },
             { completedServices: [{ service: 'app', containerId: '3'.repeat(64) }] },
-            { generatedReplay: { sourceSha256: '4'.repeat(64), generation: '5'.repeat(64), profiles: [], mounts: [] } },
+            { generatedReplay: { runtimeSha256: '4'.repeat(64), generation: '5'.repeat(64), profiles: [], mounts: [] } },
             { generatedProgress: { applied: [], notApplied: [] } },
         ]
         for (const change of invalid) {

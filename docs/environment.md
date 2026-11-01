@@ -298,9 +298,17 @@ confirming those removals, which lets the next `up` use a new generated identity
 retires a stack that `sleep` or an ended `session` left stopped: with no holder left, it claims the
 stack for this checkout without starting anything and removes it, so you do not have to run `up`
 first. While another session still holds the stack, `down` refuses with `CLAIM_CO_TENANT`; end
-that `cockpit session` or run `cockpit sleep` from it, then retry. Run `DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml` before changing generated
-declarations, then `npx --no cockpit sync --config cockpit.toml` and `npx --no cockpit up --config cockpit.toml`.
-`sleep` and `reset` keep the previous generated identity so the stack can resume.
+that `cockpit session` or run `cockpit sleep` from it, then retry.
+
+A stack's identity, carried in its ownership labels and saved progress, is a digest of the
+declarations that reach its containers, not of the bytes of `cockpit.toml`. Editing a sibling's
+`purpose`, the guards, MCP, surfaces, comments or formatting therefore leaves a running stack
+alone, and the next `up` resumes it. A change to services, ports, mounts, images or anything else
+the containers receive gives the stack a new identity: `up` refuses with
+`LIFECYCLE_PROGRESS_INVALID` rather than replace a running stack in place, and the fix it prints
+is `DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml`, then
+`npx --no cockpit up --config cockpit.toml`. `sleep` and `reset` keep the previous generated
+identity so the stack can resume.
 
 `reset` first shows an exact preview of the generated volumes and declared generated host paths
 it would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at

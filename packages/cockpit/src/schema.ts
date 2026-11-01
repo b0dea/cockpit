@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import { parseDocument } from 'yaml'
@@ -62,6 +63,7 @@ export const mechanism = {
         'requiresOperatorGate',
         'configurationDefaults',
         'mounted',
+        'runtimeDeclarationSha256',
     ],
 } as const
 
@@ -1396,4 +1398,46 @@ export function mounted(cfg: CockpitConfig, profiles: readonly string[]): Siblin
     return cfg.sibling.filter(
         (s) => s.mount === 'always' || (s.mount.startsWith('profile:') && profiles.includes(s.mount.slice(8))),
     )
+}
+
+// How a sibling is described, fetched, gated for agents or projected into guides. None of it reaches
+// a container, so editing it must leave a running stack alone.
+const SIBLING_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set(['purpose', 'guides', 'instruction_pointer', 'remote', 'branch', 'acquire', 'host_reason', 'gate'])
+
+function canonicalJson(value: unknown): string {
+    return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
+        ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+        : item)
+}
+
+/**
+ * The SHA-256 that identifies a running stack: ownership labels, the generation, saved progress and
+ * data history are keyed by it rather than by the bytes of cockpit.toml. Keying them by the file
+ * meant rewording a sibling's purpose stranded the running stack, so `up` and `sibling add` refused
+ * until it was torn down.
+ *
+ * It covers everything except what is known not to reach a container: comments and formatting,
+ * guards, MCP, work orders, surfaces, testing, the guide settings, recorded runtime measurements
+ * (they calibrate cockpit's own waits), generated decision records, the descriptive sibling fields,
+ * and siblings with mount "none" that no generated service names. A new field is therefore counted
+ * as runtime until someone decides otherwise: the failure is a needless down, never a stack running
+ * an older declaration than the one on disk. The contents of `environment.compose_files` are
+ * outside it: only their paths are declared here, and `up` hands the files to Compose as they are.
+ */
+export function runtimeDeclarationSha256(cfg: CockpitConfig): string {
+    const generated = cfg.environment.generated
+    const servedSiblings = new Set(generated?.services.map(({ sibling }) => sibling) ?? [])
+    const sibling = cfg.sibling
+        .filter((row) => row.mount !== 'none' || servedSiblings.has(row.slug) || row.derives !== undefined || row.toolchain !== 'none')
+        .map((row) => Object.fromEntries(Object.entries(row).filter(([field]) => !SIBLING_NON_RUNTIME_FIELDS.has(field))))
+        .sort((left, right) => String(left.slug) < String(right.slug) ? -1 : 1)
+    const { runtime_measurements: _measurements, generated: _generated, ...environment } = cfg.environment
+    const { decisions: _decisions, ...declaration } = generated ?? {}
+    return createHash('sha256').update(canonicalJson({
+        cockpit: { name: cfg.cockpit.name, siblings_root: cfg.cockpit.siblings_root },
+        sibling,
+        ports: cfg.ports,
+        browser: cfg.browser ?? null,
+        environment: { ...environment, generated: generated ? declaration : null },
+    })).digest('hex')
 }

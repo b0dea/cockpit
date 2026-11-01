@@ -430,7 +430,7 @@ export function issueMachineFloorAuthority(input: {
     issuedMachineFloorAuthorities.set(authority, Object.freeze({
         stackId: deriveStackId({ cockpitId: checkout.cockpitId, checkoutId: checkout.checkoutId, variant: { kind: 'shared' } }),
         checkoutPath: dirname(configuration.source.path),
-        configSha256: configuration.source.sha256,
+        configSha256: configuration.runtimeSha256,
         floor: Object.freeze(floor),
     }))
     return Object.freeze({ authority, checkout })

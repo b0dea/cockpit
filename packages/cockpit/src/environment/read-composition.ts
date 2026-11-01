@@ -373,7 +373,7 @@ export function createReadCommandAdapters(
         if (generated && !generatedComposeAuthority) throw new TypeError('generated runtime authority is unavailable')
         if (readiness.topology.cwd !== checkoutRoot
             || readiness.topology.stackId !== context.stackId
-            || readiness.topology.configSha256 !== context.source.sha256) {
+            || readiness.topology.configSha256 !== context.runtimeSha256) {
             throw new TypeError('configuration and runtime authority do not match')
         }
         const lifecycleRead = await readState(context.namespace.paths.lifecycle(context.stackId))
@@ -382,7 +382,7 @@ export function createReadCommandAdapters(
         if (!lifecycleValue || lifecycleValue.completedServices.length === 0) throw new TypeError('lifecycle state is malformed')
         if (lifecycleValue.holderId !== context.holderId) throw new TypeError('lifecycle holder authority changed')
         if (generatedApplication && !isDeepStrictEqual(lifecycleValue.generatedReplay, {
-            sourceSha256: generatedApplication.sourceSha256, generation: generatedApplication.generation,
+            runtimeSha256: generatedApplication.runtimeSha256, generation: generatedApplication.generation,
             profiles: generatedApplication.profiles, mounts: generatedApplication.mounts,
         })) throw new TypeError('generated lifecycle replay authority changed')
         const env = runtimeEnvironment(input.env)
@@ -447,7 +447,7 @@ export function createReadCommandAdapters(
                 executable: context.executable.value,
                 cwd: context.topology.cwd,
                 stackId: context.stackId,
-                configSha256: context.configuration.source.sha256,
+                configSha256: context.configuration.runtimeSha256,
                 batchId: context.topology.batchId,
                 containerId: evidence.containerId,
                 runtimeVersion: context.topology.runtimeVersion,
@@ -481,7 +481,7 @@ export function createReadCommandAdapters(
         const createdAt = new Date().toISOString()
         const capturePlan = createStabilityCapturePlan({
             stackId: context.stackId,
-            configSha256: context.configuration.source.sha256,
+            configSha256: context.configuration.runtimeSha256,
             runtimeExecutable: context.executable.value,
             cwd: context.topology.cwd,
             env: Object.freeze(Object.fromEntries(Object.entries(context.env).filter(([name]) => name === 'PATH'))),
@@ -515,7 +515,7 @@ export function createReadCommandAdapters(
         if (prior.kind === 'complete' && !previous) throw new TypeError('previous baseline is malformed')
         const snapshot = createEnvironmentSnapshot({
             stackId: context.stackId,
-            configSha256: context.configuration.source.sha256,
+            configSha256: context.configuration.runtimeSha256,
             createdAt,
             creationSource: 'resolved-config',
             intendedState: context.configuration.config as unknown as JsonValue,
@@ -543,7 +543,7 @@ export function createReadCommandAdapters(
             holderId: context.holderId,
             address,
             expected: prior.kind === 'complete' ? prior.value : null,
-            configSha256: context.configuration.source.sha256,
+            configSha256: context.configuration.runtimeSha256,
             snapshotSha256: snapshot.snapshotSha256,
             evidenceSha256: evidence.evidenceSha256,
             fingerprint: Object.freeze({

@@ -217,7 +217,7 @@ function producers(input: {
         if (stored.kind !== 'complete') return undefined
         const lifecycle = decodeLifecycleRecord(stored.value, loaded.result)
         if (!lifecycle || generated !== undefined && (!lifecycle.value.generatedReplay
-            || lifecycle.value.generatedReplay.sourceSha256 !== loaded.result.source.sha256)) return undefined
+            || lifecycle.value.generatedReplay.runtimeSha256 !== loaded.result.runtimeSha256)) return undefined
         const retained = await observeRetainedPortFamily({
             namespace: loaded.result.namespace,
             stackId: loaded.result.stackId,
@@ -315,7 +315,7 @@ function producers(input: {
                     const projection = await readDataModeOutcome({
                         namespace: session.context.namespace,
                         stackId: session.context.stackId,
-                        configSha256: application.sourceSha256,
+                        configSha256: application.runtimeSha256,
                         generation: application.generation,
                         mode: data.default_mode,
                     })
@@ -459,7 +459,7 @@ function producers(input: {
                 env: checkoutObservationEnvironment(input.env), gitExecutable: input.git })
             const running = await withSetupCheckoutProjection(setup, { source: input.config.result.source,
                 cockpitName: input.config.result.config.cockpit.name, evaluatedAt: Date.parse(time) },
-            (projection) => observeRunningCheckout(session.readiness.topology, projection, time))
+            (projection) => observeRunningCheckout(session.readiness.topology, projection, session.context.runtimeSha256, time))
             if (running?.kind !== 'complete') throw new TypeError('running checkout identity observation is unavailable')
             return Object.freeze([...result.observations, running.observation])
         },

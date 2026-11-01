@@ -183,7 +183,7 @@ describe('Git adjacency evidence', () => {
         })
     })
 
-    it('authenticates running topology against the current checkout and exact configuration', async () => {
+    it('authenticates running topology against the current checkout and its runtime declarations', async () => {
         const support = createGeneratedCommandFixture()
         try {
             const candidate = await support.consumer('running-checkout')
@@ -202,7 +202,7 @@ describe('Git adjacency evidence', () => {
                     cockpitName: loaded.result.config.cockpit.name, observedAt, env: {}, gitExecutable: executable.value })
                 return withSetupCheckoutProjection(checkout, { source: loaded.result.source,
                     cockpitName: loaded.result.config.cockpit.name, evaluatedAt: Date.parse(observedAt) },
-                projection => observeRunningCheckout(topology, copiedCheckout ? { ...projection } : projection, new Date().toISOString()))
+                projection => observeRunningCheckout(topology, copiedCheckout ? { ...projection } : projection, loaded.result.runtimeSha256, new Date().toISOString()))
             }
             const current = await observe()
             expect(current).toMatchObject({ kind: 'complete' })
@@ -217,7 +217,12 @@ describe('Git adjacency evidence', () => {
             expect(foreignResult).toMatchObject({ kind: 'complete' })
             if (foreignResult?.kind !== 'complete') throw new Error('foreign checkout comparison unavailable')
             expect(observationSatisfiesExpectation(foreignResult.observation)).toBe(false)
-            await writeFile(candidate.configPath, `${await readFile(candidate.configPath, 'utf8')}\n# changed declaration\n`)
+            const declared = await readFile(candidate.configPath, 'utf8')
+            await writeFile(candidate.configPath, `${declared}\n# reworded comment\n`)
+            const commented = await observe()
+            if (commented?.kind !== 'complete') throw new Error('commented configuration comparison unavailable')
+            expect(observationSatisfiesExpectation(commented.observation)).toBe(true)
+            await writeFile(candidate.configPath, declared.replace('APP_HOST_PORT = 4100', 'APP_HOST_PORT = 4200'))
             const changed = await observe()
             expect(changed).toMatchObject({ kind: 'complete' })
             if (changed?.kind !== 'complete') throw new Error('changed configuration comparison unavailable')
@@ -242,7 +247,7 @@ describe('Git adjacency evidence', () => {
             if (loaded.kind !== 'complete') throw new Error('nested fixture config unavailable')
             const currentStack = deriveStackId({ cockpitId: cockpitId({ name: 'synthetic', mainCheckoutPath: root }),
                 checkoutId: deriveCheckoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
-            const sourceSha256 = loaded.result.source.sha256
+            const sourceSha256 = loaded.result.runtimeSha256
             const labels = { 'dev.b0dea.cockpit.stack-id': currentStack, 'dev.b0dea.cockpit.config-sha256': sourceSha256 }
             const probe = join(root, 'docker')
             const body = `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ services: { api: { labels, healthcheck: { test: ['CMD', 'true'] } } } }))})\n`
@@ -275,7 +280,7 @@ describe('Git adjacency evidence', () => {
                     observedAt, env: {}, gitExecutable: git.value })
                 const result = await withSetupCheckoutProjection(checkout, { source: loaded.result.source,
                     cockpitName: 'synthetic', evaluatedAt: Date.parse(observedAt) },
-                projection => observeRunningCheckout(topology.topology, projection, new Date().toISOString()))
+                projection => observeRunningCheckout(topology.topology, projection, loaded.result.runtimeSha256, new Date().toISOString()))
                 expect(result).toMatchObject({ kind: 'complete' })
                 if (result?.kind !== 'complete') throw new Error('nested running checkout comparison unavailable')
                 expect(observationSatisfiesExpectation(result.observation), JSON.stringify(result)).toBe(cwd === nested)

@@ -189,17 +189,17 @@ describe('destructive command composition', () => {
         await writeFile(join(root, 'topology.json'), JSON.stringify({ services: { api: {
             labels: {
                 'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
-                'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+                'dev.b0dea.cockpit.config-sha256': loaded.result.runtimeSha256,
             },
             volumes: [{ type: 'bind', source: siblingPath, target: '/api' }],
         } } }))
         await writeFile(join(root, 'runtime.json'), JSON.stringify({ ID: 'a'.repeat(12), Name: 'synthetic-api-1',
             Project: 'synthetic-cockpit', Service: 'api', State: 'running', Health: '', ExitCode: 0,
-            Labels: `com.docker.compose.project=synthetic-cockpit,com.docker.compose.service=api,dev.b0dea.cockpit.config-sha256=${loaded.result.source.sha256},dev.b0dea.cockpit.stack-id=${loaded.result.stackId}`,
+            Labels: `com.docker.compose.project=synthetic-cockpit,com.docker.compose.service=api,dev.b0dea.cockpit.config-sha256=${loaded.result.runtimeSha256},dev.b0dea.cockpit.stack-id=${loaded.result.stackId}`,
         }))
         await writeFile(join(root, 'inspect.json'), JSON.stringify({ ID: 'a'.repeat(64), State: 'running', Health: '', Labels: {
             'com.docker.compose.project': 'synthetic-cockpit', 'com.docker.compose.service': 'api',
-            'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+            'dev.b0dea.cockpit.config-sha256': loaded.result.runtimeSha256,
             'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
         } }))
         const acquired = await lifecycle.withAcquiredPorts(loaded.result, async (value) => value)

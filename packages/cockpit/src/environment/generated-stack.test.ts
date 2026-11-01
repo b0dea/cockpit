@@ -174,7 +174,7 @@ describe('generated environment rendering', () => {
                 environment: { ...base.result.config.environment, generated } }))
             const loaded = await loadCockpitConfig(configPath)
             if (loaded.kind !== 'complete') throw new Error('generated data configuration unavailable')
-            const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, sourceSha256: loaded.result.source.sha256 })
+            const result = renderGeneratedEnvironment({ declaration: generated, ...resolvedInput, sourceSha256: loaded.result.runtimeSha256 })
             if (result.kind !== 'complete') throw new Error(result.reason)
             const harness = await generatedAuthority(result, root, undefined, true)
             const state = await selectStateRoot({ platform: 'linux', home: root, cockpitId: cockpitId as never })

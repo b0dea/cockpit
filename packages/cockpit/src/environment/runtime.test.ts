@@ -446,7 +446,7 @@ describe('runtime plan construction', () => {
         expect(loaded.kind).toBe('complete')
         if (loaded.kind !== 'complete') return
         const config = loaded.result.config
-        const sourceSha256 = loaded.result.source.sha256
+        const sourceSha256 = loaded.result.runtimeSha256
         const generation = sha('generated application')
         const owner = cockpitId({ name: config.cockpit.name, mainCheckoutPath: home })
         const checkout = checkoutId({ checkoutPath: home })

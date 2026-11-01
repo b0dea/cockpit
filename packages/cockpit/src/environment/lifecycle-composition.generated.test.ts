@@ -123,7 +123,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const loaded = await adapters.load({ configPath: input.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
-        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+        const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
         expect(generation).not.toBe(first.generation)
         await configureGeneratedDocker(first.candidate, loaded.result, generation, {})
         listenerProbeControl.enabled = true
@@ -275,7 +275,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
                 const loaded = await adapters.load({ configPath: candidate.configPath })
                 expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
                 if (loaded.kind !== 'complete') throw new Error('generated input configuration was refused')
-                const generation = createHash('sha256').update(`generated-environment\0${loaded.result.source.sha256}`).digest('hex')
+                const generation = createHash('sha256').update(`generated-environment\0${loaded.result.runtimeSha256}`).digest('hex')
                 await configureGeneratedDocker(candidate, loaded.result, generation, {
                     sourceDirectory, environmentFile, ...(buildDeclaration ? { build: buildDeclaration } : {}),
                 })
@@ -407,11 +407,11 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
             image: 'node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5',
             labels: {
                 'dev.b0dea.cockpit.stack-id': loaded.result.stackId,
-                'dev.b0dea.cockpit.config-sha256': loaded.result.source.sha256,
+                'dev.b0dea.cockpit.config-sha256': loaded.result.runtimeSha256,
                 'dev.b0dea.cockpit.generation-id': application.generation,
                 'dev.b0.cockpit.generated': '1',
                 'dev.b0.cockpit.generation': application.generation,
-                'dev.b0.cockpit.source-sha256': loaded.result.source.sha256,
+                'dev.b0.cockpit.source-sha256': loaded.result.runtimeSha256,
             },
             volumes: [
                 { type: 'bind', source: join(candidate.checkout, 'app'), target: '/workspace/source' },

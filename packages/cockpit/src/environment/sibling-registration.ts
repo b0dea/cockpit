@@ -20,7 +20,7 @@ import { cockpitCommand } from '../fix-catalogue.js'
 import { appendSiblingTable, recordSiblingRemote, removeSiblingTable, type SiblingEdit, type SiblingTableRow } from '../config/sibling-toml.js'
 import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { CockpitConfig, deriveSiblingVariable, Mount, Sibling } from '../schema.js'
+import { CockpitConfig, deriveSiblingVariable, Mount, runtimeDeclarationSha256, Sibling } from '../schema.js'
 import { ENVIRONMENT_CODES, type ExecutionStep, type FilesystemAncestorIdentity } from './contract.js'
 import { declaredRuntime } from './declaration.js'
 import { resolveGitExecutable, type ResolvedExecutable } from './executable.js'
@@ -214,7 +214,7 @@ async function kind(path: string): Promise<'absent' | 'directory' | 'other'> {
 
 interface Prepared {
     readonly text: string
-    readonly expected: unknown
+    readonly expected: CockpitConfig
 }
 
 /**
@@ -223,7 +223,7 @@ interface Prepared {
  */
 function prepare(base: CockpitConfig, edit: SiblingEdit, siblings: readonly unknown[]): Prepared | SiblingOutcome {
     if (edit.kind === 'unsupported') return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, `cockpit.toml cannot be edited safely: ${edit.reason}; nothing was written`, 'sibling')
-    const expected = { ...base, sibling: siblings }
+    const expected = { ...base, sibling: siblings } as CockpitConfig
     let parsed
     try { parsed = CockpitConfig.safeParse(parse(edit.text)) } catch (error) {
         return refused(ENVIRONMENT_CODES.CONFIG_PARSE_INVALID, `the edit would leave cockpit.toml unparseable (${error instanceof Error ? error.message.split('\n', 1)[0] : 'unknown'}); nothing was written`, 'sibling')
@@ -260,12 +260,13 @@ async function commit(path: string, sha256: string, prepared: Prepared, verb: st
 type LoadedConfig = Extract<Awaited<ReturnType<typeof loadCockpitConfig>>, { kind: 'complete' }>['result']
 
 /**
- * Every stack resource is labelled with the SHA-256 of the cockpit.toml that started it, and `down`
- * removes only resources whose label matches the current file. Editing the file while a stack is
- * recorded therefore strands that stack until the old file is restored, so the edit is refused
- * before anything is written, while `down` still works.
+ * A recorded stack runs the runtime declarations it was started from, and `up` refuses to resume it
+ * once they differ. A row the stack does not use (mount "none", named by no generated service)
+ * leaves them unchanged and is written at once; any other row would change the environment under
+ * the stack, so that edit is refused before anything is written, while `down` still works.
  */
-async function refuseWhileStackRecorded(loaded: LoadedConfig, env: SiblingAddInput['env']): Promise<SiblingOutcome | undefined> {
+async function refuseWhileStackRecorded(loaded: LoadedConfig, edited: CockpitConfig, env: SiblingAddInput['env']): Promise<SiblingOutcome | undefined> {
+    if (runtimeDeclarationSha256(edited) === loaded.runtimeSha256) return undefined
     const configPath = loaded.source.path
     // Lifecycle commands start a stack only for a declared runtime on these platforms, so no other
     // cockpit can have one recorded.
@@ -286,7 +287,7 @@ async function refuseWhileStackRecorded(loaded: LoadedConfig, env: SiblingAddInp
     if (!lifecycle) return refused(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'lifecycle progress record is malformed; nothing was written', address.path)
     if (lifecycle.value.teardownComplete === true) return undefined
     return refused('SIBLING_STACK_RECORDED',
-        `a stack started from ${configPath} is still recorded, and adding or removing a repository would change the environment underneath it; nothing was written — fix: run \`${cockpitCommand('down', { config: configPath })}\`, then rerun this command`,
+        `a stack started from ${configPath} is still recorded, and this repository would change the environment underneath it; nothing was written — fix: run \`${cockpitCommand('down', { config: configPath })}\`, then rerun this command`,
         configPath)
 }
 
@@ -306,8 +307,6 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
 
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
-    const stranded = await refuseWhileStackRecorded(loaded.result, input.env)
-    if (stranded) return stranded
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     const configDir = dirname(configPath)
@@ -335,6 +334,8 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
         const updated = Sibling.parse({ ...found, acquire: 'auto', remote: input.remote })
         const prepared = prepare(config, edit, config.sibling.map((sibling, index) => index === existing ? updated : sibling))
         if (isOutcome(prepared)) return prepared
+        const stranded = await refuseWhileStackRecorded(loaded.result, prepared.expected, input.env)
+        if (stranded) return stranded
         const failure = await commit(configPath, loaded.result.source.sha256, prepared, 'add')
         if (failure) return failure
         return success('remote-recorded', configPath, updated, { dir: 'existing row', var: 'existing row', purpose: 'existing row' },
@@ -410,6 +411,8 @@ export async function runSiblingAdd(input: SiblingAddInput, dependencies: Siblin
     const added = Sibling.parse(row)
     const prepared = prepare(config, edit, [...config.sibling, added])
     if (isOutcome(prepared)) return prepared
+    const stranded = await refuseWhileStackRecorded(loaded.result, prepared.expected, input.env)
+    if (stranded) return stranded
 
     if (mode === 'create') {
         if (git.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, git.reason, 'git')
@@ -556,8 +559,6 @@ async function existingGuideProjections(configDir: string, row: Sibling): Promis
 export async function runSiblingRemove(input: SiblingRemoveInput): Promise<SiblingOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
-    const stranded = await refuseWhileStackRecorded(loaded.result, input.env)
-    if (stranded) return stranded
     const configPath = loaded.result.source.path
     const config = loaded.result.config
     const index = config.sibling.findIndex((sibling) => sibling.slug === input.slug)
@@ -578,6 +579,8 @@ export async function runSiblingRemove(input: SiblingRemoveInput): Promise<Sibli
     const edit = removeSiblingTable(original, index, config.sibling.length)
     const prepared = prepare(config, edit, config.sibling.filter((_, position) => position !== index))
     if (isOutcome(prepared)) return prepared
+    const stranded = await refuseWhileStackRecorded(loaded.result, prepared.expected, input.env)
+    if (stranded) return stranded
     const failure = await commit(configPath, loaded.result.source.sha256, prepared, 'remove')
     if (failure) return failure
 

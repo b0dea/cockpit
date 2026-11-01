@@ -13,7 +13,7 @@ import {
     snapshotJson,
 } from '../environment/contract.js'
 import { validateWorkOrderPolicy, type ValidatedWorkOrderPolicy } from '../work-orders/intake.js'
-import { CockpitConfig } from '../schema.js'
+import { CockpitConfig, runtimeDeclarationSha256 } from '../schema.js'
 import { formatShellCommand } from '../fix-catalogue.js'
 
 export const mechanism = {
@@ -64,12 +64,16 @@ export type LoadedConfigProjection = LoadedCockpitConfig
 export interface ConsumedLoadedConfig {
     readonly config: CockpitConfig
     readonly source: SourceProvenance
+    /** Identifies the stack this configuration runs; `source.sha256` identifies the file that was read. */
+    readonly runtimeSha256: string
     readonly guardHostsStated: boolean
 }
 
 export interface LoadedCockpitConfig {
     readonly config: CockpitConfig
     readonly source: SourceProvenance
+    /** Identifies the stack this configuration runs; `source.sha256` identifies the file that was read. */
+    readonly runtimeSha256: string
     /**
      * Both guard host keys are written in the file. The schema defaults an absent key to the same
      * empty list, so only the parsed source can tell "none exists" from "never answered".
@@ -84,6 +88,7 @@ export interface MachineFloorConfigProjection { readonly kind: 'machine-floor-co
 export interface ConsumedMachineFloorConfig {
     readonly cockpitName: string
     readonly source: SourceProvenance
+    readonly runtimeSha256: string
     readonly floor: Readonly<{ runtimeMemoryMb: number; runtimeCpus: number; freeDiskMb: number }>
 }
 const issuedMachineFloorConfigProjections = new WeakMap<object, ConsumedMachineFloorConfig>()
@@ -221,6 +226,7 @@ export function projectMachineFloorConfig(projection: LoadedConfigProjection): M
     issuedMachineFloorConfigProjections.set(result, Object.freeze({
         cockpitName: loaded.config.cockpit.name,
         source: Object.freeze({ ...loaded.source }),
+        runtimeSha256: loaded.runtimeSha256,
         floor: Object.freeze({
             runtimeMemoryMb: machine.runtime_memory_mb,
             runtimeCpus: machine.runtime_cpus,
@@ -413,12 +419,14 @@ export async function loadCockpitConfig(
     const guardHostsStated = writtenGuards !== null && typeof writtenGuards === 'object'
         && Object.hasOwn(writtenGuards, 'hosted_db_hosts') && Object.hasOwn(writtenGuards, 'vendor_endpoint_hosts')
     const immutableConfig = snapshotJson(reconstructed.data) as unknown as CockpitConfig
+    const runtimeSha256 = runtimeDeclarationSha256(immutableConfig)
     const bound = Object.freeze({
         config: immutableConfig,
         source: Object.freeze({ ...provenance }),
+        runtimeSha256,
         guardHostsStated,
     })
-    const result = { config: validated.data, source: provenance, guardHostsStated } as LoadedCockpitConfig
+    const result = { config: validated.data, source: provenance, runtimeSha256, guardHostsStated } as LoadedCockpitConfig
     issuedConfigProjections.set(result, bound)
     return {
         kind: 'complete',

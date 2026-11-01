@@ -726,7 +726,7 @@ describe('lifecycle application contracts', () => {
         await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
             revision: 0, updatedAt: new Date().toISOString(), value: { ...progress, holderId: context.holderId,
-                generatedReplay: { sourceSha256: projection.sourceSha256, generation: projection.generation, profiles: [...projection.profiles], mounts: [...projection.mounts] } },
+                generatedReplay: { runtimeSha256: projection.runtimeSha256, generation: projection.generation, profiles: [...projection.profiles], mounts: [...projection.mounts] } },
         }))
         const executable = (name: string, body: string) => {
             const path = join(root, name)
@@ -1044,7 +1044,7 @@ describe('lifecycle application contracts', () => {
         const { configPath, context } = await lifecycleContextFixture()
         const events: string[] = []
         // A generated stack's resume is admitted only against the replay identity it ran with.
-        const generatedReplay = { sourceSha256: '8'.repeat(64), generation: '9'.repeat(64), profiles: [], mounts: [] }
+        const generatedReplay = { runtimeSha256: '8'.repeat(64), generation: '9'.repeat(64), profiles: [], mounts: [] }
         await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
             revision: 0, updatedAt: new Date().toISOString(), value: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
