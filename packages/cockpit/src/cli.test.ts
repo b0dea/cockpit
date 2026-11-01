@@ -155,6 +155,7 @@ describe('closed ordinary invocation metadata', () => {
             ['up'], ['sleep'], ['down'], ['preflight'], ['doctor'],
             ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
             ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
+            ['runtime', 'measure', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', `sha256:${'c'.repeat(64)}`, '--json'],
         ]
         for (const args of cases) {
             const argv = ['document', 'registry-resolve'].includes(args[0]!) ? args : [...args, '--config', authority.configPath]
@@ -168,9 +169,10 @@ describe('closed ordinary invocation metadata', () => {
 
     it('requires the exact resolved config for every available config-bearing row', () => {
         const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'sync', 'check', 'selftest', 'upgrade', 'up', 'sleep', 'down', 'preflight', 'doctor', 'logs'])
+        expect(rows.map(row => row.name)).toEqual(['setup', 'sync', 'check', 'selftest', 'upgrade', 'up', 'sleep', 'down', 'runtime', 'preflight', 'doctor', 'logs'])
         for (const row of rows) {
-            const argv = [row.name, ...(row.name === 'selftest' ? ['--probe-specifications', 'probes.json'] : row.name === 'logs' ? ['--service', 'app'] : row.name === 'sync' ? ['--dry-run'] : [])]
+            const argv = [row.name, ...(row.name === 'selftest' ? ['--probe-specifications', 'probes.json'] : row.name === 'logs' ? ['--service', 'app']
+                : row.name === 'runtime' ? ['measure', '--image', 'node:22-alpine'] : row.name === 'sync' ? ['--dry-run'] : [])]
             expect(ordinary(argv), `${row.name} missing config`).toBeUndefined()
             expect(ordinary([...argv, '--config', authority.configPath]), row.name).toBeDefined()
             expect(ordinary([...argv, '--config', 'other.toml']), `${row.name} wrong config`).toBeUndefined()
@@ -189,6 +191,9 @@ describe('closed ordinary invocation metadata', () => {
             ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
             ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
             ['sync'], ['reset'], ['baseline-record'], ['guard-evaluate', '--harness', 'claudecode'],
+            ['runtime', '--image', 'node:22-alpine'], ['runtime', 'other', '--image', 'node:22-alpine'], ['runtime', 'measure'],
+            ['runtime', 'measure', 'extra', '--image', 'node:22-alpine'], ['runtime', 'measure', '--image', 'node 22'],
+            ['runtime', 'measure', '--image', 'node:22-alpine', '--write'],
             ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
             ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
         ]
@@ -198,7 +203,7 @@ describe('closed ordinary invocation metadata', () => {
         }
         for (const row of commands) {
             if (row.ordinary.availability !== 'available') continue
-            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(row.name === 'selftest' ? ['--probe-specifications', 'p'] : row.name === 'logs' ? ['--service', 'app'] : row.name === 'sync' ? ['--dry-run'] : [])]
+            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : row.name === 'document' ? ['.'] : row.name === 'registry-resolve' ? ['--registry', 'r', '--siblings-root', '.', '--adoption', 'a'] : ['--config', authority.configPath, ...(row.name === 'selftest' ? ['--probe-specifications', 'p'] : row.name === 'logs' ? ['--service', 'app'] : row.name === 'runtime' ? ['measure', '--image', 'node:22-alpine'] : row.name === 'sync' ? ['--dry-run'] : [])]
             for (const [name, option] of Object.entries(row.ordinary.options)) {
                 const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m' : name.endsWith('sha256') || name === 'accept-reset' ? 'a'.repeat(64) : 'path']
                 let baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
@@ -416,7 +421,7 @@ describe('CLI help', () => {
             '  session                Keep the environment available for one command, then release it\n' +
             '  down                   Stop and remove the stack (run with DOCKER_CONTEXT set)\n' +
             '  reset                  Preview a reset, or approve that exact preview interactively (run with DOCKER_CONTEXT set)\n' +
-            '  runtime                Measure the local container runtime (runtime measure) and record the result\n' +
+            '  runtime                Measure the local container runtime (runtime measure) and record the result for this machine\n' +
             '  sibling                Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  preflight              Check that the environment is healthy and ready for work\n' +
             '  doctor                 Report environment problems without changing anything\n' +

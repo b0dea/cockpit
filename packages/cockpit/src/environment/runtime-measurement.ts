@@ -1,7 +1,8 @@
 /**
  * Owns `cockpit runtime measure`: identifies the local container runtime, hands it to the
- * candidate and broken-control probe (`runtime-probe.ts`), and turns a passing verdict into one
- * `[[environment.runtime_measurements]]` row, printed or appended to cockpit.toml.
+ * candidate and broken-control probe (`runtime-probe.ts`), and records a passing verdict as this
+ * machine's measurement through `runtime-measurement-record.ts`. cockpit.toml is only read: a
+ * measurement describes this machine, so recording one changes no guarded configuration.
  *
  * It does not admit runtimes (`runtime.ts` reads the rows) and it never spawns a process itself:
  * every child process crosses the supplied `execute`, which production binds to
@@ -15,12 +16,13 @@ import { fileURLToPath } from 'node:url'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig } from '../config/load.js'
-import { writeVerifiedConfig } from '../config/verified-write.js'
 import type { Diagnostic } from '../diagnostics.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
-import { admitRuntimeMeasurement, observeDockerRuntime, observedVersionCore } from './runtime.js'
+import { observeDockerRuntime, observedVersionCore } from './runtime.js'
+import { recordLocalRuntimeMeasurement } from './runtime-measurement-record.js'
 import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
 
 export const mechanism = {
@@ -32,7 +34,6 @@ export const mechanism = {
 export interface RuntimeMeasureInput {
     readonly configPath: string
     readonly image: string
-    readonly write: boolean
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
@@ -97,121 +98,6 @@ async function readDocker(execute: RuntimeMeasureDependencies['execute'], step: 
     return { kind: 'complete', text: stdout }
 }
 
-function tomlRow(row: Readonly<Record<string, string>>): string {
-    return ['[[environment.runtime_measurements]]', ...Object.entries(row).map(([key, value]) => `${key} = ${JSON.stringify(value)}`), ''].join('\n')
-}
-
-function inlineRow(row: Readonly<Record<string, string>>): string {
-    return `{ ${Object.entries(row).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join(', ')} }`
-}
-
-type MultilineDelimiter = '"""' | "'''"
-
-function multilineEnd(line: string, delimiter: MultilineDelimiter, start: number): number {
-    let candidate = line.indexOf(delimiter, start)
-    while (candidate !== -1 && delimiter === '"""') {
-        let escapes = 0
-        for (let index = candidate - 1; index >= 0 && line[index] === '\\'; index -= 1) escapes += 1
-        if (escapes % 2 === 0) break
-        candidate = line.indexOf(delimiter, candidate + delimiter.length)
-    }
-    return candidate
-}
-
-/** Return only TOML syntax outside strings and comments, carrying multiline-string state between lines. */
-function tomlCode(line: string, initial: MultilineDelimiter | null): Readonly<{ code: string; multiline: MultilineDelimiter | null }> {
-    let code = ''
-    let multiline = initial
-    for (let index = 0; index < line.length;) {
-        if (multiline !== null) {
-            const end = multilineEnd(line, multiline, index)
-            if (end === -1) return { code, multiline }
-            index = end + multiline.length
-            multiline = null
-            continue
-        }
-        const triple = line.slice(index, index + 3)
-        if (triple === '"""' || triple === "'''") {
-            multiline = triple
-            index += 3
-            continue
-        }
-        const char = line[index]!
-        if (char === '#') break
-        if (char === '"' || char === "'") {
-            const quote = char
-            index += 1
-            while (index < line.length) {
-                if (quote === '"' && line[index] === '\\') index += 2
-                else if (line[index] === quote) { index += 1; break }
-                else index += 1
-            }
-            continue
-        }
-        code += char
-        index += 1
-    }
-    return { code, multiline }
-}
-
-/** Replace only the generator's empty field in `[environment]`; unsupported TOML layouts fall through to verified refusal. */
-function rowEdit(original: string, row: Readonly<Record<string, string>>): string {
-    const lines = original.split('\n')
-    let table = ''
-    let multiline: MultilineDelimiter | null = null
-    let target: number | null = null
-    for (const [index, line] of lines.entries()) {
-        const scanned = tomlCode(line, multiline)
-        multiline = scanned.multiline
-        if (multiline !== null || scanned.code.trim().length === 0) continue
-        const header = /^\s*\[([^\[\]]+)]\s*$/.exec(scanned.code)
-        if (header) table = header[1]!.trim()
-        else if (table === 'environment' && /^\s*runtime_measurements\s*=\s*\[\]\s*$/.test(scanned.code)) {
-            if (target !== null) return original
-            target = index
-        }
-    }
-    if (target !== null) {
-        lines[target] = lines[target]!.replace(/\[\]/, `[ ${inlineRow(row)} ]`)
-        return lines.join('\n')
-    }
-    return `${original}${original.length === 0 || original.endsWith('\n') ? '' : '\n'}\n${tomlRow(row)}`
-}
-
-function withoutLastMeasurement(config: unknown): string {
-    const value = config as { environment: { runtime_measurements: readonly unknown[] } }
-    return JSON.stringify({ ...value, environment: { ...value.environment,
-        runtime_measurements: value.environment.runtime_measurements.slice(0, -1) } })
-}
-
-/** Accept a parsed configuration only when it is `base` plus exactly `row`, appended. */
-function exactlyOneRowAdded(base: unknown, next: unknown, row: Readonly<Record<string, string>>): boolean {
-    const measurements = (next as { environment?: { runtime_measurements?: readonly unknown[] } }).environment?.runtime_measurements
-    const baseCount = (base as { environment: { runtime_measurements: readonly unknown[] } }).environment.runtime_measurements.length
-    return Array.isArray(measurements) && measurements.length === baseCount + 1
-        && JSON.stringify(measurements.at(-1)) === JSON.stringify(row)
-        && withoutLastMeasurement(next) === JSON.stringify(base)
-}
-
-type AppendResult = Readonly<{ kind: 'complete' }> | Readonly<{ kind: 'refused'; outcome: RuntimeMeasureOutcome }>
-
-async function appendRow(path: string, expectedSha256: string, baseConfig: unknown, row: Readonly<Record<string, string>>): Promise<AppendResult> {
-    const written = await writeVerifiedConfig({
-        path, expectedSha256, temporaryTag: 'measure',
-        edit: (original) => rowEdit(original, row),
-        isExactChange: (config) => exactlyOneRowAdded(baseConfig, config, row),
-        messages: {
-            changedBefore: 'cockpit.toml changed while the runtime was being measured; nothing was written. Re-run the measurement',
-            changedDuring: 'cockpit.toml changed while the row was being prepared; nothing was written. Re-run the measurement',
-            invalid: (reason) => `appending the row would leave cockpit.toml invalid (${reason}); nothing was written. `
-                + `Add it to environment.runtime_measurements by hand: ${inlineRow(row)}`,
-            notExact: `appending the row would change more than one measurement row; nothing was written. Add it by hand: ${inlineRow(row)}`,
-            writtenMismatch: 'the row was written, but re-reading cockpit.toml shows a change other than that one row; inspect the file before running up',
-        },
-    })
-    return written.kind === 'complete' ? written : { kind: 'refused', outcome: refused(written.code, written.message, path) }
-}
-
 export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies: RuntimeMeasureDependencies): Promise<RuntimeMeasureOutcome> {
     const loaded = await loadCockpitConfig(input.configPath)
     if (loaded.kind !== 'complete') return Object.freeze({ status: 2, result: null, diagnostics: loaded.diagnostics })
@@ -262,12 +148,10 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (observed.kind !== 'complete') return refused(observed.code, observed.reason, 'docker')
     const identity = observed.runtimeIdentity
     if (identity === null) {
-        const admission = admitRuntimeMeasurement(observed, config.environment.runtime_measurements)
-        return refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, admission.kind === 'unavailable' ? admission.reason : 'the runtime is not identified', 'docker info')
-    }
-    if (input.write && config.environment.runtime_measurements.some((row) => row.runtime === identity)) {
-        return refused(ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
-            `cockpit.toml already has a runtime_measurements row for ${identity}; remove it before recording a new measurement with --write`, configPath)
+        return refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+            `Docker runtime is not a recognised product, so no measurement can apply (docker info: OperatingSystem ${JSON.stringify(observed.operatingSystem)}, `
+            + `Name ${JSON.stringify(observed.name)}, OSType ${JSON.stringify(observed.osType)}; host ${observed.hostPlatform}). `
+            + 'Report these docker info values to the cockpit maintainers so the runtime can be identified', 'docker info')
     }
 
     const image = await readDocker(dependencies.execute, dockerStep(docker.value, cwd, runtimeEnv, 'runtime:measure:image',
@@ -291,7 +175,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         const probeRoot = join(parent, 'probe')
         await mkdir(probeRoot, { mode: 0o700 })
         verdict = await dependencies.probe({
-            executable: docker.value, gitExecutable: git.value, cwd: probeRoot,
+            executable: docker.value, gitExecutable: git.value, cwd: probeRoot, projectPrefix: config.cockpit.name.slice(0, 40),
             env: Object.freeze({ ...runtimeEnv, ...(input.env.TMPDIR === undefined ? {} : { TMPDIR: input.env.TMPDIR }) }),
             composeFloor, measuredOn, timeoutMs: PROBE_STEP_TIMEOUT_MS,
             image: Object.freeze({ reference: image.text, id: image.text }),
@@ -310,29 +194,32 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     if (verdict.status !== 'supported' || verdict.candidate !== 'passed' || verdict.brokenControl !== 'rejected') {
         return Object.freeze({ ...refused(verdict.operatorAction?.code ?? ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
             `runtime ${identity} was not measured as supported (candidate ${verdict.candidate}, broken control ${verdict.brokenControl}): `
-            + `${verdict.operatorAction?.reason ?? 'no reason was reported'}; nothing was written`, identity), result: summary })
+            + `${verdict.operatorAction?.reason ?? 'no reason was reported'}; nothing was recorded`, identity), result: summary })
     }
     // The probe observes the runtime again; a different daemon or Compose answering it would make
     // this row describe something other than the identity read above.
     if (evidence === null || evidence.runtimeVersion !== observed.runtime.version || evidence.composeVersion !== observed.composeVersion
         || evidence.runtimeExecutableSha256 !== docker.value.sha256) {
         return Object.freeze({ ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
-            `the probe measured a different runtime than ${identity} ${observed.runtime.version} with Compose ${observed.composeVersion}; nothing was written`, identity), result: summary })
+            `the probe measured a different runtime than ${identity} ${observed.runtime.version} with Compose ${observed.composeVersion}; nothing was recorded`, identity), result: summary })
     }
 
-    const row = Object.freeze({ runtime: identity, compose_floor: composeFloor, measured_on: measuredOn,
-        candidate: 'passed', broken_control: 'rejected', status: 'supported' })
-    const toml = tomlRow(row)
-    // The printed row stays valid TOML to paste, so what happened to it travels as a comment.
-    const printed = (note: string) => `# ${note}\n${toml}`
-    if (!input.write) {
-        return Object.freeze({ status: 0, result: Object.freeze({ ...summary, row, toml, written: false }), destination: null,
-            artifact: printed(`runtime ${identity} passed; re-run with --write to append this row to ${configPath}`), diagnostics: Object.freeze([]) })
+    const row = Object.freeze({ runtime: identity, daemon: observed.name, engineVersion: observed.runtime.version,
+        composeFloor, measuredOn })
+    const recorded = await recordLocalRuntimeMeasurement(cwd, row)
+    if (recorded.kind === 'refusal') {
+        return Object.freeze({ ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+            `runtime ${identity} passed, but this machine's measurement could not be recorded in ${recorded.path}: ${recorded.reason}`, recorded.path),
+            result: Object.freeze({ ...summary, row, recorded: false }) })
     }
-    const appended = await appendRow(configPath, loaded.result.source.sha256, config, row)
-    if (appended.kind === 'refused') return Object.freeze({ ...appended.outcome, result: Object.freeze({ ...summary, row, toml, written: false }) })
-    return Object.freeze({ status: 0, result: Object.freeze({ ...summary, row, toml, written: true }), destination: null,
-        artifact: printed(`runtime ${identity} passed; appended this row to ${configPath}`), diagnostics: Object.freeze([]) })
+    const notes = [
+        `runtime ${identity} on daemon ${JSON.stringify(observed.name)} passed with engine ${row.engineVersion}; recorded with Compose floor ${composeFloor} in ${recorded.path}`,
+        ...(recorded.replaced === null ? [] : [`it replaces the measurement from ${recorded.replaced.measuredOn} (engine ${recorded.replaced.engineVersion})`]),
+        ...(recorded.discardedUnreadable === null ? [] : [`the previous record was unreadable and was replaced: ${recorded.discardedUnreadable}`]),
+        `cockpit.toml is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,
+    ]
+    return Object.freeze({ status: 0, result: Object.freeze({ ...summary, row, recorded: true, path: recorded.path }), destination: null,
+        artifact: `${notes.join('\n')}\n`, diagnostics: Object.freeze([]) })
 }
 
 /**

@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:net'
 import { createHash } from 'node:crypto'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
@@ -18,6 +18,7 @@ import { syncGeneratedEnvironment, checkGeneratedEnvironment, observeGeneratedAp
 import { observeEnvSchemas } from './env-schema-observation.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
 import { loadCockpitConfig } from '../config/load.js'
+import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
 const roots: string[] = []
@@ -63,9 +64,6 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
         '',
         ...(options.configuredRuntime || options.machineOnly ? [
             options.machineOnly ? 'compose_files = []' : 'compose_files = ["compose.yml"]',
-            options.unmeasured
-                ? 'runtime_measurements = [{ runtime = "docker-desktop", recorded_on = "2026-09-26", status = "unmeasured" }]'
-                : 'runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-26", candidate = "passed", broken_control = "rejected", status = "supported" }]',
             '',
             '[environment.machine]',
             'runtime_memory_mb = 1024',
@@ -76,6 +74,7 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
         ] : []),
     ].join('\n')
     await writeFile(configPath, config)
+    if ((options.configuredRuntime || options.machineOnly) && !options.unmeasured) await recordSyntheticMeasurement(checkout)
     if (options.configuredRuntime) await writeFile(join(checkout, 'compose.yml'), 'services: {}\n')
     await run('git', ['-C', checkout, 'add', 'cockpit.toml'])
     await run('git', ['-C', checkout, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '-m', 'fixture'])
@@ -743,9 +742,10 @@ else process.exit(64)
                 owner: 'runtime-planning',
                 code: 'RUNTIME_UNMEASURED',
                 verdict: 'unavailable',
-                reason: 'Runtime docker-desktop is not supported by a complete measurement row (docker info: OperatingSystem "Docker Desktop", '
-                    + `Name "docker-desktop", OSType "linux"; host ${process.platform}; measured rows: docker-desktop (unmeasured)). `
-                    + 'Measure it with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image> --write',
+                reason: 'Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine (docker info: OperatingSystem "Docker Desktop", '
+                    + `Name "docker-desktop", OSType "linux"; engine 27.1.2; host ${process.platform}; `
+                    + `measured in ${join(dirname(candidate.configPath), '.cockpit', 'local', 'runtime-measurements.json')}: none). `
+                    + 'Measure it on this machine with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>',
             }),
         ]))
     })

@@ -48,8 +48,8 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
         fix: 'start the configured container runtime and verify docker info succeeds, then retry',
     }),
     RUNTIME_UNMEASURED: Object.freeze({
-        why: 'the current runtime has no measured support row, so its timing and capability bounds are unknown',
-        fix: `run ${cockpitCommand('runtime measure', { args: '--image <ref> --write' })}, review the change, then retry`,
+        why: 'this machine has no passing measurement for the current runtime, so cockpit cannot vouch for its mounts, labels, health and teardown',
+        fix: `run ${cockpitCommand('runtime measure', { args: '--image <local-image>' })}, which records the result for this machine only, then retry`,
     }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',

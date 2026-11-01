@@ -116,6 +116,7 @@ function request(overrides: Partial<RuntimeProbeRequest> = {}): RuntimeProbeRequ
             executionMode: 'verified-path',
         },
         cwd: realpathSync(liveDirectory),
+        projectPrefix: 'synthetic-measure',
         env: runtimeEnvironment(),
         composeFloor: '2.20.0',
         measuredOn: new Date().toISOString().slice(0, 10),
@@ -275,6 +276,7 @@ describe('installed container-runtime capability promotion', () => {
         ['remote endpoint', { env: { ...runtimeEnvironment(), DOCKER_HOST: 'ssh://synthetic.invalid' } }],
         ['secret-bearing environment', { env: { ...runtimeEnvironment(), API_SECRET: 'probe-secret-canary' } }],
         ['future measurement', { measuredOn: '9999-01-01' }],
+        ['project prefix that is not a cockpit name', { projectPrefix: 'Synthetic Measure' }],
         ['fake executor path', { executable: { canonicalPath: '/tmp/docker', invocationPath: '/tmp/docker', sha256: 'a'.repeat(64), executionMode: 'verified-path' as const } }],
     ])('keeps %s unavailable without retaining caller values', async (_name, overrides) => {
         const verdict = await probeRuntimeSupport(request(overrides as Partial<RuntimeProbeRequest>))
@@ -341,6 +343,8 @@ describe('installed container-runtime capability promotion', () => {
         expect(['supported', 'unavailable']).toContain(verdict.status)
         expect(verdict.brokenControl, JSON.stringify(verdict)).toBe('rejected')
         expect(verdict.evidence).toEqual(expect.objectContaining({
+            // The disposable project is named after the measuring cockpit, so a survivor is attributable.
+            projectName: `synthetic-measure-probe-${verdict.evidence?.batchId}`,
             installedModuleSha256: installedModuleSha,
             runtimeExecutableSha256: dockerSha,
             brokenControlRejected: true,

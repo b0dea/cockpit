@@ -70,7 +70,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     follow: 'Continue collecting logs until cancelled',
     from: 'Path to an existing local repository',
     gate: 'Declared product gate to run',
-    image: 'Pinned container image used for runtime measurement',
+    image: 'Local container image the runtime measurement probe runs; it is never pulled',
     intent: 'Relative path to the closed JSON intent descriptor; see https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor',
     'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
     interactive: 'Ask for explicit approval in a terminal',
@@ -97,7 +97,6 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     target: 'Agent surface target to initialize',
     var: 'Environment variable mapping for the sibling',
     'work-order': 'Work-order identifier',
-    write: 'Write the measurement result to cockpit.toml',
     'write-instruction-pointers': 'Write the reviewed instruction links into opted-in sibling guides',
 })
 
@@ -107,7 +106,7 @@ export function describePublicOption(name: string): string {
     return description
 }
 
-type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target'
+type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'local-image'
 export interface OrdinaryOption {
     readonly kind: 'flag' | 'value'
     readonly role: 'boolean' | OrdinaryValueRole
@@ -118,7 +117,8 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     availability: 'available'
     executableRole: 'installed-cockpit'
     command: HandlerIdentifier
-    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly [] }>
+    // An `operation` positional must be one of `operations`, the exact subcommand words.
+    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly []; operations?: readonly string[] }>
     options: Readonly<Record<string, OrdinaryOption>>
     cwdRole: 'canonical-root'
     configuration: 'resolved' | 'none'
@@ -320,14 +320,17 @@ export const commands: readonly CommandDefinition[] = [
     },
     {
         name: 'runtime',
-        summary: 'Measure the local container runtime (runtime measure) and record the result',
+        summary: 'Measure the local container runtime (runtime measure) and record the result for this machine',
         handler: 'runtime',
         visibility: 'public',
-        ordinary: unavailable('runtime measurement starts containers and can rewrite cockpit.toml'),
+        // The probe runs a disposable stack under its own project, cleans it up, and records the result
+        // only in this machine's ignored state, so an agent can measure before its first `up`.
+        ordinary: ordinary('runtime', { ...configured, image: value('local-image', true) }, {
+            positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['measure']) }),
+        }),
         options: {
             config: { type: 'string' },
             image: { type: 'string' },
-            write: { type: 'boolean', default: false },
             json: { type: 'boolean', default: false },
         },
     },
@@ -481,6 +484,9 @@ export interface OrdinaryInvocationAuthority {
     readonly services: readonly string[]
 }
 
+// An image reference or ID as Docker spells it; the command itself refuses one that is not local.
+const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
+
 function canonicalPath(path: unknown): path is string {
     return typeof path === 'string' && path !== '/' && isAbsolute(path) && normalize(path) === path
         && !path.endsWith('/') && !/[\x00-\x1f\x7f-\x9f\\\uD800-\uDFFF]/u.test(path)
@@ -563,12 +569,15 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
                 || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
             : option.role === 'surface-target' ? SURFACE_TARGETS.some(target => target === text)
+            : option.role === 'local-image' ? LOCAL_IMAGE.test(text)
             : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
         if (!valid) return undefined
         options.set(name, text)
     }
     if (positionals.length < grammar.positional.min || positionals.length > grammar.positional.max
-        || positionals.some((path, index) => grammar.positional.roles[index] !== 'confined-root' || !confined(path))
+        || positionals.some((word, index) => grammar.positional.roles[index] === 'operation'
+            ? !grammar.positional.operations?.includes(word)
+            : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
         || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
         || grammar.selection === 'root-xor-registry' && (positionals.length === 1) === options.has('registry')
         || grammar.selection === 'release-evidence-pair' && options.has('release-evidence') !== options.has('release-evidence-sha256')

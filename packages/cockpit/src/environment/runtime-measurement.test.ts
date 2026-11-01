@@ -1,10 +1,10 @@
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
-import { loadCockpitConfig } from '../config/load.js'
 import { runRuntimeMeasure, type RuntimeMeasureProbe } from './runtime-measurement.js'
+import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import type { RuntimeProbeVerdict } from './runtime-probe.js'
 
 const roots: string[] = []
@@ -69,35 +69,57 @@ function verdict(passed: boolean, runtimeExecutableSha256: string): RuntimeProbe
 }
 
 describe('runtime measurement recording', () => {
-    it('appends exactly one supported row for the identified runtime, which then admits it', async () => {
+    it('records this machine\'s measurement outside cockpit.toml and replaces only the same runtime on a re-measure', async () => {
         const host = await measuredHost()
         const executionEnvironments: Readonly<Record<string, string>>[] = []
+        const prefixes: string[] = []
         const probe: RuntimeMeasureProbe = async (request) => {
             // The selected context stays the probe's to resolve; only an operator's own DOCKER_HOST passes through.
             expect(request.env.DOCKER_HOST).toBeUndefined()
             expect(request.env).toEqual({ PATH: host.env.PATH })
             expect(request.image).toEqual({ reference: IMAGE_ID, id: IMAGE_ID })
+            prefixes.push(request.projectPrefix)
             return verdict(true, request.executable.sha256)
         }
+        const today = new Date().toISOString().slice(0, 10)
+        const other = { runtime: 'colima', daemon: 'colima', engineVersion: '27.0.1', composeFloor: '2.20.0', measuredOn: '2026-09-26' }
+        await mkdir(join(host.root, '.cockpit', 'local'), { recursive: true })
+        await writeFile(join(host.root, '.cockpit', 'local', 'runtime-measurements.json'), JSON.stringify({
+            format: 'cockpit-runtime-measurements/v1',
+            measurements: [other, { runtime: 'orbstack', daemon: 'orbstack', engineVersion: '28.0.0', composeFloor: '2.0.0', measuredOn: '2026-09-01' }],
+        }))
 
-        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env: host.env },
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
             { execute: async step => {
                 executionEnvironments.push(step.env)
                 return executeProbe(step)
             }, probe })
 
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        expect(outcome.artifact).toContain('it replaces the measurement from 2026-09-01 (engine 28.0.0)')
         expect(executionEnvironments.length).toBeGreaterThan(0)
         for (const env of executionEnvironments) expect(env).toEqual({ PATH: host.env.PATH })
-        const written = await readFile(host.configPath, 'utf8')
-        expect(written.startsWith(CONFIG)).toBe(true)
-        const loaded = await loadCockpitConfig(host.configPath)
-        expect(loaded.kind).toBe('complete')
-        if (loaded.kind !== 'complete') return
-        expect(loaded.result.config.environment.runtime_measurements).toEqual([{
-            runtime: 'orbstack', compose_floor: '5.1.2', measured_on: new Date().toISOString().slice(0, 10),
-            candidate: 'passed', broken_control: 'rejected', status: 'supported',
-        }])
+        expect(prefixes).toEqual(['synthetic-measure'])
+        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readLocalRuntimeMeasurements(host.root)).toEqual({
+            kind: 'read', path: join(host.root, '.cockpit', 'local', 'runtime-measurements.json'),
+            rows: [other, { runtime: 'orbstack', daemon: 'orbstack', engineVersion: '29.4.0', composeFloor: '5.1.2', measuredOn: today }],
+        })
+        expect(await readFile(join(host.root, '.cockpit', 'local', '.gitignore'), 'utf8')).toContain('\n*\n')
+    })
+
+    it('replaces an unreadable record with the new measurement and says what it discarded', async () => {
+        const host = await measuredHost()
+        await mkdir(join(host.root, '.cockpit', 'local'), { recursive: true })
+        await writeFile(join(host.root, '.cockpit', 'local', 'runtime-measurements.json'), '{"format":"other"}')
+        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'unreadable', reason: expect.stringMatching(/^the file is not a cockpit-runtime-measurements\/v1 record/) })
+
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
+            { execute: executeProbe, probe: async (request) => verdict(true, request.executable.sha256) })
+
+        expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        expect(outcome.artifact).toContain('the previous record was unreadable and was replaced: the file is not a cockpit-runtime-measurements/v1 record')
+        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'read', rows: [{ runtime: 'orbstack', engineVersion: '29.4.0' }] })
     })
 
     it('passes the exact local Unix selection to the runtime probe without changing endpoint identity', async () => {
@@ -105,7 +127,7 @@ describe('runtime measurement recording', () => {
         const host = await measuredHost(endpoint)
         const selections: (string | undefined)[] = []
         for (const env of [host.env, { ...host.env, DOCKER_HOST: endpoint }] as Readonly<Record<string, string>>[]) {
-            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: false, env }, {
+            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env }, {
                 execute: executeProbe,
                 probe: async (request) => {
                     selections.push(request.env.DOCKER_HOST)
@@ -124,7 +146,7 @@ describe('runtime measurement recording', () => {
         for (const env of [host.env, { ...host.env, DOCKER_HOST: endpoint }] as Readonly<Record<string, string>>[]) {
             const steps: string[][] = []
             let calls = 0
-            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env }, {
+            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env }, {
                 execute: async (step) => { steps.push([...step.argv]); return executeProbe(step) },
                 probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
             })
@@ -139,7 +161,7 @@ describe('runtime measurement recording', () => {
     it('refuses context endpoint whitespace instead of trimming it into a different identity', async () => {
         const host = await measuredHost('unix:///synthetic/docker.sock ')
         let calls = 0
-        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: false, env: host.env }, {
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env }, {
             execute: executeProbe, probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
         })
         expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
@@ -153,7 +175,7 @@ describe('runtime measurement recording', () => {
         for (const endpoint of [
             'unix://synthetic.invalid/docker.sock', 'unix:///tmp/docker.sock\0',
         ]) {
-            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true,
+            const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine',
                 env: { ...host.env, DOCKER_HOST: endpoint } }, {
                 execute: executeProbe, probe: async (request) => { calls += 1; return verdict(true, request.executable.sha256) },
             })
@@ -163,58 +185,17 @@ describe('runtime measurement recording', () => {
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
 
-    it('writes nothing when the candidate fails', async () => {
+    it('records nothing when the candidate fails', async () => {
         const host = await measuredHost()
 
-        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env: host.env },
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
             { execute: executeProbe, probe: async (request) => verdict(false, request.executable.sha256) })
 
         expect(outcome).toMatchObject({ status: 2, artifact: null, diagnostics: [{
             code: 'RUNTIME_UNAVAILABLE',
-            message: expect.stringMatching(/^runtime orbstack was not measured as supported \(candidate failed, broken control rejected\): profile activation.*nothing was written$/),
+            message: expect.stringMatching(/^runtime orbstack was not measured as supported \(candidate failed, broken control rejected\): profile activation.*nothing was recorded$/),
         }] })
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
-    })
-
-    it('refuses --write when cockpit.toml no longer reads as the measured configuration plus one row', async () => {
-        const host = await measuredHost()
-        const edited = CONFIG.replace('name = "synthetic-measure"', 'name = "edited-meanwhile"')
-        // The probe runs for minutes; an operator editing cockpit.toml meanwhile must keep their edit.
-        const probe: RuntimeMeasureProbe = async (request) => {
-            await writeFile(host.configPath, edited)
-            return verdict(true, request.executable.sha256)
-        }
-
-        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env: host.env },
-            { execute: executeProbe, probe })
-
-        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'CONFIG_CHANGED_DURING_EXECUTION', target: host.configPath }] })
-        expect(await readFile(host.configPath, 'utf8')).toBe(edited)
-    })
-
-    it('replaces the generated empty inline measurements array with exactly one supported row', async () => {
-        const host = await measuredHost()
-        const inline = `${CONFIG.replace('purpose = "Synthetic API"', [
-            'purpose = """',
-            '[environment]',
-            'runtime_measurements = []',
-            '"""',
-        ].join('\n'))}# runtime_measurements = []\nruntime_measurements = []\n`
-        await writeFile(host.configPath, inline)
-
-        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', write: true, env: host.env },
-            { execute: executeProbe, probe: async (request) => verdict(true, request.executable.sha256) })
-
-        expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
-        const written = await readFile(host.configPath, 'utf8')
-        expect(written).toContain('purpose = """\n[environment]\nruntime_measurements = []\n"""')
-        expect(written).toContain('# runtime_measurements = []')
-        const loaded = await loadCockpitConfig(host.configPath)
-        expect(loaded.kind).toBe('complete')
-        if (loaded.kind !== 'complete') return
-        expect(loaded.result.config.environment.runtime_measurements).toEqual([{
-            runtime: 'orbstack', compose_floor: '5.1.2', measured_on: new Date().toISOString().slice(0, 10),
-            candidate: 'passed', broken_control: 'rejected', status: 'supported',
-        }])
+        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'read', rows: [] })
     })
 })

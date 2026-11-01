@@ -115,7 +115,6 @@ generated_host_paths = [".cockpit/generated/session"]
 compose_files = ["compose.yml"]
 entrypoint_derivatives = [{ name = "web", kind = "entrypoint", port = "APP_PORT", path = "/" }]
 install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["node", "--eval", "require('zod')"] }]
-runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-07", candidate = "passed", broken_control = "rejected", status = "supported" }]
 
 [environment.machine]
 runtime_memory_mb = 4096

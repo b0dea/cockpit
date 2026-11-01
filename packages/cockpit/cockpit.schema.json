@@ -3726,176 +3726,6 @@
             "additionalProperties": false
           }
         },
-        "runtime_measurements": {
-          "default": [],
-          "type": "array",
-          "items": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "compose_floor": {
-                    "type": "string",
-                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                  },
-                  "measured_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "candidate": {
-                    "type": "string",
-                    "enum": [
-                      "passed"
-                    ]
-                  },
-                  "broken_control": {
-                    "type": "string",
-                    "enum": [
-                      "rejected"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "supported"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "compose_floor",
-                  "measured_on",
-                  "candidate",
-                  "broken_control",
-                  "status"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "compose_floor": {
-                    "type": "string",
-                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                  },
-                  "measured_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "candidate": {
-                    "type": "string",
-                    "enum": [
-                      "failed"
-                    ]
-                  },
-                  "broken_control": {
-                    "type": "string",
-                    "enum": [
-                      "rejected",
-                      "accepted"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "unavailable"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "compose_floor",
-                  "measured_on",
-                  "candidate",
-                  "broken_control",
-                  "status"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "compose_floor": {
-                    "type": "string",
-                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                  },
-                  "measured_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "candidate": {
-                    "type": "string",
-                    "enum": [
-                      "passed"
-                    ]
-                  },
-                  "broken_control": {
-                    "type": "string",
-                    "enum": [
-                      "accepted"
-                    ]
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "unavailable"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "compose_floor",
-                  "measured_on",
-                  "candidate",
-                  "broken_control",
-                  "status"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9-]*$"
-                  },
-                  "recorded_on": {
-                    "type": "string",
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "unmeasured"
-                    ]
-                  }
-                },
-                "required": [
-                  "runtime",
-                  "recorded_on",
-                  "status"
-                ],
-                "additionalProperties": false
-              }
-            ]
-          }
-        },
         "generated": {
           "type": "object",
           "properties": {
@@ -10822,10 +10652,6 @@
       "rule": "unique"
     },
     {
-      "path": "environment.runtime_measurements[].runtime",
-      "rule": "unique"
-    },
-    {
       "path": "environment.posture_requirements[].requirement",
       "rule": "unique"
     },
@@ -11002,10 +10828,6 @@
     },
     {
       "path": "environment.install_policies[].toolchain+lockfile",
-      "rule": "unique"
-    },
-    {
-      "path": "environment.runtime_measurements[].runtime",
       "rule": "unique"
     },
     {

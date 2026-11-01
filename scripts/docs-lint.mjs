@@ -2085,7 +2085,7 @@ export function validateRuntimeEvidence({ root = ROOT, path, expectedFixedPoint,
             || !digest(evidence.runtime_sha256) || typeof evidence.runtime_path !== 'string' || !posix.isAbsolute(evidence.runtime_path)
             || !/^\d+\.\d+\.\d+$/.test(evidence.runtime_version ?? '') || !/^\d+\.\d+\.\d+$/.test(evidence.compose_version ?? '')
             || !/^[a-f0-9]{32}$/.test(evidence.batch_id ?? '') || typeof evidence.project_name !== 'string'
-            || evidence.project_name !== `cockpit-probe-${evidence.batch_id}`
+            || !/^[a-z0-9][a-z0-9-]{0,39}-probe-[a-f0-9]{32}$/.test(evidence.project_name) || !evidence.project_name.endsWith(`-probe-${evidence.batch_id}`)
             || typeof evidence.operating_system !== 'string' || evidence.operating_system === ''
             || typeof evidence.architecture !== 'string' || evidence.architecture === '') {
             errors.push(evidenceRefusal('DOCEV074_RUNTIME_PROMOTION_UNSUPPORTED', 'supported runtime needs the complete named cell and its shared identity'))

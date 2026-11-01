@@ -67,6 +67,7 @@ import {
     projectDependencyRuntime,
     type RuntimeServiceEvidence,
 } from './runtime.js'
+import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import {
     consumeSetupCheckoutProjection,
     observeSetupCheckout,
@@ -201,7 +202,7 @@ function producers(input: {
         }, input.execute)
         if (observed.kind !== 'complete') return undefined
         return observeRuntimeMeasurement(
-            admitRuntimeMeasurement(observed, input.config.result.config.environment.runtime_measurements),
+            admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(dirname(input.config.result.source.path))),
             input.stack,
         )
     })() : undefined

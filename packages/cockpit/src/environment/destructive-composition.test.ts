@@ -12,6 +12,7 @@ import * as ports from './ports.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { consumeRuntimeLifecycleProjection } from './runtime.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
+import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const roots: string[] = []
 const run = promisify(execFile)
@@ -97,6 +98,7 @@ describe('destructive command composition', () => {
         roots.push(root, stateHome)
         await run('git', ['init', '--quiet', root])
         const configPath = join(root, 'cockpit.toml')
+        await recordSyntheticMeasurement(root)
         await writeFile(configPath, [
             '[cockpit]',
             'name = "synthetic-cockpit"',
@@ -121,7 +123,6 @@ describe('destructive command composition', () => {
             'resettable_volumes = []',
             'generated_host_paths = []',
             'install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]',
-            'runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-26", candidate = "passed", broken_control = "rejected", status = "supported" }]',
             '',
             '[environment.machine]',
             'runtime_memory_mb = 1024',

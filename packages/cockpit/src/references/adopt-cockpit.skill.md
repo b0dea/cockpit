@@ -106,11 +106,10 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
 `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` passes.
 
 - Before the first `up`, measure the runtime with
-  `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json`;
+  `env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json`;
   the probe refuses a `DOCKER_CONTEXT` override. The guide's *Measure the runtime* says which
-  runtimes are recognised. A measurement takes a few
-  minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check --config cockpit.toml` fail and the guard hold
-  tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml`.
+  runtimes are recognised. A measurement takes a few minutes with no progress output. It records
+  the result for this machine only and leaves `cockpit.toml` unchanged, so go straight on to `up`.
 - Codex: a person runs `codex -C <cockpit root>` once per machine and chooses **Trust all and
   continue** at **Hooks need review**; until then Codex silently skips the guard hook, and
   `./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED`.

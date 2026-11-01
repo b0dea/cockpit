@@ -4,8 +4,8 @@
  * change, then rename it over the original.
  *
  * It does not decide what the edit is: callers supply the text edit and the predicate that
- * recognises the intended change. It never spawns a process. Callers: `runtime measure --write`
- * and `sibling add` / `sibling remove`.
+ * recognises the intended change. It never spawns a process. Callers: `sibling add` /
+ * `sibling remove` and `sync --adopt`.
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'

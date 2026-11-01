@@ -59,6 +59,7 @@ import {
 import { cockpitCommand } from '../fix-catalogue.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import type { StateNamespace } from './state.js'
+import type { LocalRuntimeMeasurements } from './runtime-measurement-record.js'
 import { consumeSetupCheckoutProjection, type ConsumedSetupCheckoutObservation, type SetupCheckoutProjection } from './setup-observation.js'
 import { composeProcessEnvironment } from './compose-environment.js'
 
@@ -493,7 +494,7 @@ export interface DockerInfoIdentityInput {
 
 /**
  * Name the container runtime product from one `docker info` reading, or null when it is not one we
- * recognise. The identity selects the `environment.runtime_measurements` row, so a wrong match would
+ * recognise. The identity selects this machine's runtime measurement, so a wrong match would
  * admit a runtime on another product's measurement; anything unrecognised therefore stays null.
  *
  * Provenance of each rule: `orbstack` was observed on a host running OrbStack (OperatingSystem
@@ -570,7 +571,7 @@ export function runtimeMeasurementProbeObservation(
 }
 
 export type RuntimeMeasurementAdmission =
-    | Readonly<{ kind: 'admitted'; runtimeIdentity: string }>
+    | Readonly<{ kind: 'admitted'; runtimeIdentity: string; measurement: string }>
     | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNMEASURED; reason: string }>
 
 function runtimeUnmeasured(reason: string): RuntimeMeasurementAdmission {
@@ -590,7 +591,7 @@ function versionAtLeast(actual: string, floor: string): boolean {
 
 export function admitRuntimeMeasurement(
     observation: DockerRuntimeObservation,
-    rawMeasurements: unknown,
+    measurements: LocalRuntimeMeasurements,
 ): RuntimeMeasurementAdmission {
     if (!observation || typeof observation !== 'object' || !issuedDockerRuntimeObservations.has(observation)
         || observation.kind !== 'complete') return runtimeUnmeasured('Docker runtime evidence is unavailable or unauthenticated')
@@ -601,47 +602,40 @@ export function admitRuntimeMeasurement(
     }
     const identity = observation.runtimeIdentity
     const dockerInfo = `docker info: OperatingSystem ${JSON.stringify(observation.operatingSystem)}, Name ${JSON.stringify(observation.name)}, `
-        + `OSType ${JSON.stringify(observation.osType)}; host ${observation.hostPlatform}`
-    const captured = snapshotJson(rawMeasurements)
-    const rows = Array.isArray(captured) ? captured.flatMap((candidate) => {
-        if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) return []
-        const row = candidate as Readonly<Record<string, JsonSnapshot>>
-        return typeof row.runtime === 'string' ? [`${row.runtime.slice(0, 40)} (${typeof row.status === 'string' ? row.status.slice(0, 16) : 'malformed'}`
-            + `${typeof row.compose_floor === 'string' ? `, Compose floor ${row.compose_floor.slice(0, 16)}` : ''})`] : []
-    }) : []
-    const listedRows = rows.length === 0 ? 'none'
-        : `${rows.slice(0, 4).join(', ')}${rows.length > 4 ? ` and ${rows.length - 4} more` : ''}`
-    // Every refusal names what was detected and what the configuration holds, so the operator can act
-    // on the message alone; the remedy is always a fresh measurement of this exact runtime. The reason
-    // also travels in an observation, whose text is byte-bounded, so the row list yields first.
+        + `OSType ${JSON.stringify(observation.osType)}; engine ${observation.runtime.version}; host ${observation.hostPlatform}`
+    const rows = measurements.kind === 'read' ? measurements.rows : []
+    const listed = rows.map((row) => `${row.runtime} on ${JSON.stringify(row.daemon.slice(0, 40))} (engine ${row.engineVersion.slice(0, 32)}, Compose floor ${row.composeFloor})`)
+    const listedRows = listed.length === 0 ? 'none'
+        : `${listed.slice(0, 4).join(', ')}${listed.length > 4 ? ` and ${listed.length - 4} more` : ''}`
+    // Every refusal names what was detected and what this machine's record holds, so the operator can
+    // act on the message alone; the remedy is always a fresh measurement of this exact runtime. The
+    // reason also travels in an observation, whose text is byte-bounded, so the row list yields first.
     const detail = (reason: string, action: string) => {
-        const full = `${reason} (${dockerInfo}; measured rows: ${listedRows}). ${action}`
+        const full = `${reason} (${dockerInfo}; measured in ${measurements.path}: ${listedRows}). ${action}`
         return Buffer.byteLength(full) <= OBSERVATION_REASON_BYTE_LIMIT ? full
-            : `${reason} (${dockerInfo}; measured rows: ${rows.length}). ${action}`
+            : `${reason} (${dockerInfo}; measured in ${measurements.path}: ${rows.length}). ${action}`
     }
     const remeasure = (reason: string) => refuse(detail(reason,
-        `Measure it with: ${cockpitCommand('runtime measure', { args: '--image <local-image> --write' })}`))
+        `Measure it on this machine with: ${cockpitCommand('runtime measure', { args: '--image <local-image>' })}`))
     if (!identity) {
-        return refuse(detail('Docker runtime is not a recognised product, so no measurement row can apply',
+        return refuse(detail('Docker runtime is not a recognised product, so no measurement can apply',
             'Report these docker info values to the cockpit maintainers so the runtime can be identified'))
     }
-    if (!Array.isArray(captured)) return refuse('Runtime measurement registry is malformed')
-    const row = captured.find((candidate) => candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate)
-        && (candidate as Readonly<Record<string, JsonSnapshot>>).runtime === identity)
-    if (!row || Array.isArray(row) || typeof row !== 'object') return remeasure(`Runtime ${identity} has no measurement row`)
-    if (!exactKeys(row, ['runtime', 'compose_floor', 'measured_on', 'candidate', 'broken_control', 'status'])) {
-        return remeasure(`Runtime ${identity} is not supported by a complete measurement row`)
+    if (measurements.kind === 'unreadable') {
+        return remeasure(`This machine's runtime measurement record is unreadable: ${measurements.reason}; a new measurement replaces it`)
     }
-    const measurement = row as Readonly<Record<string, JsonSnapshot>>
-    if (measurement.status !== 'supported' || measurement.candidate !== 'passed' || measurement.broken_control !== 'rejected'
-        || typeof measurement.compose_floor !== 'string' || !VERSION.test(measurement.compose_floor)
-        || typeof measurement.measured_on !== 'string' || !DATE.test(measurement.measured_on)) {
-        return remeasure(`Runtime ${identity} has not passed the required candidate and broken-control measurement`)
+    const row = rows.find((candidate) => candidate.runtime === identity && candidate.daemon === observation.name)
+    if (!row) return remeasure(`Runtime ${identity} on daemon ${JSON.stringify(observation.name)} has not been measured on this machine`)
+    // A measurement certifies the engine it ran against; an upgraded or downgraded engine is a
+    // different runtime until it passes the probe too.
+    if (row.engineVersion !== observation.runtime.version) {
+        return remeasure(`Runtime ${identity} was measured with engine ${row.engineVersion} and now runs engine ${observation.runtime.version}`)
     }
-    if (!versionAtLeast(observation.composeVersion, measurement.compose_floor)) {
-        return remeasure(`Runtime ${identity} runs Docker Compose ${observation.composeVersion}, below the measured floor ${measurement.compose_floor}`)
+    if (!VERSION.test(row.composeFloor) || !versionAtLeast(observation.composeVersion, row.composeFloor)) {
+        return remeasure(`Runtime ${identity} runs Docker Compose ${observation.composeVersion}, below the measured floor ${row.composeFloor}`)
     }
-    const result = Object.freeze({ kind: 'admitted' as const, runtimeIdentity: identity })
+    const result = Object.freeze({ kind: 'admitted' as const, runtimeIdentity: identity,
+        measurement: `${identity} on ${JSON.stringify(observation.name)}, engine ${row.engineVersion}, Compose floor ${row.composeFloor}, measured ${row.measuredOn}` })
     issuedRuntimeMeasurementAdmissions.set(result, observation)
     return result
 }
@@ -655,14 +649,15 @@ export function observeRuntimeMeasurement(admission: RuntimeMeasurementAdmission
         code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
         owner: mechanism.id,
         stackId,
-        source: runtime.operatingSystem,
+        // An admitted runtime names the measurement that admitted it, so doctor says which runtime is measured.
+        source: admission.kind === 'admitted' ? admission.measurement : runtime.operatingSystem,
         observed: admission.kind === 'admitted'
             ? { state: 'available', value: true, observedAt: runtime.observedAt }
             : { state: 'unavailable', reason: admission.reason, observedAt: runtime.observedAt },
         expectation: { kind: 'equal', value: true },
         applicability: { state: 'required', posture: 'mounted' },
         freshness: { state: 'current' },
-        remedy: 'record a passing candidate and rejected broken control for the exact runtime and Compose floor',
+        remedy: 'measure this runtime on this machine: a passing candidate and a rejected broken control for its exact engine and Compose floor',
     })
 }
 

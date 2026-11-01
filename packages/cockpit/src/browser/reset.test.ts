@@ -13,6 +13,7 @@ import { resolveLifecycleStage } from '../environment/lifecycle-stage.js'
 import { observeConfiguration } from '../environment/state.js'
 import { assertBrowserArtifactRegistration, resolveBrowserRuntime } from './runtime.js'
 import { publishComposeOwnership } from '../../test-support/compose-ownership-fixture.js'
+import { recordSyntheticMeasurement } from '../../test-support/runtime-measurement-fixture.js'
 
 const roots: string[] = []
 const run = promisify(execFile)
@@ -26,6 +27,7 @@ it('wipes produced browser artifacts through operator reset and preserves an und
     const artifacts = { runner: '.browser/runner', mcp: '.playwright-mcp', cli: '.playwright-cli', auth: '.browser/auth', debugger: '.browser/debugger' }
     const declarations = Object.values(artifacts)
     const configPath = join(root, 'cockpit.toml')
+    await recordSyntheticMeasurement(root)
     await writeFile(configPath, [
         '[cockpit]', 'name = "synthetic-browser"', 'siblings_root = "siblings"',
         '[[sibling]]', 'slug = "web"', 'dir = "web"', 'mount = "always"', 'acquire = "none"', 'var = "WEB_DIR"', 'toolchain = "none"', 'purpose = "Synthetic web"',
@@ -35,7 +37,6 @@ it('wipes produced browser artifacts through operator reset and preserves an und
         'compose_files = ["compose.yml"]', 'resettable_volumes = []',
         `generated_host_paths = ${JSON.stringify(declarations)}`,
         'install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "package-lock.json", install = ["npm", "ci"], load_probe = ["npm", "test"] }]',
-        'runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-26", candidate = "passed", broken_control = "rejected", status = "supported" }]',
         '[environment.machine]', 'runtime_memory_mb = 1024', 'runtime_cpus = 1', 'free_disk_mb = 1024', 'cold_start_seconds = 30', '',
     ].join('\n'))
     const siblingPath = join(root, 'siblings', 'web')

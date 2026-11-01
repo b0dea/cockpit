@@ -13,6 +13,7 @@ import { admitDependencyRuntime, createDependencyRuntimePlan } from '../src/envi
 import { observeDependencyLoad } from '../src/environment/installs.js'
 import { checkoutId, composeProjectName } from '../src/environment/identity.js'
 import { projectDependencyRuntime } from '../src/environment/runtime.js'
+import { recordSyntheticMeasurement } from './runtime-measurement-fixture.js'
 
 const run = promisify(execFile)
 
@@ -59,9 +60,6 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
         '[environment]',
         'compose_files = ["compose.yml"]',
         'entrypoint_derivatives = [{ name = "web", kind = "entrypoint", port = "APP_PORT", path = "/" }]',
-        runtimeMeasurement === 'supported'
-            ? 'runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-26", candidate = "passed", broken_control = "rejected", status = "supported" }]'
-            : 'runtime_measurements = [{ runtime = "docker-desktop", recorded_on = "2026-09-26", status = "unmeasured" }]',
         '',
         '[environment.machine]',
         'runtime_memory_mb = 1024',
@@ -71,6 +69,7 @@ async function fixture(portCount = 2, runtimeMeasurement: 'supported' | 'unmeasu
         '',
     ].join('\n'))
     await writeFile(composePath, 'services: {}\n')
+    if (runtimeMeasurement === 'supported') await recordSyntheticMeasurement(checkout)
     const dockerPath = join(root, 'docker')
     await writeFile(dockerPath, [
         '#!/bin/sh',
@@ -187,7 +186,6 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
         'addressing = "hostname"',
         'authentication = "bypassed"',
         'posture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "bypassed" }]',
-        'runtime_measurements = [{ runtime = "docker-desktop", compose_floor = "2.20.0", measured_on = "2026-09-26", candidate = "passed", broken_control = "rejected", status = "supported" }]',
         '',
         '[environment.machine]',
         'runtime_memory_mb = 1024',
@@ -198,6 +196,7 @@ async function generatedFixture(options: Readonly<{ secondSibling?: boolean; dat
         base,
     ].join('\n'))
     await writeFile(join(checkout, 'fixtures/personas.json'), '[{"id":"first"}]\n')
+    await recordSyntheticMeasurement(checkout)
     await writeFile(join(checkout, 'app/.env'), [
         'MESSAGES_TOKEN=synthetic-token',
         'MESSAGES_URL=https://app:3000/messages',

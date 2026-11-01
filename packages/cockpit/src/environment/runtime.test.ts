@@ -71,12 +71,15 @@ import { resolveExecutablePath, resolveGitExecutable } from './executable.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { readState, selectStateRoot, transactState } from './state.js'
 import type { CheckoutId, HolderId } from './contract.js'
+import type { LocalRuntimeMeasurements, RuntimeMeasurementRow } from './runtime-measurement-record.js'
 
 const observed = <T>(value: T, producer: string): Observation<T> => ({
     state: 'available', value, producer, observedAt: '2026-09-07T12:00:00.000Z',
 })
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
+const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
+    ({ kind: 'read', path: '/synthetic/.cockpit/local/runtime-measurements.json', rows })
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 async function admitCleanStartup(plan: Extract<ReturnType<typeof createRuntimeServicePlan>, { kind: 'planned' }>) {
@@ -171,28 +174,35 @@ fi
             const observed = await observeDockerRuntime({
                 executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
             }, (step) => executeProbe(step))
-            const admission = admitRuntimeMeasurement(observed, [{
-                runtime: 'docker-desktop', compose_floor: '5.1.0', measured_on: '2026-09-26',
-                candidate: 'passed', broken_control: 'rejected', status: 'supported',
-            }])
-            expect(admission).toEqual({ kind: 'admitted', runtimeIdentity: 'docker-desktop' })
-            expect(observeRuntimeMeasurement(admission, stackId({
+            const row = { runtime: 'docker-desktop', daemon: 'docker-desktop', engineVersion: '29.4.0', composeFloor: '5.1.0', measuredOn: '2026-09-26' }
+            const admission = admitRuntimeMeasurement(observed, measured([row]))
+            expect(admission).toEqual({ kind: 'admitted', runtimeIdentity: 'docker-desktop',
+                measurement: 'docker-desktop on "docker-desktop", engine 29.4.0, Compose floor 5.1.0, measured 2026-09-26' })
+            const observation = observeRuntimeMeasurement(admission, stackId({
                 cockpitId: cockpitId({ name: 'fixture', mainCheckoutPath: fixture.directory }),
                 checkoutId: checkoutId({ checkoutPath: fixture.directory }), variant: { kind: 'shared' },
-            }))).toEqual(expect.objectContaining({
+            }))
+            // doctor reports which measurement admitted the runtime.
+            expect(observation).toEqual(expect.objectContaining({
                 code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
+                source: 'docker-desktop on "docker-desktop", engine 29.4.0, Compose floor 5.1.0, measured 2026-09-26',
                 observed: expect.objectContaining({ state: 'available', value: true }),
             }))
 
-            for (const measurements of [
-                [],
-                [{ runtime: 'other-runtime', compose_floor: '5.1.0', measured_on: '2026-09-26', candidate: 'passed', broken_control: 'rejected', status: 'supported' }],
-                [{ runtime: 'docker-desktop', recorded_on: '2026-09-26', status: 'unmeasured' }],
-                [{ runtime: 'docker-desktop', compose_floor: '5.2.0', measured_on: '2026-09-26', candidate: 'passed', broken_control: 'rejected', status: 'supported' }],
+            for (const [measurements, reason] of [
+                [measured([]), /Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine/],
+                [measured([{ ...row, runtime: 'colima' }]), /has not been measured on this machine/],
+                [measured([{ ...row, daemon: 'other-daemon' }]), /has not been measured on this machine/],
+                [measured([{ ...row, engineVersion: '29.3.9' }]), /measured with engine 29\.3\.9 and now runs engine 29\.4\.0/],
+                [measured([{ ...row, composeFloor: '5.2.0' }]), /below the measured floor 5\.2\.0/],
+                [{ kind: 'unreadable', path: '/synthetic/.cockpit/local/runtime-measurements.json', reason: 'the file is not UTF-8 JSON' } as const,
+                    /record is unreadable: the file is not UTF-8 JSON; a new measurement replaces it/],
             ] as const) {
-                expect(admitRuntimeMeasurement(observed, measurements)).toEqual(expect.objectContaining({
-                    kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
-                }))
+                const refused = admitRuntimeMeasurement(observed, measurements)
+                expect(refused).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
+                expect(refused.kind === 'unavailable' ? refused.reason : '').toMatch(reason)
+                expect(refused.kind === 'unavailable' ? refused.reason : '')
+                    .toMatch(/Measure it on this machine with: env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config <your cockpit\.toml> --image <local-image>$/)
             }
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })
@@ -204,10 +214,10 @@ fi
                 executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
             }, (step) => executeProbe(step))
             expect(observed).toEqual(expect.objectContaining({ kind: 'complete', composeVersion: '2.29.7-desktop.1' }))
-            const row = { runtime: 'docker-desktop', measured_on: '2026-09-26', candidate: 'passed', broken_control: 'rejected', status: 'supported' } as const
-            expect(admitRuntimeMeasurement(observed, [{ ...row, compose_floor: '2.29.7' }]))
-                .toEqual({ kind: 'admitted', runtimeIdentity: 'docker-desktop' })
-            expect(admitRuntimeMeasurement(observed, [{ ...row, compose_floor: '2.30.0' }]))
+            const row = { runtime: 'docker-desktop', daemon: 'docker-desktop', engineVersion: '29.4.0', measuredOn: '2026-09-26' } as const
+            expect(admitRuntimeMeasurement(observed, measured([{ ...row, composeFloor: '2.29.7' }])))
+                .toEqual(expect.objectContaining({ kind: 'admitted', runtimeIdentity: 'docker-desktop' }))
+            expect(admitRuntimeMeasurement(observed, measured([{ ...row, composeFloor: '2.30.0' }])))
                 .toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
             expect(observedVersionCore('2.29.7-desktop.1')).toBe('2.29.7')
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
@@ -224,10 +234,9 @@ fi
                 kind: 'complete', operatingSystem: 'Ubuntu 24.04 LTS',
                 runtimeIdentity: process.platform === 'linux' ? 'docker-engine' : null,
             }))
-            expect(admitRuntimeMeasurement(observed, [{
-                runtime: 'ubuntu-24-04-lts', compose_floor: '5.1.0', measured_on: '2026-09-26',
-                candidate: 'passed', broken_control: 'rejected', status: 'supported',
-            }])).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
+            expect(admitRuntimeMeasurement(observed, measured([{
+                runtime: 'ubuntu-24-04-lts', daemon: 'build-host', engineVersion: '29.4.0', composeFloor: '5.1.0', measuredOn: '2026-09-26',
+            }]))).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })
 
@@ -237,14 +246,13 @@ fi
             const observed = await observeDockerRuntime({
                 executable: fixture.executable, cwd: fixture.directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 5_000,
             }, (step) => executeProbe(step))
-            const admission = admitRuntimeMeasurement(observed, [{
-                runtime: 'docker-desktop', compose_floor: '5.1.0', measured_on: '2026-09-26',
-                candidate: 'passed', broken_control: 'rejected', status: 'supported',
-            }])
+            const admission = admitRuntimeMeasurement(observed, measured([{
+                runtime: 'docker-desktop', daemon: 'docker-desktop', engineVersion: '29.4.0', composeFloor: '5.1.0', measuredOn: '2026-09-26',
+            }]))
             expect(admission).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
             const reason = admission.kind === 'unavailable' ? admission.reason : ''
             expect(reason).toContain('OperatingSystem "Windows Server 2022", Name "build-host", OSType "windows"')
-            expect(reason).toContain('measured rows: docker-desktop (supported, Compose floor 5.1.0)')
+            expect(reason).toContain('measured in /synthetic/.cockpit/local/runtime-measurements.json: docker-desktop on "docker-desktop" (engine 29.4.0, Compose floor 5.1.0)')
             expect(reason).toMatch(/Report these docker info values/)
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })

@@ -35,6 +35,10 @@ writes its machine identity under `.cockpit/local/`, and refreshes generated fil
 different directory does not rewrite them. The Docker label values that depend on the checkout path enter
 Compose only when a command runs; they are not committed.
 
+Runtime measurements are not committed either: each machine measures its own container runtime
+once before its first `up`, as described in
+[Measure the container runtime](environment.md#measure-the-container-runtime).
+
 For Codex, cockpit writes those relative grants to
 `sandbox_workspace_write.writable_roots` with `sandbox_mode = "workspace-write"`. It does not
 also publish a permission profile, because Codex gives the workspace-write settings precedence;

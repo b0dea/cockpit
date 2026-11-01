@@ -172,7 +172,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     preflight: PreflightCommandInput
     'registry-resolve': RegistryResolveCommandInput
     reset: ResetCommandInput
-    runtime: Readonly<{ configPath: string; image: string; write: boolean }>
+    runtime: Readonly<{ configPath: string; image: string }>
     sibling: Readonly<{ operation: 'add'; input: Omit<SiblingAddInput, 'env'> }> | Readonly<{ operation: 'remove'; input: Omit<SiblingRemoveInput, 'env'> }>
     setup: SetupCommandInput
     selftest: Readonly<{
@@ -1073,14 +1073,14 @@ async function decodeRequest(
     }
 
     if (handler === 'runtime') {
-        const values = parsed.values as { config?: string; image?: string; write?: boolean }
+        const values = parsed.values as { config?: string; image?: string }
         const [operation, ...extra] = parsed.positionals
         if (operation !== 'measure' || extra.length > 0) {
             return usageOutcome('CLI_USAGE_INVALID', 'runtime requires the measure operation: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>')
         }
         if (!values.config) return usageOutcome('CLI_USAGE_INVALID', 'provide --config <file>', '--config')
         if (!values.image) return usageOutcome('CLI_USAGE_INVALID', 'provide --image <local-image>; the probe never pulls', '--image')
-        return { handler, input: { configPath: values.config, image: values.image, write: values.write === true } }
+        return { handler, input: { configPath: values.config, image: values.image } }
     }
 
     if (handler === 'sibling') {

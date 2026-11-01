@@ -428,12 +428,12 @@ them and do not run them.
 
 ## Measure the runtime
 
-Done when `cockpit.toml` holds an `[[environment.runtime_measurements]]` row for this machine.
+Done when `runtime measure` exits 0 and names `.cockpit/local/runtime-measurements.json`.
 
-Before the first `up`, measure the local container runtime and record it:
+Before the first `up`, measure the local container runtime on this machine:
 
 ```sh
-env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --write --json
+env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image <local-image> --json
 ```
 
 `DOCKER_CONTEXT` must be unset here, because the probe measures the context Docker has selected;
@@ -443,9 +443,11 @@ image already on the machine; the probe never pulls. The probe runs only from an
 and the checks a measurement must pass are in
 [Measure the container runtime](environment.md#measure-the-container-runtime).
 
-A measurement takes a few minutes and prints no progress, so wait for it to finish. `--write`
-rewrites configuration that cockpit generated, so afterwards `cockpit check` fails and the guard
-holds agent tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml` in a terminal.
+A measurement takes a few minutes and prints no progress, so wait for it to finish. It records the
+result for this machine only, in a directory Git ignores, and leaves `cockpit.toml` unchanged, so
+`cockpit check` still passes and the guard does not hold later tool calls; the agent can go straight
+on to `up`. Measure again after the container engine is upgraded: `up` refuses with
+`RUNTIME_UNMEASURED` and names the engine versions.
 
 ## Daily loop
 

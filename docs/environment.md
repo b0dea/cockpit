@@ -341,7 +341,7 @@ one statement of both rules:
 
 ```sh
 DOCKER_CONTEXT="$(docker context show)" npx --no cockpit down --config cockpit.toml
-env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine --write
+env -u DOCKER_CONTEXT npx --no cockpit runtime measure --config cockpit.toml --image node:22-alpine
 ```
 
 For `down` and `reset`, discovery and deletion then address the same daemon. A `DOCKER_HOST`
@@ -368,9 +368,11 @@ addresses a different project and stack, so run `down` before renaming.
 
 ## Measure the container runtime
 
-`up` and `down` run only on a container runtime that has a measurement recorded in
-`cockpit.toml`, and `preflight` and `doctor` report a runtime that has none. cockpit identifies the
-runtime from one `docker info` reading of `OperatingSystem`, `Name` and `OSType`:
+`up` and `down` run only on a container runtime that has been measured on this machine, and
+`preflight` and `doctor` report a runtime that has not. A measurement is a fact about one machine,
+not something the team declares: teammates run different runtimes and versions, so it is never
+written to `cockpit.toml`. cockpit identifies the runtime from one `docker info` reading of
+`OperatingSystem`, `Name` and `OSType`:
 
 | Runtime identity | Recognised by | Provenance |
 |---|---|---|
@@ -383,22 +385,30 @@ runtime from one `docker info` reading of `OperatingSystem`, `Name` and `OSType`
 Any other reading, including an unrecognised VM on macOS, is not identified and is never accepted;
 the refusal lists the raw `docker info` values so you can report them.
 
-Record a measurement for the runtime on this machine:
+Measure the runtime on this machine:
 
 ```sh
 docker pull node:22-alpine
-./node_modules/.bin/cockpit runtime measure --config ./cockpit.toml --image node:22-alpine --write
+env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config ./cockpit.toml --image node:22-alpine
 ```
 
 The command runs a probe in a throwaway directory: a candidate stack that exercises profiles, bind
 mounts in both directions, labels, health, logs, recovery and teardown, next to a deliberately
 broken Compose file that the runtime must reject. It uses only the local image you name and never
-pulls. If the candidate passes and the broken file is rejected, it prints one
-`[[environment.runtime_measurements]]` row whose `compose_floor` is the Compose version it saw.
-With `--write` it appends that row to `cockpit.toml`, or replaces the generated empty
-`runtime_measurements = []` field with it, then re-reads the file and refuses unless exactly that
-one row was added. It also refuses when the runtime already has a row or the file changed while
-the probe ran. A failed measurement writes nothing.
+pulls. Its Compose project is `<cockpit.name>-probe-<id>`, so anything it leaves on a shared daemon
+names the cockpit that ran it, and the probe removes it before returning. If the candidate passes
+and the broken file is rejected, the command records the measurement in
+`.cockpit/local/runtime-measurements.json` beside `cockpit.toml`, a directory Git ignores. The
+record is keyed by the runtime identity and the daemon name `docker info` reports, and it holds the
+engine version and the Compose version the probe saw, which becomes the Compose floor. Measuring
+again replaces the row for the same runtime and daemon and keeps the others, so switching between
+two runtimes needs one measurement each. A failed measurement records nothing.
+
+`up` admits the runtime only when this machine's record has a row for the same runtime and daemon,
+with the same engine version and a Compose version at or above the floor. An engine upgrade
+therefore needs a new measurement. Because recording a measurement changes no committed file, an
+agent can run it before its first `up` without waiting for a human `sync`. `doctor` names the
+measurement that admitted the runtime in the `RUNTIME_UNMEASURED` check's source.
 
 The probe runs only from an installed `@b0dea/cockpit` package and only against a local runtime:
 the selected Docker context or `DOCKER_HOST` must pass the
@@ -824,9 +834,9 @@ cockpit inspects again; `ENVIRONMENT_SEED_FAILED` means you must fix the named s
 `RUNTIME_UNAVAILABLE` and `RUNTIME_PROBE_TIMEOUT` mean cockpit could not confirm a healthy local
 stack. Start or repair the declared runtime, then run the probe again. `RUNTIME_UNMEASURED` means
 cockpit could not verify the probe's inputs or artifacts or they were over their size limits, did
-not recognise the runtime, found no complete supported measurement row for it, or saw a Compose
-version below that row's `compose_floor`. The message names the detected runtime, its
-`docker info` values and the rows present. Restore safe local artifacts whose digests match, then
+not recognise the runtime, found no measurement of it on this machine, found one taken with a
+different engine version, or saw a Compose version below that measurement's floor. The message
+names the detected runtime, its `docker info` values and the measurements this machine holds. Restore safe local artifacts whose digests match, then
 record a measurement as described in [Measure the container runtime](#measure-the-container-runtime).
 `RUNTIME_COMPOSE_REMOTE` means a Compose file was outside the declared root, referred to a remote
 file, could not be parsed safely, or contained a remote or unsupported build, include or extends

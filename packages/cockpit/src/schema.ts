@@ -28,7 +28,6 @@ export const mechanism = {
         'InstallPolicy',
         'GuardCommandArgv',
         'GUARD_COMMAND_WORD_PATTERN',
-        'RuntimeMeasurement',
         'ContainerPath',
         'EnvironmentName',
         'Provenance',
@@ -203,46 +202,6 @@ export const InstallPolicy = z
         test: GuardCommandArgv.optional(),
     })
     .strict()
-
-const RuntimeMeasurementBase = {
-    runtime: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
-    compose_floor: z.string().regex(/^\d+\.\d+\.\d+$/),
-    measured_on: z.string().date(),
-} as const
-
-export const RuntimeMeasurement = z.union([
-    z
-        .object({
-            ...RuntimeMeasurementBase,
-            candidate: z.literal('passed'),
-            broken_control: z.literal('rejected'),
-            status: z.literal('supported'),
-        })
-        .strict(),
-    z
-        .object({
-            ...RuntimeMeasurementBase,
-            candidate: z.literal('failed'),
-            broken_control: z.enum(['rejected', 'accepted']),
-            status: z.literal('unavailable'),
-        })
-        .strict(),
-    z
-        .object({
-            ...RuntimeMeasurementBase,
-            candidate: z.literal('passed'),
-            broken_control: z.literal('accepted'),
-            status: z.literal('unavailable'),
-        })
-        .strict(),
-    z
-        .object({
-            runtime: RuntimeMeasurementBase.runtime,
-            recorded_on: z.string().date(),
-            status: z.literal('unmeasured'),
-        })
-        .strict(),
-])
 
 function hasDuplicate(values: readonly string[]): boolean {
     return new Set(values).size !== values.length
@@ -585,7 +544,6 @@ export const Environment = z
         compose_files: z.array(LocalComposePath).default([]),
         entrypoint_derivatives: z.array(EntrypointDerivative).default([]),
         install_policies: z.array(InstallPolicy).default([]),
-        runtime_measurements: z.array(RuntimeMeasurement).default([]),
         generated: GeneratedEnvironment.optional(),
     })
     .strict()
@@ -596,7 +554,6 @@ export const Environment = z
             compose_files: environment.compose_files,
             entrypoint_derivatives: environment.entrypoint_derivatives.map((row) => row.name),
             install_policies: environment.install_policies.map((row) => row.volume),
-            runtime_measurements: environment.runtime_measurements.map((row) => row.runtime),
             posture_requirements: environment.posture_requirements?.map((row) => row.requirement) ?? [],
         }
 
@@ -1379,7 +1336,6 @@ export type ResettableVolumeId = z.infer<typeof ResettableVolumeId>
 export type GeneratedHostPath = z.infer<typeof GeneratedHostPath>
 export type EntrypointDerivative = z.infer<typeof EntrypointDerivative>
 export type InstallPolicy = z.infer<typeof InstallPolicy>
-export type RuntimeMeasurement = z.infer<typeof RuntimeMeasurement>
 export type Browser = z.infer<typeof Browser>
 export type Testing = z.infer<typeof Testing>
 export type Provenance = z.infer<typeof Provenance>

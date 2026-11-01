@@ -26,6 +26,8 @@ export interface RuntimeProbeRequest {
     readonly executable: ResolvedExecutable
     readonly gitExecutable: ResolvedExecutable
     readonly cwd: string
+    /** The measuring cockpit's name; the probe's Compose project carries it so its resources are attributable. */
+    readonly projectPrefix: string
     readonly env: Readonly<Record<string, string>>
     readonly composeFloor: string
     readonly measuredOn: string
@@ -81,6 +83,8 @@ const VERSION = /^v?(\d+\.\d+\.\d+)$/
 const OBSERVED_VERSION = /^v?(\d+\.\d+\.\d+)(?:[-+][0-9A-Za-z.-]+)?$/
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
+// A cockpit name, bounded so the probe's project and resource names stay short.
+const PROJECT_PREFIX = /^[a-z0-9][a-z0-9-]{0,39}$/
 const SAFE_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DOCKER_HOST'])
 const MAX_TIMEOUT_MS = 120_000
 const OUTPUT_LIMIT = 1_048_576
@@ -139,11 +143,12 @@ class RuntimeProbeFailure extends Error {}
 function captureRequest(value: unknown): RuntimeProbeRequest | undefined {
     try {
         if (value === null || typeof value !== 'object' || Array.isArray(value)
-            || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
+            || !exactKeys(value, ['executable', 'gitExecutable', 'cwd', 'projectPrefix', 'env', 'composeFloor', 'measuredOn', 'timeoutMs', 'image', 'installedModule'])) return undefined
         const input = value as Partial<RuntimeProbeRequest>
         if (!isResolvedDockerExecutable(input.executable)
             || !isResolvedGitExecutable(input.gitExecutable)
             || typeof input.cwd !== 'string' || !isAbsolute(input.cwd) || normalize(input.cwd) !== input.cwd || input.cwd.includes('\0')
+            || typeof input.projectPrefix !== 'string' || !PROJECT_PREFIX.test(input.projectPrefix)
             || input.env === null || typeof input.env !== 'object' || Array.isArray(input.env)
             || Object.entries(input.env).some(([name, item]) => !SAFE_ENV.has(name) || typeof item !== 'string' || item.includes('\0'))
             || typeof input.composeFloor !== 'string' || VERSION.exec(input.composeFloor) === null
@@ -370,7 +375,9 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
     const mutationDeadline = deadline - CLEANUP_RESERVE_MS
     const expiresAt = new Date(deadline).toISOString()
     const batchId = randomBytes(16).toString('hex')
-    const projectName = `cockpit-probe-${batchId}`
+    // Named after the measuring cockpit so a survivor on a shared daemon says whose it is; the batch
+    // keeps it disjoint from that cockpit's own stack and from any concurrent probe.
+    const projectName = `${input.projectPrefix}-probe-${batchId}`
     const ownerLabel = `dev.b0dea.cockpit.probe=${batchId}`
     const ownerLabelName = 'dev.b0dea.cockpit.probe'
     const probeScope = Object.freeze([ownerLabel, `com.docker.compose.project=${projectName}`])

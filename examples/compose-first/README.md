@@ -18,8 +18,8 @@ Measure the runtime with a local image, then run the stack:
 
 ```sh human-only:runtime
 docker pull node:22-alpine
-env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image node:22-alpine --write
-./node_modules/.bin/cockpit sync --config cockpit.toml && ./node_modules/.bin/cockpit up --config cockpit.toml
+env -u DOCKER_CONTEXT ./node_modules/.bin/cockpit runtime measure --config cockpit.toml --image node:22-alpine
+./node_modules/.bin/cockpit up --config cockpit.toml
 ./node_modules/.bin/cockpit session --config cockpit.toml -- sh -c 'curl -fsS localhost:4200/health'
 DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml
 ```

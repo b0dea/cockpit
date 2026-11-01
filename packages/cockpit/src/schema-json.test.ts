@@ -11,7 +11,6 @@ import {
     MachineFloor,
     Mount,
     ResettableVolumeId,
-    RuntimeMeasurement,
     InstallPolicy,
     type Sibling,
 } from './schema.js'
@@ -401,14 +400,6 @@ describe('the published cockpit schema', () => {
             free_disk_mb: 8192,
             cold_start_seconds: 300,
         }).success).toBe(true)
-        expect(RuntimeMeasurement.safeParse({
-            runtime: 'docker-desktop',
-            compose_floor: '2.20.0',
-            measured_on: '2026-09-07',
-            candidate: 'passed',
-            broken_control: 'rejected',
-            status: 'supported',
-        }).success).toBe(true)
     })
 
     it.each([
@@ -420,21 +411,6 @@ describe('the published cockpit schema', () => {
             runtime_cpus: 2,
             free_disk_mb: 8192,
             cold_start_seconds: 300,
-        })],
-        ['unsupported runtime without paired proof', () => RuntimeMeasurement.safeParse({
-            runtime: 'docker-desktop',
-            compose_floor: '2.20.0',
-            measured_on: '2026-09-07',
-            candidate: 'passed',
-            broken_control: 'accepted',
-            status: 'supported',
-        })],
-        ['supported runtime without a measurement date', () => RuntimeMeasurement.safeParse({
-            runtime: 'docker-desktop',
-            compose_floor: '2.20.0',
-            candidate: 'passed',
-            broken_control: 'rejected',
-            status: 'supported',
         })],
     ])('rejects %s', (_label, parse) => {
         expect(parse().success).toBe(false)
@@ -495,24 +471,15 @@ describe('the published cockpit schema', () => {
                 swap_mb: 1024,
             },
         }],
-        ['supported runtime whose broken control was accepted', {
-            runtime_measurements: [{
-                runtime: 'docker-desktop',
-                compose_floor: '2.20.0',
-                measured_on: '2026-09-07',
-                candidate: 'passed',
-                broken_control: 'accepted',
-                status: 'supported',
-            }],
-        }],
-        ['unavailable runtime with fully supporting evidence', {
+        // A runtime measurement is a fact about one machine and lives in its ignored local state.
+        ['a runtime measurement, which is not team configuration', {
             runtime_measurements: [{
                 runtime: 'docker-desktop',
                 compose_floor: '2.20.0',
                 measured_on: '2026-09-07',
                 candidate: 'passed',
                 broken_control: 'rejected',
-                status: 'unavailable',
+                status: 'supported',
             }],
         }],
     ])('rejects %s through runtime and editor schemas', (_label, environment) => {
@@ -531,25 +498,8 @@ describe('the published cockpit schema', () => {
             compose_files: [],
             entrypoint_derivatives: [],
             install_policies: [],
-            runtime_measurements: [],
         })
         expect(editorAccepts({ ...structuredClone(validConfig), environment: {} })).toBe(true)
-    })
-
-    it('lists an unmeasured runtime without manufacturing probe outcomes', () => {
-        const config = {
-            ...structuredClone(validConfig),
-            environment: {
-                runtime_measurements: [{
-                    runtime: 'alternative-runtime',
-                    recorded_on: '2026-09-07',
-                    status: 'unmeasured',
-                }],
-            },
-        }
-
-        expect(CockpitConfig.safeParse(config).success).toBe(true)
-        expect(editorAccepts(config)).toBe(true)
     })
 
     it.each([
@@ -574,12 +524,6 @@ describe('the published cockpit schema', () => {
             install_policies: [
                 { toolchain: 'node', volume: 'node-modules', lockfile: 'a.lock', install: ['install-a'], load_probe: ['probe-a'] },
                 { toolchain: 'node', volume: 'node-modules', lockfile: 'b.lock', install: ['install-b'], load_probe: ['probe-b'] },
-            ],
-        }],
-        ['runtime identity', {
-            runtime_measurements: [
-                { runtime: 'runtime-a', recorded_on: '2026-09-06', status: 'unmeasured' },
-                { runtime: 'runtime-a', recorded_on: '2026-09-07', status: 'unmeasured' },
             ],
         }],
     ])('rejects duplicate %s declarations at runtime', (_label, environment) => {
@@ -764,8 +708,6 @@ describe('the published cockpit schema', () => {
         const siblingProperties = object(sibling.properties)
         const environment = object(properties.environment)
         const environmentProperties = object(environment.properties)
-        const runtimeMeasurement = object(object(environmentProperties.runtime_measurements).items)
-        const runtimeBranches = (runtimeMeasurement.oneOf ?? runtimeMeasurement.anyOf) as unknown[]
 
         for (const closed of [
             schema,
@@ -782,7 +724,6 @@ describe('the published cockpit schema', () => {
             object(object(siblingProperties.environment_files).items),
             object(object(environmentProperties.entrypoint_derivatives).items),
             object(object(environmentProperties.install_policies).items),
-            ...runtimeBranches.map(object),
         ]) {
             expect(closed.additionalProperties).toBe(false)
         }
@@ -892,7 +833,6 @@ describe('the published cockpit schema', () => {
                 { path: 'environment.entrypoint_derivatives[].name', rule: 'unique' },
                 { path: 'environment.install_policies[].volume', rule: 'unique' },
                 { path: 'environment.install_policies[].toolchain+lockfile', rule: 'unique' },
-                { path: 'environment.runtime_measurements[].runtime', rule: 'unique' },
                 { path: 'environment.posture_requirements[].requirement', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
                 { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },
@@ -916,7 +856,6 @@ describe('the published cockpit schema', () => {
                 { path: 'environment.entrypoint_derivatives[].port', rule: 'declared_in_ports.bases' },
                 { path: 'environment.install_policies[].volume', rule: 'unique' },
                 { path: 'environment.install_policies[].toolchain+lockfile', rule: 'unique' },
-                { path: 'environment.runtime_measurements[].runtime', rule: 'unique' },
                 { path: 'environment.posture_requirements[].requirement', rule: 'unique' },
                 { path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' },
                 { path: 'browser', rule: 'matches_environment_addressing_authentication_and_client_cap' },
