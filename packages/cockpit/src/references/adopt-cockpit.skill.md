@@ -17,7 +17,7 @@ step below points to.
 ## Safety contract
 
 cockpit exists so that an agent's environment holds no guesses: a clean-looking configuration
-with invented values in it is the failure it is built to prevent. Work under five rules:
+with invented values in it is the failure it is built to prevent. Work under six rules:
 
 1. Ask the human before writing into a product repository, creating a Git remote or hosted
    repository, running a destructive command (`down`, `reset`, approving removals), running
@@ -30,6 +30,11 @@ with invented values in it is the failure it is built to prevent. Work under fiv
    `provenance.kind = "inferred"`. It becomes an answer only on the human's word.
 5. Ask the human for the database and live vendor API hosts of every non-local environment
    (production, staging, shared) for the `guards` answer; env templates give variable names only.
+6. Permission to "use sensible defaults" covers `init` answers only. It never covers writing inside
+   a product repository: an **AGENTS.md** pointer, a Compose file or a `package.json` there needs
+   the human's explicit yes to that change, even when told to proceed with defaults. Mark every
+   answer you chose yourself as `"agent-default"` in the answers file's `[provenance]` table, and
+   end your report with every default you chose, its field and its value.
 
 ## Install cockpit if it is missing
 

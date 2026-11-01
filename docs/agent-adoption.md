@@ -11,7 +11,7 @@ written for a terminal.
 ## Safety contract
 
 cockpit exists so that an agent's environment holds no guesses. A clean-looking configuration
-with invented values in it is the failure it is built to prevent, so the agent works under five
+with invented values in it is the failure it is built to prevent, so the agent works under six
 rules for the whole adoption:
 
 1. **Ask the human first** before any of these, and wait for a yes:
@@ -33,6 +33,12 @@ rules for the whole adoption:
 5. **Ask for every non-local host.** The `guards` answer lists the database and live vendor API
    hosts of production, staging and shared environments; propose the variable names `init` found
    in env templates, never read their values, and take each host from the human.
+6. **Defaults never reach into a product repository, and are labelled.** "Use sensible defaults"
+   or "don't ask me" covers `init` answers only. Writing an **AGENTS.md** pointer, a Compose
+   file, a `package.json` or anything else inside a product repository still needs the human's
+   explicit yes to that exact change. Every answer you choose yourself goes in the answers file's
+   `[provenance]` table as `"agent-default"` ([Mark the answers you chose](#mark-the-answers-you-chose)),
+   and your final report lists every default you chose with its field and value.
 
 These are instructions, not enforcement: no harness blocks an agent that ignores them. The guard
 cockpit installs later blocks some commands; see [Safety and autonomy](safety-and-autonomy.md).
@@ -126,14 +132,17 @@ is where the product's notes and decisions live until its repositories exist.
    ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --json
    ```
 
-   `result.interview.outstanding` lists `sibling`, `ports.bases`, `guards` and
-   `configuration.defaults`. Under `sibling`, `inferred` proposes the root row: the directory name
+   `result.interview.outstanding` lists `cockpit.name`, `sibling`, `ports.bases`, `guards` and
+   `configuration.defaults`. `cockpit.name` proposes the directory name. Under `sibling`, `inferred` proposes the root row: the directory name
    as `slug`, `dir = "."`, `mount = "none"` and `acquire = "none"`. It has no `purpose`.
 2. **Write the answers file** with the purpose and the non-local hosts from the human. For a
    product not yet started there are usually no hosts, and an explicit empty answer is recorded
    as a decision. In a directory named `orders`:
 
    ```toml
+   [cockpit]
+   name = "orders"
+
    [[sibling]]
    slug = "orders"
    dir = "."
@@ -255,8 +264,10 @@ Run from the directory that holds the repositories. Each step stops for the huma
 
 2. **Write the answers file.** One TOML key per outstanding field, from what you read and what
    the human told you. The field table and an example are in
-   [Bootstrap without a terminal](getting-started.md#bootstrap-without-a-terminal). Show the
-   human the whole file, every inferred value with its source, and the `previewSha256`.
+   [Bootstrap without a terminal](getting-started.md#bootstrap-without-a-terminal). Ask the human
+   for `cockpit.name`; the proposal is the directory name. Mark any answer you chose yourself as
+   described in [Mark the answers you chose](#mark-the-answers-you-chose). Show the human the whole
+   file, every inferred value with its source, and the `previewSha256`.
 3. **Accept the preview and the answers** once the human agrees:
 
    ```sh
@@ -284,6 +295,28 @@ Rerunning with the same answers file resumes. A changed value for a recorded ans
 with `INIT_ANSWER_CONFLICT`: drop that key to keep the recorded answer, or follow the canonical
 [recorded-answer reset](getting-started.md#bootstrap-without-a-terminal) before `cockpit.toml` is
 prepared. One repository gets the same cockpit as several: instructions, guards and settings.
+
+### Mark the answers you chose
+
+Done when every answer you chose yourself is listed under `[provenance]` and your report names it.
+
+`init` writes a person's answer into `cockpit.toml` as something they stated. When the human
+delegated a decision ("pick sensible defaults"), say so per field in the answers file, so the
+value is never recorded as theirs:
+
+```toml
+[provenance]
+"environment.machine" = "agent-default"
+guards = "agent-default"
+```
+
+Each key is an answers-file field; the value is `"agent-default"` (you chose it) or `"human"`
+(the human stated it, the same as leaving the field out). `init` writes each agent default under
+`unconfirmed` at the top of `cockpit.toml` with a `# Unconfirmed:` comment, lists it in
+`result.unconfirmed` and as a `DOCUMENT_ANSWER_UNCONFIRMED` warning, and `doctor` reports
+`DECLARATION_UNCONFIRMED` until a person confirms each value, deletes its entry from
+`unconfirmed` and runs `sync`. An `environment.machine` floor the file does not attribute is
+recorded as unattributed rather than as the human's, because cockpit never proposes one.
 
 ### Scattered repositories
 
@@ -348,7 +381,9 @@ generated environment mode is the other choice.
 `init` then asks `environment.machine`: the floor the product needs from the container runtime
 (`runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`). These are product
 requirements and `init` proposes none of them, so ask the human rather than picking numbers, and
-answer under `[environment.machine]` in the answers file.
+answer under `[environment.machine]` in the answers file. If the human told you to choose
+defaults, mark the floor `"agent-default"` under `[provenance]`; a floor with no provenance is
+recorded as unattributed and listed under `unconfirmed` all the same.
 
 It then asks `environment.posture`: how the product is addressed locally and how sign-in works.
 For a plain localhost stack with no sign-in, answer under `[environment.posture]` with

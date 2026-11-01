@@ -49,6 +49,22 @@ every tool call would run unguarded. An agent cannot give that trust. Ask the hu
 **Trust all and continue** when Codex shows **Hooks need review**.
 `./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED` until it is done.
 
+`init` asks `cockpit.name` first and proposes the cockpit root's directory name. Ask the human for
+the name before accepting: it scopes the cockpit's Compose projects, state and generated files, so
+changing it after the first sync means bringing the stack down and syncing again. Never edit
+`cockpit.name` in `cockpit.toml` by hand to rename a running cockpit.
+
+Being told to "use sensible defaults" or "proceed without asking" covers interview answers only.
+It never extends to writing inside a product repository: an **AGENTS.md** pointer, a Compose file,
+a `package.json`, a Dockerfile or a `.env.schema` in a sibling checkout each needs the human's
+explicit yes to that exact change, because it changes the product for everyone who works on it.
+For every answer you choose yourself, record that you chose it in the answers file's `[provenance]`
+table, for example `"environment.machine" = "agent-default"`. init then writes the field under
+`unconfirmed` in `cockpit.toml` with a comment saying the setup agent chose it, and `doctor` warns
+until a person confirms it; an unmarked answer is recorded as the human's, so never leave one you
+chose unmarked. End your report by listing every default you chose, with its field and value, so the
+human can confirm or replace each.
+
 For a dedicated cockpit, offer an instruction pointer for each product repository during the
 preview. Do not enable or write one without a person's approval: it changes what every agent session in
 that repository loads. If the product has no **AGENTS.md**, show the exact proposed file as a draft;

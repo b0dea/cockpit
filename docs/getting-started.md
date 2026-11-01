@@ -236,6 +236,9 @@ The answers file spells each field as a TOML path, so `ports.bases` is the `base
 has nothing runnable, the whole file is:
 
 ```toml
+[cockpit]
+name = "library"
+
 [[sibling]]
 slug = "library"
 dir = "library"
@@ -255,7 +258,7 @@ vendor_endpoint_hosts = []
 | Field | Answer |
 |---|---|
 | `cockpit.root` | `"dedicated"` or `"in-repo"`, only when `init` runs inside a product repository; never chosen by a digest flag ([Where the cockpit lives](concepts.md#where-the-cockpit-lives)) |
-| `cockpit.name` | the cockpit name, only when the directory name is not a valid one |
+| `cockpit.name` | the cockpit name, always asked; the cockpit root's directory name is proposed when it is a valid name. It scopes Compose projects, state and generated files ([Rename a cockpit](#rename-a-cockpit)) |
 | `sibling` | one `[[sibling]]` table per repository |
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
 | `ports.bases` | the host-published base port map; `{}` means none |
@@ -265,6 +268,14 @@ vendor_endpoint_hosts = []
 | `environment.compose_files` | a Compose file the checkout already has, instead of `environment.generated` |
 | `environment.machine` | the runtime floor: `runtime_memory_mb`, `runtime_cpus`, `free_disk_mb`, `cold_start_seconds`; asked only where a runtime is declared, never proposed |
 | `guards` | `hosted_db_hosts` and `vendor_endpoint_hosts` of every non-local environment; both `[]` records that none exists |
+| `provenance` | optional table saying who chose each answer, keyed by field: `"human"` (the default) or `"agent-default"`, for example `"environment.machine" = "agent-default"` |
+
+An answer is recorded in `cockpit.toml` as one a person stated unless `[provenance]` marks it
+`"agent-default"`. Each agent default, and an `environment.machine` floor the file does not
+attribute, is listed under `unconfirmed` at the top of `cockpit.toml` with a comment, reported in
+`result.unconfirmed`, and named by `doctor` (`DECLARATION_UNCONFIRMED`) until a person confirms
+the value, deletes its entry from `unconfirmed` and runs `cockpit sync`. The setup agent's side is
+in [Mark the answers you chose](agent-adoption.md#mark-the-answers-you-chose).
 
 Answers an earlier run recorded are kept, so the same file can be passed on every run as long as
 it repeats them. A different value for a recorded field is refused (`INIT_ANSWER_CONFLICT`) before
@@ -398,6 +409,22 @@ change to services, mounts, images or anything else the containers receive makes
 it prints, then `up`. Change `[ports.bases]` only after `sleep`, as
 [Local URLs and port families](environment.md#local-urls-and-port-families) describes: the
 running stack holds a lease on its ports.
+
+## Rename a cockpit
+
+The cockpit name scopes its Compose project names, its state and its generated files, so it is an
+`init` answer rather than an edit to make afterwards. To rename an existing cockpit, bring its
+stack down first, then edit `cockpit.name` and regenerate in a terminal:
+
+```sh
+DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config ./cockpit.toml
+# edit name under [cockpit] in cockpit.toml, then:
+./node_modules/.bin/cockpit sync --config ./cockpit.toml
+./node_modules/.bin/cockpit check --config ./cockpit.toml
+```
+
+Never delete or hand-edit cockpit's generated ownership files to push a rename through: they are
+how `sync` knows which files are its own, and `sync` names what to do when it cannot apply a change.
 
 ## Run an agent inside the environment
 
