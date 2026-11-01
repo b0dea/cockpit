@@ -1067,7 +1067,9 @@ it.each([
     expect(outcome.result).toMatchObject({ unconfirmed: [{ field: 'environment.machine', provenance: 'agent-default' },
         { field: 'guards', provenance: 'agent-default' }] })
     await writeFile(f.destination, outcome.artifact!)
-    expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_UNSEEDED' }] })
+    // A run that stops after the draft still names what no person confirmed: an agent sees only this last outcome.
+    expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_UNSEEDED' }],
+        result: { unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }] } })
     expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({
         ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
         devDependencies: { '@b0dea/cockpit': expect.any(String) } })

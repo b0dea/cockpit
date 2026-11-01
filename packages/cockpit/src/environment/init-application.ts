@@ -255,11 +255,14 @@ export function unsupportedInitPlatformOutcome(platform: string): InitApplicatio
         `init cannot select a state root on ${platform} — bootstrap state ownership is implemented only for macOS and Linux; fix: run ${initCommand()} on a supported macOS or Linux host`)
 }
 
-function ownerRefusal(outcome: OwnerOutcome, stage: BootstrapStateRecord['value']['stage'], projection: BootstrapProjection): InitApplicationOutcome {
+function ownerRefusal(
+    outcome: OwnerOutcome, stage: BootstrapStateRecord['value']['stage'], projection: BootstrapProjection,
+    greenfield?: Parameters<typeof result>[3],
+): InitApplicationOutcome {
     return {
         kind: 'refusal', status: 2, artifact: null, destination: null,
         diagnostics: outcome.diagnostics,
-        result: result(stage, projection, outcome),
+        result: result(stage, projection, outcome, greenfield),
     }
 }
 
@@ -807,19 +810,19 @@ export async function runInitApplication(
         if (!authenticated) return refused('INIT_STATE_UNAUTHENTICATED', 'bootstrap state publication could not be authenticated', address.path)
     }
     const validation = await adapters.validateConfig(destination)
-    if (validation.status !== 0) return ownerRefusal(validation, 'draft-observed', projection)
+    if (validation.status !== 0) return ownerRefusal(validation, 'draft-observed', projection, unconfirmedOf(currentDocument))
     const synchronized = await adapters.synchronize(resumed.kind === 'complete'
         ? { configPath: destination }
         : { configPath: destination, bootstrapState: { publication: draftPublication!, address } })
-    if (synchronized.status !== 0) return ownerRefusal(synchronized, 'draft-observed', projection)
+    if (synchronized.status !== 0) return ownerRefusal(synchronized, 'draft-observed', projection, unconfirmedOf(currentDocument))
     const checked = await adapters.check({ configPath: destination })
-    if (checked.status !== 0) return ownerRefusal(checked, 'draft-observed', projection)
+    if (checked.status !== 0) return ownerRefusal(checked, 'draft-observed', projection, unconfirmedOf(currentDocument))
     const preflight = await adapters.preflight({ configPath: destination })
     // A surfaces-only cockpit has no runtime to preflight. Its refusal is the verified state, and is
     // reported as information so the operator still reads that no runtime is declared.
     const runtimeAbsent = preflight.status !== 0 && preflight.diagnostics.length > 0
         && preflight.diagnostics.every(row => row.code === 'ENVIRONMENT_NOT_DECLARED')
-    if (preflight.status !== 0 && !runtimeAbsent) return ownerRefusal(preflight, 'draft-observed', projection)
+    if (preflight.status !== 0 && !runtimeAbsent) return ownerRefusal(preflight, 'draft-observed', projection, unconfirmedOf(currentDocument))
     const verified = await persist(namespace, address, boundInput, projection, adapters, 'environment-verified', current)
     if (verified.kind !== 'complete') return stateFailure(verified)
     return { kind: 'complete', status: 0, artifact: null, destination: null,
