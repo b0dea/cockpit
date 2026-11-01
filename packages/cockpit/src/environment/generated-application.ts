@@ -1843,18 +1843,45 @@ function claudeReadDenials(
     instances: readonly { slug: string; path: string }[],
 ): readonly string[] {
     const literal = (path: string) => path.replace(/[*?[\]\\!#()]/g, '?')
-    const rules = ['//**/.secrets/**']
-    for (const instance of instances) {
+    const rules = ['//**/.secrets/**', ...instanceReadPaths(siblings, instances)
+        .map(row => row.inRoot ? `/${literal(row.path)}` : `//**/${literal(row.path)}`)]
+    return [...new Set(rules)].sort(compareCodeUnits)
+}
+
+/**
+ * Each declared instance by the path that is the same in every clone: relative to the cockpit root
+ * for an instance there, otherwise the sibling-relative suffix with `..` and `.` segments dropped.
+ */
+function instanceReadPaths(
+    siblings: readonly { slug: string; path: string }[],
+    instances: readonly { slug: string; path: string }[],
+): readonly Readonly<{ inRoot: boolean; path: string }>[] {
+    return instances.map(instance => {
         const sibling = siblings.find(row => row.slug === instance.slug)
         if (!sibling) throw new Error(`declared instance ${instance.path} names sibling ${instance.slug}, whose directory was not authenticated`)
-        if (sibling.path === '') {
-            rules.push(`/${literal(instance.path)}`)
-            continue
-        }
+        if (sibling.path === '') return { inRoot: true, path: instance.path }
         const suffix = [...sibling.path.split('/'), ...instance.path.split('/')].filter(part => part !== '..' && part !== '.' && part !== '')
-        rules.push(`//**/${literal(suffix.join('/'))}`)
-    }
-    return [...new Set(rules)].sort(compareCodeUnits)
+        return { inRoot: false, path: suffix.join('/') }
+    })
+}
+
+const OPENCODE_CONFIG_SCHEMA = 'https://opencode.ai/config.json'
+
+/**
+ * OpenCode's native read tool asks its `read` permission with the file path relative to the Git
+ * worktree, and its `*` matches across `/`, so each protected path is denied both as written and
+ * below any prefix: that covers a cockpit root nested in a larger repository and siblings reached
+ * through `../`. Only `*` and `?` are pattern characters there; either one in a path becomes `?`,
+ * which over-matches a deny and so stays safe. The plugin's guard routing refuses the same reads;
+ * these rules hold even when the plugin cannot load.
+ */
+function openCodeReadDenials(
+    siblings: readonly { slug: string; path: string }[],
+    instances: readonly { slug: string; path: string }[],
+): readonly string[] {
+    const literal = (path: string) => path.replace(/[*?]/g, '?')
+    const paths = ['.secrets/*', ...instanceReadPaths(siblings, instances).map(row => literal(row.path))]
+    return [...new Set(paths.flatMap(path => [path, `*/${path}`]))].sort(compareCodeUnits)
 }
 
 function nativeSources(
@@ -1925,6 +1952,7 @@ function nativeGrantFragmentSet(
     generated: Extract<SurfaceGenerationOutcome, { kind: 'complete' }>,
     grants: readonly Readonly<{ target: SurfaceTarget; path: string }>[],
     paths: Readonly<Partial<Record<SurfaceTarget, string>>>,
+    openCodeReads: readonly string[],
 ): NativeFragmentSet | undefined {
     const modelSha256 = surfaceModelSha256(grants)
     if (!modelSha256) return undefined
@@ -1963,7 +1991,10 @@ function nativeGrantFragmentSet(
         }
         const externalDirectory = Object.fromEntries([...new Set(grants.filter(grant => grant.target === target)
             .map(grant => `${grant.path}/**`))].sort(compareCodeUnits).map(grantPath => [grantPath, 'allow']))
-        const bytes = `${JSON.stringify({ ...base, permission: { external_directory: externalDirectory } }, null, 2)}\n`
+        const read = Object.fromEntries(openCodeReads.map(rule => [rule, 'deny']))
+        // OpenCode writes `$schema` into a project config that lacks it at every start, which put an
+        // unowned member before the owned region; supplying OpenCode's exact value leaves it untouched.
+        const bytes = `${JSON.stringify({ $schema: OPENCODE_CONFIG_SCHEMA, ...base, permission: { external_directory: externalDirectory, read } }, null, 2)}\n`
         return Object.freeze({ target: target as SurfaceTarget, path, baseSha256: row?.sha256 ?? sha256(''), bytes, sha256: sha256(bytes) })
     })
     if (fragments.some(fragment => fragment === undefined)) return undefined
@@ -2631,7 +2662,8 @@ async function prepareSurfaces(
     const mcpTargets = mcp.result.harnesses.filter(row => row.servers.length > 0).map(row => row.target)
     const grantTargets = [...new Set(projection.grants.map(row => row.target))]
     const generatedNativeMcp = nativeFragmentSet(generated, mcp.result, nativeMcpPaths(mcpTargets))
-    const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets))
+    const nativeGrants = nativeGrantFragmentSet(generated, projection.grants, nativeGrantPaths(grantTargets),
+        openCodeReadDenials(siblingDirectories, prepared.registry.secretPaths))
     const nativeMcp = generatedNativeMcp && nativeGrants ? bindNativeGrantsToMcp(generatedNativeMcp, nativeGrants) : undefined
     if (!nativeMcp || !nativeGrants) return refuse('SURFACE_INPUT_INVALID', 'native surface fragments could not be bound', 'surfaces')
     const runnerAsset = asset('scripts/browser-runner.sh')

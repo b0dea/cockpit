@@ -94,8 +94,9 @@ describe('public surface publication transaction', () => {
             const openCode = JSON.parse(openCodeBytes
                 .replace(`/* cockpit:owner:${ownerId}:start */`, '')
                 .replace(`/* cockpit:owner:${ownerId}:end */`, '')) as {
+                $schema: string
                 mcp: Record<string, { enabled: boolean }>
-                permission: { external_directory: Record<string, 'allow'> }
+                permission: { external_directory: Record<string, 'allow'>; read: Record<string, 'deny'> }
             }
             expect(Object.keys(claude.mcpServers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect(settings.enabledMcpjsonServers).toEqual(['approved-server'])
@@ -117,6 +118,15 @@ describe('public surface publication transaction', () => {
                 '../external/**': 'allow',
                 'app/**': 'allow',
             })
+            // OpenCode's native read is denied the same paths; its patterns are worktree-relative and
+            // its `*` crosses directories. OpenCode adds the exact `$schema` value when it is missing,
+            // which once made every later check report a conflict, so cockpit writes it itself.
+            expect(openCode.permission.read).toEqual({
+                '*/.secrets/*': 'deny', '*/app/.env': 'deny', '*/external/.env': 'deny',
+                '.secrets/*': 'deny', 'app/.env': 'deny', 'external/.env': 'deny',
+            })
+            expect(openCode.$schema).toBe('https://opencode.ai/config.json')
+            expect(openCodeBytes.startsWith(`{/* cockpit:owner:${ownerId}:start */"$schema":"https://opencode.ai/config.json",`)).toBe(true)
             expect(cursorGrant).toContain('../external')
             expect(cursorGrant).toContain('app/**')
             expect(cursorGrant).not.toContain(estate)
