@@ -80,7 +80,8 @@ npm run lint:docs
 npm run lint:supply-chain
 ```
 
-A targeted pass proves only its target. The full suite takes several minutes.
+A targeted pass proves only its target. The full suite takes about 15 minutes at four workers on
+a developer machine.
 
 `npm run test:changed -- <base-commit>` follows imports through shared test helpers to select
 the tests that depend on them. A change to the Vitest configuration or shared Git-isolation setup selects every
@@ -104,7 +105,11 @@ record when every reference page matches the current commit. Uncommitted page ed
 review and commit intentional edits, or restore them before regenerating.
 `npm run references` calls `publishRepositoryReferences` in
 `scripts/diagnostic-inventory.mjs` and refuses while implementation changes are uncommitted.
-Never edit a generated reference by hand.
+Never edit a generated reference by hand. How publication verifies those pages, and how commands
+record completion, is in
+[CLI completion and generated references](docs/contributing/cli-completion-and-references.md);
+the [contributor documentation index](docs/contributing/README.md) lists the other maintainer
+pages.
 
 CI runs the build, tests, typecheck and documentation lint, and the anonymisation scan as its
 own job; the workflow definitions in `.github/workflows/` are the source for its matrix.

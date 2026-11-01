@@ -3,8 +3,8 @@
 <!-- cockpit:verified version=0.0.0 -->
 
 This guide explains what cockpit's guards allow, ask about, deny or cannot evaluate, and why.
-It is for people reviewing generated controls and for agents working within them. Authority is
-always tied to a captured invocation and declared resources, never to a command family.
+It is for people reviewing generated controls and for agents working within them. A permission
+always applies to one exact command and declared resources, never a whole command family.
 
 The [command table](../packages/cockpit/src/command-table.ts) and
 [guard evaluator](../packages/cockpit/src/guards/evaluator.ts) own these decisions. The generated
@@ -16,22 +16,22 @@ The [command table](../packages/cockpit/src/command-table.ts) and
 | Outcome | Meaning |
 | --- | --- |
 | `allow` | Evaluation completed without a harder boundary; executable invocations match exact permitted profiles or the built-in read-only profile. |
-| `ask` | A human decision is required. This grants no authority by itself. |
+| `ask` | A person must decide. An `ask` result permits nothing by itself. |
 | `deny` | A hard boundary forbids the request, even with an exact grant. |
-| `unavailable` | Cockpit could not authenticate or safely evaluate the request. No authority is granted. |
+| `unavailable` | Cockpit could not verify or safely evaluate the request, so it permits nothing. |
 
-The evaluator scans the complete authenticated capture for hard denials before returning an
+The evaluator checks the whole captured command for hard denials before returning an
 unavailable or ask result. A softer result encountered earlier cannot hide a later forbidden
 operation. Malformed input or an incomplete policy is unavailable before that scan can begin.
 
 ## Cockpit and project commands
 
 A cockpit command is allowed only when it matches an exact available public command profile.
-The application authenticates the executable and working root; the command resolver checks the
+The application verifies the executable and working root; the command resolver checks the
 bounded complete argument vector, resolved configuration path, declared services, permitted option
 roles, and inspected paths. Internal guard transport and public commands marked unavailable are
 excluded. Declared project build and test commands are allowed only as their exact argument
-vectors in their own checkout. No command-family wildcard becomes authority.
+vectors in their own checkout. A wildcard over a command family never grants permission.
 
 ## Hard controls and prompts
 
@@ -72,9 +72,9 @@ directory that contains one or an executable control below a protected plugin di
 protected files include every harness's native MCP and permission outputs derived from the shipped
 harness registry. Otherwise an exact command allow could disable a hook or change a program that a
 harness starts before the next guarded call. This boundary follows folded path spellings and
-authenticated filesystem identities, so alternate case and aliases do not bypass it.
+verified filesystem identities, so alternate case and aliases do not bypass it.
 
-The installed code the guard runs is a control too. The guard authenticates its entry point by
+The installed code the guard runs is a control too. The guard checks its entry point's
 digest, but every other module it loads would otherwise be writable, and an edited module can turn
 every hard denial into an allow. Writing, linking, changing the mode of, or removing anything inside
 the running cockpit package or any package it loads is therefore a hard denial, under both the path
@@ -100,7 +100,7 @@ as is an unclassified non-read-only command whose visible operand names a contro
 plugin subtree or a directory containing either. These checks run before declared allows. This
 screening does not inspect archive member paths or arbitrary approved script bodies, and
 classifying an extraction directory does not prove that an archive cannot traverse outside it.
-An exact command contract grants that authority; it is not a filesystem sandbox. To restore or
+An exact command rule permits that command; it is not a filesystem sandbox. To restore or
 intentionally replace generated controls, stop the guarded session and have a human run
 `cockpit sync --config cockpit.toml` in a terminal.
 
@@ -112,7 +112,7 @@ a human decision. An exact grant cannot override either boundary.
 Unresolved Git execution context, destructive Git reset or clean forms, staging without explicit
 paths, wrapped or environment-modifying commands, and unmatched invocation profiles produce `ask`.
 An explicit removal outside configured roots also stays at `ask` even when a declared allow
-matches, because cockpit has no filesystem authority to authenticate that target; review the
+matches, because cockpit cannot verify a target outside the roots it manages; review the
 exact path and approve it manually or move the work under a configured root. An ungranted removal
 keeps the same prompt boundary.
 Broad staging can still produce a hard denial if it includes an environment instance. Unsupported
@@ -122,15 +122,16 @@ Declared rules refine that final prompt boundary. Each vector starts with the ex
 `[[guards.deny]]` matches a command-vector prefix or a contiguous command-vector sequence and may
 name a safe fix. `[[guards.allow]]` matches a command-vector prefix,
 optionally only at one checkout-relative working directory. Evaluation order is built-in hard
-denials, declared denials, missing authority, declared allows, the built-in read-only profile, then
-`ask`. An allow therefore cannot bypass a hosted endpoint, protected branch, secret path, malformed
-capture or unavailable filesystem evidence. Wrapped and environment-modifying invocations are never
-allowed by a declared rule because wrappers can change which program actually runs.
+denials, declared denials, checks cockpit could not complete, declared allows, the built-in
+read-only profile, then `ask`. An allow therefore cannot bypass a hosted endpoint, protected
+branch, secret path, malformed capture or unavailable filesystem evidence. Wrapped and
+environment-modifying invocations are never allowed by a declared rule because wrappers can
+change which program actually runs.
 
 Malformed or oversized input, incomplete policy, escaped or symlinked path evidence, inspection
 failure, and exceeded limits also produce `unavailable`. The
 [invocation parser](../packages/cockpit/src/guards/invocation-parser.ts) captures bounded input once;
-the evaluator accepts only its issued parser product. A reconstructed lookalike has no authority.
+the evaluator accepts only input that parser produced, so a hand-built lookalike is refused.
 
 ### Read-only commands
 
@@ -195,7 +196,7 @@ working-directory paths, bounded standard input, and bounded output and error. I
 a stalled handler cannot hold a guarded call indefinitely. Copied plans, failed transport,
 signals, oversized output, nonzero handler
 status, and invalid JSON become unavailable with exit 2. Lexical path normalization in this
-adapter does not itself authenticate filesystem identity.
+adapter does not itself verify filesystem identity.
 
 Generated native restrictions remain `instructed` with `pending_evidence`. If an adapter is
 unavailable, no target-specific registration or read-only fragment is emitted; the shared guard
@@ -204,58 +205,12 @@ file may still be generated. Instruction projections also retain pending evidenc
 `human_needed` skill judgments. Historical adapter measurements do not prove current native
 enforcement. See [harness surfaces](harness-surfaces.md) for the wider surface estate.
 
-## Command completion and interactive decline
+## Exit codes and generated references
 
-Public CLI outcomes in `--json` mode carry a bounded invocation record with the command name, floored
-monotonic duration in milliseconds, resolved configuration path when present, and one exit status.
-Human-mode runs print no record; the process exit code is the status:
-
-| Exit | CLI meaning |
-| --- | --- |
-| `0` | Success. |
-| `2` | Failure. |
-| `130` | Clean interactive cancellation. |
-
-`session` is the exception: once cleanup completes it exits with its command's own status, as
-[the lifecycle guide](environment.md#lifecycle-and-ownership) describes.
-
-These CLI completion statuses are separate from native adapter decision encoding. The
-[CLI application](../packages/cockpit/src/cli.ts) measures elapsed time;
-[invocation records](../packages/cockpit/src/invocation.ts) validate the common completion fields.
-
-Interactive reset and baseline decline waits for cleanup before returning exit 130 with no
-result. A thrown decline cleanup reports failure instead of cancellation. JSON mode, CI, and
-non-terminal input cannot open an interactive confirmation. Noninteractive reset remains a preview;
-baseline requires interaction. These boundaries belong to the
-[operator application](../packages/cockpit/src/environment/operator-application.ts).
-
-## Reference currentness and ownership
-
-The maintainer [reference operations](../scripts/diagnostic-inventory.mjs) authenticate one
-committed HEAD, its implementing source and shipped assets, package and build inputs, and the
-matching built owner bytes. The [reference renderer](../packages/cockpit/src/references/generate.ts)
-derives four complete reference files and the diagnostic index inside troubleshooting's fixed
-marker region. Capability rows come from shipped restriction, instruction, and skill owners;
-the renderer does not upgrade their evidence strength.
-
-The canonical repository documentation check, `npm run lint:docs`, compares all five generated
-products read-only after its Markdown checks. Missing or stale copies fail. Explicit-path and
-evidence modes are scoped checks and do not establish canonical reference currentness.
-
-Publication uses the shared
-[transaction owner](../packages/cockpit/src/generated-environment/transaction.ts). Its reference
-ownership record is separate from consumer generated-environment ownership. Initial admission
-captures exact stage-0 Git index rows and authenticates immutable blobs by object identifier;
-working-tree bytes alone cannot establish initial ownership. Later publication authenticates the
-prior reference record and owned bytes. Changed owned files or an edited owned index are refused.
-
-The transaction binds troubleshooting's complete preimage, owned region, postimage, and foreign
-prefix and suffix. It preserves every byte outside that region, revalidates source, build,
-bootstrap, and ownership observations, and avoids replacement for identical output. A local
-reference publication does not establish a public release or native enforcement.
-
-For a refusal, use the diagnostic's implementing owner in [troubleshooting](troubleshooting.md).
-Do not edit an ownership record, evidence bundle, or generated control to conceal the refusal.
+Exit codes are listed in the [CLI reference](cli-reference.md). How cockpit records command
+completion and keeps its generated reference pages current is maintainer detail, described in the
+contributor page "CLI completion and generated references", reached from
+[CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Evidence
 
@@ -267,6 +222,6 @@ bounded transcripts and validation results. Each record carries candidate and de
 broken-control evidence.
 
 Missing evidence keeps cells `instructed` or `unavailable`, with `human_needed` judgments still
-pending. It never relaxes a hard denial or grants authority. Cutover, fallback deletion, default
+pending. It never relaxes a hard denial or grants a permission. Cutover, fallback deletion, default
 changes and publication stay human decisions; a green source check or a generated reference does
 not make them.

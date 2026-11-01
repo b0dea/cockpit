@@ -11,6 +11,7 @@ guides because the two have different readers.
 - [Documentation style](style.md)
 - [Releasing](releasing.md)
 - [Testing harness surfaces](testing.md)
+- [CLI completion and generated references](cli-completion-and-references.md)
 - [Normative contracts](decisions/README.md)
 
 The linter checks each `cockpit:ref path=` marker against the tracked code it points to.

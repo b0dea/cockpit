@@ -133,7 +133,9 @@ jobs:
       fail-fast: false
       matrix:
         # Three lists, chosen by event, because macOS minutes cost ten times Linux minutes while
-        # the repository is private and the full suite takes most of an hour.
+        # the repository is private, and the full suite is long: about 15 minutes at four workers
+        # on a developer machine, longer on a hosted runner with fewer cores. The step timeouts
+        # below leave room for that.
         # - pull request: the full suite on Linux at the supported floor, plus macOS running
         #   only the tests adjacent to the change (`changed`).
         # - weekly: the full suite at the upper edge of the supported Node range.
