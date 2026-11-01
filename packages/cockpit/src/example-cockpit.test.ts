@@ -24,7 +24,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/contributing/style.md', [developer]],
     ['docs/environment.md', [runtime, runtime, runtime]],
     ['docs/getting-started.md', [packageInstall, packageInstall, packageInstall, operator, packageInstall, operator, operator, operator, operator, runtime, operator, operator, operator, runtime, runtime]],
-    ['docs/harness-surfaces.md', [operator]],
+    ['docs/harness-surfaces.md', [operator, operator]],
     ['docs/joining-a-team.md', [packageInstall, operator, operator]],
     ['docs/contributing/releasing.md', [operator, operator, developer, developer]],
     ['docs/release-policy.md', [operator]],
@@ -135,7 +135,7 @@ function run(root: string, argv: string[]) {
     const result = spawnSync(process.execPath, [launcher, ...argv.slice(1)], {
         cwd: root,
         encoding: 'utf8',
-        env: { ...process.env, CI: '1', HOME: join(environment, 'home'), XDG_STATE_HOME: join(environment, 'state') },
+        env: { ...process.env, CI: '1', HOME: join(environment, 'home'), CODEX_HOME: undefined, XDG_STATE_HOME: join(environment, 'state') },
     })
     return { ...result, response: result.stdout ? JSON.parse(result.stdout) : undefined }
 }
@@ -340,7 +340,9 @@ describe('cockpits without a generated environment', () => {
         expect(up!.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
         const doctor = run(root, ['cockpit', 'doctor', '--config', 'cockpit.toml', '--json'])
         expect(doctor.response.result.verdict).toBe('unavailable')
-        expect(doctor.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' })])
+        // The surfaces publish a Codex hook that no person has trusted in this fresh home.
+        expect(doctor.response.diagnostics).toEqual([expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }),
+            expect.objectContaining({ code: 'CODEX_HOOK_UNTRUSTED', severity: 'warning' })])
         expect(doctor.response.result.declarations).toContainEqual(expect.objectContaining({ subject: 'runtime', state: 'not-declared' }))
     })
 
