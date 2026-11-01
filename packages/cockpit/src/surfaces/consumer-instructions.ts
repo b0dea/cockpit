@@ -53,7 +53,7 @@ export function renderConsumerInstructions(input: ConsumerInstructionsInput): st
         '# How to work here', '',
     ]
     if (input.hasStack) lines.push(
-        `- Run ${run('session', '-- <command>')} to start the stack, run the command against it and release the stack, so nothing is left holding ports. ${run('up')} and ${run('down')} do it by hand (down deletes containers, so it names the Docker daemon); ${run('doctor')} explains a stack that will not start.`,
+        `- Run ${run('session', '-- <command>')} to start the stack, run the command against it and release the stack, so nothing is left holding ports; the command gets each leased port under its \`[ports.bases]\` name and each URL as \`COCKPIT_ENTRYPOINT_<NAME>\`. ${run('up')} and ${run('down')} do it by hand (down deletes containers); ${run('doctor')} explains a stack that will not start.`,
     )
     lines.push(
         `- Every cockpit command takes \`--config ${inline(input.configFile)}\`. After editing that file, run ${run('sync', '--dry-run')} to preview the generated files, ${run('sync')} to write them and ${run('check')} to confirm nothing drifted. Generated files are committed and compared byte for byte, so an unsynced edit fails review.`,
