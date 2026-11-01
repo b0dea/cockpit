@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, symlink, writeFile, realpath } from 'node:fs/
 import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stringify } from 'smol-toml'
 import { encodeOwnershipManifest } from './ownership.js'
 import { publicationCockpitId } from '../environment/identity.js'
@@ -324,6 +324,33 @@ describe('restriction expansion', () => {
             status: 2, stdout: '', stderr: expect.stringContaining('through the canonical Codex session directory'),
         })
     })
+
+    it('routes OpenCode native read, grep and glob through the guard read checks', async () => {
+        // OpenCode 1.19.4 returned a secrets file through its native read tool because the plugin
+        // mapped only shell, edit, write and patch tools.
+        const directory = await isolatedProjectRoot('cockpit-opencode-read-')
+        const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
+        await mkdir(join(directory, 'env/.secrets/app'), { recursive: true })
+        await writeFile(join(directory, 'env/.secrets/app/local.vars'), 'synthetic\n')
+        await writeFile(join(directory, 'env/service.env.example'), 'TEMPLATE=1\n')
+        const plugin = pathToFileURL(join(directory, target(result, 'opencode').files[0]!.path)).href
+        const call = (tool: string, args: Record<string, string>) => spawnSync(process.execPath, ['--input-type=module', '--eval',
+            `const { CockpitRestrictions } = await import(${JSON.stringify(plugin)}); const hooks = await CockpitRestrictions(); await hooks['tool.execute.before']({ tool: process.argv[1] }, { args: JSON.parse(process.argv[2]) })`,
+            tool, JSON.stringify(args)], { cwd: directory, env: process.env, encoding: 'utf8' })
+        const refused = expect.stringContaining('Refusing to read a declared environment instance or secrets directory')
+        for (const filePath of [join(directory, 'env/.secrets/app/local.vars'), 'env/service.env']) {
+            expect(call('read', { filePath })).toMatchObject({ status: 1, stderr: refused })
+        }
+        expect(call('grep', { pattern: 'TOKEN', path: join(directory, 'env/.secrets') })).toMatchObject({ status: 1, stderr: refused })
+        // A search over a tree holding a protected file may read it, so it is refused, naming the
+        // command the guard judged so the agent can narrow the path.
+        expect(call('grep', { pattern: 'TOKEN', path: join(directory, 'env') })).toMatchObject({ status: 1,
+            stderr: expect.stringContaining(`OpenCode grep is checked as: grep -r -e 'TOKEN' -- '${join(directory, 'env')}'`) })
+        expect(call('read', { filePath: join(directory, 'env/service.env.example') })).toMatchObject({ status: 0, stderr: '' })
+        expect(call('glob', { pattern: '**/*.env', path: join(directory, 'env') })).toMatchObject({ status: 0, stderr: '' })
+        expect(call('grep', { pattern: "it's", path: join(directory, 'env/service.env.example') })).toMatchObject({ status: 0, stderr: '' })
+        expect(call('read', {})).toMatchObject({ status: 1, stderr: expect.stringContaining('malformed applicable payload') })
+    }, 60_000)
 
     it('runs the generated Codex hook from a cockpit directory inside a larger Git repository', async () => {
         const directory = await isolatedProjectRoot('cockpit-hook-subdirectory-')
