@@ -121,29 +121,35 @@ export async function prepareCommittedCapabilityProjection(input: CommittedCapab
         const cells: CapabilityCell[] = []
         for (const row of restrictions.targets) cells.push(Object.freeze({ target: row.target, capability: 'guard-firing', skill: 'n/a',
             state: row.capability, evidence: row.evidenceStatus, provenance: row.provenance, measuredOn: row.measuredOn, measuredVersion: row.measuredVersion }))
+        // Without an adapter no guard is generated, so nothing was probed; the registry's date only
+        // records when that was decided.
         for (const target of SURFACE_TARGETS) {
             const guard = harnessFact(target).guard
             if (guard.capability === 'unavailable') cells.push(Object.freeze({ target, capability: 'guard-firing', skill: 'n/a',
-                state: guard.capability, evidence: 'not_applicable', provenance: guard.reason, measuredOn: guard.measuredOn, measuredVersion: null }))
+                state: guard.capability, evidence: 'not_applicable', provenance: guard.reason, measuredOn: NEVER_PROBED, measuredVersion: null }))
         }
         const instructions = shippedInstructionCapabilities()
         if (instructions.length !== SURFACE_TARGETS.length || new Set(instructions.map(row => row.target)).size !== SURFACE_TARGETS.length
             || SURFACE_TARGETS.some(target => !instructions.some(row => row.target === target))) return refusal('shipped instruction capabilities do not cover the fixed targets')
         for (const row of instructions) cells.push(Object.freeze({ target: row.target, capability: 'instruction-loading', skill: 'n/a',
-            state: row.capability, evidence: row.evidence, provenance: `${row.mechanism}: ${row.provenance}`, measuredOn: row.characterizedOn, measuredVersion: null }))
+            state: row.capability, evidence: row.evidence, provenance: `${row.mechanism}: ${row.provenance}`,
+            measuredOn: row.capability === 'generated' ? NEVER_PROBED : row.characterizedOn, measuredVersion: null }))
         for (const target of SURFACE_TARGETS) for (const skill of skills.skills) {
             const file = skills.files.find(row => row.target === target && row.path.endsWith(`/${skill}/SKILL.md`))
             if (!file) return refusal(`shipped skill output is missing for ${target}:${skill}`, 'surfaces/skills')
             const native = harnessFact(target).native
             cells.push(native.state === 'generated'
                 ? Object.freeze({ target, capability: 'skill-parity', skill, state: native.state, evidence: 'pending_evidence',
-                    provenance: `inspectSkillSet rendered ${file.path}; SHA-256 ${file.sha256}; ${native.reason}`, measuredOn: native.measuredOn, measuredVersion: null })
+                    provenance: `skill rendered to ${file.path}; ${native.reason}`, measuredOn: NEVER_PROBED, measuredVersion: null })
                 : Object.freeze({ target, capability: 'skill-parity', skill, state: 'instructed', evidence: 'human_needed',
-                    provenance: `inspectSkillSet rendered ${file.path}; SHA-256 ${file.sha256}; operator parity judgment pending`, measuredOn: 'unmeasured', measuredVersion: null }))
+                    provenance: `skill rendered to ${file.path}; parity review by a person pending`, measuredOn: NEVER_PROBED, measuredVersion: null }))
         }
+        // The rendered skill digests stay out of the table but in the manifest, so editing a skill
+        // still changes the published source manifest.
+        const renderedSkills = skills.files.map(file => [file.target, file.path, file.sha256])
         const projection = Object.freeze({ kind: 'committed-capabilities' as const })
         committedAuthority.set(projection, Object.freeze({ skills: skills.collection, cells: Object.freeze(cells), sourceAssets: captured.sourceAssets,
-            sha256: digest(JSON.stringify({ cells, guardTemplate: digest(captured.guardTemplate), adapters: captured.adapters })) }))
+            sha256: digest(JSON.stringify({ cells, renderedSkills, guardTemplate: digest(captured.guardTemplate), adapters: captured.adapters })) }))
         return Object.freeze({ kind: 'complete', projection, skills: skills.collection })
     } catch (error) {
         return refusal(`committed capability preparation failed: ${error instanceof Error ? error.message : 'invalid shipped bytes'}`)
@@ -207,8 +213,38 @@ function inventoryCodes(inventory: DiagnosticInventory): readonly string[] | und
 // `rg <CODE> packages/cockpit/src` answers, so the user pages never list owners or test commands.
 const DIAGNOSTIC_HEADER = '| Diagnostic | What to do |\n| --- | --- |\n'
 const NO_FIXED_REMEDY = 'see the message'
+const NEVER_PROBED = 'never'
 const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. Where a code always has the same fix, the table repeats it; '
     + `otherwise it says "${NO_FIXED_REMEDY}". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n`
+
+// The per-command tables in the CLI reference send the reader somewhere useful: a fix that never
+// changes, or the hand-written troubleshooting section that covers the code. Repeating "see the
+// message" on nearly every row told the reader nothing, so codes without either get no such column.
+const CLI_DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes '
+    + 'and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. '
+    + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
+
+const headingAnchor = (heading: string) => heading.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
+
+// Maps each code to the hand-written section that covers it: a heading named after the code wins,
+// otherwise the first section that mentions it. Only the prose before the generated index counts.
+function troubleshootingSections(document: string): ReadonlyMap<string, string> {
+    const own = new Map<string, string>()
+    const mentioned = new Map<string, string>()
+    let anchor: string | undefined
+    for (const line of document.slice(0, document.indexOf(BEGIN)).split(/\r?\n/)) {
+        const heading = /^#{2,6}\s+(.+)$/.exec(line)
+        if (heading) {
+            anchor = headingAnchor(heading[1]!)
+            const named = /^`?([A-Z][A-Z0-9_]+)`?$/.exec(heading[1]!.trim())
+            if (named && !own.has(named[1]!)) own.set(named[1]!, anchor)
+            continue
+        }
+        if (anchor === undefined) continue
+        for (const match of line.matchAll(/`([A-Z][A-Z0-9_]+)`/g)) if (!mentioned.has(match[1]!)) mentioned.set(match[1]!, anchor)
+    }
+    return new Map([...mentioned, ...own])
+}
 
 function inventoryRemedy(inventory: DiagnosticInventory, name: string): string {
     const fixes = [...inventory.remedies.get(name)!].sort()
@@ -265,10 +301,25 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         if (document === undefined) return refusal('troubleshooting needs exactly one ordered pair of standalone diagnostic-index markers', 'docs/troubleshooting.md')
         const defaults = configurationDefaults()
         const exits = Object.entries(EXIT_CODES).map(([name, value]) => `| ${value} | ${name} |\n`).join('')
+        const sections = troubleshootingSections(input.troubleshooting)
+        const guidance = (name: string) => {
+            const fix = inventoryRemedy(input.diagnostics, name)
+            const anchor = sections.get(name)
+            return [...(fix === NO_FIXED_REMEDY ? [] : [fix]), ...(anchor === undefined ? [] : [`[Troubleshooting](troubleshooting.md#${anchor})`])].join('; ')
+        }
+        const commandDiagnostics = (names: readonly string[]) => {
+            const rows = names.map(name => [code(name), guidance(name)] as const)
+            const guided = rows.filter(([, text]) => text !== '')
+            const other = rows.filter(([, text]) => text === '')
+            return [
+                ...(guided.length > 0 ? [DIAGNOSTIC_HEADER + guided.map(([name, text]) => `| ${name} | ${text} |\n`).join('')] : []),
+                ...(other.length > 0 ? [`| ${guided.length > 0 ? 'Other diagnostics' : 'Diagnostic'} |\n| --- |\n` + other.map(([name]) => `| ${name} |\n`).join('')] : []),
+            ].join('\n')
+        }
         const cli = documentHeading('CLI reference')
             + 'This generated reference is for users looking up an exact command, flag, exit code or diagnostic. '
             + 'It is generated from the CLI, so it matches this version; `cockpit <command> --help` shows the same flags.\n\n'
-            + DIAGNOSTIC_GUIDE
+            + CLI_DIAGNOSTIC_GUIDE
             + commands.map(command => {
             const commandOwners = input.diagnostics.commandOwners.get(command.handler)
             const ownedDiagnostics = commandOwners
@@ -280,7 +331,7 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
                 + '| Flag | Type | Default |\n| --- | --- | --- |\n' + Object.entries(command.options).map(([flag, option]) =>
                     `| ${code(`--${flag}`)} | ${option.type} | ${'default' in option ? code(JSON.stringify(option.default)) : 'unset'} |\n`).join('')
                 + '\n| Exit | Meaning |\n| --- | --- |\n' + exits
-                + (ownedDiagnostics.length > 0 ? '\n' + DIAGNOSTIC_HEADER + ownedDiagnostics.map(diagnosticRow).join('')
+                + (ownedDiagnostics.length > 0 ? '\n' + commandDiagnostics(ownedDiagnostics)
                     : '\nNo diagnostic codes are listed for this command; its messages name what failed and how to fix it.\n')
         }).join('\n')
         const sourcePath = (path: string) => {
@@ -314,9 +365,10 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
             + '- `generated`: cockpit writes the file for a harness that has no guard adapter or loading test, so nobody has verified that the tool even loads it.\n'
             + '- `unavailable`: cockpit writes nothing for this cell; the Provenance column says why.\n\n'
             + 'The Evidence column names what would confirm a cell: `pending_evidence` needs a paired test of the real tool, `human_needed` needs a person\'s review, and `not_applicable` means there is nothing to confirm. Generating a file or passing repository tests never promotes a cell.\n\n'
+            + 'Last probed and Probed version say when cockpit\'s mechanism was last tested against that tool and at which version, or `never`. A probe date is not a confirmation: only the State column says what is confirmed.\n\n'
         const matrix = committed ? documentHeading('Capability matrix') + matrixOpening
-            + `Source manifest: ${code(committed.sha256)}.\n\n| Harness | Capability | Skill | State | Evidence | Provenance | Measured on | Measured version |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n`
-            + committed.cells.map(row => `| ${cell(row.target)} | ${cell(row.capability)} | ${cell(row.skill)} | ${cell(row.state)} | ${cell(row.evidence)} | ${cell(row.provenance)} | ${cell(row.measuredOn)} | ${cell(row.measuredVersion ?? 'unmeasured')} |\n`).join('')
+            + `Source manifest: ${code(committed.sha256)}.\n\n| Harness | Capability | Skill | State | Evidence | Provenance | Last probed | Probed version |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n`
+            + committed.cells.map(row => `| ${cell(row.target)} | ${cell(row.capability)} | ${cell(row.skill)} | ${cell(row.state)} | ${cell(row.evidence)} | ${cell(row.provenance)} | ${cell(row.measuredOn)} | ${cell(row.measuredVersion ?? (row.measuredOn === NEVER_PROBED ? NEVER_PROBED : 'not recorded'))} |\n`).join('')
             : documentHeading('Capability matrix') + matrixOpening + 'This version lists the cells that `cockpit selftest` would test for one configuration. Listing a cell confirms nothing, and a missing test result never counts as confirmation.\n\n'
             + `Source manifest: ${code(expectation!.generatedManifestSha256)}.\n\n| Harness | Capability | Skill | Evidence |\n| --- | --- | --- | --- |\n`
             + expectation!.cells.map(row => `| ${cell(row.harness.kind === 'builtin' ? row.harness.name : row.harness.id)} | ${row.capability} | ${row.capability === 'skill-parity' ? row.skill : 'n/a'} | instructed; native probe pending |\n`).join('')

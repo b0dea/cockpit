@@ -219,14 +219,29 @@ describe('reference generation', () => {
         expect(matrix).toContain('pending_evidence')
         // Cursor and Grok Build get generated rules and skills but no guard hook: the matrix must not
         // call emitted files unavailable, nor call the absent guard anything else.
-        expect(matrix).toContain('| cursor | instruction-loading | n/a | generated | pending_evidence | rulesync-rules: cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | 2026-10-28 | unmeasured |')
-        expect(matrix).toMatch(/\| grokcli \| skill-parity \| cockpit-setup \| generated \| pending_evidence \| inspectSkillSet rendered \.grok\/skills\/cockpit-setup\/SKILL\.md; SHA-256 [0-9a-f]{64}; cockpit generates this file;/)
-        expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | 2026-10-28 | unmeasured |')
+        // A date under "Last probed" reads as a test of the tool, so cells nobody probed say never.
+        expect(matrix).toContain('| Harness | Capability | Skill | State | Evidence | Provenance | Last probed | Probed version |')
+        expect(matrix).toContain('| cursor | instruction-loading | n/a | generated | pending_evidence | rulesync-rules: cockpit generates this file; no paired candidate and broken-control probe has verified that the tool loads it | never | never |')
+        expect(matrix).toContain('| grokcli | skill-parity | cockpit-setup | generated | pending_evidence | skill rendered to .grok/skills/cockpit-setup/SKILL.md; cockpit generates this file;')
+        expect(matrix).toContain('| claudecode | skill-parity | cockpit-setup | instructed | human_needed | skill rendered to .claude/skills/cockpit-setup/SKILL.md; parity review by a person pending | never | never |')
+        expect(matrix).toContain('| cursor | guard-firing | n/a | unavailable | not_applicable | no guard adapter is checked in, so cockpit generates no guard hook | never | never |')
+        expect(matrix).toMatch(/\| claudecode \| instruction-loading \| n\/a \| instructed \| pending_evidence \| [^|]+ \| \d{4}-\d{2}-\d{2} \| not recorded \|/)
+        expect(matrix).not.toMatch(/inspectSkillSet|operator parity|unmeasured/)
         expect(matrix).not.toMatch(/\| (?:cursor|grokcli) \| (?:instruction-loading|skill-parity) \| [^|]+ \| unavailable \|/)
         expect(matrix).not.toContain('| enforced |')
         expect(renderReferences({ committed: { ...prepared.projection }, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill }).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, guardTemplate: '#!/bin/sh\nexit 0\n' })).kind).toBe('refusal')
         expect((await prepareCommittedCapabilityProjection({ ...assetInput, skillSources: assetInput.skillSources.slice(2) })).kind).toBe('refusal')
+        const editedSkill = assetInput.skillSources[2]!.bytes.replace(/\n$/, '\nA reworded closing line.\n')
+        const editedPath = assetInput.skillSources[2]!.path
+        const edited = await prepareCommittedCapabilityProjection({ ...assetInput,
+            skillSources: assetInput.skillSources.map(source => source.path === editedPath ? { ...source, bytes: editedSkill } : source),
+            sourceAssets: assetInput.sourceAssets.map(source => source.installedPath === editedPath ? { ...source, bytes: editedSkill, sha256: digest(editedSkill) } : source) })
+        expect(edited.kind, JSON.stringify(edited)).toBe('complete')
+        if (edited.kind !== 'complete') return
+        const editedMatrix = renderReferences({ committed: edited.projection, diagnostics: input().diagnostics, troubleshooting: prose, adoptSkill })
+        const manifestLine = (page: string) => /^Source manifest: .+$/m.exec(page)?.[0]
+        expect(editedMatrix.kind === 'complete' && manifestLine(editedMatrix.files[3]!.bytes)).not.toBe(manifestLine(matrix))
         const unavailable = await prepareCommittedCapabilityProjection({ ...assetInput, adapters: assetInput.adapters.map(row => row.target === 'codexcli'
             ? { format: row.format, target: row.target, mechanism: 'unavailable', measuredOn: row.measuredOn, measuredVersion: null,
                 provenance: 'synthetic unavailable adapter', reason: 'native entry unavailable' } : row) })
@@ -316,6 +331,33 @@ describe('reference generation', () => {
         expect(cli.slice(cli.indexOf('## cockpit sync'), cli.indexOf('## cockpit check'))).toContain('Reads `cockpit.toml` from `--config`.')
         expect(cli.slice(cli.indexOf('## cockpit upgrade'), cli.indexOf('\n## cockpit up\n')))
             .toContain('Status: experimental. This interface may change before a stable release.')
+    })
+
+    it('points each command diagnostic at its fixed remedy or troubleshooting section, and lists the rest without a guidance column', () => {
+        const documentOwner = 'packages/cockpit/src/document/command.ts'
+        const syncOwner = 'packages/cockpit/src/generated-environment/command.ts'
+        const owned = (path: string) => new Set([path])
+        const diagnostics = { items: ['diagnostic:BARE_FAILURE', 'diagnostic:FIXED_FAILURE', 'diagnostic:GUIDED_FAILURE', 'diagnostic:OTHER_FAILURE'],
+            owners: new Map([['BARE_FAILURE', owned(documentOwner)], ['FIXED_FAILURE', owned(documentOwner)], ['GUIDED_FAILURE', owned(documentOwner)], ['OTHER_FAILURE', owned(syncOwner)]]),
+            emissions: new Map([['BARE_FAILURE', owned(documentOwner)], ['FIXED_FAILURE', owned(documentOwner)], ['GUIDED_FAILURE', owned(documentOwner)], ['OTHER_FAILURE', owned(syncOwner)]]),
+            remedies: new Map([['BARE_FAILURE', new Set<string>()], ['FIXED_FAILURE', new Set(['repair the input'])], ['GUIDED_FAILURE', new Set<string>()], ['OTHER_FAILURE', new Set<string>()]]),
+            commandOwners: new Map([['document', owned(documentOwner)], ['sync', owned(syncOwner)]]) }
+        const troubleshooting = `# Troubleshooting\n\n\`OTHER_FAILURE\` is named before any section.\n\n## Guided recovery, step one\n\n\`GUIDED_FAILURE\` means the guide applies.\n\n${begin}\nold index\n${end}\n`
+        const rendered = renderReferences({ ...input(troubleshooting), diagnostics })
+        expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
+        if (rendered.kind !== 'complete') return
+        const cli = rendered.files.find(file => file.path === 'docs/cli-reference.md')!.bytes
+        expect(cli).not.toContain('see the message')
+        const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
+        expect(documentSection).toContain('| Diagnostic | What to do |\n| --- | --- |\n'
+            + '| `FIXED_FAILURE` | repair the input |\n'
+            + '| `GUIDED_FAILURE` | [Troubleshooting](troubleshooting.md#guided-recovery-step-one) |\n'
+            + '\n| Other diagnostics |\n| --- |\n| `BARE_FAILURE` |\n')
+        const syncSection = cli.slice(cli.indexOf('## cockpit sync'), cli.indexOf('## cockpit check'))
+        expect(syncSection).toContain('| Diagnostic |\n| --- |\n| `OTHER_FAILURE` |\n')
+        expect(syncSection).not.toContain('What to do')
+        // The troubleshooting index is the full lookup table and keeps one row per code.
+        expect(rendered.troubleshooting.bytes).toContain('| `GUIDED_FAILURE` | see the message |')
     })
 
     it('binds command diagnostics to the source modules reached by the actual CLI handlers', () => {
