@@ -223,7 +223,10 @@ unavailable, no target-specific registration or read-only fragment is emitted; t
 file may still be generated. Instruction projections also retain pending evidence. The
 [capability matrix](capability-matrix.md) preserves source provenance, measurement dates, and
 `human_needed` skill judgments. Historical adapter measurements do not prove current native
-enforcement. See [harness surfaces](harness-surfaces.md) for the wider surface estate.
+enforcement; where a dated run of the real tool showed the guard refusing, the matrix records that
+run instead, including the Codex condition that a person trusts the hook first
+([Trust the Codex hook](harness-surfaces.md#trust-the-codex-hook)). See
+[harness surfaces](harness-surfaces.md) for the wider surface estate.
 
 ## Exit codes and generated references
 

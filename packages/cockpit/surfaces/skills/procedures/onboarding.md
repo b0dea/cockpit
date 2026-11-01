@@ -42,6 +42,13 @@ resume; changed bytes or ownership require repair. The command validates the con
 synchronizes generated output, checks drift and runs preflight. Show its actual result and
 named gaps. Native discovery, a real interview and a clean-machine run each still need their own check.
 
+If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine, and
+again whenever sync changes the hook: Codex silently skips a project hook nobody has trusted, so
+every tool call would run unguarded. An agent cannot give that trust. Ask the human to run
+`codex -C <cockpit root>` in a terminal (not `codex exec`), trust the folder if asked, and choose
+**Trust all and continue** when Codex shows **Hooks need review**.
+`./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED` until it is done.
+
 For a dedicated cockpit, offer an instruction pointer for each product repository during the
 preview. Do not enable or write one without a person's approval: it changes what every agent session in
 that repository loads. If the product has no **AGENTS.md**, show the exact proposed file as a draft;

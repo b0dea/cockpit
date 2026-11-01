@@ -111,6 +111,9 @@ Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits
   runtimes are recognised. A measurement takes a few
   minutes with no progress output, and `--write` makes `./node_modules/.bin/cockpit check --config cockpit.toml` fail and the guard hold
   tool calls until a human runs `./node_modules/.bin/cockpit sync --config cockpit.toml`.
+- Codex: a person runs `codex -C <cockpit root>` once per machine and chooses **Trust all and
+  continue** at **Hooks need review**; until then Codex silently skips the guard hook, and
+  `./node_modules/.bin/cockpit doctor --config cockpit.toml` reports `CODEX_HOOK_UNTRUSTED`.
 - Daily: `./node_modules/.bin/cockpit session --config cockpit.toml -- <agent command>`.
   `./node_modules/.bin/cockpit sleep --config cockpit.toml` releases this checkout's hold;
   `DOCKER_CONTEXT="$(docker context show)" ./node_modules/.bin/cockpit down --config cockpit.toml`

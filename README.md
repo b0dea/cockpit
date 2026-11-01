@@ -134,8 +134,10 @@ section.
 - **One guard policy.** When the agent tool runs cockpit's guard hook, it denies pushes to
   protected branches, edits to the environment files declared in `cockpit.toml` and to `.secrets`,
   and commands that reach declared hosted databases or vendor hosts, and it fails closed on input
-  it cannot read. The hook is installed for Claude Code, Codex CLI and OpenCode; that each tool
-  fires it on its own is not yet confirmed. See [Safety and autonomy](docs/safety-and-autonomy.md).
+  it cannot read. The hook is installed for Claude Code, Codex CLI and OpenCode. A dated run
+  confirmed that OpenCode fires it, and Codex only after a person trusts the hook on that machine
+  (`cockpit doctor` warns until then); Claude Code's is unconfirmed. See
+  [Safety and autonomy](docs/safety-and-autonomy.md).
 - **Work orders with evaluator guidance (experimental).** Acceptance criteria and declared
   verification commands are generated with an evaluator surface that instructs a separate grading
   role. That the tool keeps the role separate is unverified; see the

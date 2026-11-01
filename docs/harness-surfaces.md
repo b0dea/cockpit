@@ -82,8 +82,45 @@ to `enforced` only after a test of the real tool says so.
 
 The shared guard is generated only for harnesses that have a checked-in guard adapter (Claude Code,
 Codex and OpenCode). The guard scripts deny, and fail closed, whenever a harness runs them. Whether
-each harness actually runs them on a tool call is not yet confirmed for any harness: every
-guard-firing cell is `instructed`, pending a test.
+each harness actually runs them on a tool call is recorded per harness in the
+[capability matrix](capability-matrix.md), from a dated run of the real tool on 2026-11-01:
+
+- OpenCode 1.19.4 is `enforced`: its plugin refused `git push` to a protected branch and a native
+  read of a secrets file, while a read of an unprotected file stayed allowed.
+- Codex 0.165.0 is `enforced` only after a person trusts the hook on that machine (evidence
+  `human_needed`). Codex silently skips a project hook nobody has trusted, so the same push ran
+  until the hook was trusted. See [Trust the Codex hook](#trust-the-codex-hook).
+- Claude Code refused the same push and read in that run, but without a paired broken control, so its
+  cell stays `instructed`.
+
+### Trust the Codex hook
+
+Codex runs the guard from `.codex/hooks.json` only after a person on that machine has trusted it,
+and it skips an untrusted hook without saying so: every tool call then runs unguarded. Trust is
+recorded per user in Codex's own configuration (`~/.codex/config.toml`, or `$CODEX_HOME`), keyed by
+the hook's path and a hash of its command, so it is needed once per machine and again whenever
+`sync` changes the hook. An agent cannot give it; a person does, once:
+
+```sh
+codex -C <cockpit root>
+```
+
+Start the interactive CLI (not `codex exec`) in the cockpit root, trust the folder if Codex asks,
+and choose **Trust all and continue** when Codex shows **Hooks need review**; the `/hooks` view
+inside a session does the same per hook. `cockpit doctor` and `cockpit check` read Codex's
+configuration without changing it and report `CODEX_HOOK_UNTRUSTED` until every generated hook is
+trusted, or when they cannot verify it.
+
+### OpenCode native reads
+
+OpenCode's native `read`, `grep` and `glob` tools never reach a shell, so the generated plugin
+restates each as the shell command that reads at least the same paths (`cat`, a recursive `grep`,
+and `ls`) and asks the guard about that. A refusal names the restated command, so an agent can
+narrow a search that would cover a secrets directory or a declared instance. The generated
+`opencode.jsonc` also denies OpenCode's `read` permission for every `.secrets` directory and each
+declared instance, which holds even if the plugin does not load. It carries the `$schema` member
+OpenCode would otherwise insert at every start, which made later checks report
+`SURFACE_STATE_CONFLICT`.
 
 Cursor and Grok Build are `generated`. Cockpit writes rules, skills, subagents, hooks, MCP and
 permission files for them (`rulesyncFeatures` in
@@ -117,7 +154,9 @@ have installed.
 
 [Restriction expansion](../packages/cockpit/src/surfaces/restrictions.ts) checks the adapter's
 recorded details but still emits `instructed` with a `pending_evidence` status, including
-native read-only settings. A harness without an adapter gets no control and is recorded as
+native read-only settings; a dated run of the real tool recorded in
+[the harness registry](../packages/cockpit/src/surfaces/harness-registry.ts) is what the matrix
+shows instead. A harness without an adapter gets no control and is recorded as
 `unavailable`/`not_applicable`. Codex and OpenCode have no prompt tier, so "ask" decisions become
 denials. [Rendering](../packages/cockpit/src/surfaces/render.ts) keeps those states, and
 [selftest planning](../packages/cockpit/src/surfaces/selftest.ts) works out which
