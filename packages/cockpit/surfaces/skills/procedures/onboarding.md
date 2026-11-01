@@ -11,13 +11,14 @@ Run from the cockpit root. Invoke each cockpit command through the exact project
 executable, `./node_modules/.bin/cockpit`, or through its `npx --no` form, such as
 `npx --no cockpit check --config cockpit.toml`, which runs that same binary and never downloads
 one. If the binary is absent, stop: do not use a command runner that can download a missing
-package implicitly.
+package implicitly. The user guide this procedure cites is installed with cockpit: open each page
+with a file read from `./node_modules/@b0dea/cockpit/docs/`.
 
 ## Bootstrap
 
-Choose the current harness target explicitly from the
-[capability matrix](https://github.com/b0dea/cockpit/blob/main/docs/capability-matrix.md),
-which separates what cockpit generates from what has been tested as enforced.
+Choose the current harness target explicitly from the capability matrix,
+`./node_modules/@b0dea/cockpit/docs/capability-matrix.md`, which separates what cockpit generates
+from what has been tested as enforced.
 For Codex CLI, preview with `./node_modules/.bin/cockpit init . --target codexcli --json`; substitute the selected
 target for another harness. Supply `--registry` only when adopting an existing registry.
 The CLI reads the registry, shows the preview, keeps state, writes the generated files and checks the environment.
@@ -80,7 +81,8 @@ Relay that question to the human and write their answer under the `cockpit.root`
 file (`dedicated` or `in-repo`); never answer it yourself. It decides where every generated file
 lives, and accepting without an answer refuses with `INIT_COCKPIT_ROOT_REQUIRED`. `dedicated`
 creates a sibling `<repo>-cockpit` directory so generated files stay out of the product's history.
-Explain the trade-off in a sentence or two from [root placement choices](https://github.com/b0dea/cockpit/blob/main/docs/concepts.md#where-the-cockpit-lives).
+Explain the trade-off in a sentence or two from the root placement choices in
+`./node_modules/@b0dea/cockpit/docs/concepts.md`.
 
 After accepted initialization, and only with explicit permission to change the product's fixtures
 or auth setup, read `references/test-data-and-personas.md` beside the cockpit-setup skill and treat
@@ -187,8 +189,8 @@ block and refuses an edited or ambiguous existing block.
 ## After upgrading cockpit
 
 An upgrade changes the generated files that guard and instruct every agent, so it is reviewed, never
-applied silently. For a read-only release plan before installing, follow
-[Review an upgrade](https://github.com/b0dea/cockpit/blob/main/docs/harness-surfaces.md#review-an-upgrade).
+applied silently. For a read-only release plan before installing, follow the *Review an upgrade*
+section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
 
 1. Run `npm install --save-dev --save-exact @b0dea/cockpit@<version>`, replacing `<version>` with the reviewed
    release. Done when both the manifest and lockfile show that exact version.
@@ -202,8 +204,8 @@ applied silently. For a read-only release plan before installing, follow
    changes something you overrode reports `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your
    override before updating its recorded hash.
 5. Commit the lockfile and the regenerated files together.
-6. Read the release notes at https://github.com/b0dea/cockpit/releases between the old and new version
-   for lines starting `Upgrade:`; the installed package does not ship its changelog. Each names a step
+6. Read the newly installed `./node_modules/@b0dea/cockpit/CHANGELOG.md` between the old and new
+   version for lines starting `Upgrade:`. Each names a step
    that sync alone does not do. The convention is in `.changeset/README.md` in the cockpit repository.
 
 Done when `./node_modules/.bin/cockpit check --config cockpit.toml --json` exits 0 and every `Upgrade:` line has been done or
@@ -293,8 +295,9 @@ contract and the independent grading, not the thinking: reuse the planning skill
    overhead costs more than it proves. Then check there is room: `./node_modules/.bin/cockpit work-status --config cockpit.toml --json` lists open orders, and the configured `workorders.wip_cap` and `workorders.programme_wip_cap` bound them. With no
    room, park something (step 7) before starting. Done when you can say who certifies and capacity exists.
 1. **Intake.** When preparing an intent descriptor, draft contract or source audit, follow the
-   [public intake examples](https://github.com/b0dea/cockpit/blob/main/docs/work-and-browser.md#intent-descriptor)
-   so the closed formats bind the inspected request without guessing fields. Inspect applicable installed
+   examples in the *Declare work and the files it may change* section of
+   `./node_modules/@b0dea/cockpit/docs/work-and-browser.md` so the closed formats bind the inspected
+   request without guessing fields. Inspect applicable installed
    thinking, research, specification and planning skills, and link each selected output in the source audit.
    Record an audited empty selection when none applies. Then compile them into the work-order schema with
    `./node_modules/.bin/cockpit work-intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`.

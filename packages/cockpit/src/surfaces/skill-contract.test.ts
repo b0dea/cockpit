@@ -298,7 +298,7 @@ describe('shipped skill contract', () => {
         expect(body).toContain('result.orders[0].state.attempts')
         expect(body).toContain('cockpit test-run --config cockpit.toml --gate declared-gate-id')
         const work = body.slice(body.indexOf('## Work'))
-        expect(work).toContain('[public intake examples]')
+        expect(work).toContain('examples in the *Declare work and the files it may change* section of `./node_modules/@b0dea/cockpit/docs/work-and-browser.md`')
         expect(work).toContain('Inspect applicable installed thinking, research, specification and planning skills')
         expect(work).toContain('Record an audited empty selection when none applies')
         expect(work).not.toContain("Run the harness's installed brainstorming and planning skills")
@@ -320,7 +320,7 @@ describe('shipped skill contract', () => {
         const setup = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-setup/SKILL.md')
         expect(setup?.bytes).toContain('references/test-data-and-personas.md')
         expect(setup?.bytes).toContain('adopt-cockpit')
-        const upgradeReview = setup?.bytes.indexOf('[Review an upgrade]') ?? -1
+        const upgradeReview = setup?.bytes.indexOf('*Review an upgrade* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`') ?? -1
         const exactInstall = setup?.bytes.indexOf('install that exact release') ?? -1
         const humanSync = setup?.bytes.indexOf('ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`') ?? -1
         expect(upgradeReview).toBeGreaterThan(-1)

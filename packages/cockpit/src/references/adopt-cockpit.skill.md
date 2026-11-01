@@ -10,9 +10,11 @@ description: "Set up or adopt cockpit for a project, bring a multi-repo product 
 Use this when a human asks you to set cockpit up, adopt it, or bring their product up for
 agents. cockpit declares a product's repositories once in `cockpit.toml`, generates the same agent
 instructions, skills, guards and permissions for every harness, and runs the stack against the
-live checkouts. The complete guide, with every situation and its completion criteria, is
-<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md>; read the section a
-step below points to.
+live checkouts. The complete guide, with every situation and its completion criteria, ships with
+cockpit: once it is installed (below), open `./node_modules/@b0dea/cockpit/docs/agent-adoption.md`
+with a file read; until then, read
+<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/agent-adoption.md>. Read the section a
+step below points to. Guide pages cited after the install step are in that installed directory.
 
 ## Safety contract
 
@@ -50,11 +52,11 @@ repositories; leave the product repositories untouched unless the human agrees. 
 ./node_modules/.bin/cockpit --help
 ```
 
-Choose your tool's target identifier from the
-<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/capability-matrix.md>.
-It separates generated files from native enforcement that has been confirmed. For example, Codex uses
-`codexcli`; substitute the appropriate target below. For an instructions-only tool, follow
-<https://raw.githubusercontent.com/b0dea/cockpit/main/docs/harness-surfaces.md#capability-states>.
+Choose your tool's target identifier from the capability matrix,
+`./node_modules/@b0dea/cockpit/docs/capability-matrix.md`. It separates generated files from native
+enforcement that has been confirmed. For example, Codex uses
+`codexcli`; substitute the appropriate target below. For an instructions-only tool, follow the
+*Capability states* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
 
 Run commands from the cockpit root through `./node_modules/.bin/cockpit`; if that file is absent,
 stop and repair the project-local install. Read flags from

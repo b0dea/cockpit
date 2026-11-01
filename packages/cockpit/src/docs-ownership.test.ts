@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { classifyMarkdownPath, resolveCodeOwners } from '../../../scripts/docs-lint.mjs'
+import { classifyMarkdownPath, resolveCodeOwners, walkMarkdownProse } from '../../../scripts/docs-lint.mjs'
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const PUBLIC_POLICIES = [
@@ -12,6 +12,25 @@ const PUBLIC_POLICIES = [
     'SECURITY.md',
     'CHANGELOG.md',
 ] as const
+
+// Surfaces run inside a consumer's cockpit after cockpit is installed there, so they read the guide
+// from the installation; the repository may be private, and the agent may be offline.
+const INSTALLED_GUIDE = /\.\/node_modules\/@b0dea\/cockpit\/(docs\/[^\s`'",)]+)/g
+const PUBLIC_GUIDE = /https:\/\/(?:github\.com\/b0dea\/cockpit\/blob\/main|raw\.githubusercontent\.com\/b0dea\/cockpit\/main)\/docs\/[^\s>)'"]*/g
+const ADOPTION_SKILL = 'packages/cockpit/src/references/adopt-cockpit.skill.md'
+
+function trackedFiles(): string[] {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)
+}
+
+function shippedGuidePages(): Set<string> {
+    return new Set(trackedFiles().filter((path) => path.startsWith('docs/') && !path.startsWith('docs/contributing/') && path.endsWith('.md')))
+}
+
+function headings(page: string): string[] {
+    return walkMarkdownProse(page, readFileSync(new URL(`../../../${page}`, import.meta.url), 'utf8')).lines
+        .flatMap((row) => /^#{1,6}\s+(.+?)\s*$/.exec(row.prose)?.[1] ?? [])
+}
 
 function trackedDocumentation(): string[] {
     return execFileSync('git', ['ls-files', '-z', '*.md'], { cwd: ROOT, encoding: 'utf8' })
@@ -63,6 +82,38 @@ describe('effective documentation ownership', () => {
             expect(link.startsWith(prefix), link).toBe(true)
             expect(tracked.has(link.slice(prefix.length)), link).toBe(true)
         }
+    })
+
+    it('points installed surfaces and CLI text at the installed guide, naming sections that exist', () => {
+        const shipped = shippedGuidePages()
+        const sources = trackedFiles().filter((path) => path.startsWith('packages/cockpit/surfaces/')
+            || /^packages\/cockpit\/src\/.*\.ts$/.test(path) && !path.endsWith('.test.ts') && !path.includes('/test-support/'))
+        let sections = 0
+        for (const path of [...sources, ADOPTION_SKILL]) {
+            const text = readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8').replace(/\s+/g, ' ').replaceAll('*', '')
+            if (path !== ADOPTION_SKILL) expect(text.match(PUBLIC_GUIDE), path).toBeNull()
+            for (const match of text.matchAll(INSTALLED_GUIDE)) {
+                const page = match[1]!.replace(/[.:;]$/, '')
+                expect(shipped.has(page), `${path} names ${page}, which the package does not ship`).toBe(true)
+                const before = text.slice(0, match.index).replace(/`$/, '')
+                if (!before.endsWith(' section of ')) continue
+                const lead = before.slice(0, -' section of '.length)
+                expect(headings(page).some((heading) => lead.endsWith(heading)), `${path}: no ${page} heading ends "${lead.slice(-60)}"`).toBe(true)
+                sections += 1
+            }
+        }
+        expect(sections, 'a section check over no references passes vacuously').toBeGreaterThan(3)
+    })
+
+    it('sends the adoption skill to the public guide only for what precedes the install', () => {
+        const skill = readFileSync(new URL(`../../../${ADOPTION_SKILL}`, import.meta.url), 'utf8')
+        const tracked = new Set(trackedFiles())
+        const prefix = 'https://raw.githubusercontent.com/b0dea/cockpit/main/'
+        const links = skill.match(PUBLIC_GUIDE) ?? []
+
+        expect(skill.replace(/\s+/g, ' ')).toContain('`./node_modules/@b0dea/cockpit/docs/agent-adoption.md`')
+        expect(links).toEqual([`${prefix}docs/agent-adoption.md`, `${prefix}docs/getting-started.md#install-cockpit`])
+        for (const link of links) expect(tracked.has(link.slice(prefix.length).split('#')[0]!), link).toBe(true)
     })
 
     it('owns every public root policy and the public documentation tree', () => {

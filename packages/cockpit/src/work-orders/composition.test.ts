@@ -594,7 +594,7 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
         const fixture = await configuredFixture()
         await writeFile(join(fixture.root, 'intents/invalid.json'), '{}')
         await expect(runWorkApplication({ operation: 'work-intake', intent: 'intents/invalid.json' }, fixture.composition))
-            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('docs/work-and-browser.md#intent-descriptor') })
+            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('Intent descriptor section of ./node_modules/@b0dea/cockpit/docs/work-and-browser.md') })
         const invalid = (bytes: string) => bytes.replace('## Non-goals\nChanging the storage provider.\n', '')
 
         const inventoryPath = join(fixture.root, 'workorders/WO-001.md')
