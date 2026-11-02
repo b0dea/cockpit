@@ -163,6 +163,9 @@ export type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; re
     configuration: 'resolved' | 'none'
     forbidden: Readonly<{ presence: readonly string[]; values: readonly { option: string; predicate: 'not-lowercase-sha256' }[] }>
     selection?: 'root-xor-registry' | 'release-evidence-pair' | 'intent-xor-work-order'
+    // Admitted only where cockpit.toml sets browser.request_preapproval, which the schema grants only
+    // on isolated data that cannot reach production.
+    requires?: 'browser-preapproval'
 }>
 
 const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
@@ -183,6 +186,7 @@ const workOptions = { config: { type: 'string' }, json: { type: 'boolean', defau
 const workOrderOption = { 'work-order': { type: 'string' } } as const
 const workOrderOptions = Object.freeze({ ...configured, 'work-order': value('identifier', true) })
 const browserOptions = Object.freeze({ ...configured, role: value('identifier') })
+const browserAdmission = Object.freeze({ requires: 'browser-preapproval' as const })
 
 
 export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIdentifier {
@@ -529,14 +533,16 @@ export const commands: readonly CommandDefinition[] = [
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Independently grade the current accepted work order', visibility: 'public', experimental: true,
         ordinary: ordinary('work-grade', workOrderOptions),
         options: { ...workOptions, ...workOrderOption } },
+    // Driving signs in and captures the application, so it runs unprompted only on the data posture a
+    // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public', experimental: true,
-        ordinary: ordinary('browser-drive', browserOptions),
+        ordinary: ordinary('browser-drive', browserOptions, browserAdmission),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser accessibility', handler: 'browser-accessibility', stage: 'test-and-grade', summary: 'Collect accessibility observations from the application', visibility: 'public', experimental: true,
-        ordinary: ordinary('browser-accessibility', browserOptions),
+        ordinary: ordinary('browser-accessibility', browserOptions, browserAdmission),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public', experimental: true,
-        ordinary: ordinary('browser-screenshot', browserOptions),
+        ordinary: ordinary('browser-screenshot', browserOptions, browserAdmission),
         options: { ...workOptions, ...{ role: { type: 'string' } } } },
     { name: 'browser debugger', handler: 'browser-debugger', stage: 'test-and-grade', summary: 'Prepare an explicitly requested browser debugger', visibility: 'public', experimental: true,
         ordinary: unavailable("the debugger opens a headed browser for a person at this machine's display, on that person's explicit request"),
@@ -565,6 +571,8 @@ export interface OrdinaryInvocationAuthority {
     readonly services: readonly string[]
     /** Test gate ids the configuration declares. */
     readonly gates: readonly string[]
+    /** Whether the configuration preapproves browser commands. */
+    readonly browserPreapproved: boolean
 }
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
@@ -609,13 +617,14 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     if (!record(candidate)
         || Object.keys(candidate).sort().join(',') !== 'argv,cwd,executable'
         || !record(captured)
-        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,gates,services') return undefined
+        || Object.keys(captured).sort().join(',') !== 'allowedRoots,browserPreapproved,canonicalRoot,configPath,executable,gates,services') return undefined
     const source = captured as unknown as OrdinaryInvocationAuthority
     if (!canonicalPath(source.executable) || !canonicalPath(source.canonicalRoot) || !canonicalPath(source.configPath)
         || !Array.isArray(source.allowedRoots) || source.allowedRoots.length > GUARD_INPUT_LIMITS.paths
         || !source.allowedRoots.every(canonicalPath) || !source.allowedRoots.includes(source.canonicalRoot)
         || !Array.isArray(source.services) || !source.services.every(service => typeof service === 'string' && /^[a-z0-9][a-z0-9_.-]{0,127}$/.test(service))
         || !Array.isArray(source.gates) || !source.gates.every(gate => typeof gate === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(gate))
+        || typeof source.browserPreapproved !== 'boolean'
         || candidate.executable !== source.executable || candidate.cwd !== source.canonicalRoot
         || !Array.isArray(candidate.argv) || candidate.argv.length === 0 || candidate.argv.length > GUARD_INPUT_LIMITS.words
         || !candidate.argv.every(arg => typeof arg === 'string' && arg.length > 0
@@ -627,6 +636,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
     const available: OrdinaryCommandMetadata | undefined = definition?.ordinary
     if (!definition || definition.visibility !== 'public' || available?.availability !== 'available') return undefined
     const grammar = available
+    if (grammar.requires === 'browser-preapproval' && !source.browserPreapproved) return undefined
     const paths = new Set<string>()
     const confined = (path: string) => {
         if (!path || path.includes('\\') || path.split('/').includes('..') || /[*?\[\]]/.test(path)) return false
@@ -636,6 +646,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         return true
     }
     if (grammar.configuration === 'resolved' && !confined(source.configPath)) return undefined
+    const reads: string[] = []
     const positionals: string[] = []
     const options = new Map<string, string | true>()
     const words = spelling.rest
@@ -654,6 +665,7 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         }
         const text = equal < 0 ? words[++index] : arg.slice(equal + 1)
         if (!text || text.startsWith('-')) return undefined
+        if (option.role === 'confined-path') reads.push(resolve(source.canonicalRoot, text))
         const valid = option.role === 'confined-path' ? confined(text)
             : option.role === 'resolved-config' ? confined(text) && resolve(source.canonicalRoot, text) === source.configPath
             : option.role === 'declared-service' ? source.services.includes(text)
@@ -684,5 +696,6 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
         || grammar.forbidden.values.some(predicate => options.has(predicate.option)
             && predicate.predicate === 'not-lowercase-sha256' && !/^[a-f0-9]{64}$/.test(String(options.get(predicate.option))))
         || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
-    return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]) })
+    return Object.freeze({ executable: source.executable, cwd: source.canonicalRoot, argv: Object.freeze([...args]),
+        ...(reads.length ? { reads: Object.freeze(reads) } : {}) })
 }

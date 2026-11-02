@@ -17,6 +17,8 @@ export interface GuardInvocationProfile {
     readonly executable: string
     readonly cwd: string
     readonly argv: readonly string[]
+    /** Files the admitted command reads and may echo back, checked like a read-only command's reads. */
+    readonly reads?: readonly string[]
 }
 export interface GuardProjectCommand {
     readonly executable: string
@@ -189,7 +191,9 @@ function capturePolicy(value: unknown): GuardEvaluationPolicy | undefined {
             || !keys(item, item.fix === undefined ? ['match', 'argv', 'reason'] : ['match', 'argv', 'reason', 'fix'])
             || !['prefix', 'contains'].includes(String(item.match)) || !ruleArgv(item.argv) || !scalar(item.reason)
             || item.fix !== undefined && !scalar(item.fix))
-        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv']) || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv))
+        || p.cockpitInvocations.some((item) => !record(item) || !keys(item, item.reads === undefined ? ['executable', 'cwd', 'argv'] : ['executable', 'cwd', 'argv', 'reads'])
+            || !scalar(item.executable) || item.executable.includes('*') || !confined(item.cwd) || !argv(item.argv)
+            || item.reads !== undefined && (!strings(item.reads) || item.reads.length > GUARD_INPUT_LIMITS.paths))
         || p.cockpitLaunchers.length > GUARD_INPUT_LIMITS.invocations || p.cockpitLaunchers.some((item) => !record(item) || !keys(item, ['executable', 'cwd', 'argv'])
             || !scalar(item.executable) || !argv(item.argv) || cockpitLauncherPrefix(item.executable, [...item.argv, 'check']) !== item.argv.length || !confined(item.cwd))
         || p.projectCommands.some((item) => !record(item) || !keys(item, ['executable', 'checkoutRoot', 'kind', 'argv']) || !confined(item.checkoutRoot) || !['build', 'test'].includes(String(item.kind)) || !projectTuple(item))
@@ -936,6 +940,15 @@ export function evaluateGuard(input: unknown, policy: unknown, inspect: PathInsp
         }
         if (access && inspectReadOnly(access, chainReadOnly)) readOnly.add(invocation)
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
+        // A cockpit command that parses a named file can quote it in a refusal, so the file is read
+        // into the agent context as surely as `cat` would read it.
+        for (const profile of resolved.cockpitInvocations) {
+            if (!profile.reads?.length || profile.executable !== invocation.executable || profile.cwd !== invocation.cwd
+                || profile.argv.length !== invocation.argv.length || profile.argv.some((word, i) => word !== invocation.argv[i])) continue
+            if (!inspectReadOnly({ cwd: profile.cwd, reads: profile.reads, trees: [], listings: [] })) {
+                holdAsk(invocation, ask('This cockpit command reads a file the guard cannot prove safe to read: a symlink, an undeclared .env file or one outside the configured roots.'))
+            }
+        }
         if (!git) continue
         inspectPath({ path: git.cwd, cwd: invocation.cwd, operation: 'cwd' })
         if (git.uncertain) holdAsk(invocation, ask('Git execution context is not an exact resolved profile.'))

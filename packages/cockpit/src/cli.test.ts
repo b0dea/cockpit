@@ -131,7 +131,7 @@ describe('invocation publication', () => {
 
 describe('closed ordinary invocation metadata', () => {
     const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
-        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'] }
+        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'], browserPreapproved: true }
     const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
     // The words each available config-bearing row needs besides --config.
     const requiredWords: Readonly<Record<string, readonly string[]>> = {
@@ -176,8 +176,13 @@ describe('closed ordinary invocation metadata', () => {
         ]
         for (const args of cases) {
             const argv = ['document', 'registry-resolve'].includes(args[0]!) ? args : [...args, '--config', authority.configPath]
-            expect(ordinary(argv), argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
+            const { reads: _reads, ...profile } = ordinary(argv) ?? {}
+            expect(profile, argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
         }
+        // The files a command parses are carried for the evaluator to check as reads.
+        expect(ordinary(['work', 'intake', '--config', authority.configPath, '--intent', 'intents/task.json', '--candidate', 'drafts/task.md'])?.reads)
+            .toEqual(['/workspace/product/intents/task.json', '/workspace/product/drafts/task.md'])
+        expect(ordinary(['work', 'status', '--config', authority.configPath])).not.toHaveProperty('reads')
         for (const field of ['environment.install_policies', 'environment.test_data']) {
             const argv = ['init', '.', '--target', 'codexcli', '--reset-answer', field, '--json']
             expect(ordinary(argv), field).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
@@ -244,6 +249,9 @@ describe('closed ordinary invocation metadata', () => {
                 expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value]), `${row.name} repeated ${name}`).toBeUndefined()
             }
         }
+        // Browser commands run unprompted only where cockpit.toml preapproves them.
+        expect(resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv: ['browser', 'drive', '--config', authority.configPath] },
+            { ...authority, browserPreapproved: false }, () => true)).toBeUndefined()
         for (const executable of ['cockpit', '/other/cockpit', 'bash']) expect(ordinary(['check', '--config', authority.configPath], { executable })).toBeUndefined()
         expect(ordinary(['check', '--config', authority.configPath], { cwd: '/workspace/app' })).toBeUndefined()
         expect(ordinary(['sh', '-c', 'cockpit check', '--config', authority.configPath])).toBeUndefined()

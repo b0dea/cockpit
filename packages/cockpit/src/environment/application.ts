@@ -544,18 +544,18 @@ export async function runGuardEvaluationApplication(
                 { node, resolveDocker: adapters.resolveDocker, execute: adapters.execute ?? executeProbe })
             if (typeof services === 'string') return unavailable(`Guard could not read the Compose service list: ${services}`)
             const authority = { executable: launcher, ...configured, allowedRoots: prepared.result.policy.allowedRoots, services,
-                gates: config.testing?.gates.map(gate => gate.id) ?? [] }
+                gates: config.testing?.gates.map(gate => gate.id) ?? [], browserPreapproved: config.browser?.request_preapproval === true }
             for (const { executable, cwd, argv, prefix, session } of launched) {
                 const args = argv.slice(prefix)
                 // A session inside a session would run a command the evaluator never sees.
-                const admitted = session && ordinarySessionCommand(args, cwd, configured)
-                    || resolveOrdinaryInvocation({ executable: launcher, cwd, argv: args }, authority, path => {
+                const admitted: Pick<GuardInvocationProfile, 'reads'> | undefined = session && ordinarySessionCommand(args, cwd, configured) ? {}
+                    : resolveOrdinaryInvocation({ executable: launcher, cwd, argv: args }, authority, path => {
                         const fact = inspect({ path, cwd, operation: 'write' })
                         return !!fact && typeof fact === 'object' && 'status' in fact && fact.status === 'resolved'
                             && 'symlink' in fact && fact.symlink === false
                     })
-                // The evaluator matches the invocation as the agent spelled it.
-                if (admitted) cockpitInvocations.push({ executable, cwd, argv })
+                // The evaluator matches the invocation as the agent spelled it, and checks what it reads.
+                if (admitted) cockpitInvocations.push({ executable, cwd, argv, ...(admitted.reads ? { reads: admitted.reads } : {}) })
             }
         }
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')

@@ -21,7 +21,8 @@ yourself has nobody left to check it, so hand it to whoever owns the repository.
 3. **Drive with the real commands.** `npx --no cockpit browser drive --config cockpit.toml --json` visits every
    declared route; `npx --no cockpit browser accessibility --config cockpit.toml --json` collects accessibility
    observations and `npx --no cockpit browser screenshot --config cockpit.toml --json` captures each surface. Add
-   `--role <role>` to any of them for a signed-in persona. Use the
+   `--role <role>` to any of them for a signed-in persona. Unless `cockpit.toml` sets
+   `browser.request_preapproval`, the guard asks a person before each one. Use the
    browser tools below for anything the declared routes do not reach. For signed-in testing read
    `../cockpit-setup/references/test-data-and-personas.md` first: it explains how state is minted per
    persona, and why a stale or shared session looks like a product bug.

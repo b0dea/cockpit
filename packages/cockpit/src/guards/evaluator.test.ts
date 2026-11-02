@@ -558,6 +558,17 @@ describe('built-in read-only profile', () => {
         expect(session(['rm', '-rf', 'src'])).toBe('ask')
         expect(session(['sh', '-c', 'cat README.md'])).toBe('ask')
         expect(session(['cat', 'config/active.instance'])).toBe('deny')
+        // A command that parses a named file can quote it back, so the file is checked as a read.
+        const reading = (file: string) => {
+            const configured = launched()
+            const profile = { ...candidate('npx', ['--no', 'cockpit', 'work', 'intake', '--config', 'cockpit.toml', '--intent', file]), reads: [`${root}/${file}`] }
+            configured.cockpitInvocations.push(profile)
+            return decideLaunched(`npx --no cockpit work intake --config cockpit.toml --intent ${file}`, configured).decision
+        }
+        expect(reading('intents/task.json')).toBe('allow')
+        expect(reading('.env')).toBe('ask')
+        expect(reading('config/active.instance')).toBe('deny')
+        expect(reading('env/.secrets/token')).toBe('deny')
         for (const malformed of [candidate('npx', ['--no']), candidate('npx', ['--no', 'cockpit'], '/outside'), candidate('sh', [])]) {
             expect(decideLaunched('npx --no cockpit doctor', { ...launched(), cockpitLaunchers: [malformed] }).decision).toBe('unavailable')
         }
