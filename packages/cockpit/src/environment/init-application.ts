@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
+import { readinessReport, type ReadinessReport } from '../readiness.js'
 import { cockpitCommand, initCommand } from '../fix-catalogue.js'
 import {
     isAnswerProvenance,
@@ -157,6 +158,17 @@ export interface InitApplicationAdapters {
                 provenance: Readonly<{ kind: 'inferred'; source: string; reason: string }> }>[]
             skipped: readonly Readonly<{ source: string; reason: string }>[]
         }>>
+    /**
+     * Findings about prerequisites no init stage checks (the root's Git working tree, the cockpit's
+     * own install, sibling remotes, committed secret files), and whether a runtime is declared.
+     */
+    readonly inspectReadiness?: (input: Readonly<{
+        root: string
+        configPath?: string
+        repositories: readonly Readonly<{ slug: string; root: string }>[]
+        checkRoot: boolean
+        classification?: string
+    }>) => Promise<Readonly<{ state: ReadinessReport['state']; findings: readonly Diagnostic[] }>>
 }
 
 export interface GreenfieldQuestion {
@@ -217,6 +229,8 @@ export interface InitResult {
     readonly resetAnswer?: Readonly<{ field: string; revision: number; invalidatedFields: readonly string[]; previewSha256: string }>
     /** Answers in cockpit.toml no person stated; each stays listed there, and doctor warns, until someone confirms it. */
     readonly unconfirmed?: readonly UnconfirmedAnswer[]
+    /** This run's findings grouped under the prerequisites cockpit depends on: what to do next. */
+    readonly readiness?: ReadinessReport
 }
 
 interface InitOutcomeBase {
@@ -417,6 +431,40 @@ function stateFailure(outcome: StateResult<unknown>): InitApplicationOutcome {
 }
 
 export async function runInitApplication(
+    input: InitApplicationInput,
+    adapters: InitApplicationAdapters,
+): Promise<InitApplicationOutcome> {
+    return withReadiness(await runInitStages(input, adapters), input, adapters)
+}
+
+// Every stop init makes, the preview included, says which prerequisites are still missing, so the
+// setup agent can walk the person through them before the first `up` instead of meeting them one
+// refusal at a time; a cockpit was left uncommitted, outside Git or with no installed cockpit while
+// init reported success.
+async function withReadiness(
+    outcome: InitApplicationOutcome,
+    input: InitApplicationInput,
+    adapters: InitApplicationAdapters,
+): Promise<InitApplicationOutcome> {
+    const result = outcome.result
+    if (!adapters.inspectReadiness || result === null) return outcome
+    const configured = result.stage === 'draft-observed' || result.stage === 'environment-verified'
+    const estateRoot = estateInput(input).root
+    const inspected = await adapters.inspectReadiness(Object.freeze({
+        root: result.root,
+        ...(configured ? { configPath: join(result.root, 'cockpit.toml') } : {}),
+        repositories: Object.freeze(configured ? [] : (result.estate?.runnable ?? [])
+            .map(({ slug, path }) => Object.freeze({ slug, root: resolve(estateRoot, path) }))),
+        // A dedicated cockpit folder is created as a Git repository by init itself.
+        checkRoot: input.cockpitRoot?.kind !== 'dedicated',
+        ...(result.estate === undefined ? {} : { classification: result.estate.classification }),
+    }))
+    const diagnostics = [...outcome.diagnostics, ...inspected.findings]
+    return Object.freeze({ ...outcome, diagnostics,
+        result: Object.freeze({ ...result, readiness: readinessReport(inspected.state, diagnostics) }) }) as InitApplicationOutcome
+}
+
+async function runInitStages(
     input: InitApplicationInput,
     adapters: InitApplicationAdapters,
 ): Promise<InitApplicationOutcome> {

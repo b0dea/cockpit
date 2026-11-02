@@ -103,7 +103,8 @@ export interface ReadinessGap {
 }
 
 export interface ReadinessReport {
-    readonly state: ReadinessState
+    /** Undetermined before init has classified the estate and while no cockpit.toml says. */
+    readonly state: ReadinessState | 'undetermined'
     /** Prerequisites some reported diagnostic says are missing, in catalogue order. */
     readonly gaps: readonly ReadinessGap[]
     /** Catalogue ids that apply to this state and that no reported diagnostic named. */
@@ -113,7 +114,7 @@ export interface ReadinessReport {
 type ReportedDiagnostic = Readonly<{ code: string; severity: string; message: string; target?: string; fix?: string }>
 
 /** Groups the diagnostics a command reported under the prerequisites they name. */
-export function readinessReport(state: ReadinessState, diagnostics: readonly ReportedDiagnostic[]): ReadinessReport {
+export function readinessReport(state: ReadinessReport['state'], diagnostics: readonly ReportedDiagnostic[]): ReadinessReport {
     const gaps: ReadinessGap[] = []
     const noFinding: string[] = []
     for (const entry of READINESS_CATALOGUE) {
@@ -122,7 +123,7 @@ export function readinessReport(state: ReadinessState, diagnostics: readonly Rep
             gaps.push(Object.freeze({ id: entry.id, level: entry.level, needs: entry.needs,
                 findings: Object.freeze(findings.map(({ code, severity, target, message, fix }) => Object.freeze({
                     code, severity, ...(target === undefined ? {} : { target }), message, fix: fix ?? entry.fix }))) }))
-        } else if (entry.appliesTo.includes(state)) noFinding.push(entry.id)
+        } else if (state === 'undetermined' ? entry.appliesTo.length === BOTH.length : entry.appliesTo.includes(state)) noFinding.push(entry.id)
     }
     return Object.freeze({ state, gaps: Object.freeze(gaps), noFinding: Object.freeze(noFinding) })
 }

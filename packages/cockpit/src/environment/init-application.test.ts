@@ -17,6 +17,8 @@ import type { SurfaceTarget } from '../surfaces/contract.js'
 import { classifyEstateObservation, documentObservedCommand, observePublicEstate, type DocumentCommandInput, type DocumentOutcome, type EstateClassificationOutcome, type EstateClassificationResult } from '../document/command.js'
 import { readState, selectBootstrapStateRoot } from './state.js'
 import { syncTeamGeneratedEnvironment } from './generated-application.js'
+import { inspectInitReadiness } from './readiness-composition.js'
+import { executeProbe } from '../environment-exec/execute.js'
 
 const scratch: string[] = []
 const digest = (character: string) => character.repeat(64)
@@ -1069,9 +1071,15 @@ it.each([
     expect(outcome.result).toMatchObject({ unconfirmed: [{ field: 'environment.machine', provenance: 'agent-default' },
         { field: 'guards', provenance: 'agent-default' }] })
     await writeFile(f.destination, outcome.artifact!)
-    // A run that stops after the draft still names what no person confirmed: an agent sees only this last outcome.
-    expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_UNSEEDED' }],
-        result: { unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }] } })
+    // A run that stops after the draft still names what no person confirmed, and which prerequisites
+    // are missing: an agent sees only this last outcome. init ran from a copy of cockpit outside the root.
+    const stopped = await runInitApplication(accepted, { ...adapters,
+        inspectReadiness: input => inspectInitReadiness(input, { env: process.env, timeoutMs: 5_000, execute: executeProbe }) })
+    // This fixture root is not a Git working tree either.
+    expect(stopped).toMatchObject({ kind: 'refusal',
+        diagnostics: [{ code: 'STATE_UNSEEDED' }, { code: 'COCKPIT_NOT_INSTALLED' }, { code: 'SETUP_PATH_TYPE_INVALID' }],
+        result: { unconfirmed: [{ field: 'environment.machine' }, { field: 'guards' }],
+            readiness: { state: 'runtime', gaps: [{ id: 'cockpit-git', level: 'required' }, { id: 'cockpit-installed', level: 'recommended' }] } } })
     expect(JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'))).toMatchObject({
         ...productManifest, scripts: { ...productManifest?.scripts, 'cockpit:sync': 'cockpit sync --config cockpit.toml' },
         devDependencies: { '@b0dea/cockpit': expect.any(String) } })
