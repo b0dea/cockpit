@@ -600,6 +600,10 @@ describe('tracked secret files', () => {
             expect(findings).toEqual([expect.objectContaining({ severity: 'warning', code: 'SECRET_FILE_TRACKED', target: 'sibling:api',
                 message: expect.stringContaining('(.env, config/.env.production)') })])
             expect(JSON.stringify(findings)).not.toContain(value)
+            // A probe whose outcome cannot be trusted is not a clean repository.
+            const forged = await inspectTrackedSecretFiles({ executable: git.value, timeoutMs: 5_000,
+                repositories: [{ slug: 'api', root: repository }] }, async step => ({ ...await executeProbe(step), stdout: Buffer.from('') }))
+            expect(forged).toEqual([expect.objectContaining({ code: 'EVIDENCE_UNAVAILABLE', target: 'sibling:api' })])
         } finally {
             await rm(root, { recursive: true, force: true })
         }

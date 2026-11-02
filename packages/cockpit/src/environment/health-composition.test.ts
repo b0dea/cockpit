@@ -444,8 +444,10 @@ else process.exit(64)
 
         // Doctor checks an uncommitted cockpit that declares no runtime; preflight, the runtime gate, still only refuses it.
         const surfacesOnly = await fixture({ unseeded: true, uncommitted: true })
+        // A mounted sibling runs nothing while no runtime is declared, so no Docker is needed.
+        await writeFile(surfacesOnly.configPath, (await readFile(surfacesOnly.configPath, 'utf8')).replace('mount = "none"', 'mount = "always"'))
         const surfacesAdapters = createHealthCommandAdapters({
-            configPath: surfacesOnly.configPath, env: { PATH: process.env.PATH, HOME: surfacesOnly.home }, timeoutMs: 5_000,
+            configPath: surfacesOnly.configPath, env: { PATH: '/usr/bin:/bin', HOME: surfacesOnly.home }, timeoutMs: 5_000,
         }, executeProbe)
         const doctor = await runDoctor({ configPath: surfacesOnly.configPath }, surfacesAdapters)
         expect(doctor.diagnostics[0]).toMatchObject({ code: 'ENVIRONMENT_NOT_DECLARED' })
@@ -453,6 +455,7 @@ else process.exit(64)
             expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', verdict: 'fail' }),
             expect.objectContaining({ code: 'RUNTIME_UNMEASURED', verdict: 'not-applicable', reason: expect.stringContaining('declares no runtime') }),
         ]))
+        expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('RUNTIME_UNAVAILABLE')
         expect((await runPreflight({ configPath: surfacesOnly.configPath }, surfacesAdapters)).diagnostics.map(({ code }) => code))
             .toEqual(['ENVIRONMENT_NOT_DECLARED'])
     })

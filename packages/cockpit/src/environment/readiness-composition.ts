@@ -49,7 +49,17 @@ export async function inspectProjectReadiness(
     if (loaded && loaded.kind !== 'complete') return Object.freeze([])
     const findings: EnvironmentDiagnostic[] = input.configPath === undefined ? [] : [...await inspectTeamReadiness(input.configPath)]
     const git = await resolveGitExecutable(input.env)
-    if (git.state !== 'available') return Object.freeze(findings)
+    if (git.state !== 'available') {
+        // Without Git, the root and secret checks did not run; their absence from the report is no finding.
+        findings.push(Object.freeze({
+            severity: 'warning' as const,
+            code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+            message: `the readiness checks that ask Git (the cockpit root's working tree, committed secret files) did not run: ${git.reason}`,
+            target: 'git',
+            fix: 'install Git and put it on PATH, then rerun this command',
+        }))
+        return Object.freeze(findings)
+    }
     // A greenfield root init writes into in place stays outside Git until someone runs git init, and
     // setup refuses it only later; init reached environment-verified without saying so.
     if (input.checkRoot && await isDirectory(input.root)) {

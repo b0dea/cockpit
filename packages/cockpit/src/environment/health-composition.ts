@@ -208,10 +208,9 @@ function producers(input: {
     const generated = input.config.result.config.environment.generated
     const declaresStack = generated !== undefined || input.config.result.config.environment.compose_files.length > 0
     const runningStack = declaresStack && !input.stopped
-    const configuredRuntime = generated !== undefined
-        || input.config.result.config.environment.compose_files.length > 0
-        || input.config.result.config.environment.machine !== undefined
-        || input.config.result.config.sibling.some(({ mount }) => mount !== 'none')
+    // Only doctor reaches here for a cockpit that declares nothing to run; a mounted sibling there
+    // gives Docker nothing to do, so a missing runtime must not be reported as a gap.
+    const configuredRuntime = !declaresNothingToRun(input.config.result.config.environment)
     const runtimeMeasurement = configuredRuntime && !runningStack ? (async () => {
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') {

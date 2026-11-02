@@ -596,8 +596,19 @@ export async function inspectTrackedSecretFiles(input: {
         })
         if (!step) throw new TypeError(`tracked secret inspection could not be planned for ${repository.slug}`)
         const outcome = authenticatedExecutionOutcome(await execute(step), step)
-        // A directory that is not a repository yet tracks nothing; that gap is reported where Git state is.
-        if (!outcome || outcome.kind !== 'complete') continue
+        // Git exits non-zero in a directory that is not a repository, which tracks nothing; that gap is
+        // reported where Git state is. Any other refusal is a probe that did not run, and says so.
+        if (outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) continue
+        if (!outcome || outcome.kind !== 'complete') {
+            findings.push(Object.freeze({
+                severity: 'warning' as const,
+                code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+                message: `whether sibling ${repository.slug} commits secret-shaped files could not be checked (${outcome?.code ?? 'unauthenticated Git outcome'})`,
+                target: `sibling:${repository.slug}`,
+                fix: `run git -C ${repository.root} ls-files to see why Git cannot list the repository, fix that, then rerun this command`,
+            }))
+            continue
+        }
         const tracked = outcome.stdout.toString('utf8').split('\0').filter((path) => {
             const name = path.slice(path.lastIndexOf('/') + 1)
             return path !== '' && SECRET_FILE.test(name) && !SECRET_TEMPLATE.test(name)
