@@ -2,24 +2,23 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This walkthrough runs cockpit on the synthetic example in this repository, from an empty
-directory to generated agent surfaces and a drift check that catches a hand edit. It is for
-anyone evaluating cockpit before pointing it at a real product. It needs no credentials and no
-Docker, and takes a few minutes.
+This walkthrough is for anyone evaluating cockpit before pointing it at a real product. It runs
+cockpit on the synthetic example in this repository: you generate agent surfaces, then watch a
+drift check catch a hand edit. It needs no credentials and no Docker.
 
-Every output below was captured from a real run on macOS; long lines and repeated rows are
-trimmed with `...`, and absolute paths are shortened to `…`.
+Outputs below were captured from a real run on macOS; long lines and repeated rows are trimmed
+with `...`, and absolute paths are shortened to `…`.
 
 ## Install cockpit
 
 You need the Node.js and Git prerequisites from [Install cockpit](getting-started.md#install-cockpit).
-The project-local package is installed below only after entering the copied demo root.
+The package itself is installed in the next step, inside the demo directory.
 
 ## Create the demo directory
 
-Copy the example outside the cockpit checkout so its generated files and Git repositories do not
-land in this repository. Until the first release, install from source: see
-[Install from source](getting-started.md#install-from-source), and install that tarball in place of
+Copy the example outside the cockpit checkout, so its generated files and Git repositories stay
+out of this repository. Until the first release, build the tarball as in
+[Install from source](getting-started.md#install-from-source) and install it in place of
 `@b0dea/cockpit` below.
 
 ```sh
@@ -29,10 +28,9 @@ npm init --yes
 npm install --save-dev --save-exact @b0dea/cockpit
 ```
 
-Now run the repository bootstrap block of
-[examples/synthetic/README.md](../examples/synthetic/README.md) in this directory. It creates the
-product's two repositories under **repositories/**: **app**, a
-tiny Node package with one commit, and **web**, an empty repository whose remote is a local bare
+Now run the bootstrap block of [examples/synthetic/README.md](../examples/synthetic/README.md) in
+this directory. It creates the product's two repositories under **repositories/**: **app**, a tiny
+Node package with one commit, and **web**, an empty repository whose remote is a local bare
 repository. The configuration declares both as siblings.
 
 ## Preview the generated files
@@ -70,10 +68,9 @@ WARNING SURFACE_GENERATOR_TRUST_WARNING [claudecode:.claude/settings.json]: Clau
 ```
 
 Nothing is written yet. The warning is deliberate: the generated Claude Code settings grant
-access to the sibling directory and name the approved MCP servers, and settings like those
-deserve the same review as a hook. Human mode prints readable results and diagnostics, with no
-JSON invocation record. Add `--json` to get the result, diagnostics and invocation metadata as
-one JSON document on stdout instead.
+access to the sibling directory and name the approved MCP servers, which deserves the same review
+as a hook. Add `--json` to get the result, diagnostics and invocation metadata as
+one JSON document on stdout.
 
 ## Apply the sync and set up
 
@@ -86,10 +83,10 @@ git -C repositories/app -c user.name=Synthetic -c user.email=synthetic@example.i
 ```
 
 `sync` writes everything the dry run listed, including **repositories/app/.env.example**, the
-environment template the app's stubbed vendor needs. It belongs to the app repository, so you
-commit it there; `setup` refuses an untracked template. `setup` then verifies both repositories
-and creates the ignored **.env** instance from the template. `check` recomputes every generated
-file and compares it with disk:
+environment template for the app's stubbed vendor. It belongs to the app repository, so you commit
+it there; `setup` refuses an untracked template. `setup` then verifies both repositories and
+creates the ignored **.env** from the template. `check` recomputes every generated file and
+compares it with disk:
 
 <!-- cockpit:capture date=2026-10-27 version=0.0.0 -->
 ```console
@@ -132,16 +129,16 @@ ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]: owned generated artifact
 ...
 ```
 
-`check` exits 2, names the file, and gives the fix. It never repairs anything itself. A changed
+`check` exits 2, names the file and prints the fix; it never repairs anything itself. A changed
 skill file reports `SURFACE_STATE_CONFLICT` instead, because cockpit will not overwrite a surface
-it can no longer prove it owns. Undo the edit, or run the suggested `sync`, and `check` passes
-again. Bytes outside a cockpit-owned region, such as your own notes at the end of AGENTS.md, are
-not drift.
+it can no longer prove it owns. Undo the edit or run the suggested `sync`, and `check` passes
+again. Your own text outside a cockpit-owned region, such as notes at the end of AGENTS.md, is not
+drift.
 
 ## Read the configuration
 
-Open **cockpit.toml** in the demo directory. It is long because every value carries its
-provenance; the shape is simple. The first sections:
+Open **cockpit.toml** in the demo directory. It is long because every value records where it came
+from, but the shape is simple. The first sections:
 
 ```toml
 [cockpit]
@@ -201,14 +198,11 @@ Each operation and probe has a `provenance` table saying where the value came fr
 
 ## What changes on a real product
 
-The example declares services but ships no service code to run, so it ends here. On a product
-with real services, the next commands are `up`, `preflight` and, for everyday work, `session`.
-They need Docker Compose and a runtime recorded by the
-[runtime identity and measurement procedure](environment.md#measure-the-container-runtime).
-
+The example declares services but ships no code to run, so it ends here. On a real product the
+next commands are `up`, `preflight` and, for everyday work, `session`; they need Docker Compose and
+a [measured container runtime](environment.md#measure-the-container-runtime). See
 [Bring the product up](getting-started.md#bring-the-product-up) and
-[Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment)
-describe them.
+[Run an agent inside the environment](getting-started.md#run-an-agent-inside-the-environment).
 
 ## Clean up
 

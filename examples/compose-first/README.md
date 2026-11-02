@@ -1,8 +1,9 @@
 # Compose-first cockpit
 
-A cockpit that keeps its own `compose.yml` for two tiny node siblings, with no `environment.generated`.
-`sync` publishes the agent surfaces, and `check` drift-checks them and reads `compose.yml` through
-`docker compose config`: a host port not taken from `[ports.bases]` fails, a missing healthcheck warns.
+For a product that already has a Compose file: this cockpit keeps its own `compose.yml` for two
+tiny Node siblings instead of an `environment.generated` stack. `sync` publishes the agent
+surfaces; `check` drift-checks them and validates `compose.yml` through `docker compose config`,
+failing a host port not taken from `[ports.bases]` and warning on a missing healthcheck.
 [Install cockpit as an exact project-local dependency](../../docs/getting-started.md#install-cockpit)
 before running the example.
 

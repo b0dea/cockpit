@@ -1,8 +1,8 @@
 # Docs-only cockpit
 
 A cockpit with no `[environment]`, for a repository of documents or a product not yet built.
-`sync` publishes the agent surfaces and `check` drift-checks them. Runtime commands such as
-`up` refuse with `ENVIRONMENT_NOT_DECLARED` and exit 2, and `doctor` reports the runtime as not declared.
+`sync` publishes the agent surfaces and `check` drift-checks them. Runtime commands such as `up`
+refuse with `ENVIRONMENT_NOT_DECLARED` and exit 2, and `doctor` reports no runtime declared.
 [Install cockpit as an exact project-local dependency](../../docs/getting-started.md#install-cockpit)
 before running the example.
 

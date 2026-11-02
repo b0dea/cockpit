@@ -1,6 +1,8 @@
 # Synthetic cockpit
 
-This example uses two synthetic working repositories and one local bare remote.
+The example the [tutorial](../../docs/tutorial.md) walks through: a product of two synthetic
+repositories, one with a local bare remote, and a stubbed vendor. It exercises `sync`, `setup` and
+`check` with no credentials and no Docker.
 
 <!-- cockpit:verified version=0.0.0 -->
 
@@ -30,9 +32,9 @@ git -C repositories/app add .gitignore package.json package-lock.json probe.mjs
 git -C repositories/app -c user.name=Synthetic -c user.email=synthetic@example.invalid commit --quiet -m 'synthetic fixture'
 ```
 
-Both sibling repositories now exist. The following inventory is executed in CI with the installed
-`cockpit` binary. Review the dry run before `sync` creates the managed outputs, including the vendor
-environment template. Do not create that template by hand: an existing unmanaged file is refused.
+The acceptance tests run the next block with the installed binary. Review the dry run before
+`sync` creates the managed outputs, including the vendor environment template; do not create that
+template by hand, because `sync` refuses an existing unmanaged file.
 
 ```sh executable
 ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run --json
@@ -46,13 +48,13 @@ git -C repositories/app add .env.example
 git -C repositories/app -c user.name=Synthetic -c user.email=synthetic@example.invalid commit --quiet -m 'generated synthetic template'
 ```
 
-`setup` validates both repositories and initializes the ignored environment instance from the
-tracked template. `check` verifies that the managed outputs remain current:
+`setup` validates both repositories and creates the ignored environment instance from the tracked
+template; `check` verifies the managed outputs are current:
 
 ```sh executable
 ./node_modules/.bin/cockpit setup --config cockpit.toml --json
 ./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
-This example declares no service code, so it stops at `check`. To bring a stack up, use
-[examples/minimal](../minimal/README.md), which declares one service.
+The example has no service code, so it stops at `check`. To bring a stack up, use
+[examples/minimal](../minimal/README.md).

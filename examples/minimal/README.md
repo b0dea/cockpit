@@ -1,18 +1,21 @@
 # Minimal cockpit
 
-The smallest generated environment: one service built from `api/`, one port, one health probe.
+The smallest generated environment, for seeing a stack come up: one service built from `api/`,
+one port, one health probe.
 
 <!-- cockpit:verified version=0.0.0 -->
 
 [Install cockpit as an exact project-local dependency](../../docs/getting-started.md#install-cockpit),
-then run this example in a `git init` copy. `check` lists undecided decisions; afterwards, measure
-with a local image:
+then run this example in a `git init` copy. `check` lists the decisions still open:
 
 ```sh executable
 ./node_modules/.bin/cockpit sync --config cockpit.toml --dry-run --json
 ./node_modules/.bin/cockpit sync --config cockpit.toml --json
 ./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
+
+With Docker running, measure the runtime with a local image, then bring the stack up, hold it for
+one command, put it to sleep and resume it, and remove it:
 
 ```sh human-only:runtime
 docker pull node:22-alpine
