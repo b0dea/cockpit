@@ -293,7 +293,8 @@ declared service being inspected. Follow the generated testing tiers: extend the
 test through its public surface, iterate with the narrowest selector, and batch complete or shared
 gates after the change stabilizes. Do not repeat weaker proof already established by a stronger test. In the
 work-order lane, persist step checks and heartbeat before moving on; record attempts, root causes,
-open questions for a human, results and decisions with the matching cockpit commands. Keep each layer of results separate.
+open questions for a human and results with the matching cockpit commands, and leave answers and decisions to a
+person, who records them with `work answer`. Keep each layer of results separate.
 For environment or credential defects, follow **Secret handling** before invoking the exact declared
 product command.
 

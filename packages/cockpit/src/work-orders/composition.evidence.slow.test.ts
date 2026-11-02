@@ -73,6 +73,11 @@ describe('configured durable work application composition', () => {
         expect(declined.continuation.prompt).toContain('Which owner confirms the cache boundary?')
         expect(declined.continuation.prompt).toContain('The repository owner confirmed it.')
         await expect(declined.continuation.decide('yes')).resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('Nothing was recorded') })
+        // Agent-written text cannot drive the person's terminal or reorder what they read.
+        await writeFile(join(fixture.root, 'intents/escape.json'), JSON.stringify({ kind: 'resolve-gap', id: 'cache-owner', answer: 'Owner\u001b[2J confirmed \u202eti' }))
+        const escaped = await runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'intents/escape.json' }, fixture.composition)
+        if (escaped.kind !== 'human-needed') throw new Error('escaped answer continuation unavailable')
+        expect(escaped.continuation.prompt).toContain('Owner\uFFFD[2J confirmed \uFFFDti')
         const answered = await runWorkApplication({ operation: 'work-answer', workOrderId: 'WO-001', eventFile: 'intents/resolve-gap.json' }, fixture.composition)
         if (answered.kind !== 'human-needed') throw new Error('answer continuation unavailable')
         await expect(answered.continuation.decide(`answer ${answered.continuation.digest}`)).resolves.toMatchObject({ kind: 'complete', value: { value: {

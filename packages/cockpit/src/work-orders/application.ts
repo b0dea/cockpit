@@ -110,8 +110,9 @@ const unsatisfied = (operation: 'test-run' | 'work-grade' | 'work-execute', valu
     Object.freeze({ kind: 'unsatisfied', operation, value, reason })
 
 // The prompt shows a person what they are answering; agent-written text is printed with its control
-// characters replaced so it cannot drive the person's terminal.
-const shown = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/g, '\uFFFD')
+// and bidirectional-override characters replaced so it can neither drive the person's terminal nor
+// display in an order other than the one recorded.
+const shown = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '\uFFFD')
 function answerPrompt(workOrderId: string, prepared: PreparedAnswer, digest: string): string {
     const event = prepared.event
     const lines = event.kind === 'resolve-gap' && prepared.question
@@ -177,8 +178,8 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
             prepared.stateBytes, prepared.event, prepared.writer, prepared.store); return result.kind === 'complete' ? complete(operation, result) : refusal(operation, result.message) }
         if (operation === 'work-answer') {
             const prepared = await composition.answer(captured.workOrderId, captured.eventFile)
-            const shown = JSON.stringify({ workOrder: captured.workOrderId, contract: prepared.contract.digest, state: createHash('sha256').update(prepared.stateBytes).digest('hex'), event: prepared.event })
-            const digest = createHash('sha256').update(shown).digest('hex')
+            const bound = JSON.stringify({ workOrder: captured.workOrderId, contract: prepared.contract.digest, state: createHash('sha256').update(prepared.stateBytes).digest('hex'), event: prepared.event })
+            const digest = createHash('sha256').update(bound).digest('hex')
             let consumed = false
             const decide = async (answer: string): Promise<WorkApplicationOutcome> => {
                 if (consumed) return refusal(operation, 'This answer prompt was already used; rerun work answer')
