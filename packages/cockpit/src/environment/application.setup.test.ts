@@ -920,10 +920,39 @@ describe('setup application choreography', () => {
             compensation: { attemptedStepIds: ['undo:api'], completedStepIds: [], failed: [{ id: 'undo:api', code: 'EXECUTION_STEP_FAILED' }] },
         })
         expect(outcome.diagnostics).toEqual(expect.arrayContaining([
-            expect.objectContaining({ code: 'EXECUTION_STEP_FAILED', target: 'setup:api:clone' }),
+            expect.objectContaining({ code: 'SETUP_CLONE_FAILED', message: expect.stringContaining('git reported no error text') }),
             expect.objectContaining({ code: 'EXECUTION_COMPENSATION_STEP_FAILED', target: 'undo:api' }),
             expect.objectContaining({ code: 'CONFIG_CHANGED_DURING_EXECUTION' }),
         ]))
+    })
+
+    it('names the remote, git\'s own error and the clones that already succeeded when a clone fails', async () => {
+        const { configPath, context, adapters } = await sequenceFixture()
+        adapters.observeGit = cloneObservations()
+        adapters.planGit = async ({ sibling }) => ({
+            kind: 'preview', status: 0, diagnostics: [],
+            result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
+            plan: { steps: [{ id: `setup:${sibling.slug}:clone` }] as never },
+        })
+        adapters.execute = async () => ({
+            kind: 'refusal', status: 2, result: null,
+            diagnostics: [{ severity: 'error', code: 'EXECUTION_STEP_FAILED', message: 'execution step setup:api:clone failed', target: 'setup:api:clone' }],
+            execution: {
+                completedStepIds: [], failedStep: { id: 'setup:api:clone', started: true, stderr: "fatal: repository 'synthetic' does not exist" },
+                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
+            },
+        })
+        const api = context.siblings.find(sibling => sibling.slug === 'api')!
+
+        const outcome = await runSetupSequence({ configPath }, adapters)
+
+        expect(outcome).toMatchObject({ kind: 'refusal', result: null })
+        const failure = outcome.diagnostics.find(diagnostic => diagnostic.code === 'SETUP_CLONE_FAILED')
+        expect(failure).toEqual(expect.objectContaining({ severity: 'error', target: resolve(context.siblingsRoot, api.dir) }))
+        expect(failure?.message).toContain(api.remote!)
+        expect(failure?.message).toContain("fatal: repository 'synthetic' does not exist")
+        expect(failure?.fix).toContain('npx --no cockpit setup --config <your cockpit.toml>')
+        expect(outcome.diagnostics.map(diagnostic => diagnostic.code)).not.toContain('EXECUTION_STEP_FAILED')
     })
 
     it('does not claim mutation when lifecycle is unchanged and a failed step never started', async () => {

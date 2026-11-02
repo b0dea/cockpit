@@ -275,8 +275,12 @@ export function renderHumanDiagnostics(
             const changes = outcome.result.changes as readonly { operation: unknown; path: unknown }[]
             if (!changes.every((change) => change && (change.operation === 'write' || change.operation === 'remove')
                 && typeof change.path === 'string')) return ''
-            return changes.length === 0 ? 'No generated changes.\n'
-                : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
+            const stale = 'staleRemoval' in outcome.result ? outcome.result.staleRemoval as { digest?: unknown } | undefined : undefined
+            const approval = typeof stale?.digest === 'string' && /^[a-f0-9]{64}$/.test(stale.digest)
+                ? `${escapeForTerminal(`Stale-removal digest ${stale.digest}: to approve these removals, a person runs `
+                    + `${bindConfigPath(cockpitCommand('sync', { args: '--interactive' }), fixContext)} in a terminal and types it.`)}\n` : ''
+            return (changes.length === 0 ? 'No generated changes.\n'
+                : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`) + approval
         }
         if (command === 'logs' && 'records' in outcome.result && Array.isArray(outcome.result.records)) {
             const records = outcome.result.records as readonly { timestamp: unknown; stream: unknown; message: unknown }[]

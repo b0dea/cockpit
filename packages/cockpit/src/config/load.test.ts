@@ -416,10 +416,15 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         const configPath = join(directory, 'cockpit.toml')
         expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
             message: 'cockpit configuration was not found', target: configPath }])
-        mkdirSync(join(directory, '.cockpit'))
+        recordSyncedConfig(directory, 'cockpit.toml')
         expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
             message: 'cockpit.toml is missing from a cockpit checkout (.cockpit/ is present); every cockpit command and guarded agent call reads it',
             target: configPath, fix: `git -C ${directory} restore -- cockpit.toml (it is committed), then retry` }])
+        // A mistyped --config was never committed, so restoring it from git cannot work.
+        const mistyped = join(directory, 'nope.toml')
+        expect((await loadCockpitConfig(mistyped)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
+            message: `nope.toml does not exist; this cockpit checkout was synced from ${configPath}`,
+            target: mistyped, fix: 'check the --config path, then retry' }])
     })
 
     it('renders a missing-config recovery command as exact literal Git argv', async () => {
@@ -429,7 +434,7 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         const configPath = join(directory, configName)
         const bin = join(directory, 'bin')
         const capture = join(directory, 'argv.json')
-        mkdirSync(join(directory, '.cockpit'))
+        recordSyncedConfig(directory, configName)
         mkdirSync(bin)
         const git = join(bin, 'git')
         writeFileSync(git, `#!${process.execPath}\nrequire('node:fs').writeFileSync(process.env.CAPTURE, JSON.stringify(process.argv.slice(2)))\n`)
@@ -477,4 +482,11 @@ function mkdtemp(): string {
     const directory = mkdtempSync(join(tmpdir(), 'cockpit-config-load-'))
     scratch.push(directory)
     return directory
+}
+
+// sync records the configuration it read in the ownership manifest; only that file is committed.
+function recordSyncedConfig(directory: string, name: string): void {
+    mkdirSync(join(directory, '.cockpit'))
+    writeFileSync(join(directory, '.cockpit', 'generated-environment-ownership.json'),
+        JSON.stringify({ format: 'cockpit-generated-ownership/v3', source: { path: name, sha256: 'a'.repeat(64) } }))
 }

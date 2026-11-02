@@ -709,10 +709,10 @@ describe('lifecycle application contracts', () => {
         ])
     })
 
-    it('admits same-basis generated progress with one machine, stage, port and runtime readiness round', async () => {
+    it.each([1, 2])('admits same-basis generated progress with one machine, stage, port and runtime readiness round for a %i MB floor', async (memoryFloor) => {
         const source = CockpitConfig.parse(parse(readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')))
         source.cockpit.siblings_root = '.'
-        source.environment.machine = { runtime_memory_mb: 1, runtime_cpus: 1, free_disk_mb: 1, cold_start_seconds: 30 }
+        source.environment.machine = { runtime_memory_mb: memoryFloor, runtime_cpus: 1, free_disk_mb: 1, cold_start_seconds: 30 }
         const { configPath, context } = await lifecycleContextFixture(stringify(source))
         const root = dirname(configPath)
         mkdirSync(join(root, 'fixtures'), { recursive: true })
@@ -790,6 +790,14 @@ describe('lifecycle application contracts', () => {
             },
             execute: async () => { throw new Error('unavailable service plan must not execute') },
         })
+        if (memoryFloor > 1) {
+            // The runtime reports 1 MiB, so a 2 MB floor stops bring-up before any stage, and says by how much.
+            expect(counts).toEqual({ machine: 1, stage: 0, ports: 1, runtime: 0 })
+            expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MACHINE_MEMORY_BELOW_FLOOR',
+                message: 'the container runtime has 1 MB of memory, below the 2 MB that environment.machine.runtime_memory_mb declares',
+                fix: expect.stringContaining('lower the declared environment.machine floor') }] })
+            return
+        }
         expect(counts).toEqual({ machine: 1, stage: 1, ports: 2, runtime: 1 })
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [
             { code: 'LIFECYCLE_EVIDENCE_INVALID', target: 'app', message: 'runtime service did not become healthy' },

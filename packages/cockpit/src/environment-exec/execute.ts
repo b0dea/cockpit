@@ -23,6 +23,7 @@ import {
     type FilesystemCheck,
     type EnvironmentDiagnostic,
 } from '../environment/contract.js'
+import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from './verified-digest.js'
 
 export const mechanism = {
@@ -299,7 +300,7 @@ export type ExecutePlanOutcome =
           result: null
           execution: {
               completedStepIds: readonly string[]
-              failedStep: { id: string; started: boolean }
+              failedStep: { id: string; started: boolean; stderr?: string }
               compensation: {
                   attemptedStepIds: readonly string[]
                   completedStepIds: readonly string[]
@@ -780,6 +781,16 @@ export type ExecuteProbeOutcome =
     | { kind: 'complete'; execution: ProbeStepExecution; receipt: ExecutionReceipt; stdout: Buffer; stderr: Buffer }
     | { kind: 'refusal'; code: ExecutionFailureCode; execution: ProbeStepExecution; receipt?: ExecutionReceipt; stdout: Buffer; stderr: Buffer }
 
+const FAILED_STEP_STDERR_BYTES = 2_048
+
+// Only a step that declares `failureOutput` gets this: for a tool such as git clone, its last words
+// are the only statement of the cause (an unreachable host, a missing repository).
+function failedStepStderr(stderr: Buffer): string | undefined {
+    const tail = new TextDecoder('utf-8').decode(stderr.subarray(Math.max(0, stderr.byteLength - FAILED_STEP_STDERR_BYTES)))
+        .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').trim()
+    return tail === '' ? undefined : redactSensitiveMessage(tail)
+}
+
 function immutablePlanOutcome(outcome: ExecutePlanOutcome): ExecutePlanOutcome {
     const diagnostics = Object.freeze(outcome.diagnostics.map((item) => Object.freeze({ ...item })))
     if (outcome.kind === 'complete') return Object.freeze({
@@ -1188,6 +1199,7 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
             })
             if (preserveStaging) break
         }
+        const stderrTail = observation.resolvedStep?.failureOutput === 'stderr-tail' ? failedStepStderr(observation.stderr) : undefined
         return {
             kind: 'refusal', status: 2, result: null,
             diagnostics: [
@@ -1198,7 +1210,7 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
             ],
             execution: {
                 completedStepIds: completed.map(({ id }) => id),
-                failedStep: { id: observation.id, started: observation.started },
+                failedStep: { id: observation.id, started: observation.started, ...(stderrTail === undefined ? {} : { stderr: stderrTail }) },
                 compensation: {
                     attemptedStepIds: attempted,
                     completedStepIds: compensated,

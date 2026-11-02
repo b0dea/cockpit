@@ -1163,17 +1163,19 @@ done
         scratch.push(directory)
         const marker = join(directory, 'mutated')
 
-        const outcome = await executePlan({ steps: [nodeStep(
+        const outcome = await executePlan({ steps: [{ ...nodeStep(
             'mutates-then-fails',
-            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'changed'); process.exit(7)`,
-        )] })
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'changed'); `
+                + `process.stderr.write('fatal: unable to access https://synthetic:hunter2@example.invalid/api.git\\n'); process.exit(7)`,
+        ), failureOutput: 'stderr-tail' }] })
 
         expect(existsSync(marker)).toBe(true)
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null }))
         if (outcome.kind !== 'refusal') return
+        // A step that declares it gets its own error back as the cause; URL credentials never leave.
         expect(outcome.execution).toEqual({
             completedStepIds: [],
-            failedStep: { id: 'mutates-then-fails', started: true },
+            failedStep: { id: 'mutates-then-fails', started: true, stderr: 'fatal: unable to access https://[redacted]@example.invalid/api.git' },
             compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
         })
     })

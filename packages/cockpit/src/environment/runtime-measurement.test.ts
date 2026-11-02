@@ -225,6 +225,24 @@ describe('runtime measurement recording', () => {
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
     })
 
+    it('tells a person to pull a missing image rather than to start a runtime that is running', async () => {
+        const host = await measuredHost()
+        const docker = join(host.root, 'docker')
+        await writeFile(docker, (await readFile(docker, 'utf8')).replace(`printf '%s\\n' '${IMAGE_ID}'`,
+            `printf 'Error: No such image: nosuch:latest\\n' >&2; exit 1`))
+        let probed = false
+
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'nosuch:latest', env: host.env },
+            { execute: executeProbe, probe: async (request) => { probed = true; return verdict(true, request.executable.sha256) } })
+
+        expect(probed).toBe(false)
+        expect(outcome).toMatchObject({ status: 2, artifact: null, diagnostics: [{
+            code: 'RUNTIME_IMAGE_UNAVAILABLE', target: '--image',
+            message: expect.stringContaining('"nosuch:latest" is not a local image'),
+            fix: expect.stringContaining('docker pull <image>'),
+        }] })
+    })
+
     it('records nothing when the candidate fails', async () => {
         const host = await measuredHost()
 

@@ -718,6 +718,16 @@ describe('generated environment process contract', () => {
         expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true }])
         expect(JSON.parse(capture.output().stdout).result.changes).toEqual([{ operation: 'write', path: 'compose.generated.yml' }])
         expect(await runCli(['check', '--config', 'cockpit.toml', '--dry-run'], captureIo().io)).toBe(2)
+
+        // A stale removal is approved only by typing its digest, so the human preview must show it.
+        const human = captureIo()
+        const digest = 'c'.repeat(64)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--dry-run'], human.io, {
+            sync: async () => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: true,
+                changes: [{ operation: 'remove', path: 'compose.generated.yml' }], staleRemoval: { digest } } }),
+        })).toBe(0)
+        expect(human.output().stdout).toBe('remove "compose.generated.yml"\n'
+            + `Stale-removal digest ${digest}: to approve these removals, a person runs npx --no cockpit sync --config ${resolve('cockpit.toml')} --interactive in a terminal and types it.\n`)
     })
 
     it('previews interactive sync and applies only after the exact stale-removal digest is typed', async () => {

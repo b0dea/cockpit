@@ -794,7 +794,7 @@ describe('lifecycle application contracts', () => {
 
     it.each([
         ['within budget', 1_250, 30_000, 'complete'],
-        ['over budget', 30_001, 30_000, 'refusal'],
+        ['over budget', 30_049, 30_000, 'refusal'],
     ] as const)('commits empty progress before service work and reports a cold start %s', async (_case, measuredMillis, limitMillis, expectedKind) => {
         const { configPath, context } = await lifecycleContextFixture()
         const containerId = '2'.repeat(64)
@@ -857,7 +857,9 @@ describe('lifecycle application contracts', () => {
         expect(result).toMatchObject(expectedKind === 'complete'
             ? { kind: 'complete', result: { change: 'started', ports: { APP_PORT: 4100 }, entrypoints,
                 coldStart: { measuredMillis, limitMillis, headroomMillis: limitMillis - measuredMillis } } }
-            : { kind: 'refusal', diagnostics: [{ code: 'MACHINE_COLD_START_EXCEEDED', target: 'api' }] })
+            : { kind: 'refusal', diagnostics: [{ code: 'MACHINE_COLD_START_EXCEEDED', target: 'api',
+                message: 'the runtime took 30.049 s to start its services, over the 30 s that environment.machine.cold_start_seconds allows',
+                fix: expect.stringContaining('raise environment.machine.cold_start_seconds') }] })
         expect(executed).toEqual(['start', 'status', 'identity', 'inspect'])
         expect(admittedStages).toEqual(['start', 'status', 'identity'])
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({

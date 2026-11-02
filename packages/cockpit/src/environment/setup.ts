@@ -102,6 +102,7 @@ function step(
 ): ExecutionStep {
     return {
         id, argv, argv0: executable.invocationPath, cwd, env, timeoutMs: 120_000, stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
+        failureOutput: 'stderr-tail',
         paths: [target], ports: [], labels: { operation: 'setup' },
         expected: [{ kind: 'path', target, state: 'repository' }],
         consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912, argvIndexes: [0], executable: true, executionMode: executable.executionMode }],

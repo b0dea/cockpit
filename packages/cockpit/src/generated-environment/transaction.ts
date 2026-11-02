@@ -2222,8 +2222,16 @@ function publicationApproved(plan: PublicationPlan, record: PublicationRecord, a
 }
 
 function approvalRefusal(record: PublicationRecord): PublicationRefusal {
-    return refuse('GENERATED_STALE_APPROVAL_REQUIRED', 'stale generated ownership requires independent approval bound to the exact current entries',
-        record.staleRemoval!.entries[0]!.path, `review dry-run stale-removal digest ${record.staleRemoval!.digest} before retrying through an approved operator boundary`)
+    return Object.freeze({
+        kind: 'refusal', artifact: null, destination: null, result: null, status: 2,
+        diagnostics: Object.freeze([{
+            severity: 'error' as const,
+            code: 'GENERATED_STALE_APPROVAL_REQUIRED',
+            message: `stale generated ownership requires independent approval bound to the exact current entries (stale-removal digest ${record.staleRemoval!.digest})`,
+            target: record.staleRemoval!.entries[0]!.path,
+            fix: 'a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended',
+        }]),
+    })
 }
 
 /** Admit approval before another owner writes, retaining the exact plan's one-use publication. */
