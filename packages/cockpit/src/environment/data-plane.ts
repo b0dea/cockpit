@@ -8,6 +8,7 @@ import { cockpitCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     inStackCommand,
     isCanonicalTimestamp,
     snapshotEnvironmentObservation,
@@ -196,6 +197,7 @@ function observedFreshVolume(outcome: Extract<ExecuteProbeOutcome, { kind: 'comp
             && typeof record.generation === 'string' && sha256Identity.test(record.generation)
             && record.generation === generation
     } catch {
+        // Unparsable or undecodable output is not evidence of an empty volume.
         return false
     }
 }
@@ -281,7 +283,10 @@ function capturePlanInput(input: DataModePlanInput): DataModePlanInput | undefin
         if (Reflect.ownKeys(descriptors).length !== expected.length
             || expected.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
         return Object.freeze(Object.fromEntries(expected.map((key) => [key, descriptors[key]!.value]))) as unknown as DataModePlanInput
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 export function planDataMode(input: DataModePlanInput): DataModePlanResult {
@@ -293,8 +298,8 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
     let parsed: GeneratedEnvironmentDeclaration
     try {
         parsed = GeneratedEnvironment.parse(snapshotJson(input.environment))
-    } catch {
-        return refusal('generated environment data declaration is malformed', 'generated environment')
+    } catch (error) {
+        return refusal(`generated environment data declaration is malformed: ${errorCause(error)}`, 'generated environment')
     }
     if (!isAbsolute(input.checkoutRoot) || resolve(input.checkoutRoot) !== input.checkoutRoot
         || typeof input.includeFixtureVolume !== 'boolean'
@@ -333,7 +338,10 @@ export function planDataMode(input: DataModePlanInput): DataModePlanResult {
         freshVolumeOnly: boolean,
     ): boolean => {
         let resolvedStep: ExecutionStep
-        try { resolvedStep = input.resolve(operation, Object.freeze({ ...context })) } catch { return false }
+        try { resolvedStep = input.resolve(operation, Object.freeze({ ...context })) } catch {
+            // The resolver is caller supplied; a throw leaves the step unresolved, which the plan refuses.
+            return false
+        }
         const execution = snapshotExecutionPlan({ steps: [resolvedStep] })?.steps[0]
         if (!execution) return false
         // Runtime variables must never be attached to a resolver-selected executable or Compose project.
@@ -553,7 +561,10 @@ export async function readDataModeOutcome(input: {
 }): Promise<DataModeOutcomeProjection | undefined> {
     if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
     let descriptors: PropertyDescriptorMap
-    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch { return undefined }
+    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch {
+        // A throwing proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
     const keys = ['configSha256', 'generation', 'mode', 'namespace', 'stackId']
     if (Reflect.ownKeys(descriptors).length !== keys.length
         || keys.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
@@ -563,7 +574,10 @@ export async function readDataModeOutcome(input: {
     const generation = descriptors.generation!.value
     const mode = descriptors.mode!.value
     let namespace: StateNamespace | undefined
-    try { namespace = authenticateStateNamespace(namespaceValue) } catch { return undefined }
+    try { namespace = authenticateStateNamespace(namespaceValue) } catch {
+        // A throwing namespace accessor makes the namespace unauthentic, which the caller refuses.
+        return undefined
+    }
     if (!namespace || typeof stackId !== 'string' || !stackIdentity.test(stackId)
         || typeof configSha256 !== 'string' || !sha256Identity.test(configSha256)
         || typeof generation !== 'string' || !sha256Identity.test(generation)) return undefined
@@ -609,7 +623,10 @@ export function projectDataModeObservationSteps(input: {
 }): readonly ExecutionStep[] | undefined {
     if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
     let descriptors: PropertyDescriptorMap
-    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch { return undefined }
+    try { descriptors = Object.getOwnPropertyDescriptors(input) } catch {
+        // A throwing proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
     const keys = ['plan', 'projection']
     if (Reflect.ownKeys(descriptors).length !== keys.length
         || keys.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return undefined
@@ -713,11 +730,14 @@ export async function executeDataMode(
         .update(JSON.stringify(contract.execution.steps.map(stepDigest))).digest('hex')
     const persist = async (result: DataModeExecutionResult): Promise<DataModeExecutionResult> => {
         let durable = false
-        try { durable = await publishDataModeOutcome(contract, result, durableObservedAt ?? new Date().toISOString()) } catch { durable = false }
+        let cause = ''
+        try { durable = await publishDataModeOutcome(contract, result, durableObservedAt ?? new Date().toISOString()) } catch (error) {
+            cause = `: ${errorCause(error)}`
+        }
         if (durable) return result
         const persistence = diagnostic(
             ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            'data execution history could not be published durably',
+            `data execution history could not be published durably${cause}`,
             contract.stackId,
         )
         return result.kind === 'refusal'
@@ -762,9 +782,9 @@ export async function executeDataMode(
             restoreLease = consumed.lease
         }
         let outcome: ExecuteProbeOutcome
-        try { outcome = await execute(step) } catch {
+        try { outcome = await execute(step) } catch (error) {
             return refuseExecution(index, diagnostic(
-                ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, 'data execution did not return an outcome', metadata.id,
+                ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, `data execution did not return an outcome: ${errorCause(error)}`, metadata.id,
             ))
         }
         const authenticated = authenticatedExecutionOutcome(outcome, step)
@@ -843,7 +863,10 @@ export function isDataModeCompletion(
     if (expectation === undefined) return true
     if (expectation === null || typeof expectation !== 'object' || Array.isArray(expectation) || isProxy(expectation)) return false
     let descriptors: PropertyDescriptorMap
-    try { descriptors = Object.getOwnPropertyDescriptors(expectation) } catch { return false }
+    try { descriptors = Object.getOwnPropertyDescriptors(expectation) } catch {
+        // A throwing proxy trap makes the expectation malformed, which is not a match.
+        return false
+    }
     const keys = ['configSha256', 'earliestMs', 'generation', 'latestMs', 'mode', 'stackId']
     if (Reflect.ownKeys(descriptors).length !== keys.length
         || keys.some((key) => !Object.hasOwn(descriptors, key) || !('value' in descriptors[key]!))) return false
@@ -871,7 +894,10 @@ export function projectPersonaOutputs(
         const bytes = descriptors.bytes.value
         if (!(bytes instanceof Uint8Array) || bytes.byteLength > 16_777_216) return undefined
         sourceBytes = Buffer.from(bytes)
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor makes the source malformed, which the caller refuses.
+        return undefined
+    }
     const parsed = GeneratedEnvironment.safeParse(snapshotJson(environment))
     const fixtures = parsed.success ? parsed.data.data?.fixtures : undefined
     if (!fixtures || sourcePath !== fixtures.persona_source || typeof render !== 'function') return undefined
@@ -884,7 +910,10 @@ export function projectPersonaOutputs(
                 ...output, bytesBase64: bytes.toString('base64'), sha256: createHash('sha256').update(bytes).digest('hex'),
             }))
         }
-    } catch { return undefined }
+    } catch {
+        // A caller-supplied renderer that throws leaves no persona projection, which the caller refuses.
+        return undefined
+    }
     return Object.freeze({
         source: Object.freeze({ path: sourcePath, sha256: createHash('sha256').update(sourceBytes).digest('hex') }),
         outputs: Object.freeze(outputs),

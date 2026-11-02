@@ -311,7 +311,10 @@ export function projectPortLeaseResult(input: {
             entrypoints: entrypointResult.values,
             address: leaseEvidence.address,
         })
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 export type RetainedPortFamilyResult =
@@ -353,6 +356,7 @@ export async function observeRetainedPortFamily(supplied: {
         if (typeof configSnapshot === 'string' && configSnapshot !== 'recorded') throw new Error(configSnapshot)
         config = configSnapshot
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed; refused here.
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'retained port-family input is malformed', 'retained port family')
     }
     if (!namespace || !stackId || !holderId || !checkoutId || !config
@@ -454,6 +458,7 @@ export async function projectRetainedPortFamilyResult(input: {
             address: retained.address,
         })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -499,6 +504,7 @@ export async function revalidatePortLeaseProjection(input: {
             && projection.ownership.holderCount === holderIds.length
             && JSON.stringify(projection.ownership.holderIds) === JSON.stringify(holderIds)
     } catch {
+        // Reading the supplied projection can only fail on a throwing accessor or proxy trap, which is not revalidated evidence.
         return false
     }
 }
@@ -538,6 +544,7 @@ export async function inspectPortLeaseTransfer(input: {
               })
             : undefined
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed; refused here.
         return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'port lease transfer input is malformed', 'port lease transfer')
     }
     if (!namespace || !stackId || !holderId || !checkoutId || !previousHolderId || !projection
@@ -656,6 +663,7 @@ function snapshotPortConfig(value: unknown): PortFamilyConfig | string {
         const snapshot = Object.freeze({ step: step as number, count: count as number, bases: Object.freeze(bases) })
         return validateConfig(snapshot) ?? snapshot
     } catch {
+        // A throwing accessor or proxy trap makes the config malformed; the reason says so.
         return 'port family config is invalid'
     }
 }
@@ -708,6 +716,7 @@ function boundedArrayLength(value: unknown, maximum: number): number | undefined
         ) return undefined
         return descriptor.value
     } catch {
+        // A throwing accessor or proxy trap makes the value unreadable, which the caller refuses.
         return undefined
     }
 }
@@ -787,6 +796,7 @@ function snapshotListenerEvidence(
             snapshots.push(Object.freeze({ ports: Object.freeze(ports), observation: Object.freeze(observation) }))
         }
     } catch {
+        // A throwing accessor or proxy trap makes the evidence malformed, which the caller refuses.
         return undefined
     }
     return Object.freeze(snapshots)
@@ -1069,6 +1079,7 @@ export async function leasePortFamily(supplied: {
         }
         input = Object.freeze({ ...snapshot, listenerEvidence })
     } catch {
+        // A throwing accessor or proxy trap makes the input invalid; refused here.
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'port lease input is invalid', '')
     }
     const invalid = validateConfig(input?.config)
@@ -1250,6 +1261,7 @@ export async function compensateAcquiredPortHolder(input: {
         suppliedLeaseResult = descriptors.leaseResult!.value
         now = descriptors.now!.value as string
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed; refused here.
         return refuse(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'acquired port-holder compensation input is malformed', 'port-holder compensation')
     }
     const issuance = suppliedLeaseResult !== null && typeof suppliedLeaseResult === 'object'
@@ -1380,6 +1392,7 @@ export async function releasePortFamily(input: {
             now: input.now,
         })
     } catch {
+        // A throwing accessor or proxy trap makes the input unreadable; refused here.
         return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, 'port lease release input could not be read safely', 'port lease release input')
     }
     if (
@@ -1404,6 +1417,7 @@ function isLoopback(value: string): boolean {
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
             || EntrypointDerivative.shape.hostname.safeParse(hostname).success
     } catch {
+        // An unparsable URL is not a loopback address.
         return false
     }
 }
@@ -1430,6 +1444,7 @@ function snapshotDerivativeInput(value: unknown): {
             : Object.freeze(parsed.data.declaredValues)
         return Object.freeze({ lease, declarations, ...(declaredValues ? { declaredValues } : {}) })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }

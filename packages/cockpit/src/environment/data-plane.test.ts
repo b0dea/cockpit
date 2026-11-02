@@ -382,6 +382,9 @@ describe('data mode execution', () => {
         })
 
         expect(result).toMatchObject({ kind: 'refusal' })
+        const message = JSON.stringify(result.kind === 'refusal' ? result.diagnostics : [])
+        expect(message).toContain('data execution did not return an outcome: Error')
+        expect(message).not.toContain('synthetic executor failure')
         await expect(acquireClaim({
             namespace: state, stackId, holder: { holderId: holderB, checkoutId: checkoutB }, now: '2026-09-26T06:05:00.000Z',
         })).resolves.toMatchObject({ kind: 'complete' })
