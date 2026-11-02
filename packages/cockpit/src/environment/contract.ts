@@ -17,7 +17,7 @@ export const mechanism = {
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
         'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'DOCKER_CLIENT_ENVIRONMENT', 'HOST_PROCESS_CONTROL_ENV', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
-        'isCanonicalTimestamp', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
+        'isCanonicalTimestamp', 'errorCause', 'hasErrorCode', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
         'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
         'snapshotLifecyclePlan', 'inStackCommand',
@@ -375,6 +375,28 @@ export type EnvironmentCode = typeof ENVIRONMENT_CODES[keyof typeof ENVIRONMENT_
 export type ExecutionFailureCode = typeof EXECUTION_FAILURE_CODES[number]
 export type RefusalCode = typeof REFUSAL_CODES[number]
 export type EnvironmentDiagnostic = Diagnostic<EnvironmentCode>
+
+// A refusal names its cause in one bounded line. A system error (errno code plus syscall) carries
+// only the operation and the path, so its first line is surfaced. Any other message can echo the
+// bytes being parsed or a child's output, environment-file values among them, so only its class is
+// named. Only own data properties are read: a thrown value can be hostile, and describing it must
+// not throw again.
+export function errorCause(error: unknown): string {
+    if (isProxy(error) || !(error instanceof Error)) return 'a non-error value was thrown'
+    const own = (key: string): unknown => Object.getOwnPropertyDescriptor(error, key)?.value
+    const message = own('message')
+    if (typeof own('code') === 'string' && typeof own('syscall') === 'string' && typeof message === 'string') {
+        return message.split(/\r?\n|\r/, 1)[0]!.slice(0, 240)
+    }
+    return error instanceof TypeError ? 'TypeError' : error instanceof SyntaxError ? 'SyntaxError'
+        : error instanceof RangeError ? 'RangeError' : 'Error'
+}
+
+export function hasErrorCode(error: unknown, ...codes: readonly string[]): boolean {
+    if (isProxy(error) || !(error instanceof Error)) return false
+    const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value
+    return typeof code === 'string' && codes.includes(code)
+}
 
 const canonicalTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
