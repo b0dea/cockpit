@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { classifyMarkdownPath, repositoryMarkdownPaths, walkMarkdownProse } from '../../../scripts/docs-lint.mjs'
+import { resolveDockerExecutable } from './environment/executable.js'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const launcher = join(repositoryRoot, 'packages/cockpit/bin/cockpit.mjs')
@@ -297,7 +298,22 @@ describe('the public synthetic cockpit', () => {
     })
 })
 
+// Docker is not a prerequisite of this suite, and hosted macOS runners have none. Where no docker
+// executable is on PATH, check must refuse a Compose-first cockpit rather than pass it unread; any
+// other Compose failure still fails these tests.
+const DOCKER_ABSENT = 'Executable was not found in the supplied search path: docker'
+const docker = await resolveDockerExecutable(process.env)
+const dockerAbsent = docker.state !== 'available' && docker.reason === DOCKER_ABSENT
+
 describe('cockpits without a generated environment', () => {
+    function readsTopology(check: ReturnType<typeof run>): boolean {
+        if (!dockerAbsent) return true
+        expect(check.status, `${check.stdout}\n${check.stderr}`).toBe(2)
+        expect(check.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error')).toEqual([
+            expect.objectContaining({ code: 'COMPOSE_TOPOLOGY_UNAVAILABLE', message: expect.stringContaining(DOCKER_ABSENT) })])
+        return false
+    }
+
     function copyPlainExample(example: string, name: string) {
         const root = join(scratch, name)
         cpSync(join(repositoryRoot, 'examples', example), root, { recursive: true })
@@ -349,11 +365,12 @@ describe('cockpits without a generated environment', () => {
         const compose = readFileSync(join(root, 'compose.yml'), 'utf8')
         const { executable } = inventory(readFileSync(join(root, 'README.md'), 'utf8'))
         expect(executable.map(argv => argv[1])).toEqual(['sync', 'check'])
-        const [, check] = executable.map(argv => {
-            const result = run(root, argv)
-            expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
-            return result
-        })
+        const [sync, check] = executable.map(argv => run(root, argv))
+        expect(sync!.status, `${sync!.stdout}\n${sync!.stderr}`).toBe(0)
+        if (readsTopology(check!)) {
+            expect(check!.status, `${check!.stdout}\n${check!.stderr}`).toBe(0)
+            expect(check!.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
+        }
         const ownership = JSON.parse(readFileSync(join(root, '.cockpit/generated-environment-ownership.json'), 'utf8'))
         const owned = ownership.entries.map((entry: { path: string }) => entry.path)
         expect(owned).toContain('.claude/skills/cockpit-setup/SKILL.md')
@@ -365,7 +382,6 @@ describe('cockpits without a generated environment', () => {
         expect(override).toContain('  api:\n    labels:\n      dev.b0dea.cockpit.config-sha256:')
         expect(override).toContain('  web:\n    labels:\n      dev.b0dea.cockpit.config-sha256:')
         expect(readFileSync(join(root, 'compose.yml'), 'utf8')).toBe(compose)
-        expect(check!.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
         // cockpit does not rewrite published interfaces, so the example itself binds loopback.
         expect([...compose.matchAll(/^ {4}ports: \["([^"]+)"\]$/gm)].map(match => match[1]))
             .toEqual(['127.0.0.1:${API_HOST_PORT:-4200}:3000', '127.0.0.1:${WEB_HOST_PORT:-4300}:3000'])
@@ -396,6 +412,7 @@ describe('cockpits without a generated environment', () => {
         const path = join(root, 'compose.yml')
         writeFileSync(path, readFileSync(path, 'utf8').replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '"127.0.0.1:4300:3000"'))
         const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(check)) return
         expect(check.status).toBe(2)
         expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
@@ -415,6 +432,7 @@ describe('cockpits without a generated environment', () => {
         }
 
         const unmounted = checked()
+        if (!readsTopology(unmounted)) return
         expect(unmounted.status).toBe(2)
         expect(unmounted.response.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'error', code: 'COMPOSE_SIBLING_NOT_MOUNTED', target: 'sibling:worker' }))
@@ -458,6 +476,7 @@ describe('cockpits without a generated environment', () => {
         const sync = run(root, ['cockpit', 'sync', '--config', 'cockpit.toml', '--json'])
         expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0)
         const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(check)) return
         expect(check.response.diagnostics.filter((row: { code: string }) => row.code.startsWith('COMPOSE_'))).toEqual([])
         expect(check.status, `${check.stdout}\n${check.stderr}`).toBe(0)
     })
@@ -468,6 +487,7 @@ describe('cockpits without a generated environment', () => {
         const [api, web] = readFileSync(path, 'utf8').split('  web:\n')
         writeFileSync(path, `${api}  web:\n${web!.slice(0, web!.indexOf('    healthcheck:'))}`)
         const check = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(check)) return
         expect(check.status, `${check.stdout}\n${check.stderr}`).toBe(0)
         expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'warning', code: 'COMPOSE_HEALTHCHECK_MISSING', target: 'compose:web' }))

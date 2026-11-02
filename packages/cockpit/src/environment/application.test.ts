@@ -788,6 +788,12 @@ describe('guard policy construction', () => {
             resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) }
         const decide = async (service: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
             payload: shellPayload(`${launcher} logs --config ${realpathSync(configPath)} --service ${service}`, root) }, adapters)).decision.decision
+        // Docker is not a prerequisite of this suite; without it no service name can be admitted.
+        const docker = await adapters.resolveDocker()
+        if (docker.state !== 'available' && docker.reason === 'Executable was not found in the supplied search path: docker') {
+            expect([await decide('worker'), await decide('app')]).toEqual(['unavailable', 'unavailable'])
+            return
+        }
         expect(await decide('worker')).toBe('allow')
         expect(await decide('app')).toBe('ask')
     }, 120_000)
