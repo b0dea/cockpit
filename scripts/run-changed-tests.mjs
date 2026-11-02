@@ -19,6 +19,8 @@ const SCRIPT_PATH = /^scripts\/([^/]+)\.(?:mjs|d\.mts)$/
 const SURFACES_PATH = /^packages\/[^/]+\/surfaces\/.+/
 const LIBEXEC_PATH = /^packages\/[^/]+\/libexec\/[^/]+$/
 const FIXTURE_PATH = /^fixtures\/([^/]+)\/.+/
+// Data files beside the tests that read them, e.g. packages/cockpit/src/surfaces/fixtures/one-row.toml.
+const PACKAGE_FIXTURE_PATH = /^packages\/[^/]+\/src\/(?:.+\/)?fixtures\/(.+)$/
 const EXAMPLE_PATH = /^examples\/([^/]+)\/.+/
 const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
 const EXAMPLE_TEST = 'example-cockpit.test.ts'
@@ -123,8 +125,7 @@ function testsReferencing(root, needle) {
 }
 
 // Fixture readers can be shared through several helpers; use the same exact import graph as sources.
-function testsReadingFixtures(root, directory, imports) {
-    const needle = `fixtures/${directory}`
+function testsReadingFixtures(root, needle, imports) {
     const readers = walkFiles(root, 'packages')
         .filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
         .filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
@@ -238,6 +239,7 @@ function ownerTests(root, paths, extras) {
         }
         const script = SCRIPT_PATH.exec(path)
         const fixture = FIXTURE_PATH.exec(path)
+        const packageFixture = PACKAGE_FIXTURE_PATH.exec(path)
         const example = EXAMPLE_PATH.exec(path)
         const mapped = []
         if (MODULE_PATH.test(path) || PACKAGE_SCRIPT_MODULE_PATH.test(path)) {
@@ -260,9 +262,9 @@ function ownerTests(root, paths, extras) {
         if (example && !MARKDOWN_PATH.test(path)) {
             mapped.push(...testsReferencing(root, `examples/${example[1]}`), ...testsInDirectory(root, [EXAMPLE_TEST]))
         }
-        if (fixture) {
+        if (fixture || packageFixture) {
             imports ??= importedModules(root)
-            mapped.push(...testsReadingFixtures(root, fixture[1], imports))
+            mapped.push(...testsReadingFixtures(root, fixture ? `fixtures/${fixture[1]}` : `fixtures/${packageFixture[1]}`, imports))
         }
         if (mapped.length) for (const candidate of mapped) selected.add(candidate)
         else unmapped.push(path)

@@ -75,14 +75,19 @@ const result = { numTotalTests: assertions.length, numPassedTests: 1, numFailedT
   fileMode: invocationTemp ? statSync(join(invocationTemp.fixture, 'retained-on-interrupt.txt')).mode & 0o777 : null,
   invocationMode: invocationTemp ? statSync(invocationTemp.root).mode & 0o777 : null }
 if (scenario === 'nonzero') process.exit(7)
-const finished = (name, state) => appendFileSync(process.env.COCKPIT_TEST_PROGRESS_FILE,
-  JSON.stringify({ file: join(process.cwd(), name), state }) + '\\n')
+const finished = (name, state, at = Date.now()) => appendFileSync(process.env.COCKPIT_TEST_PROGRESS_FILE,
+  JSON.stringify({ file: join(process.cwd(), name), state, at }) + '\\n')
 if (scenario === 'partial-failure') {
   finished('a.test.ts', 'passed')
   finished('b.test.ts', 'failed')
   process.exit(1)
 }
-if (scenario === 'hang') finished('a.test.ts', 'passed')
+if (scenario === 'hang') {
+  finished('a.test.ts', 'started', Date.now() - 90_000)
+  finished('c.test.ts', 'started', Date.now() - 30_000)
+  finished('b.test.ts', 'started', Date.now() - 60_000)
+  finished('a.test.ts', 'passed')
+}
 if (scenario === 'unexpected-skip') {
   result.numPassedTests = 0
   result.numPendingTests += 1
@@ -288,7 +293,7 @@ describe('bounded test runner', () => {
         ])
     })
 
-    it('records each finished test module in the progress file named by the environment', async () => {
+    it('records when each test module starts and finishes in the progress file named by the environment', async () => {
         const { default: ImmediateFailureReporter } = await import(pathToFileURL(IMMEDIATE_FAILURE_REPORTER).href)
         const { root } = fixture()
         const progress = join(root, 'progress.jsonl')
@@ -296,6 +301,7 @@ describe('bounded test runner', () => {
         const module = (moduleId: string, state: string, ok: boolean) => ({ moduleId, state: () => state, ok: () => ok })
         process.env.COCKPIT_TEST_PROGRESS_FILE = progress
         try {
+            reporter.onTestModuleStart(module('/synthetic/a.test.ts', 'pending', true))
             reporter.onTestModuleEnd(module('/synthetic/a.test.ts', 'passed', true))
             reporter.onTestModuleEnd(module('/synthetic/b.test.ts', 'failed', false))
             reporter.onTestModuleEnd(module('/synthetic/c.test.ts', 'skipped', true))
@@ -303,9 +309,10 @@ describe('bounded test runner', () => {
             delete process.env.COCKPIT_TEST_PROGRESS_FILE
         }
         expect(readFileSync(progress, 'utf8').trim().split('\n').map(line => JSON.parse(line))).toEqual([
-            { file: '/synthetic/a.test.ts', state: 'passed' },
-            { file: '/synthetic/b.test.ts', state: 'failed' },
-            { file: '/synthetic/c.test.ts', state: 'failed' },
+            { file: '/synthetic/a.test.ts', state: 'started', at: expect.any(Number) },
+            { file: '/synthetic/a.test.ts', state: 'passed', at: expect.any(Number) },
+            { file: '/synthetic/b.test.ts', state: 'failed', at: expect.any(Number) },
+            { file: '/synthetic/c.test.ts', state: 'failed', at: expect.any(Number) },
         ])
     })
 
@@ -420,6 +427,7 @@ process.exitCode = await runTestsCli(${JSON.stringify(selected)}, {
             const [deadlineFile] = remainingFiles()
             expect(readFileSync(join(root, '.vitest-reports', deadlineFile), 'utf8')).toBe('b.test.ts\nc.test.ts\n')
             expect(deadline.stderr).toContain(`npm test -- $(cat .vitest-reports/${deadlineFile})`)
+            expect(deadline.stderr).toMatch(/Still running at the deadline, longest first:\n {2}b\.test\.ts \(6\ds\)\n {2}c\.test\.ts \(3\ds\)\n/)
         } finally {
             if (alive(descendant)) process.kill(descendant, 'SIGKILL')
         }

@@ -19,12 +19,19 @@ export default class ImmediateFailureReporter {
     }
 
     // The JSON report is written only when the run ends on its own, so a run cut off by the
-    // deadline would otherwise leave nothing recording which files finished. Appending per module
-    // keeps that record on disk as the run progresses.
-    onTestModuleEnd(testModule) {
-        const path = process.env.COCKPIT_TEST_PROGRESS_FILE
-        if (!path) return
-        const state = testModule.state() === 'passed' && testModule.ok() ? 'passed' : 'failed'
-        appendFileSync(path, `${JSON.stringify({ file: testModule.moduleId, state })}\n`)
+    // deadline would otherwise leave nothing recording which files finished, or which ones were
+    // still running when it was stopped. Appending per module keeps that record on disk as the
+    // run progresses.
+    onTestModuleStart(testModule) {
+        record(testModule.moduleId, 'started')
     }
+
+    onTestModuleEnd(testModule) {
+        record(testModule.moduleId, testModule.state() === 'passed' && testModule.ok() ? 'passed' : 'failed')
+    }
+}
+
+function record(file, state) {
+    const path = process.env.COCKPIT_TEST_PROGRESS_FILE
+    if (path) appendFileSync(path, `${JSON.stringify({ file, state, at: Date.now() })}\n`)
 }

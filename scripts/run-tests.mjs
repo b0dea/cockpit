@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { availableParallelism, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const mechanism = {
@@ -381,6 +381,22 @@ function unfinishedFiles(root, selected, progressPath) {
     return files.filter(path => !passed.has(resolve(root, path)))
 }
 
+// A deadline is usually spent by a few long files rather than by the queue behind them, so name
+// the files that were still running, longest first, with how long each had been running.
+function reportRunningAtDeadline(root, progressPath, now) {
+    if (!existsSync(progressPath)) return
+    const started = new Map()
+    for (const entry of readFileSync(progressPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))) {
+        if (entry.state === 'started') started.set(entry.file, entry.at)
+        else started.delete(entry.file)
+    }
+    if (started.size === 0) return
+    console.error('Still running at the deadline, longest first:')
+    for (const [file, at] of [...started].sort((left, right) => left[1] - right[1])) {
+        console.error(`  ${relative(root, file)} (${Math.round((now - at) / 1000)}s)`)
+    }
+}
+
 function writeRemaining(root, id, selected, progressPath) {
     const remaining = unfinishedFiles(root, selected, progressPath)
     if (remaining.length === 0) return
@@ -564,6 +580,11 @@ export async function runTestsCli(argv, options = {}) {
     } finally {
         if (observationInterval) clearInterval(observationInterval)
         for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler)
+        if (timedOut) try {
+            reportRunningAtDeadline(root, progressPath, Date.now())
+        } catch (error) {
+            console.error(`TEST_RUN_RUNNING_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`)
+        }
         if (selectedFiles.length > 0) try {
             writeRemaining(root, runId, selectedFiles, progressPath)
         } catch (error) {

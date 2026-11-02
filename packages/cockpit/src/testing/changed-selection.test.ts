@@ -386,6 +386,22 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual(['packages/cockpit/src/chained.test.ts', 'packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/indirect.test.ts'])
     })
 
+    it('runs the tests that read a changed data fixture kept beside package sources', () => {
+        const fixture = withOwners({
+            'packages/cockpit/src/surfaces/fixtures/row.toml': 'before\n',
+            'packages/cockpit/src/surfaces/fixtures/other.toml': 'before\n',
+            'packages/cockpit/src/surfaces/row.test.ts': "const row = new URL('./fixtures/row.toml', import.meta.url)\n",
+            'packages/cockpit/src/config/load.test.ts': "const row = 'packages/cockpit/src/surfaces/fixtures/row.toml'\n",
+            'packages/cockpit/src/surfaces/other.test.ts': "const other = new URL('./fixtures/other.toml', import.meta.url)\n",
+        })
+        edit(fixture.root, 'packages/cockpit/src/surfaces/fixtures/row.toml')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/config/load.test.ts', 'packages/cockpit/src/surfaces/row.test.ts'])
+    })
+
     it('runs the owners of a changed libexec program: tests and modules that name it, and programs that run it', () => {
         const fixture = withOwners({
             'packages/cockpit/libexec/runner.cjs': 'runner\n',
