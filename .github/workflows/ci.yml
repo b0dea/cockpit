@@ -103,7 +103,22 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci --ignore-scripts
+      # Aikido safe-chain checks every package the install below resolves against a malware feed
+      # and stops the install on a hit, so a pull request cannot slip a known-malicious version
+      # into the lockfile. It needs no account. The installer is pinned by its release digest and
+      # verifies the binary it downloads; the next step fails if npm is not routed through it.
+      - name: route package installs through the malware check
+        run: |
+          curl -fsSL https://github.com/AikidoSec/safe-chain/releases/download/1.5.25/install-safe-chain.sh -o "$RUNNER_TEMP/install-safe-chain.sh"
+          echo "83069f6db4215cccf6a26bdd6e65a5c2366b9d24322b2d5d2862d47385e56682  $RUNNER_TEMP/install-safe-chain.sh" | sha256sum -c -
+          sh "$RUNNER_TEMP/install-safe-chain.sh" --ci
+      - name: install dependencies through the malware check
+        run: |
+          case "$(command -v npm)" in
+            "$HOME/.safe-chain/"*) ;;
+            *) echo "::error::npm resolves to $(command -v npm), not the safe-chain shim"; exit 1 ;;
+          esac
+          npm ci --ignore-scripts
       # The reference-documentation tests derive command and diagnostic inventories from the
       # compiled package, so a docs-only change still needs the build.
       - run: npm run build
