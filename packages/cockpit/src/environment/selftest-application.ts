@@ -626,11 +626,12 @@ export async function runConfiguredSurfaceSelftestApplication(
     })
     const confirmation = await adapters.requestProbeSpecificationsApproval?.(candidate)
     if (confirmation !== artifactSha256) {
-        return {
-            kind: 'refusal', status: 2, code: 'SELFTEST_EXECUTION_INVALID',
-            reason: 'probe specification artifact requires independent approval of its exact digest and command vectors',
-            fix: 'run selftest with --interactive at a terminal outside CI, review the commands it displays, and type the exact file SHA-256 it displays',
-        }
+        // No `fix` field: the diagnostic index would print it as the remedy for every
+        // SELFTEST_EXECUTION_INVALID, including probes that ran and failed.
+        return refusal(
+            'SELFTEST_EXECUTION_INVALID',
+            'probe specification artifact requires independent approval of its exact digest and command vectors; run selftest with --interactive at a terminal outside CI and type the file SHA-256 it displays',
+        )
     }
     return runSurfaceSelftestApplication({
         application: checked.result.application,
