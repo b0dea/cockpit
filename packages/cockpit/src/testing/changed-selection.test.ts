@@ -564,6 +564,19 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual([ARCHITECTURE, 'packages/cockpit/src/user.test.ts'])
     })
 
+    it('does not refuse a deleted source file that nothing imports any more', () => {
+        const fixture = withOwners({
+            'packages/cockpit/src/gone/thing.ts': 'export const thing = 1\n',
+            'packages/cockpit/src/user.test.ts': 'user\n',
+        })
+        rmSync(join(fixture.root, 'packages/cockpit/src/gone'), { recursive: true })
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([ARCHITECTURE])
+    })
+
     it('refuses a source file that no test imports', () => {
         const fixture = withOwners({
             'packages/cockpit/src/lonely.ts': 'export const lonely = 1\n',

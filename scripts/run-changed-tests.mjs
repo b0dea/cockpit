@@ -303,7 +303,8 @@ function ownerTests(root, paths, extras, wide) {
             sourceChanged = true
             const owners = sourceOwners(root, path, () => imports ??= importedModules(root, wide), wide)
             if (owners.length) for (const candidate of owners) selected.add(candidate)
-            else unmapped.push(path)
+            // A deleted file nothing imports any more has no owner left to run; the architecture contract still does.
+            else if (existingFile(root, path)) unmapped.push(path)
             continue
         }
         const script = SCRIPT_PATH.exec(path)
