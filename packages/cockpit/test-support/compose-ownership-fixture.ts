@@ -13,8 +13,10 @@ export async function publishComposeOwnership(
     const sources = await Promise.all(references.map(async (reference) => ({
         reference, source: await readFile(join(checkout, reference), 'utf8'),
     })))
+    // The declared resettable volumes are only checked against the files; they do not change the bytes.
     const rendered = renderComposeOwnership({
         sources, stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
+        resettableVolumes: [],
     })
     if (rendered.kind !== 'complete') throw new Error(rendered.reason)
     await writeFile(join(checkout, COMPOSE_OWNERSHIP_FILE), rendered.bytes)

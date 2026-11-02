@@ -21,6 +21,7 @@ export const mechanism = {
         'Gate',
         'EnvironmentFile',
         'MachineFloor',
+        'MAX_COLD_START_SECONDS',
         'ResettableVolumeId',
         'GeneratedHostPath',
         'parseBrowserNetworkExposure',
@@ -133,12 +134,18 @@ export const EnvironmentFile = z
         path: ['instance'],
     })
 
+// `up` holds one authority window open while every service starts, and each start step runs for
+// the declared budget. A budget beyond what that window can hold was silently cut to five minutes,
+// so a stack that needed more was killed and reported unhealthy on every retry. An hour covers a
+// first start that builds images and installs dependencies; a longer one is refused here.
+export const MAX_COLD_START_SECONDS = 3_600
+
 export const MachineFloor = z
     .object({
         runtime_memory_mb: z.number().int().positive(),
         runtime_cpus: z.number().positive(),
         free_disk_mb: z.number().int().positive(),
-        cold_start_seconds: z.number().int().positive(),
+        cold_start_seconds: z.number().int().positive().max(MAX_COLD_START_SECONDS),
     })
     .strict()
 
@@ -1317,6 +1324,24 @@ export const CockpitConfig = z
             ...(globalGenerated?.volumes ?? []).map((volume) => ({ value: volume.id, path: ['environment', 'generated', 'volumes'] })),
             ...generatedRows.flatMap(({ index, generated }) => (generated.volumes ?? []).map((volume) => ({ value: volume.id, path: ['sibling', index, 'derives', 'generated', 'volumes'] }))),
         ], 'generated volume identities must be unique across global and row declarations')
+        // Reset matches each entry against a Compose volume key, so a name no volume declares
+        // would reset nothing while reading as a control. A compose-first stack's keys live in its
+        // Compose files and are checked where `sync`, `check` and `up` read them.
+        if (globalGenerated !== undefined || cfg.environment.compose_files.length === 0) {
+            const declared = [
+                ...(globalGenerated?.volumes ?? []).map(({ id }) => id),
+                ...generatedRows.flatMap(({ generated }) => (generated.volumes ?? []).map(({ id }) => id)),
+            ]
+            cfg.environment.resettable_volumes.forEach((name, index) => {
+                if (declared.includes(name)) return
+                ctx.addIssue({
+                    code: 'custom', path: ['environment', 'resettable_volumes', index],
+                    message: globalGenerated === undefined
+                        ? `resettable volume ${JSON.stringify(name)} names no volume: the environment declares neither generated volumes nor compose_files`
+                        : `resettable volume ${JSON.stringify(name)} is not a generated volume id${declared.length === 0 ? '' : ` (declared: ${declared.join(', ')})`}`,
+                })
+            })
+        }
         uniqueAcrossRows([
             ...(globalGenerated?.decisions.entries ?? []).map((entry) => ({ value: entry.id, path: ['environment', 'generated', 'decisions', 'entries'] })),
             ...generatedRows.flatMap(({ index, generated }) => generated.decisions.map((entry) => ({ value: entry.id, path: ['sibling', index, 'derives', 'generated', 'decisions'] }))),
@@ -1400,6 +1425,14 @@ export function mounted(cfg: CockpitConfig, profiles: readonly string[]): Siblin
 // a container, so editing it must leave a running stack alone.
 const SIBLING_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set(['purpose', 'guides', 'instruction_pointer', 'remote', 'branch', 'acquire', 'host_reason', 'gate'])
 
+// What the host checks or reports around the containers: the machine floor and cold-start budget
+// `up` and preflight hold the host to, the posture preflight reads, the volumes `reset` may delete,
+// and the URLs derived from leased ports. Hashing them made raising cold_start_seconds strand a
+// healthy stack behind a demand to run `down`.
+const ENVIRONMENT_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set([
+    'machine', 'addressing', 'authentication', 'posture_requirements', 'resettable_volumes', 'entrypoint_derivatives',
+])
+
 function canonicalJson(value: unknown): string {
     return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
         ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
@@ -1414,7 +1447,8 @@ function canonicalJson(value: unknown): string {
  *
  * It covers everything except what is known not to reach a container: comments and formatting,
  * guards, MCP, work orders, surfaces, testing, the guide settings, generated decision records, the
- * descriptive sibling fields, and siblings with mount "none" that no generated service names. A new field is therefore counted
+ * descriptive sibling fields, the host-only environment fields, and siblings with mount "none" that
+ * no generated service names. A new field is therefore counted
  * as runtime until someone decides otherwise: the failure is a needless down, never a stack running
  * an older declaration than the one on disk. The contents of `environment.compose_files` are
  * outside it: only their paths are declared here, and `up` hands the files to Compose as they are.
@@ -1426,7 +1460,8 @@ export function runtimeDeclarationSha256(cfg: CockpitConfig): string {
         .filter((row) => row.mount !== 'none' || servedSiblings.has(row.slug) || row.derives !== undefined || row.toolchain !== 'none')
         .map((row) => Object.fromEntries(Object.entries(row).filter(([field]) => !SIBLING_NON_RUNTIME_FIELDS.has(field))))
         .sort((left, right) => String(left.slug) < String(right.slug) ? -1 : 1)
-    const { generated: _generated, ...environment } = cfg.environment
+    const { generated: _generated, ...declared } = cfg.environment
+    const environment = Object.fromEntries(Object.entries(declared).filter(([field]) => !ENVIRONMENT_NON_RUNTIME_FIELDS.has(field)))
     const { decisions: _decisions, ...declaration } = generated ?? {}
     return createHash('sha256').update(canonicalJson({
         cockpit: { name: cfg.cockpit.name, siblings_root: cfg.cockpit.siblings_root },

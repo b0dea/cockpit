@@ -27,7 +27,7 @@ import {
 export const mechanism = {
     id: 'environment-state',
     module: 'packages/cockpit/src/environment/state.ts',
-    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'refreshBootstrapPublication', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
+    exports: ['SERIALIZED_RECORD_BYTE_LIMIT', 'selectStateRoot', 'selectMachineStateRoot', 'selectBootstrapStateRoot', 'snapshotStateNamespace', 'snapshotBootstrapStateNamespace', 'authenticateStateNamespace', 'authenticateBootstrapStateNamespace', 'issueStateScopedLock', 'withStateScopedLock', 'withStateRootPortLock', 'withStateNamespaceInventory', 'lifecycleHistoryAddress', 'parseCoordinationStateEntry', 'readState', 'inspectStateLock', 'abortStateTransaction', 'transactState', 'resetBootstrapAnswer', 'refreshBootstrapObservation', 'refreshBootstrapPublication', 'authenticateStatePublication', 'observeConfiguration', 'isStateObservation', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -845,6 +845,51 @@ export function snapshotBootstrapStateNamespace(value: BootstrapStateNamespace):
     } catch { return undefined }
 }
 
+type StateRefusal = Extract<StateResult<never>, { kind: 'refusal' }>
+type StateBase = Readonly<{ kind: 'complete'; value: Readonly<{ base: string; root: string }> }>
+
+// `refusal` is typed as the whole result union; this narrows it for callers that only ever refuse.
+const stateRefusal = (code: StateRefusal['code'], message: string, target: string): StateRefusal =>
+    refusal<never>(code, message, target) as StateRefusal
+
+async function selectStateBase(
+    input: Readonly<{ platform: 'darwin' | 'linux'; home: string | undefined; xdgStateHome?: string }>,
+    uid: number,
+): Promise<StateBase | StateRefusal> {
+    if (input.platform === 'darwin') {
+        if (!input.home || !(await usableBase(input.home, uid))) {
+            return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', input.home ?? '')
+        }
+        return { kind: 'complete', value: Object.freeze({ base: input.home, root: join(input.home, 'Library', 'Application Support', 'cockpit', 'state', 'v1') }) }
+    }
+    if (input.xdgStateHome !== undefined) {
+        if (!(await usableSelectedBase(input.xdgStateHome, uid))) {
+            return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'present XDG state home is not safely usable', input.xdgStateHome)
+        }
+        return { kind: 'complete', value: Object.freeze({ base: input.xdgStateHome, root: join(input.xdgStateHome, 'cockpit', 'v1') }) }
+    }
+    if (!input.home || !(await usableBase(input.home, uid))) {
+        return stateRefusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', input.home ?? '')
+    }
+    return { kind: 'complete', value: Object.freeze({ base: input.home, root: join(input.home, '.local', 'state', 'cockpit', 'v1') }) }
+}
+
+/**
+ * The per-user state root, without a cockpit or checkout: what `runtime measure` needs to record a
+ * fact about this machine before any stack exists. It is the same root `selectStateRoot` scopes
+ * each cockpit under, so every checkout of every cockpit on this machine reaches the same directory.
+ */
+export async function selectMachineStateRoot(input: Readonly<{ platform: 'darwin' | 'linux'; home: string | undefined; xdgStateHome?: string; uid?: number }>): Promise<StateResult<string>> {
+    const uid = input.uid ?? process.getuid?.()
+    if (uid === undefined) return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', input.home ?? '')
+    const selected = await selectStateBase({ platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome }, uid)
+    if (selected.kind !== 'complete') return selected
+    if (!(await safeDescendant(selected.value.base, selected.value.root, uid))) {
+        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'selected state root is not safely usable', selected.value.root)
+    }
+    return { kind: 'complete', value: selected.value.root }
+}
+
 export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootInput): Promise<StateResult<BootstrapStateNamespace>> {
     let stableInput: SelectBootstrapStateRootInput
     try {
@@ -859,27 +904,9 @@ export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootIn
         || !surfaceTargets.has(stableInput.target)) {
         return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'bootstrap state root input is malformed', 'bootstrap state root input')
     }
-    let root: string
-    let base: string
-    if (stableInput.platform === 'darwin') {
-        if (!stableInput.home || !(await usableBase(stableInput.home, uid))) {
-            return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', stableInput.home ?? '')
-        }
-        base = stableInput.home
-        root = join(base, 'Library', 'Application Support', 'cockpit', 'state', 'v1')
-    } else if (stableInput.xdgStateHome !== undefined) {
-        if (!(await usableSelectedBase(stableInput.xdgStateHome, uid))) {
-            return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'present XDG state home is not safely usable', stableInput.xdgStateHome)
-        }
-        base = stableInput.xdgStateHome
-        root = join(base, 'cockpit', 'v1')
-    } else {
-        if (!stableInput.home || !(await usableBase(stableInput.home, uid))) {
-            return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'state root requires an absolute usable home directory', stableInput.home ?? '')
-        }
-        base = stableInput.home
-        root = join(base, '.local', 'state', 'cockpit', 'v1')
-    }
+    const selectedBase = await selectStateBase(stableInput, uid)
+    if (selectedBase.kind === 'refusal') return selectedBase
+    const { base, root } = selectedBase.value
     if (!(await safeDescendant(base, root, uid)) || confinedTo(stableInput.checkoutRoot, root)) {
         return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'selected state root is not safely usable', root)
     }
@@ -938,39 +965,9 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
         )
     }
 
-    let root: string
-    let base: string
-    if (stableInput.platform === 'darwin') {
-        if (!stableInput.home || !(await usableBase(stableInput.home, uid))) {
-            return refusal(
-                ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-                'state root requires an absolute usable home directory',
-                stableInput.home ?? '',
-            )
-        }
-        base = stableInput.home
-        root = join(stableInput.home, 'Library', 'Application Support', 'cockpit', 'state', 'v1')
-    } else if (stableInput.xdgStateHome !== undefined) {
-        if (!(await usableSelectedBase(stableInput.xdgStateHome, uid))) {
-            return refusal(
-                ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-                'present XDG state home is not safely usable',
-                stableInput.xdgStateHome,
-            )
-        }
-        base = stableInput.xdgStateHome
-        root = join(stableInput.xdgStateHome, 'cockpit', 'v1')
-    } else {
-        if (!stableInput.home || !(await usableBase(stableInput.home, uid))) {
-            return refusal(
-                ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-                'state root requires an absolute usable home directory',
-                stableInput.home ?? '',
-            )
-        }
-        base = stableInput.home
-        root = join(stableInput.home, '.local', 'state', 'cockpit', 'v1')
-    }
+    const selectedBase = await selectStateBase(stableInput, uid)
+    if (selectedBase.kind === 'refusal') return selectedBase
+    const { base, root } = selectedBase.value
 
     if (!(await safeDescendant(base, root, uid)) || checkoutRoots.some((checkoutRoot) => confinedTo(checkoutRoot, root))) {
         return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'selected state root is not safely usable', root)

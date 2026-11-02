@@ -412,7 +412,14 @@ describe('the published cockpit schema', () => {
             free_disk_mb: 8192,
             cold_start_seconds: 300,
         })],
-    ])('rejects %s', (_label, parse) => {
+        // `up` cannot hold a start open longer than this; a larger budget was once silently cut.
+        ['a cold start budget beyond one hour', () => MachineFloor.safeParse({
+            runtime_memory_mb: 4096,
+            runtime_cpus: 2,
+            free_disk_mb: 8192,
+            cold_start_seconds: 3_601,
+        })],
+    ])('rejects %s',(_label, parse) => {
         expect(parse().success).toBe(false)
     })
 
@@ -828,6 +835,7 @@ describe('the published cockpit schema', () => {
                 { path: 'sibling[].var', rule: 'unique' },
                 { path: 'sibling[].environment_files[].instance', rule: 'unique' },
                 { path: 'environment.resettable_volumes[]', rule: 'unique' },
+                { path: 'environment.resettable_volumes[]', rule: 'declared_compose_volume_key' },
                 { path: 'environment.generated_host_paths[]', rule: 'unique' },
                 { path: 'environment.compose_files[]', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].name', rule: 'unique' },

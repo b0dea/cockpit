@@ -167,12 +167,19 @@ describe('the public synthetic cockpit', () => {
                 execFileSync('git', ['-C', app, 'add', '.env.example'])
                 execFileSync('git', ['-C', app, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
                     'commit', '--quiet', '-m', 'generated synthetic template'])
+                // sync needs the web checkout to exist, but a fresh machine has none: setup must clone it
+                // from the relative remote and accept the absolute origin Git records for it.
+                rmSync(join(root, 'repositories/web'), { recursive: true })
             }
             const result = run(root, argv)
             expect(result.status, `${argv.join(' ')}\n${result.stdout}\n${result.stderr}`).toBe(0)
             expect(result.stderr).toBe('')
             expect(result.response.invocation.exitCode).toBe(0)
         }
+        const rerun = run(root, ['cockpit', 'setup', '--config', 'cockpit.toml', '--json'])
+        expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0)
+        expect(rerun.response.result.siblings.map((row: { changed: boolean }) => row.changed)).toEqual([false, false])
+        expect(existsSync(join(root, 'repositories/web/.git'))).toBe(true)
         expect(existsSync(join(root, '.cockpit/generated-environment-ownership.json'))).toBe(true)
         expect(existsSync(join(root, 'compose.generated.yml'))).toBe(true)
         expect(existsSync(join(root, 'repositories/app/.env'))).toBe(true)
@@ -432,6 +439,22 @@ describe('cockpits without a generated environment', () => {
         expect(check.status).toBe(2)
         expect(check.response.diagnostics).toContainEqual(expect.objectContaining({
             severity: 'error', code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000' }))
+    })
+
+    it('warns in check on a published port with no host interface and stays quiet for a loopback one', () => {
+        const root = syncedComposeFirst('compose-first-interface')
+        const path = join(root, 'compose.yml')
+        const loopback = readFileSync(path, 'utf8')
+        const quiet = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        if (!readsTopology(quiet)) return
+        expect(quiet.response.diagnostics.map((row: { code: string }) => row.code)).not.toContain('COMPOSE_PORT_ALL_INTERFACES')
+        writeFileSync(path, loopback.replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '"${WEB_HOST_PORT:-4300}:3000"'))
+        const open = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(open.response.diagnostics).toContainEqual(expect.objectContaining({
+            severity: 'warning', code: 'COMPOSE_PORT_ALL_INTERFACES', target: 'compose:web:3000' }))
+        writeFileSync(path, loopback.replace('"127.0.0.1:${WEB_HOST_PORT:-4300}:3000"', '{ target: 3000, published: "${WEB_HOST_PORT:-4300}", host_ip: "127.0.0.1" }'))
+        const longForm = run(root, ['cockpit', 'check', '--config', 'cockpit.toml', '--json'])
+        expect(longForm.response.diagnostics.map((row: { code: string }) => row.code)).not.toContain('COMPOSE_PORT_ALL_INTERFACES')
     })
 
     it('fails check on a mount = "always" sibling that no Compose service bind-mounts', () => {

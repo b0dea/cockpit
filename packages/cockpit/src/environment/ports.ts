@@ -10,6 +10,7 @@ import {
     removeExactCoordinationHolder,
     releaseClaim,
     readRootPortInventory,
+    type HolderProcess,
     type HolderReleaseAuthority,
     type PortLeaseRecord,
 } from './claims.js'
@@ -1026,6 +1027,7 @@ export async function leasePortFamily(supplied: {
     readonly now: string
     readonly listenerTimeoutMs: number
     readonly listenerEvidence: readonly PortListenerEvidenceInput[]
+    readonly holderProcess?: HolderProcess
 }): Promise<LeasePortFamilyResult> {
     let input: Omit<typeof supplied, 'listenerEvidence'> & { readonly listenerEvidence: readonly PortListenerEvidenceInput[] }
     try {
@@ -1039,6 +1041,10 @@ export async function leasePortFamily(supplied: {
         const config = snapshotPortConfig(supplied.config)
         const now = supplied.now
         const listenerTimeoutMs = supplied.listenerTimeoutMs
+        const holderProcess = supplied.holderProcess === undefined ? undefined : Object.freeze({
+            ...(supplied.holderProcess.pid === undefined ? {} : { pid: supplied.holderProcess.pid }),
+            ...(supplied.holderProcess.processStartedAt === undefined ? {} : { processStartedAt: supplied.holderProcess.processStartedAt }),
+        })
         if (typeof config === 'string') {
             return refuse(ENVIRONMENT_CODES.PORT_FAMILY_OUT_OF_RANGE, config, String(stackId ?? ''))
         }
@@ -1050,6 +1056,7 @@ export async function leasePortFamily(supplied: {
             config,
             now,
             listenerTimeoutMs,
+            ...(holderProcess === undefined ? {} : { holderProcess }),
         })
         const suppliedEvidence = supplied.listenerEvidence
         const listenerEvidence = snapshotListenerEvidence(suppliedEvidence, config)
@@ -1101,7 +1108,7 @@ export async function leasePortFamily(supplied: {
         const currentValue = decodeCoordinationRecord(current, input.stackId)
         if (!currentValue) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
         if (isDrainActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId))
-        const added = addCoordinationHolder(currentValue, { holderId: input.holderId, checkoutId: input.checkoutId }, input.now)
+        const added = addCoordinationHolder(currentValue, { holderId: input.holderId, checkoutId: input.checkoutId, ...input.holderProcess }, input.now)
         if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', input.holderId))
         const currentLease = currentValue.lease
 

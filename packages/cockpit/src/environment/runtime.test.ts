@@ -79,7 +79,7 @@ const observed = <T>(value: T, producer: string): Observation<T> => ({
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 const measured = (rows: readonly RuntimeMeasurementRow[]): LocalRuntimeMeasurements =>
-    ({ kind: 'read', path: '/synthetic/.cockpit/local/runtime-measurements.json', rows })
+    ({ kind: 'read', path: '/synthetic/state/machine/runtime-measurements.json', rows })
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 async function admitCleanStartup(plan: Extract<ReturnType<typeof createRuntimeServicePlan>, { kind: 'planned' }>) {
@@ -195,7 +195,7 @@ fi
                 [measured([{ ...row, daemon: 'other-daemon' }]), /has not been measured on this machine/],
                 [measured([{ ...row, engineVersion: '29.3.9' }]), /measured with engine 29\.3\.9 and now runs engine 29\.4\.0/],
                 [measured([{ ...row, composeFloor: '5.2.0' }]), /below the measured floor 5\.2\.0/],
-                [{ kind: 'unreadable', path: '/synthetic/.cockpit/local/runtime-measurements.json', reason: 'the file is not UTF-8 JSON' } as const,
+                [{ kind: 'unreadable', path: '/synthetic/state/machine/runtime-measurements.json', reason: 'the file is not UTF-8 JSON' } as const,
                     /record is unreadable: the file is not UTF-8 JSON; a new measurement replaces it/],
             ] as const) {
                 const refused = admitRuntimeMeasurement(observed, measurements)
@@ -252,7 +252,7 @@ fi
             expect(admission).toEqual(expect.objectContaining({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED }))
             const reason = admission.kind === 'unavailable' ? admission.reason : ''
             expect(reason).toContain('OperatingSystem "Windows Server 2022", Name "build-host", OSType "windows"')
-            expect(reason).toContain('measured in /synthetic/.cockpit/local/runtime-measurements.json: docker-desktop on "docker-desktop" (engine 29.4.0, Compose floor 5.1.0)')
+            expect(reason).toContain('measured in /synthetic/state/machine/runtime-measurements.json: docker-desktop on "docker-desktop" (engine 29.4.0, Compose floor 5.1.0)')
             expect(reason).toMatch(/Report these docker info values/)
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })
@@ -1753,7 +1753,15 @@ fi
         // pinned image may pull it, so every start is held to the declared cold start. Holding the
         // rest to the command budget killed a first `up` moments before its container became healthy.
         expect(pinnedStart.start.timeoutMs).toBe(70_000)
-        const composeFirst = { services: { api: {
+        // A declared budget beyond five minutes is honoured, not cut to a fixed window: a service
+        // healthy after 330s of a 600s budget was killed at 300s and reported unhealthy.
+        const longEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 600_000 })).admitted
+        if (longEvidence.kind !== 'complete') throw new Error(longEvidence.reason)
+        const longStart = createRuntimeServicePlan({ topology: longEvidence.topology, service: 'api' })
+        if (longStart.kind !== 'planned' || !longStart.build) throw new Error('long cold-start service plan unavailable')
+        expect(longStart.start.timeoutMs).toBe(610_000)
+        expect(longStart.build.timeoutMs).toBe(600_000)
+        const composeFirst ={ services: { api: {
             build: { context: directory, dockerfile: 'Dockerfile' },
             labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
             healthcheck: { test: ['CMD', 'true'], interval: '25s' },

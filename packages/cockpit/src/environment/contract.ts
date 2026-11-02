@@ -16,7 +16,7 @@ export const mechanism = {
     module: 'packages/cockpit/src/environment/contract.ts',
     exports: [
         'OBSERVATION_LIFECYCLE_STAGES', 'SETUP_ACTION_KINDS', 'ENVIRONMENT_CODES', 'EXECUTION_FAILURE_CODES',
-        'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT',
+        'REFUSAL_CODES', 'INHERITED_TOOL_ENVIRONMENT', 'OBSERVATION_PRODUCER_BYTE_LIMIT', 'OBSERVATION_REASON_BYTE_LIMIT', 'MAX_STEP_TIMEOUT_MS',
         'isCanonicalTimestamp', 'filesystemObjectIdentity', 'sameFilesystemObject', 'isFilesystemObjectIdentity',
         'snapshotJson', 'snapshotGeneratedJson', 'snapshotExecutionStep', 'snapshotExecutionPlan',
         'snapshotEnvironmentObservation',
@@ -215,6 +215,7 @@ export const ENVIRONMENT_CODES = Object.freeze({
     RUNTIME_COMPOSE_REMOTE: 'RUNTIME_COMPOSE_REMOTE',
     RUNTIME_LAUNCHER_UNAVAILABLE: 'RUNTIME_LAUNCHER_UNAVAILABLE',
     RUNTIME_PROBE_TIMEOUT: 'RUNTIME_PROBE_TIMEOUT',
+    LOGS_TRUNCATED: 'LOGS_TRUNCATED',
     RESET_CONFIRMATION_REQUIRED: 'RESET_CONFIRMATION_REQUIRED',
     RESET_CONFIRMATION_MISMATCH: 'RESET_CONFIRMATION_MISMATCH',
     RESET_CO_TENANT: 'RESET_CO_TENANT',
@@ -634,7 +635,7 @@ function expectedObservations(value: unknown): boolean {
 }
 
 // Product test stages declare up to two hours; every other owner bounds its steps far lower itself.
-const MAX_STEP_TIMEOUT_MS = 7_200_000
+export const MAX_STEP_TIMEOUT_MS = 7_200_000
 
 interface ExecutionTraversal { count: number; readonly ids: Set<string> }
 

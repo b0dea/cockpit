@@ -3,7 +3,7 @@ import { isAbsolute, normalize } from 'node:path'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import { composeProjectDirectory } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import { ENVIRONMENT_CODES, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, MAX_STEP_TIMEOUT_MS, snapshotExecutionStep, snapshotJson, type ExecutionFailureCode, type ExecutionStep, type StackId } from './contract.js'
 import { isRuntimeEvidenceAuthentic, type CapturedRuntimeEvidence } from './evidence.js'
 import { consumeRuntimeServiceFailureForLogs, consumeRuntimeServiceObservationForFailureLogs, createRuntimeAdapter, type ComposeArtifact, type RuntimeAdapterAuthority, type RuntimeServiceFailureEvidence, type RuntimeServiceFailureLogContext, type RuntimeServiceObservation } from './runtime.js'
 import { redactSensitiveMessage } from './sensitive.js'
@@ -160,8 +160,12 @@ export function planLogs(
     const argv = [input.executable.canonicalPath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', String(input.tail), ...(input.follow ? ['--follow'] : []), input.containerId] as [string, ...string[]]
     const step: ExecutionStep = Object.freeze({
         id: `runtime:logs:${input.projectName}:${input.service}`, argv: Object.freeze(argv) as readonly [string, ...string[]], argv0: input.executable.invocationPath, cwd: input.cwd,
-        env: Object.freeze({ ...input.env }), timeoutMs: input.timeoutMs, stdoutLimitBytes: input.outputLimitBytes,
-        stderrLimitBytes: Math.min(input.outputLimitBytes, 65_536), paths: Object.freeze([]), ports: Object.freeze([]),
+        // A follow runs until it is cancelled, so the per-query budget would end it with nothing shown;
+        // it gets the longest step the executor accepts instead.
+        env: Object.freeze({ ...input.env }), timeoutMs: input.follow ? MAX_STEP_TIMEOUT_MS : input.timeoutMs, stdoutLimitBytes: input.outputLimitBytes,
+        // The newest records are the ones asked for, so output past the limit drops the oldest bytes
+        // rather than the whole read.
+        stderrLimitBytes: Math.min(input.outputLimitBytes, 65_536), outputOverflow: 'retain-tail', paths: Object.freeze([]), ports: Object.freeze([]),
         labels: Object.freeze({ stackId: input.stackId, configSha256: input.configSha256, batchId: input.batchId, containerId: input.containerId, service: input.service, since: input.since, runtimeVersion: input.runtimeVersion, executableSha256: input.executable.sha256, ...(input.restartBatches === undefined ? {} : { restartBeforeBatch: input.restartBatches[0], restartAfterBatch: input.restartBatches[1] }) }), expected: Object.freeze([]),
         consumedFiles: Object.freeze([
             Object.freeze({ path: input.executable.canonicalPath, sha256: input.executable.sha256, maxBytes: 536_870_912, argvIndexes: Object.freeze([0]), executable: true, executionMode: input.executable.executionMode }),
@@ -499,19 +503,30 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
     const restartBatches = authority.restartBeforeBatch === undefined ? undefined : [authority.restartBeforeBatch, authority.restartAfterBatch] as const
     if (outcome === undefined) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
     const cancelled = outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_ABORTED
-    if (outcome.kind === 'refusal' && !cancelled) return { kind: 'unavailable' as const, code: outcome.code, records: Object.freeze([]) }
-    if (cancelled && !outcome.execution.started) return { kind: 'cancelled' as const, records: Object.freeze([]) }
-    if (outcome.stdout.byteLength > resolvedPlan.step.stdoutLimitBytes) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT, records: Object.freeze([]) }
-    if (outcome.stderr.byteLength > resolvedPlan.step.stderrLimitBytes) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.EXECUTION_STDERR_LIMIT, records: Object.freeze([]) }
+    // A follow that reaches its budget has ended, as it does when the container stops: what it read is the result.
+    const followEnded = outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT
+        && resolvedPlan.step.argv.includes('--follow')
+    if (outcome.kind === 'refusal' && !cancelled && !followEnded) return { kind: 'unavailable' as const, code: outcome.code, records: Object.freeze([]) }
+    if (cancelled && !outcome.execution.started) return { kind: 'cancelled' as const, records: Object.freeze([]), truncated: false }
     if (!outcome.receipt || outcome.receipt.stepId !== resolvedPlan.step.id
         || !validInstant(outcome.receipt.startedAt) || !validInstant(outcome.receipt.finishedAt)
         || instantMs(outcome.receipt.startedAt) > instantMs(outcome.receipt.finishedAt)) {
         return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
     }
     const records: LogRecord[] = []
-    for (const [stream, output] of [['stdout', outcome.stdout], ['stderr', outcome.stderr]] as const) {
+    const truncatedStreamStarts: string[] = []
+    for (const [stream, output, observedBytes] of [
+        ['stdout', outcome.stdout, outcome.execution.stdoutObservedBytes],
+        ['stderr', outcome.stderr, outcome.execution.stderrObservedBytes],
+    ] as const) {
+        const truncated = observedBytes > output.byteLength
+        // A retained tail starts inside a line, possibly inside a character, so its first newline is the
+        // first record boundary that can be trusted.
+        const firstNewline = truncated ? output.indexOf(0x0a) : -1
+        const whole = !truncated ? output : firstNewline === -1 ? Buffer.alloc(0) : output.subarray(firstNewline + 1)
         let text: string
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(output) } catch { return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) } }
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(whole) } catch { return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) } }
+        const streamStart = records.length
         for (const line of text.split('\n').filter(Boolean)) {
             const match = line.match(/^(\S+)\s+(.*)$/)
             if (match === null || !validInstant(match[1])) return { kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNMEASURED, records: Object.freeze([]) }
@@ -525,6 +540,7 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
                 timestamp: match[1], message, restart: false, stream,
             }))
         }
+        if (truncated && records.length > streamStart) truncatedStreamStarts.push(records[streamStart].timestamp)
     }
     if (resolvedRestart !== undefined) {
         const { before, after } = resolvedRestart
@@ -555,5 +571,15 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
     }
     records.sort((left, right) => compareInstants(left.timestamp, right.timestamp)
         || (left.stream === right.stream ? 0 : left.stream === 'stdout' ? -1 : 1))
-    return { kind: cancelled ? 'cancelled' as const : 'complete' as const, records: Object.freeze(records) }
+    // Each stream keeps its own newest bytes. Older records from the other stream would sit beside a
+    // stretch where the truncated one shows nothing, so the result starts where every stream is whole.
+    const wholeFrom = truncatedStreamStarts.reduce<string | undefined>((latest, start) =>
+        latest === undefined || compareInstants(start, latest) > 0 ? start : latest, undefined)
+    const shown = wholeFrom === undefined ? records : records.filter(({ timestamp }) => compareInstants(timestamp, wholeFrom) >= 0)
+    return {
+        kind: cancelled ? 'cancelled' as const : 'complete' as const,
+        records: Object.freeze(shown),
+        truncated: outcome.execution.stdoutObservedBytes > outcome.stdout.byteLength
+            || outcome.execution.stderrObservedBytes > outcome.stderr.byteLength,
+    }
 }

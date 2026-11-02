@@ -33,7 +33,7 @@ import {
     type StackId,
     snapshotJson,
 } from './contract.js'
-import { gitEnvironment, type SetupObservation, type SetupResult } from './setup.js'
+import { gitEnvironment, resolveLocalRemote, type SetupObservation, type SetupResult } from './setup.js'
 import type { InstructionPointerResult } from './instruction-pointer.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolvedGitExecutable, type ExecutableResolution, type ResolvedExecutable } from './executable.js'
 import { CockpitConfig, type EntrypointDerivative, type InstallPolicy, type Sibling } from '../schema.js'
@@ -179,6 +179,8 @@ import {
     reserveDrain,
     reserveDrainAttempt,
     decodeCoordinationRecord,
+    observeProcessStart,
+    releaseDeadSessionHolders,
     type DrainOutcomeAuthority,
     type DrainReservationRequest,
 } from './claims.js'
@@ -1344,7 +1346,8 @@ function exactSetupResult(
     const origin = evidence.remotes && typeof evidence.remotes === 'object' && !Array.isArray(evidence.remotes)
         ? (evidence.remotes as Record<string, unknown>).origin
         : undefined
-    const remoteMatches = sibling.remote !== undefined && origin === sibling.remote
+    const remoteMatches = sibling.remote !== undefined && typeof origin === 'string'
+        && resolveLocalRemote(origin, siblingsRoot) === resolveLocalRemote(sibling.remote, siblingsRoot)
     const allowed = outcomeKind === 'complete' && action === 'report' && (
         sibling.acquire === 'none' && ['absent', 'directory', 'repository'].includes(observedKind as string)
         || sibling.acquire === 'manual' && observedKind === 'absent'
@@ -2888,7 +2891,7 @@ async function executeUpRound(
                     const logDiagnostics = await reportFailedService(admitted.logs, completed.service, context, adapters)
                     const primary = lifecycleRefusal(
                         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-                        'completed runtime service could not be revalidated',
+                        `completed runtime service could not be revalidated: its recorded container is no longer running and healthy, for example after it was killed — fix: run \`${cockpitCommand('sleep', { config: context.source.path })}\`, then \`${lifecycleSuggestion(context, 'up')}\` to start the stack again`,
                         completed.service,
                     )
                     return { kind: 'refusal', result: {
@@ -2922,6 +2925,13 @@ async function executeUpRound(
             operationGeneration,
         })
         if (admission.kind === 'refusal') {
+            // A compose-first stack has no generated replay to compare, so a declaration edit shows
+            // only as changed work. Restarting it from scratch recreated healthy containers under
+            // the new declaration, and stopped them when their labels no longer matched; a fully
+            // started stack is refused instead, as a generated one is.
+            if (stored && !resetProgress && !generated && progressComplete) {
+                return { kind: 'complete' as const, result: runtimeChangedRefusal(context) }
+            }
             return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
                 : { kind: 'complete' as const, result: {
@@ -3390,7 +3400,12 @@ export async function runSession(
     )
 
     const sleep = await adapters.sleep({ configPath: input.configPath })
-    const cleanup = sleep.kind === 'complete' ? `; environment cleanup ${sleep.result.change}` : ''
+    // The sleep change names what happened to the stack, not to the session's hold, which every
+    // completed cleanup released; "cleanup retained" read as the hold having been kept.
+    const cleanup = sleep.kind !== 'complete' ? ''
+        : sleep.result.change === 'stopped' ? '; its hold was released and the stack stopped'
+            : sleep.result.change === 'retained' ? '; its hold was released and another holder keeps the stack running'
+                : '; its hold was released'
     // A command that exits nonzero is a normal end of the session, not a cockpit failure: a wrapper
     // that exits 2 for it hides the command's own status from the scripts and agents that branch on
     // it. So a completed cleanup passes that status through, with the shell convention of 128 plus
@@ -3477,6 +3492,14 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             : diagnostic),
     }
 
+    if (recovery.kind !== 'recoverable') {
+        const reaped = await releaseDeadSessionHolders({
+            namespace: context.namespace, stackId: context.stackId,
+            successor: { holderId: context.holderId, checkoutId: context.checkoutId },
+            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, adapters.execute),
+        })
+        if (reaped.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: reaped.diagnostics }
+    }
     const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
     if (unheld) return unheld
     const retained = await observeRetainedPortFamily({
@@ -4564,11 +4587,12 @@ export interface LogsCommandAdapters {
 export type LogsCommandResult = EnvironmentCommandOutcome<Readonly<{
     readonly json: boolean
     readonly records: readonly LogRecord[]
+    readonly truncated: boolean
 }>> | Readonly<{
     kind: 'cancelled'
     status: 130
     diagnostics: readonly EnvironmentDiagnostic[]
-    result: Readonly<{ json: boolean; records: readonly LogRecord[] }>
+    result: Readonly<{ json: boolean; records: readonly LogRecord[]; truncated: boolean }>
 }>
 
 export interface BaselineCommandInput {
@@ -4788,7 +4812,7 @@ function issueHealthObservationSource(
                 source: `${loaded.source.path}:${sibling.slug}`,
                 sibling: sibling.slug,
                 acquire: sibling.acquire,
-                ...(sibling.remote === undefined ? {} : { declaredRemote: sibling.remote }),
+                ...(sibling.remote === undefined ? {} : { declaredRemote: resolveLocalRemote(sibling.remote, siblingsRoot) }),
             })
         })
         const prepared = Object.freeze({
@@ -5205,8 +5229,18 @@ function validPublicLogOptions(service: string, since: string, tail: number): bo
 function logsCancelled(json: boolean): Extract<LogsCommandResult, { kind: 'cancelled' }> {
     return Object.freeze({
         kind: 'cancelled', status: 130, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: Object.freeze([]) }),
+        result: Object.freeze({ json, records: Object.freeze([]), truncated: false }),
     })
+}
+
+function logsTruncated(service: string, shown: number, step: ExecutionStep): readonly EnvironmentDiagnostic[] {
+    return Object.freeze([Object.freeze({
+        severity: 'warning' as const,
+        code: 'LOGS_TRUNCATED' as const satisfies typeof ENVIRONMENT_CODES.LOGS_TRUNCATED,
+        message: `the logs of service ${service} exceeded the output limit of ${step.stdoutLimitBytes} bytes of stdout and ${step.stderrLimitBytes} of stderr, so only the newest ${shown} record${shown === 1 ? '' : 's'} are shown and older records in the requested range are not`,
+        target: 'logs',
+        fix: 'lower --tail to the number of recent records you need, or read the older records from the container runtime directly',
+    })])
 }
 
 export async function runLogs(
@@ -5274,14 +5308,11 @@ export async function runLogs(
     if (collected.kind === 'unavailable') {
         return logsRefusal(collected.code, 'authenticated log collection is unavailable')
     }
-    if (collected.kind === 'cancelled') return Object.freeze({
-        kind: 'cancelled', status: 130, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: collected.records }),
-    })
-    return Object.freeze({
-        kind: 'complete', status: 0, diagnostics: Object.freeze([]),
-        result: Object.freeze({ json, records: collected.records }),
-    })
+    const diagnostics = collected.truncated
+        ? logsTruncated(service, collected.records.length, plan.step) : Object.freeze([])
+    const result = Object.freeze({ json, records: collected.records, truncated: collected.truncated })
+    if (collected.kind === 'cancelled') return Object.freeze({ kind: 'cancelled', status: 130, diagnostics, result })
+    return Object.freeze({ kind: 'complete', status: 0, diagnostics, result })
 }
 
 export async function runBaselineRecord(

@@ -1,8 +1,9 @@
 /**
- * Owns `cockpit runtime measure`: identifies the local container runtime, hands it to the
- * candidate and broken-control probe (`runtime-probe.ts`), and records a passing verdict as this
- * machine's measurement through `runtime-measurement-record.ts`. cockpit.toml is only read: a
- * measurement describes this machine, so recording one changes no guarded configuration.
+ * Owns `cockpit runtime measure`: identifies the local container runtime, clears what an earlier
+ * interrupted measure left behind (`runtime-probe-residue.ts`), hands the runtime to the candidate
+ * and broken-control probe (`runtime-probe.ts`), and records a passing verdict as this machine's
+ * measurement through `runtime-measurement-record.ts`. cockpit.toml is only read: a measurement
+ * describes this machine, so recording one changes no guarded configuration.
  *
  * It does not admit runtimes (`runtime.ts` reads the rows) and it never spawns a process itself:
  * every child process crosses the supplied `execute`, which production binds to
@@ -20,9 +21,11 @@ import type { Diagnostic } from '../diagnostics.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { ENVIRONMENT_CODES, type ExecutionStep } from './contract.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
-import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
+import { resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { observeDockerRuntime, observedVersionCore } from './runtime.js'
 import { recordLocalRuntimeMeasurement } from './runtime-measurement-record.js'
+import { MEASURE_DIRECTORY_PREFIX, claimMeasureDirectory, sweepProbeResidue } from './runtime-probe-residue.js'
+import { selectMachineStateRoot } from './state.js'
 import { probeRuntimeSupport, type RuntimeProbeRequest, type RuntimeProbeVerdict } from './runtime-probe.js'
 
 export const mechanism = {
@@ -55,19 +58,21 @@ export interface RuntimeMeasureOutcome {
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/
 const STEP_TIMEOUT_MS = 10_000
 const PROBE_STEP_TIMEOUT_MS = 30_000
+// Reports `live` or `absent` for a pid; twice, so a transient answer reads as `unavailable`.
+const PROCESS_STATE_SCRIPT = "const p=Number(process.argv[1]);const c=()=>{try{process.kill(p,0);return'live'}catch(e){return e&&e.code==='ESRCH'?'absent':'unavailable'}};const a=c(),b=c();process.stdout.write(a===b?a:'unavailable')"
 
 function refused(code: string, message: string, target?: string): RuntimeMeasureOutcome {
     return Object.freeze({ status: 2, result: null, artifact: null, destination: null,
         diagnostics: Object.freeze([Object.freeze({ severity: 'error' as const, code, message, ...(target === undefined ? {} : { target }) })]) })
 }
 
-function dockerStep(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string, args: readonly string[]): ExecutionStep {
+function dockerStep(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string, args: readonly string[], stdoutLimitBytes = 1_024): ExecutionStep {
     return Object.freeze({
         id,
         argv: Object.freeze([executable.canonicalPath, ...args]) as readonly [string, ...string[]],
         argv0: executable.invocationPath,
         cwd, env, timeoutMs: STEP_TIMEOUT_MS,
-        stdoutLimitBytes: 1_024, stderrLimitBytes: 4_096,
+        stdoutLimitBytes, stderrLimitBytes: 4_096,
         paths: Object.freeze([]), ports: Object.freeze([]),
         labels: Object.freeze({ purpose: id }),
         expected: Object.freeze([]),
@@ -118,6 +123,12 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     const daemon = await selectLocalDockerDaemon(input.env, STEP_TIMEOUT_MS, dependencies.execute, {
         command: 'runtime measure', localOnly: 'a measurement describes this machine, which a remote daemon says nothing about' })
     if (daemon.kind === 'refusal') return Object.freeze({ status: 2, result: null, artifact: null, destination: null, diagnostics: Object.freeze([daemon.diagnostic]) })
+    // Where the measurement is recorded: the per-user root every checkout of this machine shares.
+    if (process.platform !== 'darwin' && process.platform !== 'linux') return refused(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        'runtime measurements are recorded on macOS or Linux only', process.platform)
+    const stateRoot = await selectMachineStateRoot({ platform: process.platform, home: input.env.HOME, xdgStateHome: input.env.XDG_STATE_HOME })
+    if (stateRoot.kind !== 'complete') return refused(stateRoot.kind === 'refusal' ? stateRoot.code : ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
+        stateRoot.kind === 'refusal' ? stateRoot.message : 'the state root is unavailable', stateRoot.kind === 'refusal' ? stateRoot.target : 'state root')
     const path = input.env.PATH ?? ''
     const [docker, git] = await Promise.all([resolveDockerExecutable(input.env), resolveGitExecutable(input.env)])
     if (docker.state !== 'available') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, docker.reason, 'docker')
@@ -156,9 +167,27 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
     const measuredOn = new Date().toISOString().slice(0, 10)
     // The probe requires an empty canonical directory and creates its isolated HOME beside it, so
     // both live under one private parent that is removed whatever the verdict.
-    const parent = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-runtime-measure-')))
+    const parent = await realpath(await mkdtemp(join(tmpdir(), MEASURE_DIRECTORY_PREFIX)))
     let verdict: RuntimeProbeVerdict
+    let swept: Awaited<ReturnType<typeof sweepProbeResidue>>
     try {
+        await claimMeasureDirectory(parent)
+        // A measure killed mid-probe leaves containers, a network, a volume and this directory
+        // behind; clear this cockpit's own before adding another set to a shared daemon.
+        const node = await resolveDiskCapacityExecutable()
+        swept = await sweepProbeResidue({
+            processState: async (pid) => {
+                if (node.state !== 'available') return 'unavailable'
+                const state = await readDocker(dependencies.execute, dockerStep(node.value, dirname(node.value.canonicalPath), runtimeEnv, 'runtime:measure:residue:owner',
+                    ['-e', PROCESS_STATE_SCRIPT, String(pid)]))
+                return state.kind === 'complete' && (state.text === 'live' || state.text === 'absent') ? state.text : 'unavailable'
+            },
+            projectPrefix: config.cockpit.name.slice(0, 40), temporaryDirectory: dirname(parent), ownDirectory: parent,
+            run: (id, args) => readDocker(dependencies.execute, dockerStep(docker.value, cwd, runtimeEnv, id, args, 65_536)),
+            ...(process.getuid === undefined ? {} : { uid: process.getuid() }),
+        })
+        if (swept.kind === 'refusal') return refused(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+            `${swept.reason}${swept.removed.length > 0 ? ` (already removed: ${swept.removed.join(', ')})` : ''}; nothing was probed`, 'docker')
         const probeRoot = join(parent, 'probe')
         await mkdir(probeRoot, { mode: 0o700 })
         verdict = await dependencies.probe({
@@ -177,6 +206,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         endpoint: Object.freeze({ value: daemon.endpoint, source: daemon.source }),
         image: image.text, candidate: verdict.candidate, brokenControl: verdict.brokenControl,
         checks: evidence?.candidateChecks ?? null,
+        removedLeftovers: swept.removed, leftUntouched: swept.left,
     })
     if (verdict.status !== 'supported' || verdict.candidate !== 'passed' || verdict.brokenControl !== 'rejected') {
         return Object.freeze({ ...refused(verdict.operatorAction?.code ?? ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
@@ -193,14 +223,16 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
 
     const row = Object.freeze({ runtime: identity, daemon: observed.name, engineVersion: observed.runtime.version,
         composeFloor, measuredOn })
-    const recorded = await recordLocalRuntimeMeasurement(cwd, row)
+    const recorded = await recordLocalRuntimeMeasurement(stateRoot.value, row)
     if (recorded.kind === 'refusal') {
         return Object.freeze({ ...refused(ENVIRONMENT_CODES.RUNTIME_UNMEASURED,
             `runtime ${identity} passed, but this machine's measurement could not be recorded in ${recorded.path}: ${recorded.reason}`, recorded.path),
             result: Object.freeze({ ...summary, row, recorded: false }) })
     }
     const notes = [
-        `runtime ${identity} on daemon ${JSON.stringify(observed.name)} passed with engine ${row.engineVersion}; recorded with Compose floor ${composeFloor} in ${recorded.path}`,
+        ...(swept.removed.length === 0 ? [] : [`removed what an interrupted measure left behind: ${swept.removed.join('; ')}`]),
+        ...(swept.left.length === 0 ? [] : [`left in place, since a measure may still be running: ${swept.left.join('; ')}`]),
+        `runtime ${identity} on daemon ${JSON.stringify(observed.name)} passed with engine ${row.engineVersion}; recorded with Compose floor ${composeFloor} in ${recorded.path}, shared by every checkout on this machine`,
         ...(recorded.replaced === null ? [] : [`it replaces the measurement from ${recorded.replaced.measuredOn} (engine ${recorded.replaced.engineVersion})`]),
         ...(recorded.discardedUnreadable === null ? [] : [`the previous record was unreadable and was replaced: ${recorded.discardedUnreadable}`]),
         `cockpit.toml is unchanged; next: ${cockpitCommand('up', { config: configPath })}`,

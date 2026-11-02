@@ -90,6 +90,8 @@ const MAX_TIMEOUT_MS = 120_000
 const OUTPUT_LIMIT = 1_048_576
 const PROBE_WINDOW_MS = 300_000
 const CLEANUP_RESERVE_MS = 90_000
+// The candidate's data volume: its Compose key, which `resettable_volumes` names.
+const PROBE_VOLUME_KEY = 'probe_data'
 
 function exactKeys(value: object, expected: readonly string[]): boolean {
     const descriptors = Object.getOwnPropertyDescriptors(value)
@@ -508,7 +510,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             '[environment]', `compose_files = [${JSON.stringify(basename(candidatePath))}]`,
             'addressing = "port"', 'authentication = "bypassed"',
             'posture_requirements = [{ requirement = "local-runtime-endpoint", addressing = "port" }, { requirement = "local-runtime-access", authentication = "bypassed" }]',
-            `resettable_volumes = [${JSON.stringify(volumeName)}]`, `generated_host_paths = [${JSON.stringify(generatedName)}]`, '',
+            `resettable_volumes = [${JSON.stringify(PROBE_VOLUME_KEY)}]`, `generated_host_paths = [${JSON.stringify(generatedName)}]`, '',
             '[environment.machine]', 'runtime_memory_mb = 1', 'runtime_cpus = 1', 'free_disk_mb = 1', 'cold_start_seconds = 30', '',
         ].join('\n')
         await writeExclusive(configPath, configSource)
@@ -589,12 +591,12 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
             '    volumes:',
             `      - type: bind`, `        source: ${JSON.stringify(siblingPath)}`, '        target: /probe',
             `      - type: bind`, `        source: ${JSON.stringify(generatedPath)}`, '        target: /generated',
-            '      - type: volume', '        source: probe_data', '        target: /data',
+            '      - type: volume', `        source: ${PROBE_VOLUME_KEY}`, '        target: /data',
             '    networks: [probe_net]',
             '  profile_control:', `    image: ${JSON.stringify(input.image.reference)}`, '    command: ["sh", "-c", "while :; do sleep 3600; done"]',
             '    profiles: ["runtime_probe"]', '    networks: [probe_net]', '    labels:', ...labelLines,
             '    healthcheck:', '      test: ["CMD", "sh", "-c", "kill -0 1"]', '      interval: 1s', '      timeout: 1s', '      retries: 10',
-            'volumes:', '  probe_data:', `    name: ${JSON.stringify(volumeName)}`, '    labels:', ...labelLines,
+            'volumes:', `  ${PROBE_VOLUME_KEY}:`, `    name: ${JSON.stringify(volumeName)}`, '    labels:', ...labelLines,
             'networks:', '  probe_net:', `    name: ${JSON.stringify(`${projectName}-network`)}`, '    labels:', ...labelLines, '',
         ].join('\n')
         candidateArtifact = { path: candidatePath, sha256: hash(candidateSource) }
@@ -606,6 +608,7 @@ export async function probeRuntimeSupport(rawInput: RuntimeProbeRequest): Promis
         const ownership = renderComposeOwnership({
             sources: [{ reference: basename(candidatePath), source: candidateSource }],
             stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
+            resettableVolumes: [PROBE_VOLUME_KEY],
         })
         if (ownership.kind !== 'complete') fail(`the candidate's ownership override could not be rendered (${ownership.reason})`)
         await writeExclusive(ownershipPath, (ownership as Extract<typeof ownership, { kind: 'complete' }>).bytes)

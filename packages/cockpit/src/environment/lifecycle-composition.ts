@@ -7,7 +7,7 @@ import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { redirectedBindSources } from './compose-topology.js'
-import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
@@ -23,6 +23,7 @@ import {
 } from './generated-application.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import {
+    dataModeOutcomeSavedAt,
     executeDataMode,
     observeDataMode,
     planDataMode,
@@ -40,8 +41,11 @@ import {
     type SleepCommandAdapters,
     type UpCommandAdapters,
 } from './application.js'
+import { observeProcessStart, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
 import {
     ENVIRONMENT_CODES,
+    isCanonicalTimestamp,
+    snapshotExecutionPlan,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     type ExecutionStep,
@@ -76,6 +80,7 @@ import {
     createRuntimeAdapter,
     createRuntimeTopologyPlan,
     issueMachineFloorAuthority,
+    OBSERVATION_WINDOW_HEADROOM_MS,
     observeDockerRuntime,
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
@@ -107,7 +112,6 @@ export const mechanism = {
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
-const MAX_TOPOLOGY_OBSERVATION_WINDOW_MS = 300_000
 const SAFE_DOCKER_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
 function environmentCode(code: string): code is EnvironmentDiagnostic['code'] {
@@ -175,6 +179,9 @@ export interface LifecycleCommandCompositionInput {
     readonly timeoutMs: number
     readonly activeProfiles?: readonly string[]
     readonly runtimeMeasurementProbeAuthority?: RuntimeMeasurementProbeAuthority | (() => RuntimeMeasurementProbeAuthority)
+    // The `cockpit session` wrapper's own process, recorded with its hold so that the hold is
+    // released once that process is gone.
+    readonly holderProcess?: HolderProcess
 }
 
 export type LifecycleCommandAdapterComposition = Omit<UpCommandAdapters & SleepCommandAdapters, 'withRuntimeReadiness'> & {
@@ -285,7 +292,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         const descriptors = Object.getOwnPropertyDescriptors(value)
         const keys = ['configPath', 'env', 'sessionId', 'timeoutMs']
         const actualKeys = Reflect.ownKeys(descriptors)
-        const optionalKeys = ['activeProfiles', 'runtimeMeasurementProbeAuthority'].filter((key) => descriptors[key] !== undefined)
+        const optionalKeys = ['activeProfiles', 'runtimeMeasurementProbeAuthority', 'holderProcess'].filter((key) => descriptors[key] !== undefined)
         if (actualKeys.length !== keys.length + optionalKeys.length
             || keys.some((key) => !descriptors[key] || !('value' in descriptors[key]!))
             || optionalKeys.some((key) => !('value' in descriptors[key]!))) return undefined
@@ -295,12 +302,16 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         const timeoutMs = descriptors.timeoutMs!.value
         const activeProfiles = descriptors.activeProfiles?.value
         const runtimeMeasurementProbeAuthority = descriptors.runtimeMeasurementProbeAuthority?.value
+        const holderProcess = descriptors.holderProcess?.value as HolderProcess | undefined
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')
             || typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.includes('\0')
             || typeof timeoutMs !== 'number' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000
             || activeProfiles !== undefined && (!Array.isArray(activeProfiles) || activeProfiles.length > 64
                 || new Set(activeProfiles).size !== activeProfiles.length
                 || activeProfiles.some((profile) => typeof profile !== 'string' || !/^[a-z0-9][a-z0-9_.-]*$/.test(profile)))
+            || holderProcess !== undefined && (!holderProcess || typeof holderProcess !== 'object'
+                || !Number.isSafeInteger(holderProcess.pid) || holderProcess.pid! < 1
+                || holderProcess.processStartedAt !== undefined && !isCanonicalTimestamp(holderProcess.processStartedAt))
             || !rawEnvironment || typeof rawEnvironment !== 'object' || Array.isArray(rawEnvironment)) return undefined
         const env: Record<string, string | undefined> = {}
         for (const [name, entry] of Object.entries(rawEnvironment as Record<string, unknown>)) {
@@ -310,7 +321,9 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
         }
         return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), sessionId, timeoutMs,
             ...(activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...activeProfiles].sort()) }),
-            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }) })
+            ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
+            ...(holderProcess === undefined ? {} : { holderProcess: Object.freeze({ pid: holderProcess.pid,
+                ...(holderProcess.processStartedAt === undefined ? {} : { processStartedAt: holderProcess.processStartedAt }) }) }) })
     } catch {
         return undefined
     }
@@ -790,6 +803,39 @@ export function createLifecycleCommandAdapters(
             : reject('generated-vendors', 'generated vendor observations are incomplete')
     }
 
+    // A product-data volume removed after its data was applied (by `reset`, `docker volume prune` or
+    // a runtime reset) comes back empty at the next start, while the saved outcome still says the
+    // data was applied; `up` then only reran the read-only probes and refused on every retry. Docker
+    // records when each volume was created, so a volume created after the outcome was saved holds
+    // none of that data and the mode is applied again. Both instants come from clocks the runtime
+    // keeps in step with the host; a start always creates the volume before its data is applied.
+    const dataVolumesCreatedSince = async (context: LifecycleRunContext, cwd: string, ids: readonly string[], savedAt: string): Promise<boolean | undefined> => {
+        if (ids.length === 0 || !input) return false
+        const docker = await resolveDockerExecutable(input.env)
+        if (docker.state !== 'available') return undefined
+        const binding = bindings.get(context)
+        if (!binding) return undefined
+        const project = composeProjectName({ cockpitName: binding.config.cockpit.name, stackId: context.stackId })
+        const step = snapshotExecutionPlan({ steps: [Object.freeze({
+            id: 'data:volume-created', argv: Object.freeze([docker.value.canonicalPath, 'volume', 'inspect', '--format', '{{json .CreatedAt}}',
+                ...ids.map((id) => `${project}_${id}`)] as const),
+            argv0: docker.value.invocationPath, cwd, env: runtimeEnvironment(input.env), timeoutMs: input.timeoutMs,
+            stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536, paths: Object.freeze([]), ports: Object.freeze([]),
+            labels: Object.freeze({ stackId: context.stackId }), expected: Object.freeze([]),
+            consumedFiles: Object.freeze([Object.freeze({ path: docker.value.canonicalPath, sha256: docker.value.sha256, maxBytes: 536_870_912,
+                argvIndexes: Object.freeze([0]), executable: true, executionMode: docker.value.executionMode })]),
+            filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
+        })] })?.steps[0]
+        if (!step) return undefined
+        const outcome = authenticatedExecutionOutcome(await execute(step), step)
+        if (!outcome || outcome.kind !== 'complete' || outcome.execution.exitCode !== 0) return undefined
+        // `{{json .CreatedAt}}` prints one quoted instant per volume; anything else refuses below.
+        const created = Buffer.from(outcome.stdout).toString('utf8').trim().split('\n')
+            .map((line) => /^"[^"\\]+"$/.test(line) ? Date.parse(line.slice(1, -1)) : Number.NaN)
+        if (created.length !== ids.length || created.some((instant) => !Number.isFinite(instant))) return undefined
+        return created.some((instant) => instant > Date.parse(savedAt))
+    }
+
     const completeGeneratedData: LifecycleCommandAdapterComposition['completeGeneratedData'] = async (
         context,
         runtime,
@@ -844,7 +890,12 @@ export function createLifecycleCommandAdapters(
             return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
                 diagnostic?.target ?? 'generated-data', diagnostic?.message ?? 'generated data plan is unavailable')
         }
-        if (durable) {
+        const savedAt = durable ? dataModeOutcomeSavedAt(durable) : undefined
+        const recreated = savedAt === undefined ? false : await dataVolumesCreatedSince(context, binding.checkoutRoot,
+            generated.volumes.filter(({ purpose }) => purpose === 'product-data').map(({ id }) => id), savedAt)
+        if (recreated === undefined) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
+            'generated-data', 'the creation times of the product-data volumes could not be read, so cockpit cannot tell whether their data survived')
+        if (durable && !recreated) {
             const steps = projectDataModeObservationSteps({ plan: planned.plan, projection: durable })
             if (!steps) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
                 'generated-data', 'generated data readback authority is unavailable')
@@ -936,7 +987,7 @@ export function createLifecycleCommandAdapters(
             : (probeAuthority === undefined ? undefined : runtimeMeasurementProbeObservation(probeAuthority, docker.value.sha256))
                 ?? Object.freeze({ kind: 'unavailable' as const, code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason: 'runtime measurement probe authority is unavailable or expired' })
         if (observed.kind !== 'complete') return refuse?.(ownerDiagnostics(observed.code, observed.reason, context.stackId))
-        const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(currentBinding.checkoutRoot))
+        const measured = admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(context.namespace.root))
         const certifiedProbe = input.runtimeMeasurementProbeAuthority !== undefined
         if (measured.kind !== 'admitted' && !certifiedProbe) return refuse?.(ownerDiagnostics(measured.code, measured.reason, context.stackId))
         const measurementObservation = measured.kind === 'admitted'
@@ -968,6 +1019,7 @@ export function createLifecycleCommandAdapters(
             const ownership = renderComposeOwnership({
                 sources: declared.map(({ reference, source }) => ({ reference, source })),
                 stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
+                resettableVolumes: currentBinding.config.environment.resettable_volumes,
             })
             if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
                 `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
@@ -1025,7 +1077,7 @@ export function createLifecycleCommandAdapters(
             batchId,
             observationWindow: {
                 startedAt,
-                expiresAt: new Date(Date.parse(startedAt) + MAX_TOPOLOGY_OBSERVATION_WINDOW_MS).toISOString(),
+                expiresAt: new Date(Date.parse(startedAt) + machine.cold_start_seconds * 1_000 + OBSERVATION_WINDOW_HEADROOM_MS).toISOString(),
             },
         })
         if (topologyPlan.kind !== 'planned') return undefined
@@ -1150,6 +1202,13 @@ export function createLifecycleCommandAdapters(
 
     const withAcquiredPorts: LifecycleCommandAdapterComposition['withAcquiredPorts'] = async (context, use, refuse) => {
         if (!bindings.has(context)) return undefined
+        const holderProcess = input?.holderProcess
+        const reaped = await releaseDeadSessionHolders({
+            namespace: context.namespace, stackId: context.stackId,
+            successor: { holderId: context.holderId, checkoutId: context.checkoutId, ...holderProcess },
+            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, execute),
+        })
+        if (reaped.kind === 'refusal') return refuse?.(reaped.diagnostics)
         const now = new Date().toISOString()
         const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
         const acquired = await acquirePortProjection({
@@ -1162,6 +1221,7 @@ export function createLifecycleCommandAdapters(
             listenerTimeoutMs,
             listenerEvidence: await listenerEvidence(context, now, listenerTimeoutMs),
             declarations: context.entrypointDerivatives,
+            ...(holderProcess === undefined ? {} : { holderProcess }),
         })
         if (acquired.kind === 'refusal') return refuse?.(acquired.diagnostics)
         if (acquired.kind !== 'complete') return undefined

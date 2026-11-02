@@ -53,7 +53,7 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
     }),
     CLAIM_CO_TENANT: Object.freeze({
         why: 'another holder still owns or is using the same stack',
-        fix: `for a failed up attempt, run ${cockpitCommand('up')} to resume or ${cockpitCommand('down')} to release; otherwise have every owning session run ${cockpitCommand('sleep')}, then retry`,
+        fix: `for a failed up attempt, run ${cockpitCommand('up')} to resume or ${cockpitCommand('down')} to release; otherwise end each cockpit session the message names (let its command finish, or stop the named process), then retry; a session whose process is gone is released by the next up, sleep, down or reset`,
     }),
     PORT_FAMILY_COLLISION: Object.freeze({
         why: 'one or more ports selected for this stack are already in use',
@@ -190,6 +190,17 @@ function lifecycleSummary(command: string, result: Readonly<Record<string, unkno
         }
         const tally = [...counts].map(([verdict, count]) => `${count} ${verdict === 'pass' ? count === 1 ? 'check passes' : 'checks pass' : verdict}`)
         return escapeForTerminal(`Preflight ${result.verdict === 'pass' ? 'passed' : result.verdict}: ${tally.join(', ') || 'no checks'}.`) + '\n'
+    }
+    // A plain reset only previews; printing nothing left a person unable to tell an empty plan from
+    // one that would delete their data volume.
+    if (command === 'reset' && typeof result.planDigest === 'string' && Array.isArray(result.targets)) {
+        if (typeof result.stackId !== 'string') return ''
+        const targets = result.targets as readonly { kind?: unknown; identity?: unknown; declaration?: unknown }[]
+        if (targets.length === 0) return `${escapeForTerminal(`Nothing to reset (${result.stackId}).`)}\n`
+        const lines = targets.map(({ kind, identity, declaration }) =>
+            `  ${escapeForTerminal(`${String(kind)} ${String(identity)}${declaration === identity ? '' : ` (${String(declaration)})`}`)}\n`)
+        return `${escapeForTerminal(`Reset would remove ${targets.length} ${targets.length === 1 ? 'target' : 'targets'} (${result.stackId}); plan ${result.planDigest}:`)}\n`
+            + `${lines.join('')}Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n`
     }
     const headline = Object.hasOwn(LIFECYCLE_CHANGES, command) && typeof result.change === 'string'
         && Object.hasOwn(LIFECYCLE_CHANGES[command]!, result.change) ? LIFECYCLE_CHANGES[command]![result.change] : undefined

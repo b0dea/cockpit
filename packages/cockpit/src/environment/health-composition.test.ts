@@ -74,7 +74,7 @@ async function fixture(options: { readonly configuredRuntime?: boolean; readonly
         ] : []),
     ].join('\n')
     await writeFile(configPath, config)
-    if ((options.configuredRuntime || options.machineOnly) && !options.unmeasured) await recordSyntheticMeasurement(checkout)
+    if ((options.configuredRuntime || options.machineOnly) && !options.unmeasured) await recordSyntheticMeasurement(home)
     if (options.configuredRuntime) await writeFile(join(checkout, 'compose.yml'), 'services: {}\n')
     if (!options.uncommitted) {
         await run('git', ['-C', checkout, 'add', 'cockpit.toml'])
@@ -779,7 +779,7 @@ else process.exit(64)
                 verdict: 'unavailable',
                 reason: 'Runtime docker-desktop on daemon "docker-desktop" has not been measured on this machine (docker info: OperatingSystem "Docker Desktop", '
                     + `Name "docker-desktop", OSType "linux"; engine 27.1.2; host ${process.platform}; `
-                    + `measured in ${join(dirname(candidate.configPath), '.cockpit', 'local', 'runtime-measurements.json')}: none). `
+                    + `measured in ${join(candidate.namespace.root, 'machine', 'runtime-measurements.json')}: none). `
                     + 'Measure it on this machine with: npx --no cockpit runtime measure --config <your cockpit.toml> --image <local-image>',
             }),
         ]))

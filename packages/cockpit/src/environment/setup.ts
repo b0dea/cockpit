@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import {
     ENVIRONMENT_CODES,
@@ -10,7 +11,7 @@ import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 export const mechanism = {
     id: 'setup-planning',
     module: 'packages/cockpit/src/environment/setup.ts',
-    exports: ['planSetup', 'gitEnvironment'],
+    exports: ['planSetup', 'gitEnvironment', 'resolveLocalRemote'],
 } as const
 
 type ObservedPathKind = 'absent' | 'directory' | 'repository' | 'symlink'
@@ -74,6 +75,24 @@ export function gitEnvironment(ambient: Readonly<Record<string, string | undefin
         GIT_TERMINAL_PROMPT: '0',
         ...approved,
     })
+}
+
+// Git stores a cloned local path as an absolute path, so a relative declaration is resolved against
+// the siblings root (the directory clone runs in) before it is cloned and before it is compared with
+// the observed origin. URLs, scp-like `host:path` (a colon before any slash) and option-like values
+// are left exactly as declared.
+export function resolveLocalRemote(remote: string, siblingsRoot: string): string {
+    if (remote === '' || remote.startsWith('-') || isAbsolute(remote) || remote.startsWith('~')) return remote
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(remote)) return remote
+    const colon = remote.indexOf(':')
+    if (colon !== -1 && !remote.slice(0, colon).includes('/')) return remote
+    const path = resolve(siblingsRoot, remote)
+    try {
+        return realpathSync(path)
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path
+        throw new Error(`cannot resolve local remote ${JSON.stringify(remote)} (${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`, { cause: error })
+    }
 }
 
 function fallbackChecks(
@@ -162,7 +181,7 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
         }
     }
 
-    const remote = input.sibling.remote!
+    const remote = resolveLocalRemote(input.sibling.remote!, siblingsRoot)
     if (observation.kind === 'absent') {
         if (input.sibling.acquire === 'manual') {
             return {
@@ -204,7 +223,8 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
         return refusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, 'repository acquisition target exists but is not a repository', target)
     }
 
-    const current = observation.remotes?.origin
+    const observedOrigin = observation.remotes?.origin
+    const current = observedOrigin === undefined ? undefined : resolveLocalRemote(observedOrigin, siblingsRoot)
     if (current === remote) return { kind: 'complete', status: 0, diagnostics: [], result: result('report', false) }
     if (input.sibling.acquire === 'auto') {
         return refusal(

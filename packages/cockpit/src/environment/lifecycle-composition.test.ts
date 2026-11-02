@@ -182,6 +182,22 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(sessionSteps.filter(({ id }) => id.includes(':stop:'))).toHaveLength(1)
     }, 120_000)
 
+    // A data volume removed after its data was applied (reset, a volume prune) comes back empty, and
+    // `up` used to rerun only the read-only probes against it and refuse on every retry.
+    it('applies the data mode again when its product-data volume was created after the saved outcome', async () => {
+        const scenario = await runGeneratedScenario({ dataMode: 'empty' })
+        expect(scenario.result, JSON.stringify(scenario.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const applied = () => scenario.steps.filter(({ id }) => id === 'data:empty:empty-schema').length
+        expect(applied()).toBe(1)
+        const kept = await runUp({ configPath: scenario.candidate.configPath }, scenario.adapters)
+        expect(kept, JSON.stringify(kept)).toMatchObject({ kind: 'complete', result: { change: 'unchanged' } })
+        expect(applied()).toBe(1)
+        await writeFile(join(scenario.candidate.root, 'volume-created-at'), new Date(Date.now() + 60_000).toISOString())
+        const reseeded = await runUp({ configPath: scenario.candidate.configPath }, scenario.adapters)
+        expect(reseeded, JSON.stringify(reseeded)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(applied()).toBe(2)
+    }, 120_000)
+
     it.each(['empty', 'seeded', 'restored'] as const)('runs and checks the declared %s data mode without selecting the fixture volume', async (dataMode) => {
         const scenario = await runGeneratedScenario({ dataMode })
         const dataSteps = scenario.steps.map(({ id }) => id).filter((id) => id.startsWith('data:'))

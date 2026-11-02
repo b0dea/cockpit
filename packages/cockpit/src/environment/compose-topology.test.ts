@@ -58,3 +58,21 @@ describe('compose topology mount posture', () => {
         })).map(row => row.code)).toEqual([])
     })
 })
+
+describe('compose topology port exposure', () => {
+    const publishing = (hostIp: string | null, published: string | null = '${API_HOST_PORT}'): ComposeServiceTopology =>
+        ({ id: 'api', ports: [{ published, hostIp, target: '3000' }], healthcheck: true, image: null, build: true, mountSources: [] })
+    const exposure = async (...ports: ComposeServiceTopology[]) => (await assessComposeTopology(ports, {
+        projectDirectory: '/unused', portVariables: ['API_HOST_PORT'], hostPaths: [], siblings: [],
+    })).map(row => [row.severity, row.code, row.target])
+
+    // Docker binds every interface when a published port names none; naming one, even 0.0.0.0, is the
+    // author saying what they mean.
+    it('warns on a published port with no host interface and accepts one that names it', async () => {
+        expect(await exposure(publishing(null))).toEqual([['warning', 'COMPOSE_PORT_ALL_INTERFACES', 'compose:api:3000']])
+        expect(await exposure(publishing(null, null))).toEqual([['warning', 'COMPOSE_PORT_ALL_INTERFACES', 'compose:api:3000']])
+        expect(await exposure(publishing('127.0.0.1'))).toEqual([])
+        expect(await exposure(publishing('::1'))).toEqual([])
+        expect(await exposure(publishing('0.0.0.0'))).toEqual([])
+    })
+})

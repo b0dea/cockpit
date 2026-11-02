@@ -33,7 +33,9 @@ import {
     createHolderProcessProbePlan,
     decodeCoordinationRecord,
     observeHolderCheckouts,
+    observeProcessStart,
     prepareDrainOutcomePublication,
+    releaseDeadSessionHolders,
     removeExactCoordinationHolder,
     openReclaimDrainExecution,
     openRuntimeDrainExecution,
@@ -185,6 +187,7 @@ function claimRecord(holders: readonly {
     checkoutId: CheckoutId
     claimedAt: string
     pid?: number
+    processStartedAt?: string
 }[]): StateRecord {
     return {
         format: 'cockpit-state/v1',
@@ -1465,6 +1468,53 @@ function runAcquisition(input: {
         child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(stderr || `child exited ${code}`)))
     })
 }
+
+// A `cockpit session` killed with SIGKILL never runs its closing sleep; its hold made down, reset
+// and sleep refuse forever while naming a session nobody could end.
+describe('dead session holders', () => {
+    const exitedProcess = async () => {
+        const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' })
+        await new Promise<void>((resolve, reject) => { child.once('error', reject); child.once('exit', () => resolve()) })
+        return child.pid!
+    }
+    const ownStart = async () => {
+        const observed = await observeProcessStart(process.pid, executeProbe)
+        if (observed.state !== 'present') throw new Error(JSON.stringify(observed))
+        return observed.startedAt
+    }
+    const holders = async (state: StateNamespace) => {
+        const stored = await readState(state.paths.coordination(stackId))
+        if (stored.kind !== 'complete') throw new Error('expected coordination record')
+        return decodeCoordinationRecord(stored.value, stackId)!
+    }
+
+    it('releases a session whose process is gone and hands a stack it held alone to the requester', async () => {
+        const state = await namespace()
+        const pid = await exitedProcess()
+        await seedCoordination(state, [{ holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid, processStartedAt: '2026-09-07T11:58:59.000Z' }])
+
+        const result = await releaseDeadSessionHolders({ namespace: state, stackId, successor: { holderId: holderA, checkoutId: checkoutA },
+            now: '2026-09-07T12:00:00.000Z', observe: (candidate) => observeProcessStart(candidate, executeProbe) })
+
+        expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderB, pid }] })
+        expect(await holders(state)).toMatchObject({ holders: [{ holderId: holderA, checkoutId: checkoutA }], lastReleasedHolder: holderB, lease: { released: false } })
+    })
+
+    it('keeps a running session and a pid with no recorded start, and releases a stranger reusing a pid', async () => {
+        const state = await namespace()
+        await seedCoordination(state, [
+            { holderId: holderA, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid, processStartedAt: await ownStart() },
+            { holderId: holderB, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: process.pid, processStartedAt: '2000-01-01T00:00:00.000Z' },
+            { holderId: holderC, checkoutId: checkoutA, claimedAt: '2026-09-07T11:59:00.000Z', pid: await exitedProcess() },
+        ])
+
+        const result = await releaseDeadSessionHolders({ namespace: state, stackId, successor: { holderId: `holder:${'2'.repeat(64)}:session` as HolderId, checkoutId: checkoutA },
+            now: '2026-09-07T12:00:00.000Z', observe: (candidate) => observeProcessStart(candidate, executeProbe) })
+
+        expect(result).toMatchObject({ kind: 'complete', released: [{ holderId: holderB }] })
+        expect((await holders(state)).holders.map(({ holderId }) => holderId)).toEqual([holderC, holderA])
+    })
+})
 
 describe('session-aware claims', () => {
     it('keeps a settled runtime outcome reusable through reduction until finalization', async () => {

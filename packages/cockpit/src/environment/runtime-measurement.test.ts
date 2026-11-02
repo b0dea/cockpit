@@ -1,14 +1,15 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { dirname, join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import { runRuntimeMeasure, type RuntimeMeasureProbe } from './runtime-measurement.js'
 import { readLocalRuntimeMeasurements } from './runtime-measurement-record.js'
+import { selectMachineStateRoot } from './state.js'
 import type { RuntimeProbeVerdict } from './runtime-probe.js'
 
 const roots: string[] = []
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 
 const IMAGE_ID = `sha256:${'c'.repeat(64)}`
 const CONFIG = [
@@ -38,6 +39,11 @@ async function measuredHost(endpoint = 'unix:///synthetic/docker.sock') {
         '  "compose version") printf "5.1.2\\n" ;;',
         `  "info --format") printf '%s\\n' '["OrbStack","orbstack","linux"]' ;;`,
         `  "image inspect") printf '%s\\n' '${IMAGE_ID}' ;;`,
+        // Leftover listings and removals: the test seeds `listing-<kind>` and reads `removals`.
+        `  "ps -a") /bin/cat ${JSON.stringify(join(root, 'listing-container'))} 2>/dev/null; exit 0 ;;`,
+        `  "network ls") /bin/cat ${JSON.stringify(join(root, 'listing-network'))} 2>/dev/null; exit 0 ;;`,
+        `  "volume ls") /bin/cat ${JSON.stringify(join(root, 'listing-volume'))} 2>/dev/null; exit 0 ;;`,
+        `  "container rm"|"network rm"|"volume rm") [ -e ${JSON.stringify(join(root, 'rm-fails'))} ] && { echo "refused" >&2; exit 1; }; echo "$1 $2 $(for a; do :; done; echo "$a")" >> ${JSON.stringify(join(root, 'removals'))}; exit 0 ;;`,
         '  *) exit 64 ;;',
         'esac',
         '',
@@ -45,6 +51,13 @@ async function measuredHost(endpoint = 'unix:///synthetic/docker.sock') {
     await chmod(docker, 0o700)
     return { root, configPath, env: { PATH: `${root}:/usr/bin:/bin`, HOME: root } }
 }
+
+async function machineStateRoot(host: Awaited<ReturnType<typeof measuredHost>>): Promise<string> {
+    const selected = await selectMachineStateRoot({ platform: process.platform as 'darwin' | 'linux', home: host.env.HOME })
+    if (selected.kind !== 'complete') throw new Error('state root unavailable')
+    return selected.value
+}
+const machineRecord = async (host: Awaited<ReturnType<typeof measuredHost>>) => join(await machineStateRoot(host), 'machine', 'runtime-measurements.json')
 
 function verdict(passed: boolean, runtimeExecutableSha256: string): RuntimeProbeVerdict {
     return {
@@ -82,8 +95,9 @@ describe('runtime measurement recording', () => {
         }
         const today = new Date().toISOString().slice(0, 10)
         const other = { runtime: 'colima', daemon: 'colima', engineVersion: '27.0.1', composeFloor: '2.20.0', measuredOn: '2026-09-26' }
-        await mkdir(join(host.root, '.cockpit', 'local'), { recursive: true })
-        await writeFile(join(host.root, '.cockpit', 'local', 'runtime-measurements.json'), JSON.stringify({
+        const record = await machineRecord(host)
+        await mkdir(dirname(record), { recursive: true })
+        await writeFile(record, JSON.stringify({
             format: 'cockpit-runtime-measurements/v1',
             measurements: [other, { runtime: 'orbstack', daemon: 'orbstack', engineVersion: '28.0.0', composeFloor: '2.0.0', measuredOn: '2026-09-01' }],
         }))
@@ -101,25 +115,28 @@ describe('runtime measurement recording', () => {
         for (const env of executionEnvironments.slice(2)) expect(env).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic' })
         expect(prefixes).toEqual(['synthetic-measure'])
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
-        expect(await readLocalRuntimeMeasurements(host.root)).toEqual({
-            kind: 'read', path: join(host.root, '.cockpit', 'local', 'runtime-measurements.json'),
+        expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toEqual({
+            kind: 'read', path: record,
             rows: [other, { runtime: 'orbstack', daemon: 'orbstack', engineVersion: '29.4.0', composeFloor: '5.1.2', measuredOn: today }],
         })
-        expect(await readFile(join(host.root, '.cockpit', 'local', '.gitignore'), 'utf8')).toContain('\n*\n')
+        // A measurement is a machine fact: nothing is written beside this checkout's cockpit.toml,
+        // so another worktree of the same cockpit reads the same record instead of measuring again.
+        await expect(stat(join(host.root, '.cockpit'))).rejects.toMatchObject({ code: 'ENOENT' })
     })
 
     it('replaces an unreadable record with the new measurement and says what it discarded', async () => {
         const host = await measuredHost()
-        await mkdir(join(host.root, '.cockpit', 'local'), { recursive: true })
-        await writeFile(join(host.root, '.cockpit', 'local', 'runtime-measurements.json'), '{"format":"other"}')
-        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'unreadable', reason: expect.stringMatching(/^the file is not a cockpit-runtime-measurements\/v1 record/) })
+        const record = await machineRecord(host)
+        await mkdir(dirname(record), { recursive: true })
+        await writeFile(record, '{"format":"other"}')
+        expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toMatchObject({ kind: 'unreadable', reason: expect.stringMatching(/^the file is not a cockpit-runtime-measurements\/v1 record/) })
 
         const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
             { execute: executeProbe, probe: async (request) => verdict(true, request.executable.sha256) })
 
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
         expect(outcome.artifact).toContain('the previous record was unreadable and was replaced: the file is not a cockpit-runtime-measurements/v1 record')
-        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'read', rows: [{ runtime: 'orbstack', engineVersion: '29.4.0' }] })
+        expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toMatchObject({ kind: 'read', rows: [{ runtime: 'orbstack', engineVersion: '29.4.0' }] })
     })
 
     it('passes the exact local Unix selection to the runtime probe without changing endpoint identity', async () => {
@@ -175,7 +192,7 @@ describe('runtime measurement recording', () => {
             message: expect.stringMatching(/DOCKER_CONTEXT.*tcp:\/\/synthetic\.invalid:2376/),
         }] })
         expect(calls).toBe(0)
-        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'read', rows: [] })
+        expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toMatchObject({ kind: 'read', rows: [] })
     })
 
     it('refuses a Windows pipe on a POSIX host before runtime probing or daemon commands', async () => {
@@ -254,6 +271,65 @@ describe('runtime measurement recording', () => {
             message: expect.stringMatching(/^runtime orbstack was not measured as supported \(candidate failed, broken control rejected\): profile activation.*nothing was recorded$/),
         }] })
         expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
-        expect(await readLocalRuntimeMeasurements(host.root)).toMatchObject({ kind: 'read', rows: [] })
+        expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toMatchObject({ kind: 'read', rows: [] })
+    })
+
+    it('removes only this cockpit\'s dead probe leftovers before probing, names them, and keeps a live measure\'s', async () => {
+        const host = await measuredHost()
+        const scratch = join(host.root, 'tmp')
+        await mkdir(scratch)
+        vi.stubEnv('TMPDIR', scratch)
+        const dead = 'a'.repeat(32)
+        const live = 'b'.repeat(32)
+        const foreign = 'c'.repeat(32)
+        const project = (batch: string, prefix = 'synthetic-measure') => `${prefix}-probe-${batch}-0123456789ab`
+        await writeFile(join(host.root, 'listing-container'), [
+            `${'1'.repeat(64)}\t${project(dead)}\t${dead}`, `${'2'.repeat(64)}\t${project(live)}\t${live}`,
+            `${'3'.repeat(64)}\t${project(foreign, 'other-cockpit')}\t${foreign}`, `${'4'.repeat(64)}\t\t`,
+            // Named like a dead probe but carrying a different probe label: not provably cockpit's.
+            `${'6'.repeat(64)}\t${project(dead)}\t${foreign}`,
+        ].join('\n'))
+        await writeFile(join(host.root, 'listing-network'), `${'5'.repeat(64)}\t${project(dead)}\t${dead}\n`)
+        await writeFile(join(host.root, 'listing-volume'), `${project(dead)}-data\t${project(dead)}\t${dead}\n`)
+        // A measure that exited without cleaning up, whose probe directory still names its batch.
+        const deadDirectory = join(scratch, 'cockpit-runtime-measure-AAAAAA')
+        await mkdir(join(deadDirectory, 'probe'), { recursive: true })
+        await writeFile(join(deadDirectory, 'owner'), '2147483646\n')
+        await writeFile(join(deadDirectory, 'probe', `candidate-${dead}.yml`), '')
+        // A measure whose owner is still running: its batch must survive.
+        const liveDirectory = join(scratch, 'cockpit-runtime-measure-BBBBBB')
+        await mkdir(join(liveDirectory, 'probe'), { recursive: true })
+        await writeFile(join(liveDirectory, 'owner'), `${process.pid}\n`)
+        await writeFile(join(liveDirectory, 'probe', `candidate-${live}.yml`), '')
+
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
+            { execute: executeProbe, probe: async (request) => verdict(true, request.executable.sha256) })
+
+        expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
+        expect((await readFile(join(host.root, 'removals'), 'utf8')).trim().split('\n')).toEqual([
+            `container rm ${'1'.repeat(64)}`, `network rm ${'5'.repeat(64)}`, `volume rm ${project(dead)}-data`,
+        ])
+        expect(outcome.artifact).toContain('removed what an interrupted measure left behind')
+        expect(outcome.artifact).toContain(`container ${'1'.repeat(12)} (project ${project(dead)})`)
+        expect(outcome.artifact).toContain(`left in place, since a measure may still be running: container ${'2'.repeat(12)} (project ${project(live)})`)
+        await expect(stat(deadDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect((await stat(liveDirectory)).isDirectory()).toBe(true)
+    })
+
+    it('refuses to probe when a leftover from an interrupted measure cannot be removed, and names it', async () => {
+        const host = await measuredHost()
+        const scratch = join(host.root, 'tmp')
+        await mkdir(scratch)
+        vi.stubEnv('TMPDIR', scratch)
+        await writeFile(join(host.root, 'listing-container'), `${'1'.repeat(64)}\tsynthetic-measure-probe-${'a'.repeat(32)}-0123456789ab\t${'a'.repeat(32)}\n`)
+        await writeFile(join(host.root, 'rm-fails'), '')
+        let probed = false
+
+        const outcome = await runRuntimeMeasure({ configPath: host.configPath, image: 'node:22-alpine', env: host.env },
+            { execute: executeProbe, probe: async (request) => { probed = true; return verdict(true, request.executable.sha256) } })
+
+        expect(probed).toBe(false)
+        expect(outcome).toMatchObject({ status: 2, diagnostics: [{ message: expect.stringContaining(`container ${'1'.repeat(12)} (project synthetic-measure-probe-${'a'.repeat(32)}-0123456789ab): `) }] })
+        expect(outcome.diagnostics[0]!.message).toContain('could not be removed')
     })
 })

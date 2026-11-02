@@ -1,9 +1,11 @@
 /**
- * Owns this machine's runtime measurements: `.cockpit/local/runtime-measurements.json` beside
- * cockpit.toml, one row per measured runtime. A measurement is a fact about the container runtime on
- * one machine, not something the team declares, so it lives in the directory that ignores itself
- * rather than in cockpit.toml: teammates on different runtimes would otherwise overwrite each other's
- * rows, and recording one would change guarded configuration that only a human `sync` accepts.
+ * Owns this machine's runtime measurements: `machine/runtime-measurements.json` under the per-user
+ * state root, one row per measured runtime. A row is keyed by the runtime product, the daemon
+ * `docker info` names and the engine version, and says nothing about a checkout, so every checkout
+ * and git worktree of every cockpit on this machine shares it; a different runtime, daemon or
+ * engine matches no row and is refused until it is measured. It is not something the team declares,
+ * so it is not in cockpit.toml: teammates on different runtimes would overwrite each other's rows,
+ * and recording one would change guarded configuration that only a human `sync` accepts.
  *
  * It reads and writes the file and nothing else: `runtime-measurement.ts` produces rows and
  * `runtime.ts` decides whether a row admits the observed runtime.
@@ -20,12 +22,9 @@ export const mechanism = {
     exports: ['readLocalRuntimeMeasurements', 'recordLocalRuntimeMeasurement'],
 } as const
 
-const MEASUREMENTS_PATH = '.cockpit/local/runtime-measurements.json'
+const MEASUREMENTS_PATH = 'machine/runtime-measurements.json'
 const FORMAT = 'cockpit-runtime-measurements/v1'
 const ROW_LIMIT = 32
-// Written only when the directory is new; `sync` later replaces it with the guard's own copy, which
-// ignores everything too.
-const IGNORE_BYTES = '# cockpit-owned: machine-local facts, never committed\n*\n'
 
 const Text = z.string().min(1).max(128).regex(/^[^\u0000-\u001f\u007f]+$/)
 const Row = z.object({
@@ -49,8 +48,8 @@ function errorCode(error: unknown): string {
 }
 
 /** Read the rows; a missing file is an empty record, anything else unreadable names why. */
-export async function readLocalRuntimeMeasurements(cockpitRoot: string): Promise<LocalRuntimeMeasurements> {
-    const path = join(cockpitRoot, MEASUREMENTS_PATH)
+export async function readLocalRuntimeMeasurements(stateRoot: string): Promise<LocalRuntimeMeasurements> {
+    const path = join(stateRoot, MEASUREMENTS_PATH)
     let bytes: Buffer
     try {
         const read = await readBoundedInput(path)
@@ -102,26 +101,18 @@ async function replaceFile(directory: string, name: string, bytes: string): Prom
 /**
  * Record one passing measurement, replacing the row for the same runtime and daemon. A record that
  * cannot be read is replaced too, because every row in it is re-derivable by measuring, and the
- * result says so; refusing would leave an agent no way forward, since the directory is a guard control.
+ * result says so; refusing would leave an agent no way forward.
  */
-export async function recordLocalRuntimeMeasurement(cockpitRoot: string, row: RuntimeMeasurementRow): Promise<RecordResult> {
-    const path = join(cockpitRoot, MEASUREMENTS_PATH)
+export async function recordLocalRuntimeMeasurement(stateRoot: string, row: RuntimeMeasurementRow): Promise<RecordResult> {
+    const path = join(stateRoot, MEASUREMENTS_PATH)
     const checked = Row.safeParse(row)
     if (!checked.success) return Object.freeze({ kind: 'refusal', path, reason: `the measurement row is malformed (${checked.error.issues[0]?.message ?? 'invalid'})` })
     try {
-        const parent = join(cockpitRoot, '.cockpit')
-        const directory = join(parent, 'local')
-        for (const candidate of [parent, directory]) {
-            const state = await plainDirectory(candidate)
-            if (state === 'absent') await mkdir(candidate, { mode: 0o700 })
-            else if (state !== 'present') return Object.freeze({ kind: 'refusal', path, reason: state })
-        }
-        const ignore = join(directory, '.gitignore')
-        try { await lstat(ignore) } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-            await replaceFile(directory, '.gitignore', IGNORE_BYTES)
-        }
-        const current = await readLocalRuntimeMeasurements(cockpitRoot)
+        const directory = join(stateRoot, 'machine')
+        await mkdir(directory, { recursive: true, mode: 0o700 })
+        const state = await plainDirectory(directory)
+        if (state !== 'present') return Object.freeze({ kind: 'refusal', path, reason: state })
+        const current = await readLocalRuntimeMeasurements(stateRoot)
         const existing = current.kind === 'read' ? current.rows : []
         const replaced = existing.find((candidate) => candidate.runtime === row.runtime && candidate.daemon === row.daemon) ?? null
         const kept = existing.filter((candidate) => candidate !== replaced)

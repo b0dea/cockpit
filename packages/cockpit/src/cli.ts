@@ -49,6 +49,7 @@ import { executeForegroundProcess, executePlan, executeProbe } from './environme
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { createLifecycleCommandAdapters } from './environment/lifecycle-composition.js'
+import { observeProcessStart } from './environment/claims.js'
 import { createReadCommandAdapters } from './environment/read-composition.js'
 import { probeInstalledRuntime, runRuntimeMeasure } from './environment/runtime-measurement.js'
 import { initializeLocalGitRepository, runSiblingAdd, runSiblingRemove, type SiblingAddInput, type SiblingRemoveInput } from './environment/sibling-registration.js'
@@ -614,18 +615,22 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             const configPath = resolve(input.configPath)
             return runSleepApplication({ configPath }, lifecycleAdapters(configPath, sessionId))
         },
-        session: (input) => {
-            if (inherited === null) return Promise.resolve(usageOutcome(
-                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID'))
+        session: async (input) => {
+            if (inherited === null) return usageOutcome(
+                'CLI_USAGE_INVALID', 'COCKPIT_SESSION_ID must be a canonical UUID', 'COCKPIT_SESSION_ID')
             const configPath = resolve(input.configPath)
             const sessionId = input.sessionId
             const sessionEnvironment = Object.freeze({ ...env, COCKPIT_SESSION_ID: sessionId })
             const childEnv = concreteEnvironment(sessionEnvironment)
+            // Without its start time the hold is never released for a dead process, because the
+            // pid alone may since name another one; the session still runs, with that weaker hold.
+            const started = await observeProcessStart(process.pid, executeProbe)
             const adapters = createLifecycleCommandAdapters({
                 configPath,
                 env: sessionEnvironment,
                 sessionId,
                 timeoutMs: RUNTIME_STEP_TIMEOUT_MS,
+                holderProcess: { pid: process.pid, ...(started.state === 'present' ? { processStartedAt: started.startedAt } : {}) },
             }, executeProbe)
             return runSessionApplication({ ...input, configPath, cwd: process.cwd(), env: childEnv }, {
                 up: (request) => runUpApplication(request, adapters),

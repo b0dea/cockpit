@@ -186,8 +186,17 @@ cold_start_seconds = 300
             if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded.diagnostics))
             return { file: loaded.result.source.sha256, runtime: loaded.result.runtimeSha256 }
         }
+        const machine = (coldStart: number) => `\n[environment]\ncompose_files = ["compose.yml"]\nresettable_volumes = ["data"]\n[environment.machine]\nruntime_memory_mb = 512\nruntime_cpus = 1\nfree_disk_mb = 1024\ncold_start_seconds = ${coldStart}\n`
+        const floored = await identity(`${validConfig}${machine(120)}`)
+        // The floor, the cold-start budget and the reset list are held on the host, not in a
+        // container, so raising them leaves a running stack alone.
+        for (const hostOnly of [
+            `${validConfig}${machine(600)}`,
+            `${validConfig}${machine(120).replace('runtime_memory_mb = 512', 'runtime_memory_mb = 1024')}`,
+            `${validConfig}${machine(120).replace('["data"]', '["data", "cache"]')}`,
+        ]) expect((await identity(hostOnly)).runtime, hostOnly).toBe(floored.runtime)
         const base = await identity(validConfig)
-        const unused = '[[sibling]]\nslug = "docs"\ndir = "docs"\nmount = "none"\nacquire = "none"\nvar = "DOCS_DIR"\npurpose = "Synthetic docs"\n'
+        const unused ='[[sibling]]\nslug = "docs"\ndir = "docs"\nmount = "none"\nacquire = "none"\nvar = "DOCS_DIR"\npurpose = "Synthetic docs"\n'
         for (const cosmetic of [
             validConfig.replace('purpose = "Synthetic API"', 'purpose = "Synthetic API, described again"'),
             `# a comment\n${validConfig.replaceAll(' = ', '   =   ')}`,

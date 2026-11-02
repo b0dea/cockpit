@@ -207,7 +207,7 @@ function producers(input: {
         }, input.execute)
         if (observed.kind !== 'complete') return undefined
         return observeRuntimeMeasurement(
-            admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(dirname(input.config.result.source.path))),
+            admitRuntimeMeasurement(observed, await readLocalRuntimeMeasurements(input.namespace.root)),
             input.stack,
         )
     })() : undefined

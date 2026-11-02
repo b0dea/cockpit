@@ -100,6 +100,7 @@ const generatedConfig = {
     sibling: [{ slug: 'app', dir: 'app', mount: 'always', acquire: 'none', var: 'APP_DIR', toolchain: 'node', purpose: 'Synthetic service', environment_files: [{ template: '.env.example', instance: '.env' }] }],
     ports: { bases: { WEB_PORT: 4100 } },
     environment: {
+        resettable_volumes: ['product-data'],
         install_policies: [{ toolchain: 'node', volume: 'dependencies', lockfile: 'package-lock.json', install: ['npm', 'ci'], load_probe: ['node', 'synthetic-probe.mjs'] }],
         generated: {
             compose_file: 'compose.generated.yml',
@@ -344,6 +345,7 @@ describe('generated environment declarations', () => {
         ['undeclared sibling', (config: typeof generatedConfig) => { config.environment.generated.services[0].sibling = 'missing' }],
         ['undeclared lease', (config: typeof generatedConfig) => { config.environment.generated.services[0].ports[0].host_variable = 'MISSING_PORT' }],
         ['undeclared policy', (config: typeof generatedConfig) => { Reflect.set(config.environment.generated.volumes[0], 'install_policy', 'missing') }],
+        ['undeclared resettable volume', (config: typeof generatedConfig) => { Reflect.set(config.environment, 'resettable_volumes', ['product-dta']) }],
         ['too-short measured start', (config: typeof generatedConfig) => { config.environment.generated.services[0].health.start_period_seconds = 1 }],
         ['nonlocal sink', (config: typeof generatedConfig) => { config.environment.generated.vendors[0].endpoints[0].sink = 'https://vendor.invalid/' }],
         ['forward operation reference', (config: typeof generatedConfig) => { config.environment.generated.data.modes[1].operations[0].after = ['fixtures'] }],

@@ -79,9 +79,13 @@ function derivedConfig(): Record<string, unknown> {
 
 describe('registry derivation', () => {
     it('folds one profile sibling into the complete effective configuration and reference indexes', () => {
-        const result = deriveRegistry(derivedConfig())
+        const input = derivedConfig()
+        // A row-derived volume is one of the stack's volumes, so reset may name it.
+        Reflect.set(input.environment as object, 'resettable_volumes', ['worker-dependencies'])
+        const result = deriveRegistry(input)
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') return
+        expect(result.result.config.environment.resettable_volumes).toEqual(['worker-dependencies'])
 
         const worker = result.result.config.environment.generated!.services.find(({ id }) => id === 'worker')!
         expect(worker).toMatchObject({
@@ -135,6 +139,7 @@ describe('registry derivation', () => {
             config.sibling[1].derives.generated.install_policies[0].volume = 'dependencies'
             config.sibling[1].derives.generated.additional_mounts[0].source = 'dependencies'
         }],
+        ['undeclared resettable volume', (config: any) => { config.environment.resettable_volumes = ['worker-dependencie'] }],
         ['duplicate policy selector', (config: any) => { config.sibling[1].derives.generated.install_policies[0].lockfile = 'package-lock.json' }],
         ['existing generated cross-check failure', (config: any) => { config.sibling[1].derives.generated.service.health.probe.service = 'app' }],
         ['duplicate MCP reference', (config: any) => { config.sibling[1].derives.mcp_sources.push(config.sibling[1].derives.mcp_sources[0]) }],

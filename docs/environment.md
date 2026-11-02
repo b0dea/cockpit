@@ -64,6 +64,10 @@ with `COMPOSE_TOPOLOGY_UNAVAILABLE` if Docker cannot produce it. It also checks:
 - a published host port not written as a `[ports.bases]` variable, such as `"127.0.0.1:4200:3000"`,
   fails with `COMPOSE_PORT_NOT_LEASED`, because the same number collides across worktrees and
   parallel stacks; write `"127.0.0.1:${API_HOST_PORT}:3000"` instead;
+- a published port with no host interface, such as `"${API_HOST_PORT}:3000"`, warns with
+  `COMPOSE_PORT_ALL_INTERFACES`, because Docker then binds every interface and the service is
+  reachable from the network; write `"127.0.0.1:${API_HOST_PORT}:3000"`, or name `0.0.0.0` when you
+  mean the wider exposure;
 - a service with no Compose healthcheck warns with `COMPOSE_HEALTHCHECK_MISSING`, because running
   is then treated as ready;
 - an image referenced by tag rather than digest warns with `COMPOSE_IMAGE_UNPINNED`.
@@ -255,7 +259,9 @@ that failed. The holder and lease stay, so the next `up` resumes and `down` remo
 
 When `up` starts services, it times the start, from the earliest recorded service start to the
 moment the last newly started service reports healthy. If that exceeds `cold_start_seconds`, `up`
-refuses with `MACHINE_COLD_START_EXCEEDED`. A successful result reports `coldStart.measuredMillis`,
+refuses with `MACHINE_COLD_START_EXCEEDED`. Each service start may run for the whole declared
+budget, and the configuration refuses a budget above 3600 seconds, the longest `up` holds one
+start open. A successful result reports `coldStart.measuredMillis`,
 `limitMillis` and `headroomMillis`. A partial resume times only the services that run started.
 Joining a stack that is already running, or that another holder started, reports no duration
 rather than an invented one.
@@ -263,7 +269,10 @@ rather than an invented one.
 ### Release the stack
 
 `sleep` removes the current holder. It stops the shared runtime only when no other holder remains,
-so one holder cannot stop another's environment. `stackId` names the shared runtime and
+so one holder cannot stop another's environment. Stopping the runtime also releases the stack's port
+lease, so a stopped stack does not use up one of the `ports.count` families other checkouts need;
+the next `up` leases afresh and may land on a different family, so read the ports and entrypoints
+it returns instead of reusing the earlier ones. `stackId` names the shared runtime and
 `checkoutId` names one checkout; two checkouts with the same stack ID are still not
 interchangeable.
 
@@ -275,6 +284,14 @@ explicitly. Ordinary cockpit lifecycle commands run inside the wrapper use the s
 identity, and a second `cockpit session` wrapper is refused. Once cleanup completes, `session`
 exits with the command's own status, or 128 plus the signal number (and names the signal) when a
 signal ended it. It exits 2 when cleanup fails and 130 when you cancel it.
+
+A session records its wrapper's process ID and start time with its hold. A wrapper that dies
+without its closing `sleep`, from SIGKILL, a crash or a closed terminal, leaves that hold behind;
+the next `up`, `sleep`, `down` or `reset` from the checkout sees that the process is gone and
+releases it. When it was the last hold, the command's own hold takes the running stack over, so
+`sleep` stops it and `down` removes it. A hold whose process is still running, or whose start time
+`ps` could not confirm, is kept: the `CLAIM_CO_TENANT` refusal names each such holder and its
+process ID, so you can end that command, for example with `kill <pid>`, and retry.
 
 The command `session` runs gets the stack's addresses in its environment, so an agent started under
 it can reach the stack without rerunning `up --json`:
@@ -312,14 +329,23 @@ clears startup progress only after confirming the removals, which lets the next 
 generated identity. `down` also retires a stack that `sleep` or an ended `session` left stopped:
 with no holder left, it claims the stack for this checkout without starting anything and removes
 it, so you do not have to run `up` first. While another session still holds the stack, `down`
-refuses with `CLAIM_CO_TENANT`; end that `cockpit session` or run `cockpit sleep` from it, then
-retry.
+refuses with `CLAIM_CO_TENANT` and names that session's holder and process; end that
+`cockpit session`, then retry.
 
-`reset` first shows an exact preview of the generated volumes and declared generated host paths it
-would delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at a
+`reset` first shows an exact preview of the declared volumes and generated host paths it would
+delete. Plain and `--json` reset calls delete nothing. Interactive reset needs a person at a
 terminal outside CI; the approval stays with the process that showed the preview, which checks
 everything again before it acts. `down` and `reset` delete only from a local Docker daemon, which
 they fix once per run; see [Choose the Docker daemon](#choose-the-docker-daemon).
+
+Name each `environment.resettable_volumes` entry by its key in the Compose file: the
+`[[environment.generated.volumes]]` `id` in a generated stack, or the top-level `volumes:` key in a
+compose-first one. Docker's volume name carries a per-checkout project prefix, so it is not
+accepted. A name that no declared volume has fails configuration validation in a generated stack.
+In a compose-first stack, `sync`, `check` and every runtime command, `down` included, refuse it,
+and an `external` volume too, because cockpit cannot label it. A declared volume that does not exist yet is left out of the
+preview. A volume that an earlier `cockpit.toml` created is still this stack's data, and `reset`
+deletes it with the rest.
 
 Every destructive action is recorded durably before it starts. If cockpit itself is interrupted, a
 detached supervisor process keeps track of that exact attempt. The next `sleep`, `down` or approved
@@ -336,7 +362,9 @@ destroys the records cockpit needs to repair it safely.
 A stack's identity, carried in its ownership labels and saved progress, is a digest of the
 declarations that reach its containers, not of the bytes of `cockpit.toml`. Editing a sibling's
 `purpose`, the guards, MCP, surfaces, comments or formatting leaves a running stack alone, and the
-next `up` resumes it. `sleep` and `reset` keep the previous generated identity so the stack can
+next `up` resumes it. So do the fields the host checks rather than the containers receive:
+`[environment.machine]` (including `cold_start_seconds`), `addressing`, `authentication`,
+`posture_requirements`, `resettable_volumes` and `entrypoint_derivatives`. `sleep` and `reset` keep the previous generated identity so the stack can
 resume.
 
 A change to services, ports, mounts, images or anything else the containers receive gives the
@@ -436,12 +464,17 @@ The command runs a probe in a throwaway directory: a candidate stack that exerci
 mounts in both directions, labels, health, logs, recovery and teardown, next to a deliberately
 broken Compose file that the runtime must reject. It uses only the local image you name and never
 pulls. Its Compose project is `<cockpit.name>-probe-<id>`, so anything it leaves on a shared daemon
-names the cockpit that ran it, and the probe removes it before returning. The probe runs only from
+names the cockpit that ran it, and the probe removes it before returning. If a measure was killed
+before it could, the next `runtime measure` first removes that cockpit's own probe containers,
+network and volume and the stale `cockpit-runtime-measure-*` temporary directory, and lists what it
+removed. It leaves alone anything that may belong to a measure still running, and refuses to probe
+when a leftover cannot be removed, naming it. The probe runs only from
 an installed `@b0dea/cockpit` package and only against a daemon that passes the
 [local endpoint rules](#choose-the-docker-daemon).
 
 If the candidate passes and the broken file is rejected, the command records the measurement in
-`.cockpit/local/runtime-measurements.json` beside `cockpit.toml`, a directory Git ignores. The
+`machine/runtime-measurements.json` under cockpit's per-user state root (the same root the stack
+state lives in), so every checkout and git worktree on this machine reads it and measures once. The
 record is keyed by the runtime identity and the daemon name `docker info` reports, and holds the
 engine version and the Compose version the probe saw, which becomes the Compose floor. Measuring
 again replaces the row for the same runtime and daemon and keeps the others, so switching between
@@ -651,7 +684,10 @@ Run the declared flow in this order. Replace the two `*-gate-id` placeholders wi
 ```
 
 The first `up` applies the default data mode. Reset previews exactly which data and auth files it
-will remove; only the interactive command applies that preview. The second `up` reseeds, the first
+will remove; only the interactive command applies that preview. The second `up` reseeds: a
+product-data volume created after the data mode was last applied, whether `reset`, a
+`docker volume prune` or a runtime reset removed the old one, holds none of that data, so `up`
+applies the default data mode again rather than only rerunning its read-only probes. The first
 product gate mints one signed-in state per persona, and the second proves both an allowed and a
 denied operation. Running only part of a gate is PARTIAL, never a pass of the whole gate.
 
@@ -763,7 +799,9 @@ What the checks compare:
 - **Git remotes.** A declared sibling remote is compared with the remote selected by that
   checkout's branch upstream; cockpit does not rewrite Git remotes. A checkout with no upstream has
   nothing to compare, and the result says so. Once an upstream is selected, it must be available
-  and match; a missing or diverged upstream blocks the gate.
+  and match; a missing or diverged upstream blocks the gate. A `remote` that is a relative local path
+  (not a URL or `host:path`) is resolved against the siblings root, the directory `setup` clones
+  from, so `setup` accepts the absolute origin Git records for the clone.
 - **Surfaces.** Generated files must match the ownership manifest and stay within the guide line
   cap and the built-in harness skill caps. Custom outputs and plugin bundle copies are checked for
   being current, but no harness-side cap on their always-loaded size applies to them. Whether each
@@ -783,10 +821,13 @@ What the checks compare:
   declaration, host-floor checks do not apply.
 
 `logs` reads one declared service from the selected running stack. `--tail` accepts 1 through 10000
-records, and `--since` limits the time range. Records keep their stream and restart details. In the
-CLI, interrupting `--follow` returns exit 130 with the records collected before the process group
-stopped; programmatic callers must supply an abort signal. Collection is limited in time and output
-size; the CLI allows ten seconds for it and reports a timeout as a failure. Output is returned after
+records, and `--since` limits the time range. Records keep their stream and restart details. A read
+without `--follow` has ten seconds and reports a timeout as a failure. `--follow` collects until you
+interrupt it, the container stops, or two hours pass; interrupting it in the CLI returns exit 130
+with the records collected before the process group stopped, and programmatic callers must supply an
+abort signal. Output is limited to 1 MiB of the container's stdout and 64 KiB of its stderr. Past
+that, `logs` keeps the newest whole records that fit, sets `truncated` to `true` in the JSON result
+and warns with `LOGS_TRUNCATED`; lower `--tail` to stay under it. Output is returned after
 collection, including structured records in JSON mode, rather than streamed.
 
 `baseline-record` is experimental. It is the only command that writes an environment baseline, and

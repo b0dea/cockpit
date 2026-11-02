@@ -458,8 +458,10 @@ describe('lifecycle application contracts', () => {
 
     it('returns the cancellation status only after releasing confirmed session ownership', async () => {
         const stack = `stack:${'5'.repeat(64)}` as StackId
+        // A co-tenant keeps the stack, but the session's own hold is gone; "cleanup retained" read
+        // as the hold having been kept.
         const sleep = vi.fn(async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [],
-            result: { stackId: stack, change: 'stopped' as const } }))
+            result: { stackId: stack, change: 'retained' as const } }))
         const outcome = await runSession({
             configPath: '/synthetic/cockpit.toml', argv: ['synthetic-agent'], cwd: '/synthetic', env: { PATH: '/synthetic/bin' },
         }, {
@@ -477,7 +479,7 @@ describe('lifecycle application contracts', () => {
 
         expect(sleep).toHaveBeenCalledOnce()
         expect(outcome).toMatchObject({ kind: 'refusal', status: 130, diagnostics: [{
-            code: 'EXECUTION_ABORTED', message: expect.stringContaining('cleanup stopped'),
+            code: 'EXECUTION_ABORTED', message: expect.stringContaining('its hold was released and another holder keeps the stack running'),
         }] })
 
         const controller = new AbortController()

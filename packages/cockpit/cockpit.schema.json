@@ -3648,7 +3648,7 @@
               "type": "integer",
               "minimum": 0,
               "exclusiveMinimum": true,
-              "maximum": 9007199254740991
+              "maximum": 3600
             }
           },
           "required": [
@@ -10720,6 +10720,10 @@
     {
       "path": "environment.resettable_volumes[]",
       "rule": "unique"
+    },
+    {
+      "path": "environment.resettable_volumes[]",
+      "rule": "declared_compose_volume_key"
     },
     {
       "path": "environment.generated_host_paths[]",

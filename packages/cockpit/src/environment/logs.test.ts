@@ -286,7 +286,8 @@ describe('runtime logs', () => {
         if (result.kind !== 'planned') return
         expect(result.step.argv).toEqual([runtimePath, 'container', 'logs', '--timestamps', '--since', input.since, '--tail', '100', '--follow', input.containerId])
         expect(Object.isFrozen(result.step.argv)).toBe(true)
-        expect(result.step).toEqual(expect.objectContaining({ timeoutMs: 10_000, stdoutLimitBytes: 4096 }))
+        expect(result.step).toEqual(expect.objectContaining({ timeoutMs: 7_200_000, stdoutLimitBytes: 4096, outputOverflow: 'retain-tail' }))
+        expect(planLogs({ ...input, follow: false })).toMatchObject({ kind: 'planned', step: { timeoutMs: 10_000 } })
     })
 
     it('reads logs from the local socket or context the lifecycle selected', () => {
@@ -413,7 +414,7 @@ describe('runtime logs', () => {
         const execute = vi.fn(executeProbe)
         const result = await collectLogs(plan, execute, signal)
         expect(execute).toHaveBeenCalledWith(plan.step, { signal })
-        expect(result).toEqual({ kind: 'complete', records: [expect.objectContaining({ service: 'api', message: 'password=[redacted]', restart: false })] })
+        expect(result).toEqual({ kind: 'complete', truncated: false, records: [expect.objectContaining({ service: 'api', message: 'password=[redacted]', restart: false })] })
         expect(JSON.stringify(result)).not.toContain('hunter2')
     })
 
@@ -437,16 +438,17 @@ describe('runtime logs', () => {
 
         const result = await collectLogs(plan, executeProbe, controller.signal)
 
-        expect(result).toEqual({ kind: 'cancelled', records: [] })
+        expect(result).toEqual({ kind: 'cancelled', records: [], truncated: false })
     })
 
-    it('returns cancelled with authenticated redacted records after stopping a running follow', async () => {
+    it('returns cancelled with authenticated redacted records after stopping a follow that outlived the step budget', async () => {
         const ready = join(runtimeDirectory, 'follow-ready')
         const controller = new AbortController()
         const { since, tail, follow, ...request } = input
+        const stepBudgetMs = 1000
         const result = runLogs({ configPath: '/synthetic/cockpit.toml', service: input.service,
             since, tail, follow, json: true }, {
-            observe: async () => ({ request: { ...request, env: { ...input.env,
+            observe: async () => ({ request: { ...request, timeoutMs: stepBudgetMs, env: { ...input.env,
                 COCKPIT_TEST_MODE: 'follow', COCKPIT_TEST_READY: ready,
                 COCKPIT_TEST_OUTPUT: '2026-09-07T00:00:01Z token=follow-canary\n',
             } } }),
@@ -455,13 +457,14 @@ describe('runtime logs', () => {
         })
         try {
             await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 5_000 })
+            await new Promise((resolve) => setTimeout(resolve, stepBudgetMs * 2))
         } finally {
             controller.abort()
         }
 
         const outcome = await result
         expect(outcome).toMatchObject({ kind: 'cancelled', status: 130, diagnostics: [],
-            result: { json: true, records: [{ stream: 'stdout', timestamp: '2026-09-07T00:00:01Z' }] } })
+            result: { json: true, truncated: false, records: [{ stream: 'stdout', timestamp: '2026-09-07T00:00:01Z' }] } })
         expect(JSON.stringify(outcome)).not.toContain('follow-canary')
     })
 
@@ -530,9 +533,24 @@ describe('runtime logs', () => {
         expect(JSON.stringify(result)).not.toContain('deep-canary')
     })
 
-    it('enforces the byte cap and exact execution cohort', async () => {
-        const limited = planWithOutput('123456789', { outputLimitBytes: 8 }); if (limited.kind !== 'planned') return
-        expect((await collectLogs(limited, executeProbe)).code).toBe('EXECUTION_STDOUT_LIMIT')
+    it('returns the newest whole records that fit the byte cap and says the rest were dropped', async () => {
+        const { since, tail, follow: _follow, ...request } = input
+        const outcome = await runLogs({ configPath: '/synthetic/cockpit.toml', service: input.service,
+            since, tail, follow: false, json: true }, {
+            observe: async () => ({ request: { ...request, outputLimitBytes: 40, env: { ...input.env,
+                COCKPIT_TEST_OUTPUT: '2026-09-07T00:00:01Z oldest\n2026-09-07T00:00:02Z middle\n2026-09-07T00:00:03Z newest\n',
+                COCKPIT_TEST_ERROR_OUTPUT: '2026-09-07T00:00:02Z stderr before the kept stdout\n',
+            } } }),
+            execute: executeProbe,
+        })
+
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0,
+            diagnostics: [{ severity: 'warning', code: 'LOGS_TRUNCATED' }],
+            result: { truncated: true, records: [{ stream: 'stdout', message: 'newest' }] } })
+        expect(outcome.result?.records).toHaveLength(1)
+    })
+
+    it('enforces the exact execution cohort', async () => {
         const original = planWithOutput(''); if (original.kind !== 'planned') return
         const outcome = await executeProbe(original.step)
         const relabelled = planLogs({ ...input, batchId: sha('stale') }); if (relabelled.kind !== 'planned') return
