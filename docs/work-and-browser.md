@@ -202,17 +202,24 @@ To renew an accepted order after changing its contract, set its `status` back to
 
 <!-- cockpit:ref command=work recover --> An interrupted operation leaves a named lock behind. Run `cockpit work recover --config cockpit.toml --lock WO-001` with the exact lock identifier from the refusal to inspect its holder. Recovery needs an explicit `--apply` and a fresh check showing that the recorded process is gone. If the holder is still running, cannot be checked, has a malformed record, or has changed, cockpit refuses to take the lock. Ordinary status and journal recovery never take over a lock, and a malformed lock record is kept for a person to inspect.
 
-<!-- cockpit:ref command=work record --> `cockpit work record --config cockpit.toml --work-order WO-001 --event-file workorders/events/progress.json` saves one event against the current accepted order. The file holds one JSON object; extra fields are refused:
+<!-- cockpit:ref command=work record --> `cockpit work record --config cockpit.toml --work-order WO-001 --event-file workorders/events/progress.json` saves one of the agent's own events against the current accepted order, attributed to the author. The file holds one JSON object; extra fields are refused:
 
 | Event | Fields | Use |
 | --- | --- | --- |
 | `heartbeat` | `{"kind":"heartbeat"}` | Show the order is moving. |
 | `root-cause` | `kind`, `step`, `approach`, `detail` | Record why an approach failed; needed before retrying at the attempt cap. |
 | `gap` | `kind`, `id`, `step`, `question` | Record a question for a person; it blocks execution until answered. |
-| `resolve-gap` | `kind`, `id`, `answer` | Record the person's answer to that gap. |
-| `decision` | `kind`, `decision`: `{date, decision, disposition, reason, impact}` | Record a decision; `disposition` is `accepted`, `rejected` or `deferred`. |
 | `reconcile-execution` | `kind`, `step`, `approach`, `reason` | Clear an execution reservation left by an interrupted `work execute`. |
 | `evidence` | `{"kind":"evidence","layer":"source","reference":"<file>"}` | Record a source file's current digest. |
+
+<!-- cockpit:ref command=work answer --> A gap's answer and a decision speak for a person, so `work record` refuses them. A person records them with `cockpit work answer --config cockpit.toml --work-order WO-001 --event-file workorders/events/answer.json --interactive`, which shows the open question and the answer, or the decision, and records it as the operator only after the person types the digest it displays. Like acceptance, it needs an interactive terminal, refuses JSON and CI, and the guard never runs it for an agent; that a person rather than a program driving a pseudo-terminal answers is instructed, not enforced. An agent may draft the file; the person reads and confirms what is recorded.
+
+| Event | Fields | Use |
+| --- | --- | --- |
+| `resolve-gap` | `kind`, `id`, `answer` | The person's answer to an open gap. |
+| `decision` | `kind`, `decision`: `{date, decision, disposition, reason, impact}` | The person's decision; `disposition` is `accepted`, `rejected` or `deferred`. |
+
+A refusal for an unparseable intent, event or programme ledger names the file, the line and column when the parser reports one, and the expected shape; it never quotes the file's bytes.
 
 For `evidence`, cockpit reads the named file inside the project and records its digest together with the current contract, the repository revisions and the working-tree content. Each repository entry needs both its revision and its working-tree digest, so incomplete state is refused. Changes to tracked or untracked source files make saved proof stale even when HEAD has not moved. Cockpit's own coordination files do not count as source changes: the orders and programme ledgers, its private state, and event files under `workorders/events/`. Keep event files there; an event file anywhere else is a source change and makes every earlier step's proof stale. `work execute` records attempts and step checks, not `work record`, and callers cannot claim local, CI, runtime or deployment proof.
 

@@ -344,7 +344,11 @@ contract and the independent grading, not the thinking: reuse the planning skill
 2. **Work test-first inside Authority, one Plan step at a time.** Write the failing test for a criterion, then the code, touching only
    files the Authority lists. If the work needs another file, stop and ask for a renewed contract
    (`work renew`) rather than editing outside it. Record progress with `./node_modules/.bin/cockpit work record --config cockpit.toml --work-order WO-001 --event-file workorders/events/progress.json`;
-   keep event files under `workorders/events/`, where they do not make earlier proof stale.
+   keep event files under `workorders/events/`, where they do not make earlier proof stale. When you need a
+   person's input, record a `gap` event with your question and stop. Answers and decisions are the person's:
+   `work record` refuses `resolve-gap` and `decision` events, and the person records them in a terminal with
+   `./node_modules/.bin/cockpit work answer --config cockpit.toml --work-order WO-001 --event-file workorders/events/answer.json --interactive`.
+   You may draft that file for them; never answer on their behalf.
 3. **Check each Plan step** with `./node_modules/.bin/cockpit work execute --config cockpit.toml --work-order WO-001 --approach first-try --json`
    once its work is done, replacing `first-try` with a short name for your approach. It runs that step's declared verification command; a failure returns the command's exit
    status and the end of its output in `result.verification`. Fix and rerun. While iterating, the declared gate
