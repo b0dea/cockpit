@@ -10,7 +10,7 @@ import type { Diagnostic } from '../diagnostics.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { libexecProgram } from '../environment-exec/libexec-program.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
-import { snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
+import { errorCause, snapshotGeneratedJson, type ExecutionStep } from '../environment/contract.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../environment/executable.js'
 import { readState, type BootstrapStateAddress } from '../environment/state.js'
 import { installedPackageMetadata } from '../package-metadata.js'
@@ -122,6 +122,7 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
             || Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set || !descriptor.enumerable)) return undefined
         return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
     } catch {
+        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
     }
 }
@@ -195,6 +196,7 @@ async function runGit(root: string, git: ResolvedExecutable, argv: readonly stri
         const outcome = authenticatedExecutionOutcome(await adapters.execute(step), step)
         return outcome?.kind === 'complete' && outcome.stderr.byteLength === 0 ? Buffer.from(outcome.stdout) : undefined
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     }
 }
@@ -213,7 +215,7 @@ async function referenceGitState(root: string, git: ResolvedExecutable, adapters
     const listing = await runGit(root, git, ['ls-tree', '-z', head, '--', ...REFERENCE_PATHS], 'committed-reference-estate', 4096, adapters, deadline)
     if (!listing) return undefined
     let text: string
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(listing) } catch { return undefined }
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(listing) } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
     if (!text.endsWith('\0')) return undefined
     const records = text.split('\0')
     records.pop()
@@ -406,6 +408,7 @@ async function digestFile(path: string, maxBytes: number): Promise<string | unde
         if (fileFingerprint(path, after) === fingerprint) recordVerifiedDigest(fingerprint, digest)
         return digest
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     } finally {
         try { await handle?.close() } catch { /* Unavailable authority remains a refusal. */ }
@@ -423,6 +426,7 @@ export async function nodeAuthority(): Promise<NodeAuthority | undefined> {
             executionMode: 'verified-path' as const,
         }) : undefined
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     }
 }
@@ -499,7 +503,7 @@ function helperStep(
     // An unauthenticated program is one more unavailable step: the caller refuses or compensates,
     // and a transaction that has started keeps its recovery inputs.
     let program: ReturnType<typeof libexecProgram>
-    try { program = libexecProgram(HELPER_PROGRAM) } catch { return undefined }
+    try { program = libexecProgram(HELPER_PROGRAM) } catch { /* an unauthenticated helper program is unavailable; the caller refuses or compensates. */ return undefined }
     return Object.freeze({
         id: `generated-filesystem-${(request as { action: string }).action}-${(request as { nonce: string }).nonce}`,
         argv: Object.freeze([node.canonicalPath, '--', program.path, requestBytes, ...inputs.map(({ path }) => path)]) as readonly [string, ...string[]],
@@ -566,12 +570,14 @@ export async function readAnchoredFile(
         rootStatus = await lstat(root)
         if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return Object.freeze({ kind: 'invalid' })
     } catch {
+        // an unobservable root is an invalid anchored read the caller refuses.
         return Object.freeze({ kind: 'invalid' })
     }
     let directory: string
     try {
         directory = await mkdtemp(join(tmpdir(), 'cockpit-generated-read-'))
     } catch {
+        // an unobservable root is an invalid anchored read the caller refuses.
         return Object.freeze({ kind: 'invalid' })
     }
     try {
@@ -629,6 +635,7 @@ export async function readAnchoredFile(
             identity: Object.freeze({ root: readRoot, chain: Object.freeze(chain as DirectoryIdentity[]), file }),
         })
     } catch {
+        // a failed anchored read is invalid; the caller refuses it.
         return Object.freeze({ kind: 'invalid' })
     } finally {
         await rm(directory, { recursive: true, force: true })
@@ -646,7 +653,7 @@ export async function readAnchoredEntry(
     if (!target || maxBytes < 1 || maxBytes > MAX_GENERATED_BYTES) return Object.freeze({ kind: 'invalid' })
     const parts = relative(root, target).split(sep)
     let rootStatus: Awaited<ReturnType<typeof lstat>>
-    try { rootStatus = await lstat(root) } catch { return Object.freeze({ kind: 'invalid' }) }
+    try { rootStatus = await lstat(root) } catch { /* an unobservable root is an invalid anchored read the caller refuses. */ return Object.freeze({ kind: 'invalid' }) }
     if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return Object.freeze({ kind: 'invalid' })
     let directory: string | undefined
     try {
@@ -695,7 +702,7 @@ export async function readAnchoredEntry(
         if (sha256(bytes) !== simple.sha256) return Object.freeze({ kind: 'invalid' })
         return Object.freeze({ kind: 'file', bytes, sha256: simple.sha256, mode: simple.mode as number,
             identity: Object.freeze({ root: readRoot, chain: Object.freeze(chain as DirectoryIdentity[]), file }) })
-    } catch { return Object.freeze({ kind: 'invalid' }) } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
+    } catch { /* a failed anchored read is invalid; the caller refuses it. */ return Object.freeze({ kind: 'invalid' }) } finally { if (directory) await rm(directory, { recursive: true, force: true }) }
 }
 
 export type AnchoredRelocation = Readonly<{ kind: 'complete'; sha256: string }>
@@ -838,9 +845,10 @@ async function readPrivateOutput(path: string, maxBytes: number): Promise<Buffer
             && after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs
             ? Buffer.concat(chunks, total) : undefined
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     } finally {
-        try { await handle?.close() } catch { closeFailed = true }
+        try { await handle?.close() } catch { /* the read already failed; the unclosed descriptor is reported through closeFailed. */ closeFailed = true }
     }
     return closeFailed ? undefined : result
 }
@@ -876,6 +884,7 @@ async function readAnchoredBatch(
         rootStatus = await lstat(root)
         if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) return undefined
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     }
     let directory: string | undefined
@@ -966,6 +975,7 @@ async function readAnchoredBatch(
         }
         return Object.freeze({ kind: 'complete', results: Object.freeze(results) })
     } catch {
+        // an unavailable authority is refused by the caller.
         return undefined
     } finally {
         if (directory) await rm(directory, { recursive: true, force: true })
@@ -1310,6 +1320,7 @@ async function runHelper(
         const value: unknown = JSON.parse(text)
         return `${JSON.stringify(value)}\n` === text ? value : undefined
     } catch {
+        // unparseable input is malformed; the caller refuses it.
         return undefined
     }
 }
@@ -1359,6 +1370,7 @@ async function stageInputs(files: readonly OwnedBytes[]): Promise<{ directory: s
         }
         return Object.freeze({ directory, inputs: Object.freeze(inputs) })
     } catch {
+        // staging failed; the caller refuses and no inputs are retained.
         if (directory) await rm(directory, { recursive: true, force: true })
         return undefined
     }
@@ -1379,6 +1391,7 @@ async function recordRecovery(directory: string, groups: readonly AppliedGroup[]
         await directoryHandle.sync()
         return true
     } catch {
+        // a recovery record that is not durable keeps publication closed.
         return false
     } finally {
         try { await handle?.close() } catch { /* A missing durable recovery record keeps publication closed. */ }
@@ -1603,6 +1616,7 @@ async function staleRemovalApproved(
             && approval.format === 'cockpit-stale-removal-approval/v1'
             && approval.digest === request.digest
     } catch {
+        // a throwing approval authority is no approval; the caller refuses.
         return false
     }
 }
@@ -1630,7 +1644,7 @@ interface ReferenceManifest extends ReferenceManifestPayload { readonly integrit
 function parseReferenceManifest(bytes: string): ReferenceManifest | undefined {
     if (typeof bytes !== 'string' || Buffer.byteLength(bytes) > MAX_OWNERSHIP_BYTES) return undefined
     let value: unknown
-    try { value = JSON.parse(bytes) } catch { return undefined }
+    try { value = JSON.parse(bytes) } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
     const record = ownRecord(value)
     if (!record || !exactKeys(record, ['format', 'generation', 'source', 'producer', 'entries', 'integrity'])
         || record.format !== 'cockpit-generated-references/v1' || typeof record.generation !== 'string' || !SHA256.test(record.generation)
@@ -1888,7 +1902,7 @@ async function admitReferencePlan(
         } else {
             if (current.kind !== 'file') return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting reference region requires an existing regular file', path)
             let document: string
-            try { document = new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) } catch { return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting reference is not UTF-8', path) }
+            try { document = new TextDecoder('utf-8', { fatal: true }).decode(current.bytes) } catch { /* undecodable bytes are malformed input the caller refuses. */ return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting reference is not UTF-8', path) }
             const region = troubleshootingRegion(document)
             const declaration = references[index]
             if (!region || declaration?.kind !== 'markdown-region' || declaration.preimageSha256 !== current.sha256
@@ -1901,7 +1915,7 @@ async function admitReferencePlan(
                 }
             } else {
                 let nextDocument: string
-                try { nextDocument = mutation.bytes! } catch { return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting postimage is invalid', path) }
+                try { nextDocument = mutation.bytes! } catch { /* an unreadable postimage is invalid; the refusal names it. */ return refuse('GENERATED_PUBLICATION_FAILED', 'troubleshooting postimage is invalid', path) }
                 const nextRegion = troubleshootingRegion(nextDocument)
                 if (!nextRegion || nextRegion.prefix !== region.prefix || nextRegion.suffix !== region.suffix
                     || sha256(nextRegion.bytes) !== declaration.regionSha256 || mutation.sha256 !== declaration.postimageSha256) {
@@ -2053,8 +2067,8 @@ async function planCurrent(record: PublicationRecord, adapters: PublicationAdapt
 
 /** Admit exact classified leaves against the observed durable ledger, never raw delete authority. */
 export async function admitPublicationPlan(input: AdmittedPublicationPlanInput, adapters: PublicationAdapters): Promise<PublicationRefusal | Readonly<{ kind: 'complete'; plan: PublicationPlan }>> {
-    try { return await admitPlan(input, adapters) } catch {
-        return refuse('GENERATED_PUBLICATION_FAILED', 'publication input, ownership or target observation could not be authenticated', 'generated-environment')
+    try { return await admitPlan(input, adapters) } catch (error) {
+        return refuse('GENERATED_PUBLICATION_FAILED', `publication input, ownership or target observation could not be authenticated: ${errorCause(error)}`, 'generated-environment')
     }
 }
 
@@ -2246,8 +2260,8 @@ export async function authorizePublicationPlan(plan: PublicationPlan, adapters: 
 }
 
 export async function runPublicationPlan(plan: PublicationPlan, adapters: PublicationRunAdapters): Promise<PublicationOutcome> {
-    try { return await runPlan(plan, adapters) } catch {
-        return refuse('GENERATED_PUBLICATION_FAILED', 'publication owner revalidation failed', 'generated-environment')
+    try { return await runPlan(plan, adapters) } catch (error) {
+        return refuse('GENERATED_PUBLICATION_FAILED', `publication owner revalidation failed: ${errorCause(error)}`, 'generated-environment')
     }
 }
 
@@ -2376,16 +2390,16 @@ async function applyPrepared(
             )
         }
         return Object.freeze({ kind: 'complete', changes: prepared.changes, committedPaths: Object.freeze(prepared.changes.map(row => row.path)) })
-    } catch {
+    } catch (error) {
         if (!await compensate(applied, node, adapters, transactionDeadline)) {
             retainInputs = true
             return refuse(
                 'GENERATED_COMPENSATION_FAILED',
-                'generated publication failed and prior bytes could not be fully restored; recover retained local backups before retrying',
+                `generated publication failed (${errorCause(error)}) and prior bytes could not be fully restored; recover retained local backups before retrying`,
                 `${applied.at(-1)?.parent ?? 'generated-environment'}; inputs=${staged.directory}`,
             )
         }
-        return refuse('GENERATED_PUBLICATION_FAILED', 'generated files were not published (filesystem transaction refused)', 'generated-environment')
+        return refuse('GENERATED_PUBLICATION_FAILED', `generated files were not published (filesystem transaction refused: ${errorCause(error)})`, 'generated-environment')
     } finally {
         if (!retainInputs) await rm(staged.directory, { recursive: true, force: true })
     }

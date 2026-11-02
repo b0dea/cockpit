@@ -82,7 +82,7 @@ import {
     type AnchoredEntry, type AnchoredBatchReadResult, type PublicationMutation, type DirectoryIdentity, type PersonaSourceIdentity,
     type GeneratedStaleRemovalApprovalRequest, type GeneratedStaleRemovalApproval, type PublicationPlan,
 } from '../generated-environment/transaction.js'
-import { ENVIRONMENT_CODES, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
+import { ENVIRONMENT_CODES, errorCause, snapshotEnvironmentObservation, snapshotExecutionStep, snapshotGeneratedJson, type EnvironmentObservation, type ExecutionStep, type CockpitId } from './contract.js'
 import { SIBLING_DEFAULT_GUIDES } from '../schema.js'
 import type { ResolvedExecutable } from './executable.js'
 import { resolveDockerExecutable, resolveExecutablePath, resolveGitExecutable } from './executable.js'
@@ -326,6 +326,7 @@ async function siblingRootsCurrent(authority: AuthenticatedSiblingRoots): Promis
         }
         return true
     } catch {
+        // a failed re-observation means the root is no longer authenticated; the caller refuses.
         return false
     }
 }
@@ -668,6 +669,7 @@ function ownRecord(value: unknown): Record<string, unknown> | undefined {
             || Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set || !descriptor.enumerable)) return undefined
         return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
     } catch {
+        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
     }
 }
@@ -902,6 +904,7 @@ async function selectedBootstrapRecordCurrent(record: SelectedBootstrapRecord): 
             && reads.results.every((read, index) => read.kind === 'complete' && read.sha256 === record.assets[index]!.sha256
                 && sourceIdentity(read.identity) === sourceIdentity(record.assets[index]!.identity))
     } catch {
+        // a failed re-observation means the inputs are no longer authenticated; the caller refuses.
         return false
     }
 }
@@ -920,8 +923,8 @@ export async function prepareSelectedBootstrapSurface(
         const status = await lstat(root)
         if (root !== captured.root || !status.isDirectory() || status.isSymbolicLink()) throw new Error('root')
         rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
-    } catch {
-        return refuse('GENERATED_INPUT_INVALID', 'selected bootstrap root is not a canonical directory', captured.root)
+    } catch (error) {
+        return refuse('GENERATED_INPUT_INVALID', `selected bootstrap root is not a canonical directory: ${errorCause(error)}`, captured.root)
     }
     const node = await nodeAuthority()
     const assets = node && await selectedBootstrapAssets(node, adapters)
@@ -997,8 +1000,8 @@ export async function resumeSelectedBootstrapSurface(
         const status = await lstat(captured.root)
         if (!status.isDirectory() || status.isSymbolicLink() || await realpath(captured.root) !== captured.root) throw new Error('root')
         rootIdentity = Object.freeze({ dev: status.dev, ino: status.ino })
-    } catch {
-        return refuse('GENERATED_INPUT_INVALID', 'selected bootstrap root is not a canonical directory', captured.root)
+    } catch (error) {
+        return refuse('GENERATED_INPUT_INVALID', `selected bootstrap root is not a canonical directory: ${errorCause(error)}`, captured.root)
     }
     const node = await nodeAuthority()
     if (!node) return refuse('SURFACE_INPUT_INVALID', 'bootstrap resume could not authenticate the node executable', 'bootstrap')
@@ -1177,7 +1180,7 @@ export async function projectGeneratedApplicationMountSources(application: Gener
                     if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())) return refusal
                 }
                 if (await realpath(target) !== target) return refusal
-            } catch { return refusal }
+            } catch { /* an unobservable host input is refused with its path and expected type. */ return refusal }
             if (input.mount) sources.push(target)
         }
         for (const root of roots) {
@@ -1185,7 +1188,7 @@ export async function projectGeneratedApplicationMountSources(application: Gener
             if (await realpath(root.path) !== root.path || !status.isDirectory() || status.isSymbolicLink()
                 || status.dev !== root.dev || status.ino !== root.ino) return undefined
         }
-    } catch { return undefined }
+    } catch { /* an unobservable root refuses the host inputs. */ return undefined }
     return Object.freeze([...new Set(sources)].sort())
 }
 
@@ -1343,6 +1346,7 @@ function commandInput(input: unknown): GeneratedEnvironmentCommandInput | undefi
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0')) return undefined
         return Object.freeze({ configPath })
     } catch {
+        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
     }
 }
@@ -1365,6 +1369,7 @@ function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput | undef
         }
         return Object.freeze({ configPath, dryRun, ...(bootstrapState === undefined ? {} : { bootstrapState }) })
     } catch {
+        // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.
         return undefined
     }
 }
@@ -1412,6 +1417,7 @@ async function readOwnership(
         const parsed = parseOwnershipManifest(bytes, { root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath })
         return parsed.kind === 'complete' ? { kind: 'complete', manifest: parsed.manifest, bytes, sha256: read.sha256, identity: read.identity } : parsed
     } catch {
+        // invalid ownership bytes are reported as invalid.
         return { kind: 'invalid' }
     }
 }
@@ -1942,7 +1948,7 @@ function expectsCodexSkillSidecar(bytes: string): boolean {
         const document = parseDocument(bytes.slice(4, end), { uniqueKeys: true })
         if (document.errors.length > 0) return false
         frontmatter = document.toJS({ maxAliasCount: 0 }) as unknown
-    } catch { return false }
+    } catch { /* unparseable input is malformed; the caller refuses it. */ return false }
     if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) return false
     const codexcli = (frontmatter as Record<string, unknown>).codexcli
     if (!codexcli || typeof codexcli !== 'object' || Array.isArray(codexcli)) return false
@@ -1974,7 +1980,7 @@ function readSurfaceAsset(
     try {
         return Object.freeze({ path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes),
             sha256: read.sha256, identity: read.identity })
-    } catch { return undefined }
+    } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
 }
 
 /**
@@ -2149,7 +2155,7 @@ function nativeGrantFragmentSet(
                     const parsed = ownRecord(parseToml(row.bytes))
                     if (!parsed) return undefined
                     base = parsed
-                } catch { return undefined }
+                } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
                 if (['sandbox_mode', 'sandbox_workspace_write', 'default_permissions', 'permissions']
                     .some(key => Object.hasOwn(base, key))) return undefined
             }
@@ -2169,7 +2175,7 @@ function nativeGrantFragmentSet(
                 const parsed = ownRecord(JSON.parse(row.bytes))
                 if (!parsed) return undefined
                 base = parsed
-            } catch { return undefined }
+            } catch { /* unparseable input is malformed; the caller refuses it. */ return undefined }
             if (Object.hasOwn(base, 'permission')) return undefined
         }
         const externalDirectory = openCodeExternalDirectories(grants)
@@ -2327,7 +2333,7 @@ async function executeCustomCapability(
             ]),
             ...(capability.state === 'enforced' ? { evidence: Object.freeze({ ...capability.evidence }) } : {}),
         })
-    } catch { return undefined } finally {
+    } catch { /* an unavailable authority is refused by the caller. */ return undefined } finally {
         if (scratch && scratchIdentity) {
             try {
                 const current = await lstat(scratch)
@@ -2353,7 +2359,7 @@ async function projectExplicitNativeHooks(
     const policyRead = await readAnchoredFile(prepared.root, policyDeclaration.path, MAX_SURFACE_FILE_BYTES, prepared.node, adapters)
     if (policyRead.kind !== 'complete' || policyRead.sha256 !== policyDeclaration.sha256) return undefined
     let policyBytes: string
-    try { policyBytes = new TextDecoder('utf-8', { fatal: true }).decode(policyRead.bytes) } catch { return undefined }
+    try { policyBytes = new TextDecoder('utf-8', { fatal: true }).decode(policyRead.bytes) } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
     const policy: NativeHookPolicy = Object.freeze({
         manifest,
         authority: Object.freeze({ root: prepared.root, cockpitId: prepared.cockpitId, configPath: prepared.configPath }),
@@ -2391,7 +2397,7 @@ async function projectExplicitNativeHooks(
     const revisionOutcome = authenticatedExecutionOutcome(await adapters.execute(revisionStep), revisionStep)
     if (!revisionOutcome || revisionOutcome.kind !== 'complete' || revisionOutcome.stderr.byteLength !== 0) return undefined
     let revisions: string[]
-    try { revisions = new TextDecoder('utf-8', { fatal: true }).decode(revisionOutcome.stdout).trim().split('\n') } catch { return undefined }
+    try { revisions = new TextDecoder('utf-8', { fatal: true }).decode(revisionOutcome.stdout).trim().split('\n') } catch { /* undecodable bytes are malformed input the caller refuses. */ return undefined }
     if (revisions.length !== 2 || revisions[0] === revisions[1]
         || revisions.some(value => !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value) || !/[1-9a-f]/.test(value))) return undefined
     let scratch: string | undefined
@@ -2496,8 +2502,8 @@ async function prepareSurfaces(
             siblingRoots.set(sibling.slug, root)
             sourceRoots.push(Object.freeze({ slug: sibling.slug, root, identity: authority.identity }))
         }
-    } catch {
-        return refuse('SURFACE_SOURCE_UNAVAILABLE', 'an active sibling checkout could not be authenticated', 'surfaces')
+    } catch (error) {
+        return refuse('SURFACE_SOURCE_UNAVAILABLE', `an active sibling checkout could not be authenticated: ${errorCause(error)}`, 'surfaces')
     }
     // A root guide that projection also writes would become both an authenticated input and an
     // owned output. Native harness loading already reaches these files, so a self-link adds no rule.
@@ -2547,6 +2553,7 @@ async function prepareSurfaces(
         if (read.kind !== 'complete') return refuse('MCP_DECLARATION_INVALID', 'an MCP declaration source is unavailable', source.path)
         let bytes: string
         try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch {
+            // undecodable bytes are malformed input the caller refuses.
             return refuse('MCP_DECLARATION_INVALID', 'an MCP declaration source is not UTF-8', source.path)
         }
         const parsed = parseMcpDeclarationFile({ bytes, source: { kind: 'sibling', slug: source.slug, path: source.path, sha256: read.sha256 }, workingDirectory: root })
@@ -2830,7 +2837,7 @@ async function prepareSurfaces(
 
     let modulePath: string
     try { modulePath = await realpath(fileURLToPath(new URL('../../dist/cli.js', import.meta.url))) }
-    catch { return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', 'the installed guard handler is unavailable', 'guard') }
+    catch (error) { return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the installed guard handler is unavailable: ${errorCause(error)}`, 'guard') }
     const moduleRead = await readAnchoredFile(dirname(modulePath), basename(modulePath), MAX_GENERATED_BYTES, prepared.node, adapters)
     if (moduleRead.kind !== 'complete') return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', 'the installed guard handler is unavailable', 'guard')
     const rootStat = await lstat(prepared.root)
@@ -2935,6 +2942,7 @@ async function prepareSurfaces(
         if (existingClaude.kind === 'file') {
             let bytes: string
             try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(existingClaude.bytes) } catch {
+                // undecodable bytes are malformed input the caller refuses.
                 return refuse('SURFACE_STATE_CONFLICT', 'the existing Claude guide is not UTF-8', 'CLAUDE.md')
             }
             const priorClaude = priorOwned.find(entry => entry.path === 'CLAUDE.md')
@@ -3140,6 +3148,7 @@ async function mergeAdoptedSurfaces(
             `the adopted copy of ${row.path} is ${read.kind === 'missing' ? 'missing' : 'not a bounded regular file'}; restore ${row.source} or remove its [[surfaces.adopted]] row`, row.source)
         let bytes: string
         try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } catch {
+            // undecodable bytes are malformed input the caller refuses.
             return refuse('SURFACE_ADOPTION_REFUSED', `the adopted copy ${row.source} is not UTF-8 text`, row.source)
         }
         const index = merged.findIndex(entry => entry.path === row.path)
@@ -3268,7 +3277,7 @@ async function inputSourcesCurrent(
             || sourceIdentity(read.identity) !== sourceIdentity(prepared.surfaceAssets[index]!.identity))) return false
         if (deadline !== undefined && Date.now() >= deadline) return false
         return true
-    } catch { return false }
+    } catch { /* a failed re-observation means the inputs changed; the caller refuses. */ return false }
 }
 
 function publicationInputPath(root: string, path: string): string | undefined {
@@ -3386,9 +3395,10 @@ async function ownedInputOverlap(
         if (outcome.kind === 'invalid') outcome = Object.freeze({ kind: 'complete' })
         if (!(await Promise.all(watches.map(stable))).every(Boolean)) outcome = Object.freeze({ kind: 'invalid' })
     } catch {
+        // an unobservable directory is reported as an invalid read.
         outcome = Object.freeze({ kind: 'invalid' })
     } finally {
-        for (const handle of handles.reverse()) try { await handle.close() } catch { closeFailed = true }
+        for (const handle of handles.reverse()) try { await handle.close() } catch { /* an unobservable directory is reported as an invalid read. */ closeFailed = true }
     }
     return closeFailed ? Object.freeze({ kind: 'invalid' }) : outcome
 }
@@ -3432,6 +3442,7 @@ async function observeSurfaceState(
         else if (entry.kind === 'file') {
             let bytes: string
             try { bytes = new TextDecoder('utf-8', { fatal: true }).decode(entry.bytes) } catch {
+                // undecodable bytes make the path opaque, never owned.
                 opaque.add(path)
                 continue
             }
@@ -3893,8 +3904,8 @@ async function checkCanonicalGeneratedEnvironment(
                 'GENERATED_ARTIFACT_MISSING', 'owned generated artifact could not be classified safely', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>',
             )
             generatedCandidates.push({ path: file.path, bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) })
-        } catch {
-            return refuse('GENERATED_ARTIFACT_MISSING', 'owned generated artifact became unreadable', file.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
+        } catch (error) {
+            return refuse('GENERATED_ARTIFACT_MISSING', `owned generated artifact became unreadable: ${errorCause(error)}`, file.path, 'run npx --no cockpit sync --config <your cockpit.toml>')
         }
     }
     const inspected = prepared.rendered

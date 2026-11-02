@@ -291,6 +291,7 @@ export function inspectGeneratedEnvironment(input: {
         const parsedCompose = parseYaml(rendered.compose)
         if (parsedCompose === null || typeof parsedCompose !== 'object') throw new TypeError('not a mapping')
     } catch {
+        // the refusal names the invalid YAML.
         return { kind: 'refusal', code: 'GENERATED_COMPOSE_INVALID', target: declaration.compose_file, reason: 'generated Compose is not valid YAML' }
     }
     const inspection = Object.freeze({ kind: 'passed' as const })
@@ -486,6 +487,7 @@ function composePortsMatch(stdout: Buffer, expected: Readonly<Record<string, unk
         }
         return actual.sort().join('\n') === (declared as string[]).sort().join('\n')
     } catch {
+        // unreadable published ports do not match the declaration.
         return false
     }
 }
