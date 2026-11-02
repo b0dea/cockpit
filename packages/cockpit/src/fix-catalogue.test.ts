@@ -287,7 +287,8 @@ describe('printed cockpit commands', () => {
             const collect = (snippet: string, kind: string) => {
                 // A command ends where the shell would start the next one.
                 for (const match of snippet.matchAll(prefix)) {
-                    const command = snippet.slice(match.index).split(/\s(?:&&|\|\||\||;|#)\s|;\s/)[0]!.trim()
+                    // A redirect is the shell's, not an argument: `> resolved.sh` would swallow the argv capture.
+                    const command = snippet.slice(match.index).split(/\s(?:&&|\|\||\||;|#|>>?)\s|;\s/)[0]!.trim()
                     printed.push({ at: `${path} (${kind})`, command })
                     const prefixed = unrunnablePrefix(snippet.slice(0, match.index))
                     if (prefixed) unrunnable.push(`${path}: ${command} behind ${prefixed}`)
