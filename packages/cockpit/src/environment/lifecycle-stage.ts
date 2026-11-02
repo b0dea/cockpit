@@ -82,7 +82,14 @@ export interface LifecycleRecordValue extends LifecycleProgress {
     readonly generatedReplay?: GeneratedLifecycleReplay
     readonly generatedProgress?: GeneratedLifecycleProgress
     readonly teardownComplete?: true
+    /**
+     * The digest of each file the running stack was started from, by the name a person edits, so a
+     * refused declaration change can say which one changed.
+     */
+    readonly runtimeInputs?: RuntimeInputs
 }
+
+export type RuntimeInputs = Readonly<Record<string, string>>
 
 export interface CurrentLifecycleRecord {
     readonly record: StateRecord
@@ -139,7 +146,7 @@ export function decodeLifecycleRecord(
 ): CurrentLifecycleRecord | undefined {
     const value = snapshotJson(record.value)
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || Object.keys(value).sort().join('\0') !== ['completedServices', ...(Object.hasOwn(value, 'generatedProgress') ? ['generatedProgress'] : []), ...(Object.hasOwn(value, 'generatedReplay') ? ['generatedReplay'] : []), 'holderId', 'operationGeneration', ...(Object.hasOwn(value, 'teardownComplete') ? ['teardownComplete'] : []), 'workBasisSha256'].join('\0')
+        || Object.keys(value).sort().join('\0') !== ['completedServices', ...(Object.hasOwn(value, 'generatedProgress') ? ['generatedProgress'] : []), ...(Object.hasOwn(value, 'generatedReplay') ? ['generatedReplay'] : []), 'holderId', 'operationGeneration', ...(Object.hasOwn(value, 'runtimeInputs') ? ['runtimeInputs'] : []), ...(Object.hasOwn(value, 'teardownComplete') ? ['teardownComplete'] : []), 'workBasisSha256'].join('\0')
         || record.format !== 'cockpit-state/v1' || record.kind !== 'lifecycle'
         || record.cockpitId !== context.cockpitId || record.subjectId !== context.stackId) return undefined
     const candidate = value as Record<string, unknown>
@@ -163,6 +170,15 @@ export function decodeLifecycleRecord(
             || [...record.profiles, ...record.mounts].some((item) => typeof item !== 'string' || item.length === 0 || item.includes('\0'))) return undefined
         replay = Object.freeze({ runtimeSha256: record.runtimeSha256, generation: record.generation,
             profiles: Object.freeze([...record.profiles]), mounts: Object.freeze([...record.mounts]) })
+    }
+    let runtimeInputs: RuntimeInputs | undefined
+    if (Object.hasOwn(candidate, 'runtimeInputs')) {
+        const value = candidate.runtimeInputs
+        if (teardownComplete || !value || typeof value !== 'object' || Array.isArray(value)) return undefined
+        const entries = Object.entries(value)
+        if (entries.length === 0 || entries.length > 64 || entries.some(([name, digest]) => name.length === 0 || name.length > 1_024
+            || name.includes('\0') || typeof digest !== 'string' || !lifecycleDigest.test(digest))) return undefined
+        runtimeInputs = Object.freeze(Object.fromEntries(entries))
     }
     let progress: GeneratedLifecycleProgress | undefined
     if (Object.hasOwn(candidate, 'generatedProgress')) {
@@ -197,6 +213,7 @@ export function decodeLifecycleRecord(
             ...(replay ? { generatedReplay: replay } : {}),
             ...(progress ? { generatedProgress: progress } : {}),
             ...(teardownComplete ? { teardownComplete: true as const } : {}),
+            ...(runtimeInputs ? { runtimeInputs } : {}),
             workBasisSha256: candidate.workBasisSha256,
             operationGeneration: candidate.operationGeneration,
             completedServices: Object.freeze(completed as LifecycleProgress['completedServices']),

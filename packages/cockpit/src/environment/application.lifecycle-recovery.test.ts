@@ -235,6 +235,9 @@ import { renderGuardProjectCommand } from './install-policy.js'
 import type { EnvironmentSeedPlan } from './templates.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 
+// The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
+const RUNTIME_INPUTS = Object.freeze({ 'cockpit.toml': 'd'.repeat(64) })
+
 const scratch: string[] = []
 const gitDirectory = mkdtempSync(join(tmpdir(), 'cockpit-application-git-'))
 const gitCanonicalPath = join(gitDirectory, 'git-executable')
@@ -318,7 +321,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -373,7 +376,7 @@ describe('lifecycle application contracts', () => {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
             withRuntimeReadiness: async (_context, use) => {
                 readinessCounts.runtime += 1
-                return use({ topology, lifecycle: {} } as never)
+                return use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never)
             },
             withLifecycleStage: async (_context, use) => {
                 readinessCounts.stage += 1
@@ -442,7 +445,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),
@@ -484,7 +487,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: vi.fn(),
@@ -563,7 +566,7 @@ describe('lifecycle application contracts', () => {
 
         await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'db' }, { id: 'api' }] }, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'db' }, { id: 'api' }] }, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute: async (step) => {
@@ -601,6 +604,7 @@ describe('lifecycle application contracts', () => {
             value: {
                 holderId: context.holderId, workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
                 completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }],
+                runtimeInputs: { 'cockpit.toml': 'd'.repeat(64), 'compose.yml': 'e'.repeat(64) },
             },
         }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
@@ -615,14 +619,16 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {},
+                inputs: { 'cockpit.toml': 'd'.repeat(64), 'compose.yml': 'f'.repeat(64) } } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
             execute,
         })
 
+        // The edit was to compose.yml, so the refusal names it rather than cockpit.toml.
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID',
-            message: expect.stringContaining('up does not replace a running stack') }] })
+            message: expect.stringContaining('services, ports, mounts or images: compose.yml changed since it started, and up does not replace a running stack') }] })
         expect(execute).not.toHaveBeenCalled()
     })
 
@@ -711,7 +717,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => { readinessCounts.runtime += 1; return use({ topology, lifecycle: {} } as never) },
+            withRuntimeReadiness: async (_context, use) => { readinessCounts.runtime += 1; return use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never) },
             withLifecycleStage: async (_context, use) => { readinessCounts.stage += 1; return use({} as never) },
             withAcquiredPorts: async (_context, use) => { readinessCounts.ports += 1; return use({
                 retainOnFailure: vi.fn(),
@@ -815,7 +821,7 @@ describe('lifecycle application contracts', () => {
                 if (!evidence) throw new Error(`machine fixture evidence was not admitted: ${JSON.stringify(outcomes)}`)
                 return use(observeHostCapacity({ evidence }))
             },
-            withRuntimeReadiness: async (_context, use) => { counts.runtime += 1; return use({ topology, lifecycle: {} } as never) },
+            withRuntimeReadiness: async (_context, use) => { counts.runtime += 1; return use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS } as never) },
             withLifecycleStage: async (_context, use) => { counts.stage += 1; return use({} as never) },
             withAcquiredPorts: async (_context, use) => {
                 counts.ports += 1
@@ -873,7 +879,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -922,7 +928,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runUp({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             withLifecycleStage: async (_context, use) => use({} as never),
             withAcquiredPorts: async (_context, use) => use({
                 retainOnFailure: vi.fn(),
@@ -1018,7 +1024,7 @@ describe('lifecycle application contracts', () => {
             return { kind: 'complete' as const, change: 'compensated' as const, recordRevision: 3, remainingHolderIds: [] }
         })
         applicationOwners.ports.compensateAcquiredPortHolder = compensate
-        const readiness = async (_context: LifecycleRunContext, use: (value: unknown) => Promise<unknown>) => use({ topology, lifecycle: {} })
+        const readiness = async (_context: LifecycleRunContext, use: (value: unknown) => Promise<unknown>) => use({ topology, lifecycle: {}, inputs: RUNTIME_INPUTS })
         const stage = async (_context: LifecycleRunContext, use: (value: unknown) => Promise<unknown>) => use({})
 
         const first = await runUp({ configPath: firstContext.configPath }, {
@@ -1075,7 +1081,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             execute,
         })
 
@@ -1152,7 +1158,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             execute: async (step) => {
                 events.push(step.id)
                 return {} as never
@@ -1198,7 +1204,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             execute: async () => ({}) as never,
         })
 
@@ -1266,7 +1272,7 @@ describe('lifecycle application contracts', () => {
 
         const result = await runSleep({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {} } as never),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, inputs: RUNTIME_INPUTS } as never),
             execute: async () => ({}) as never,
         })
 

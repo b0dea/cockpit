@@ -71,6 +71,7 @@ import {
     type GeneratedLifecycleReplay,
     type LifecycleHistoryTransition,
     type LifecycleRecordValue,
+    type RuntimeInputs,
 } from './lifecycle-stage.js'
 import { generatedApplicationProjection, prepareGeneratedEnvironmentCurrentness, type GeneratedApplicationProjection, type GeneratedEnvironmentCurrentness } from './generated-application.js'
 import { observeComposeTopology } from './compose-topology.js'
@@ -808,6 +809,8 @@ export interface RuntimeReadiness {
     readonly lifecycle: RuntimeLifecycleProjection
     readonly hostObservations: readonly EnvironmentObservation[]
     readonly runtimeObservations: readonly EnvironmentObservation[]
+    /** The digest of each file this runtime is started from, by the name a person edits. */
+    readonly inputs: RuntimeInputs
 }
 
 interface AcquiredPorts {
@@ -2201,11 +2204,26 @@ function lifecycleRefusal(
     }
 }
 
-function runtimeChangedRefusal(context: LifecycleRunContext): ReturnType<typeof lifecycleRefusal> {
+// A compose-first stack starts from its Compose files as well as cockpit.toml; naming only
+// cockpit.toml sent a person who had edited compose.yml looking for a change that was not there.
+function runtimeChangedRefusal(context: LifecycleRunContext, changed: string): ReturnType<typeof lifecycleRefusal> {
     return lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-        `the recorded stack runs an earlier version of the services, ports, mounts or images in ${basename(context.source.path)}, and up does not replace a running stack — fix: run \`${lifecycleSuggestion(context, 'down')}\`, then \`${lifecycleSuggestion(context, 'up')}\``,
+        `the recorded stack runs an earlier version of the services, ports, mounts or images: ${changed}, and up does not replace a running stack — fix: run \`${lifecycleSuggestion(context, 'down')}\`, then \`${lifecycleSuggestion(context, 'up')}\``,
         context.stackId)
+}
+
+function changedRuntimeInputs(recorded: RuntimeInputs | undefined, current: RuntimeInputs | undefined, fallback: string): string {
+    const names = (values: readonly string[], conjunction: string) => values.length <= 1 ? values.join('')
+        : `${values.slice(0, -1).join(', ')} ${conjunction} ${values.at(-1)}`
+    if (recorded && current) {
+        const changed = [...new Set([...Object.keys(recorded), ...Object.keys(current)])]
+            .filter((name) => recorded[name] !== current[name]).sort()
+        if (changed.length > 0) return `${names(changed, 'and')} changed since it started`
+    }
+    // Without a recorded digest per file, name every file the stack is started from.
+    const candidates = current ? Object.keys(current).sort() : [fallback]
+    return `${names(candidates, 'or')} changed since it started`
 }
 
 function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' | 'down'): string {
@@ -2830,7 +2848,8 @@ async function executeUpRound(
             // The replay names the runtime declarations, so only a change that reaches the containers
             // lands here. `up` never recreates a running stack in place; `down` removes it by its
             // ownership labels whatever the configuration says now.
-            return { kind: 'complete' as const, result: runtimeChangedRefusal(context) }
+            return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
+                changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path))) }
         }
         if (teardownComplete) {
             const acquisition = initialAcquisition ?? (ports.leaseResult.kind === 'complete' && ports.leaseResult.change === 'acquired'
@@ -2930,7 +2949,8 @@ async function executeUpRound(
             // the new declaration, and stopped them when their labels no longer matched; a fully
             // started stack is refused instead, as a generated one is.
             if (stored && !resetProgress && !generated && progressComplete) {
-                return { kind: 'complete' as const, result: runtimeChangedRefusal(context) }
+                return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
+                    changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path))) }
             }
             return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
@@ -2976,6 +2996,7 @@ async function executeUpRound(
         const plannedValue: LifecycleRecordValue = Object.freeze({
             holderId: context.holderId,
             ...planned.plan.progress,
+            runtimeInputs: runtime.inputs,
             ...(generated ? { generatedReplay: generatedReplay(generated),
                 ...(stored?.value.generatedProgress ? { generatedProgress: stored.value.generatedProgress } : {}) } : {}),
         })
@@ -3253,7 +3274,7 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
     const releasable = () => acquired !== undefined && !runtimeStarted
     const declaration = await inspectRecordedPortDeclaration({ namespace: context.namespace, stackId: context.stackId, config: context.ports })
     if (declaration.kind === 'refusal') return { kind: 'refusal', status: 2, result: null, diagnostics: declaration.diagnostics }
-    if (declaration.changed) return runtimeChangedRefusal(context)
+    if (declaration.changed) return runtimeChangedRefusal(context, `[ports] in ${basename(context.source.path)} changed since it started`)
     // Starting under the new name beside a stack recorded under the old one would run two stacks for
     // one checkout, the old one beyond the reach of down.
     const earlier = await findStackUnderEarlierName({ namespace: context.namespace, cockpitId: context.cockpitId, checkoutId: context.checkoutId })
@@ -3695,8 +3716,10 @@ async function invalidateCompletedLifecycle(
         workBasisSha256,
         operationGeneration,
         completedServices: Object.freeze([]),
-        ...(purpose === 'down' ? { teardownComplete: true as const }
-            : stored.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
+        ...(purpose === 'down' ? { teardownComplete: true as const } : {
+            ...(stored.value.generatedReplay ? { generatedReplay: stored.value.generatedReplay } : {}),
+            ...(stored.value.runtimeInputs ? { runtimeInputs: stored.value.runtimeInputs } : {}),
+        }),
     })
     const publication = await publishLifecycleRecord(context, stored.record, value)
     if ('status' in publication) return {
