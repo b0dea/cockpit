@@ -14,7 +14,7 @@ Extend an existing behavior test at the nearest public boundary when it can prov
 
 Run a gate with `npx --no cockpit test-run --config cockpit.toml --gate <id>`. Narrow it with `npx --no cockpit test-run --config cockpit.toml --gate <id> --select <kind>:<value>`, where kind is spec, file, test, or route. Product tooling receives the value as data and owns its native arguments.
 
-Use the targeted gate while iterating. If the declared tier is Full, run the complete gate once after implementation and review stabilize. A targeted tier ends with its declared targeted gate.
+Use the targeted gate while iterating. When a stage runs the affected or changed-since selection of the product build or test tool, let that tool choose the tests instead of narrowing by hand. If the declared tier is Full, run the complete gate once after implementation and review stabilize, before handing back. A targeted tier ends with its declared targeted gate.
 
 Only the complete declared gate can PASS. Subsets and staged selftest are PARTIAL; unavailable checks are DEGRADED; changed subjects are VOID. Executed failures remain FAIL.
 

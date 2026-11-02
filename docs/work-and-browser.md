@@ -230,6 +230,31 @@ Direct requests to the browser-control addresses and to the underlying server po
 
 <!-- cockpit:ref command=test-run --> <!-- cockpit:ref schema=testing.gates --> Product stages and gates are declared in configuration. Use the narrowest proving gate for isolated behavior, and the complete declared gate for shared behavior. Documentation-only changes need no behavioral gate when behavior is unchanged.
 
+### Choosing stage commands
+
+<!-- cockpit:ref schema=testing.stages --> Let the product's build or test tool decide what a change affects; cockpit runs it and reports the verdict. Declare the tool's affected or changed-since run as a targeted gate and its complete run as a full gate. A stage command is an argv array run without a shell, from the directory holding `cockpit.toml`, with only `PATH` in its environment and a bounded run time and output size; a stage that exceeds either reports DEGRADED. `--select <kind>:<value>` is appended to every stage command in the gate as those two arguments, so a stage that accepts a selection needs a wrapper that maps it onto the tool's own flags.
+
+This Nx example assumes the product checkout is at `../web` and its mainline is `origin/main`:
+
+```toml
+[testing]
+stages = [
+  { id = "affected", command = ["sh", "-c", "cd ../web && exec npx nx affected -t test --base=origin/main"], requires_stack = false },
+  { id = "all", command = ["sh", "-c", "cd ../web && exec npx nx run-many -t test"], requires_stack = false },
+]
+gates = [
+  { id = "affected", tier = "targeted", stages = ["affected"], changes = "Isolated behavior; Nx selects the affected projects" },
+  { id = "all", tier = "full", stages = ["all"], changes = "Shared or cross-project behavior" },
+]
+native_hooks = { install = "inspect" }
+```
+
+Nx compares the base with the current working tree, so uncommitted edits count. For other tools, keep the stage shape and change the command:
+
+- **Bazel:** `bazel test //...` as the only stage. Bazel reruns a test only when the test or its dependencies changed (`--cache_test_results` defaults to `auto`), so the full gate is already change-aware.
+- **Turborepo:** `npx turbo run test --affected` for the targeted stage and `npx turbo run test` for the full one. Turborepo documents `--affected` as `--filter=...[main...HEAD]`, a comparison of commits, so commit work in progress before relying on it.
+- **A runner's changed-file mode:** `npx vitest run --changed origin/main` or `npx jest --changedSince=origin/main` for the targeted stage, and the plain run for the full one.
+
 <!-- cockpit:ref path=packages/cockpit/src/testing/verdict.ts --> Only a complete, stable declared gate whose checks all pass can report PASS. If a check ran and failed, the result is FAIL. If results are unavailable or malformed, it is DEGRADED. Otherwise, if the listed files changed or are stale, it is VOID. Otherwise, a subset or staged run is PARTIAL. A target selector passes your selection to the product's own tool and never substitutes a made-up pass.
 
 <!-- cockpit:ref schema=testing.native_hooks.install --> Native hooks are inspect-only by default. Writing native hook output needs a policy tied to cockpit's ownership record and a measurement of its cost. Rendering a hook and describing how to activate it does not switch on the Git hook path. A person must install it and check separately that it works.

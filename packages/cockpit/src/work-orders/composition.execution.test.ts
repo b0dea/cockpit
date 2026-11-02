@@ -50,6 +50,16 @@ describe('configured durable work application composition', () => {
             executable: true,
             executionMode: 'verified-path',
         }))
+        expect(execution).toMatchObject({ cwd: fixture.root, argv: [target, 'test', '--', 'cache-1'] })
+
+        // Consumers write wrappers that parse this exact argv shape to map a selection onto their
+        // build tool's own flags, so the delivery form is a published contract.
+        executionBoundary.steps.length = 0
+        await expect(runWorkApplication({ operation: 'test-run', gate: 'focused', mode: 'canonical',
+            select: { kind: 'file', value: 'src/a b.ts' } }, configured.composition))
+            .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('PARTIAL') })
+        expect(executionBoundary.steps.find(step => step.argv0 === target)?.argv)
+            .toEqual([target, 'test', '--', 'cache-1', '--select', 'file:src/a b.ts'])
     }, 120_000)
 
     it('keeps non-browser work available without an active configured browser lease', async () => {
