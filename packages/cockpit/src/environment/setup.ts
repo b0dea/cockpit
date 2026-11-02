@@ -11,7 +11,7 @@ import { resolvedGitExecutable, type ResolvedExecutable } from './executable.js'
 export const mechanism = {
     id: 'setup-planning',
     module: 'packages/cockpit/src/environment/setup.ts',
-    exports: ['planSetup', 'gitEnvironment'],
+    exports: ['planSetup', 'gitEnvironment', 'resolveLocalRemote'],
 } as const
 
 type ObservedPathKind = 'absent' | 'directory' | 'repository' | 'symlink'

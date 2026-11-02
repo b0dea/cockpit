@@ -716,40 +716,47 @@ export async function observeProcessStart(
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): Promise<ProcessStartObservation> {
     if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2_147_483_647) return { state: 'unknown', reason: `process id ${pid} is invalid` }
-    try {
-        process.kill(pid, 0)
-    } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ESRCH') return { state: 'absent' }
-        if (code !== 'EPERM') return { state: 'unknown', reason: `process ${pid} could not be signalled: ${code ?? String(error)}` }
-    }
+    const node = await resolveExecutablePath(process.execPath)
+    if (node.state !== 'available') return { state: 'unknown', reason: node.reason }
+    const presence = await runBoundedProbe(node.value, `holder:process-presence:${pid}`, ['-e', HOLDER_PROCESS_PROBE, String(pid)], {}, execute)
+    if (presence === 'absent') return { state: 'absent' }
+    if (presence !== 'live') return { state: 'unknown', reason: `the presence of process ${pid} could not be confirmed` }
     let ps: ResolvedExecutable | undefined
     for (const candidate of ['/bin/ps', '/usr/bin/ps']) {
         const resolved = await resolveExecutablePath(candidate)
         if (resolved.state === 'available') { ps = resolved.value; break }
     }
     if (!ps) return { state: 'unknown', reason: 'ps is not installed at /bin/ps or /usr/bin/ps' }
-    const step = snapshotExecutionPlan({ steps: [Object.freeze({
-        id: `holder:process-start:${pid}`,
-        argv: Object.freeze([ps.canonicalPath, '-o', 'lstart=', '-p', String(pid)] as const),
-        argv0: ps.invocationPath, cwd: '/', env: Object.freeze({ LC_ALL: 'C', TZ: 'UTC0' }), timeoutMs: 5_000,
-        stdoutLimitBytes: 256, stderrLimitBytes: 1_024, paths: Object.freeze([]), ports: Object.freeze([]),
-        labels: Object.freeze({ pid: String(pid) }), expected: Object.freeze([]),
-        consumedFiles: Object.freeze([Object.freeze({ path: ps.canonicalPath, sha256: ps.sha256, maxBytes: 536_870_912,
-            argvIndexes: Object.freeze([0]), executable: true, executionMode: ps.executionMode })]),
-        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
-    })] })?.steps[0]
-    if (!step) return { state: 'unknown', reason: 'the ps step could not be planned' }
-    const outcome = authenticatedExecutionOutcome(await execute(step), step)
-    if (!outcome || outcome.kind !== 'complete' || outcome.execution.exitCode !== 0) {
-        return { state: 'unknown', reason: `ps did not report when process ${pid} started` }
-    }
-    const match = PS_START.exec(Buffer.from(outcome.stdout).toString('utf8').trim())
+    const started = await runBoundedProbe(ps, `holder:process-start:${pid}`, ['-o', 'lstart=', '-p', String(pid)], { LC_ALL: 'C', TZ: 'UTC0' }, execute)
+    if (started === undefined) return { state: 'unknown', reason: `ps did not report when process ${pid} started` }
+    const match = PS_START.exec(started.trim())
     if (!match) return { state: 'unknown', reason: `ps reported an unrecognised start time for process ${pid}` }
     const [, month, day, hours, minutes, seconds, year] = match
     const startedAt = new Date(Date.UTC(Number(year), MONTHS.indexOf(month!), Number(day), Number(hours), Number(minutes), Number(seconds)))
     return Number.isNaN(startedAt.getTime()) ? { state: 'unknown', reason: `ps reported an invalid start time for process ${pid}` }
         : { state: 'present', startedAt: startedAt.toISOString() }
+}
+
+// One short read-only step through the executor; its stdout when it exits 0, otherwise undefined.
+async function runBoundedProbe(
+    executable: ResolvedExecutable,
+    id: string,
+    args: readonly string[],
+    env: Readonly<Record<string, string>>,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<string | undefined> {
+    const step = snapshotExecutionPlan({ steps: [Object.freeze({
+        id, argv: Object.freeze([executable.canonicalPath, ...args] as const),
+        argv0: executable.invocationPath, cwd: '/', env: Object.freeze({ ...env }), timeoutMs: 5_000,
+        stdoutLimitBytes: 256, stderrLimitBytes: 1_024, paths: Object.freeze([]), ports: Object.freeze([]),
+        labels: Object.freeze({ probe: id }), expected: Object.freeze([]),
+        consumedFiles: Object.freeze([Object.freeze({ path: executable.canonicalPath, sha256: executable.sha256, maxBytes: 536_870_912,
+            argvIndexes: Object.freeze([0]), executable: true, executionMode: executable.executionMode })]),
+        filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
+    })] })?.steps[0]
+    if (!step) return undefined
+    const outcome = authenticatedExecutionOutcome(await execute(step), step)
+    return outcome?.kind === 'complete' && outcome.execution.exitCode === 0 ? Buffer.from(outcome.stdout).toString('utf8') : undefined
 }
 
 export function describeHolder(holder: ClaimHolder): string {

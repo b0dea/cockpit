@@ -183,7 +183,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const topology = (readiness as { topology: RuntimeTopologyEvidence }).topology
         const windowStart = Date.parse(topology.observationWindow.startedAt)
         const windowEnd = Date.parse(topology.observationWindow.expiresAt)
-        expect(windowEnd - windowStart).toBe(300_000)
+        expect(windowEnd - windowStart).toBe(330_000)
         const now = vi.spyOn(Date, 'now')
         now.mockReturnValue(windowStart + 5_001)
         expect(resolveRuntimeServiceOrder(topology)).toEqual(['api'])
