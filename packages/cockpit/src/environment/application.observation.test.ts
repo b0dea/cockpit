@@ -708,7 +708,7 @@ describe('observation application runners', () => {
             kind: 'blocked',
             diagnostics: [{
                 code: 'GIT_COMPARISON_REMOTE_MISMATCH',
-                message: 'Git status probe execution is unavailable for sibling api',
+                message: 'Git status probe execution is unavailable for sibling api: Error',
                 target: 'api',
             }],
         })

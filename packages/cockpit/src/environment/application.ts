@@ -16,6 +16,7 @@ import {
 } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     isCanonicalTimestamp,
     type CheckoutId,
     type ConfigSourceSnapshot,
@@ -581,8 +582,8 @@ export async function runGuardEvaluationApplication(
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
         if (launcherSha256 && (await read(dirname(launcher), basename(launcher), 65_536)).sha256 !== launcherSha256) return unavailable('Guard ordinary command executable changed during evaluation.')
         return { decision, diagnostics: decision.decision === 'allow' ? [] : [{ severity: 'error', code: 'GUARD_REFUSED', message: decision.reason, target: 'guard' }] }
-    } catch {
-        return unavailable('Guard authority could not be read or revalidated.')
+    } catch (error) {
+        return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
     }
 }
 
@@ -1001,8 +1002,8 @@ export function issueDestructiveRunContext(input: DestructiveRunContextInput): E
         const context = Object.freeze({ ...lifecycle, namespace, instance })
         issuedDestructiveRuns.add(context)
         return Object.freeze({ kind: 'complete', status: 0, diagnostics: Object.freeze([]), result: context })
-    } catch {
-        return lifecycleContextRefusal()
+    } catch (error) {
+        return lifecycleContextRefusal(`destructive run authority could not be read: ${errorCause(error)}`)
     }
 }
 
@@ -1060,8 +1061,8 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
         lifecycleConfigurationSources.set(context, Object.freeze({ source: context.source,
             siblingsRoot: resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root) }))
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
-    } catch {
-        return lifecycleContextRefusal()
+    } catch (error) {
+        return lifecycleContextRefusal(`lifecycle run authority could not be read: ${errorCause(error)}`)
     }
 }
 
@@ -1206,8 +1207,8 @@ export function issueSetupRunContext(input: SetupRunContextInput): EnvironmentCo
         })
         issuedSetupRuns.add(context)
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
-    } catch {
-        return contextRefusal()
+    } catch (error) {
+        return contextRefusal('setup', `setup run authority could not be read: ${errorCause(error)}`)
     }
 }
 
@@ -1295,6 +1296,7 @@ export function setupEnvironment(
             ...(xdgStateHome === undefined ? {} : { XDG_STATE_HOME: xdgStateHome }),
         })
     } catch {
+        // Only reading a caller-supplied environment can throw; the caller refuses it as invalid data.
         return undefined
     }
     return exactEnvironment(projected)
@@ -1730,10 +1732,11 @@ export async function runSetup(
 
     const nextOperationTimestamp = async (): Promise<string | SetupApplicationOutcome> => {
         let observedAt: unknown
+        let cause = ''
         try {
             observedAt = adapters.observedAt()
-        } catch {
-            observedAt = undefined
+        } catch (error) {
+            cause = `: ${errorCause(error)}`
         }
         return isCanonicalTimestamp(observedAt)
             ? observedAt
@@ -1742,7 +1745,7 @@ export async function runSetup(
                   adapters,
                   [...diagnostics, ownerDiagnostic(
                       ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
-                      'setup operation timestamp is unavailable',
+                      `setup operation timestamp is unavailable${cause}`,
                       context.source.path,
                   )],
                   executionEvidence(completedStepIds, mutationMayHaveOccurred),
@@ -2522,6 +2525,7 @@ function matchesPortAcquisition(
             && leaseResult.recordRevision === projection.ownership.recordRevision
             && JSON.stringify(leaseResult.lease) === JSON.stringify(projection.lease)
     } catch {
+        // A throwing accessor in the lease result is a mismatch, which the caller refuses.
         return false
     }
 }
@@ -3802,6 +3806,7 @@ function exactCommandConfigPath(input: unknown): string | undefined {
             || descriptors.configPath.value.includes('\0')) return undefined
         return resolve(descriptors.configPath.value)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -3850,6 +3855,7 @@ function selectedObservation<Observation extends DestructiveReclaimObservation>(
         return selected.kind === 'selected' && selected.stackId === context.stackId
             && selected.checkoutId === context.checkoutId ? observation : undefined
     } catch {
+        // An observation whose instance cannot be read is not this run's, which the caller refuses.
         return undefined
     }
 }
@@ -4727,6 +4733,7 @@ function stageMatches(context: PreflightContext, expected: 'steady' | 'bootstrap
     try {
         return Array.isArray(context.stages) && context.stages.every((authority) => authority.stage === expected)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return false
     }
 }
@@ -4744,6 +4751,7 @@ function exactHealthProducers(value: unknown): HealthObservationProducers | unde
         }
         return Object.freeze(producers) as HealthObservationProducers
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -4758,6 +4766,7 @@ function singleDataElement(value: unknown): unknown {
             || !element || !('value' in element) || !length || !('value' in length) || length.value !== 1) return undefined
         return element.value
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -4775,6 +4784,7 @@ function exactDataObject(value: unknown, keys: readonly string[]): Readonly<Reco
         }
         return Object.freeze(captured)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -4905,6 +4915,7 @@ function prepareHealthObservation(
             ? prepared
             : undefined
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -4912,19 +4923,19 @@ function prepareHealthObservation(
 async function executeObservationStep(
     adapters: ObservationCommandAdapters,
     step: ExecutionStep,
-): Promise<Readonly<{ kind: 'complete'; outcome: ExecuteProbeOutcome }> | Readonly<{ kind: 'unavailable' }>> {
+): Promise<Readonly<{ kind: 'complete'; outcome: ExecuteProbeOutcome }> | Readonly<{ kind: 'unavailable'; cause: string }>> {
     try {
         return Object.freeze({ kind: 'complete', outcome: await adapters.execute(step, {}) })
-    } catch {
-        return Object.freeze({ kind: 'unavailable' })
+    } catch (error) {
+        return Object.freeze({ kind: 'unavailable', cause: errorCause(error) })
     }
 }
 
-function comparisonProbeUnavailable(input: ComparisonRemoteInput, probe: string): ComparisonRemoteResult {
+function comparisonProbeUnavailable(input: ComparisonRemoteInput, probe: string, cause?: string): ComparisonRemoteResult {
     return Object.freeze({
         kind: 'unavailable',
         code: ENVIRONMENT_CODES.GIT_COMPARISON_REMOTE_MISMATCH,
-        reason: `${probe} execution is unavailable for sibling ${input.sibling}`,
+        reason: `${probe} execution is unavailable for sibling ${input.sibling}${cause === undefined ? '' : `: ${cause}`}`,
     })
 }
 
@@ -4937,21 +4948,21 @@ async function observeComparisonRemote(
     const statusStep = createGitObservationStep(input)
     if (!statusStep) return comparisonProbeUnavailable(input, 'Git status probe planning')
     const statusExecution = await executeObservationStep(adapters, statusStep)
-    if (statusExecution.kind === 'unavailable') return comparisonProbeUnavailable(input, 'Git status probe')
+    if (statusExecution.kind === 'unavailable') return comparisonProbeUnavailable(input, 'Git status probe', statusExecution.cause)
     const git = observeGit(statusStep, statusExecution.outcome, input)
     const ref = createComparisonRemoteRefStep({ ...input, git })
     if (ref.kind !== 'probe') return ref
     const refExecution = await executeObservationStep(adapters, ref.step)
-    if (refExecution.kind === 'unavailable') return comparisonProbeUnavailable(input, 'comparison upstream probe')
+    if (refExecution.kind === 'unavailable') return comparisonProbeUnavailable(input, 'comparison upstream probe', refExecution.cause)
     const url = observeComparisonRemoteRef(ref, refExecution.outcome)
     if (url.kind !== 'probe') return url
     const urlExecution = await executeObservationStep(adapters, url.step)
-    if (urlExecution.kind === 'unavailable') return comparisonProbeUnavailable(input, 'comparison remote URL probe')
+    if (urlExecution.kind === 'unavailable') return comparisonProbeUnavailable(input, 'comparison remote URL probe', urlExecution.cause)
     const revalidation = observeComparisonRemoteUrl(url, urlExecution.outcome)
     if (revalidation.kind !== 'probe') return revalidation
     const revalidationExecution = await executeObservationStep(adapters, revalidation.step)
     if (revalidationExecution.kind === 'unavailable') {
-        return comparisonProbeUnavailable(input, 'comparison upstream revalidation probe')
+        return comparisonProbeUnavailable(input, 'comparison upstream revalidation probe', revalidationExecution.cause)
     }
     return observeComparisonRemoteRevalidation(revalidation, revalidationExecution.outcome)
 }
@@ -5076,8 +5087,9 @@ async function inspectDoctorSurfaceOverrides(
             })
         }
         return captured as unknown as DoctorSurfaceOverrideInspection
-    } catch {
-        return unavailableSurfaceOverrideInspection
+    } catch (error) {
+        return Object.freeze({ ...unavailableSurfaceOverrideInspection,
+            reason: `${unavailableSurfaceOverrideInspection.reason}: ${errorCause(error)}` })
     }
 }
 
@@ -5268,6 +5280,7 @@ function ownDataValues(
         }
         return Object.freeze(captured)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -5331,8 +5344,8 @@ export async function runLogs(
         signal = adapters.signal
         observe = adapters.observe
         execute = adapters.execute
-    } catch {
-        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, 'log request must be readable')
+    } catch (error) {
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log request must be readable: ${errorCause(error)}`)
     }
     const configPath = captured?.configPath
     const service = captured?.service
@@ -5442,12 +5455,12 @@ export async function runBaselineRecord(
     try {
         await adapters.write(admitted.result)
         return admitted
-    } catch {
+    } catch (error) {
         return Object.freeze({
             kind: 'refusal', status: 2, result: null,
             diagnostics: Object.freeze([applicationDiagnostic(
                 ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-                'environment baseline durability is indeterminate',
+                `environment baseline durability is indeterminate: ${errorCause(error)}`,
                 admitted.result.stackId,
             )]),
         })
@@ -5512,12 +5525,12 @@ export async function beginOperatorBaselineRecord(
             try {
                 await adapters.write(baseline)
                 return admitted
-            } catch {
+            } catch (error) {
                 return Object.freeze({
                     kind: 'refusal', status: 2, result: null,
                     diagnostics: Object.freeze([applicationDiagnostic(
                         ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-                        'environment baseline durability is indeterminate', baseline.stackId,
+                        `environment baseline durability is indeterminate: ${errorCause(error)}`, baseline.stackId,
                     )]),
                 })
             }

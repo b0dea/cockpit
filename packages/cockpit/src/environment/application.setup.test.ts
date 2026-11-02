@@ -1521,9 +1521,9 @@ describe('setup application choreography', () => {
     })
 
     it.each([
-        ['malformed', (): string => 'not-a-timestamp'],
-        ['unreadable', (): string => { throw new Error('clock failed') }],
-    ] as const)('refuses %s operation time before invoking an authority owner', async (_label, clock) => {
+        ['malformed', (): string => 'not-a-timestamp', ''],
+        ['unreadable', (): string => { throw new Error('clock failed') }, ': Error'],
+    ] as const)('refuses %s operation time before invoking an authority owner', async (_label, clock, cause) => {
         const { configPath, context, adapters } = await sequenceFixture({
             environment_files: [{ template: '.env.example', instance: '.env' }],
         })
@@ -1540,7 +1540,7 @@ describe('setup application choreography', () => {
         expect(outcome.diagnostics).toContainEqual({
             severity: 'error',
             code: 'SETUP_PATH_TYPE_INVALID',
-            message: 'setup operation timestamp is unavailable',
+            message: `setup operation timestamp is unavailable${cause}`,
             target: context.source.path,
         })
         expect(withIgnore).not.toHaveBeenCalled()
