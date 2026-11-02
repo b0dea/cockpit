@@ -23,8 +23,10 @@ describe('health CLI boundary', () => {
         ], capture.io, {}, { env: {} })
 
         expect(status).toBe(2)
+        // The production observation loads the configuration first, so a missing file is named as
+        // missing rather than reported as an unmeasured runtime.
         expect(JSON.parse(capture.output().stdout)).toMatchObject({
-            diagnostics: [{ code: 'RUNTIME_UNMEASURED' }], result: null,
+            diagnostics: [{ code: 'CONFIG_NOT_FOUND', target: '/synthetic/missing-cockpit.toml' }], result: null,
         })
     })
 
