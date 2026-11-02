@@ -17,6 +17,7 @@ const LLMS_INDEX = 'llms.txt'
 const MANIFEST_PATH = /^(?:packages\/[^/]+\/)?package(?:-lock)?\.json$/
 const SCRIPT_PATH = /^scripts\/([^/]+)\.(?:mjs|d\.mts)$/
 const SURFACES_PATH = /^packages\/[^/]+\/surfaces\/.+/
+const LIBEXEC_PATH = /^packages\/[^/]+\/libexec\/[^/]+$/
 const FIXTURE_PATH = /^fixtures\/([^/]+)\/.+/
 const EXAMPLE_PATH = /^examples\/([^/]+)\/.+/
 const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
@@ -130,6 +131,30 @@ function testsReadingFixtures(root, directory, imports) {
     return [...new Set(readers.flatMap(path => TEST_PATH.test(path) ? [path] : testsImporting(imports, path)))]
 }
 
+// A libexec program is spawned or required by path, never imported, so its owners are the tests
+// that name it, the owners of modules that name it, and the owners of programs that name it.
+function testsNamingLibexecProgram(root, program, imports) {
+    const directory = dirname(program)
+    const programs = readdirSync(resolve(root, directory)).map(name => posix.join(directory, name))
+        .filter(path => existingFile(root, path))
+    const modules = walkFiles(root, 'packages').filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
+    const tests = new Set()
+    const visited = new Set([program])
+    const pending = [program]
+    while (pending.length) {
+        const name = basename(pending.pop())
+        for (const path of modules.filter(candidate => readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
+            const owners = TEST_PATH.test(path) ? [path] : SOURCE_PATH.test(path) ? sourceOwners(root, path, () => imports) : testsImporting(imports, path)
+            for (const test of owners) tests.add(test)
+        }
+        for (const path of programs.filter(candidate => !visited.has(candidate) && readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
+            visited.add(path)
+            pending.push(path)
+        }
+    }
+    return [...tests]
+}
+
 // A source file whose tests carry another name is owned by the tests that import it, directly or
 // through re-exports and test-support helpers. Static specifiers are
 // resolved against the importing file, so a same-named file in another directory never matches.
@@ -166,6 +191,19 @@ function testsImporting(imports, source) {
     return [...tests]
 }
 
+// A source file is owned by its adjacent tests, or, when it has none, by the tests that import it.
+function sourceOwners(root, path, imports) {
+    const source = SOURCE_PATH.exec(path)
+    const directory = dirname(source[1])
+    const stem = basename(source[1])
+    const candidates = readdirSync(resolve(root, directory))
+        .filter(name => name === `${stem}.test.${source[2]}` || name === `${stem}.spec.${source[2]}`
+            || (name.startsWith(`${stem}.`) && (name.endsWith(`.test.${source[2]}`) || name.endsWith(`.spec.${source[2]}`))))
+        .map(name => posix.join(directory, name))
+        .filter(candidate => existingFile(root, candidate))
+    return candidates.length ? candidates : testsImporting(imports(), path)
+}
+
 function ownerTests(root, paths, extras) {
     const selected = new Set()
     const unmapped = []
@@ -191,23 +229,11 @@ function ownerTests(root, paths, extras) {
             else unmapped.push(path)
             continue
         }
-        const source = SOURCE_PATH.exec(path)
-        if (source && !TEST_PATH.test(path)) {
+        if (SOURCE_PATH.test(path)) {
             sourceChanged = true
-            const directory = dirname(source[1])
-            const stem = basename(source[1])
-            const candidates = readdirSync(resolve(root, directory))
-                .filter(name => name === `${stem}.test.${source[2]}` || name === `${stem}.spec.${source[2]}`
-                    || (name.startsWith(`${stem}.`) && (name.endsWith(`.test.${source[2]}`) || name.endsWith(`.spec.${source[2]}`))))
-                .map(name => posix.join(directory, name))
-                .filter(candidate => existingFile(root, candidate))
-            if (candidates.length) for (const candidate of candidates) selected.add(candidate)
-            else {
-                imports ??= importedModules(root)
-                const importing = testsImporting(imports, path)
-                if (importing.length) for (const candidate of importing) selected.add(candidate)
-                else unmapped.push(path)
-            }
+            const owners = sourceOwners(root, path, () => imports ??= importedModules(root))
+            if (owners.length) for (const candidate of owners) selected.add(candidate)
+            else unmapped.push(path)
             continue
         }
         const script = SCRIPT_PATH.exec(path)
@@ -226,6 +252,10 @@ function ownerTests(root, paths, extras) {
             mapped.push(...packageTestFiles(root).filter(candidate => candidate.startsWith(`${TEST_DIRECTORY}/surfaces/`)))
         }
         if (script) mapped.push(...testsReferencing(root, `${script[1]}.mjs`))
+        if (LIBEXEC_PATH.test(path)) {
+            imports ??= importedModules(root)
+            mapped.push(...testsNamingLibexecProgram(root, path, imports))
+        }
         if (path === SCHEMA_ARTIFACT) mapped.push(...testsReferencing(root, 'cockpit.schema.json'))
         if (example && !MARKDOWN_PATH.test(path)) {
             mapped.push(...testsReferencing(root, `examples/${example[1]}`), ...testsInDirectory(root, [EXAMPLE_TEST]))

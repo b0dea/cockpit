@@ -213,9 +213,10 @@ function inventoryCodes(inventory: DiagnosticInventory): readonly string[] | und
         || inventory.owners.size !== codes.length
         || !(remedies instanceof Map) || remedies.size !== codes.length || codes.some(name => {
             const owners = inventory.owners.get(name)
-            const fixes = remedies.get(name)
+            const remedy = remedies.get(name)
             return !(owners instanceof Set) || owners.size === 0 || [...owners].some(path => typeof path !== 'string' || !/^packages\/cockpit\/src\/[A-Za-z0-9_./-]+\.ts$/.test(path))
-                || !(fixes instanceof Set) || [...fixes].some(fix => typeof fix !== 'string' || fix.length === 0 || /[\r\n]/.test(fix))
+                || !remedy || !(remedy.kind === 'none' || remedy.kind === 'varies'
+                    || remedy.kind === 'fixed' && typeof remedy.fix === 'string' && remedy.fix.length > 0 && !/[\r\n]/.test(remedy.fix))
         })) return undefined
     const known = new Set(codes)
     if ([...inventory.commandDiagnostics].some(([handler, emitted]) => typeof handler !== 'string' || !(emitted instanceof Set)
@@ -227,9 +228,11 @@ function inventoryCodes(inventory: DiagnosticInventory): readonly string[] | und
 // `rg <CODE> packages/cockpit/src` answers, so the user pages never list owners or test commands.
 const DIAGNOSTIC_HEADER = '| Diagnostic | What to do |\n| --- | --- |\n'
 const NO_FIXED_REMEDY = 'see the message'
+const VARYING_REMEDY = 'depends on what failed; see the message'
 const NEVER_PROBED = 'never'
-const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. Where a code always has the same fix, the table repeats it; '
-    + `otherwise it says "${NO_FIXED_REMEDY}". [Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n`
+const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. Where every place that raises a code gives the same fix, the table repeats it; '
+    + `where they give different fixes it says "${VARYING_REMEDY}", and otherwise "${NO_FIXED_REMEDY}". `
+    + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
 
 // The per-command tables in the CLI reference send the reader somewhere useful: a fix that never
 // changes, or the hand-written troubleshooting section that covers the code. Repeating "see the
@@ -237,7 +240,11 @@ const DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to f
 const CLI_DIAGNOSTIC_GUIDE = 'Each diagnostic message names what failed and how to fix it. For each command, What to do repeats a fix that never changes '
     + 'and links the [Troubleshooting](troubleshooting.md) section that covers the code; the other codes are listed on their own, and their message is the guidance. '
     + '[Respond to diagnostic codes](environment.md#respond-to-diagnostic-codes) explains each family of codes.\n\n'
-    + 'Each command lists the codes its code path can produce, derived from the source, so a list can name a code that needs a failure your setup never meets.\n\n'
+    // The attribution counts a shared factory whole: the health and lifecycle adapter factories
+    // build several commands' adapters, so a command that uses one adapter inherits the others' codes.
+    + 'Each command lists the codes its code path can produce, derived from the source rather than observed, and the lists err towards too many. '
+    + 'A list can name a code that needs a failure your setup never meets, and, where commands are built from the same shared parts, a code only a related command raises. '
+    + 'A code a command prints that its list does not name is a defect in this page.\n\n'
 const EVERY_COMMAND_GUIDE = 'Every command can produce these codes, so they are listed once, here, and not under each command:\n\n'
 
 const headingAnchor = (heading: string) => heading.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^a-z0-9 _-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
@@ -263,8 +270,8 @@ function troubleshootingSections(document: string): ReadonlyMap<string, string> 
 }
 
 function inventoryRemedy(inventory: DiagnosticInventory, name: string): string {
-    const fixes = [...inventory.remedies.get(name)!].sort()
-    return fixes.length === 0 ? NO_FIXED_REMEDY : fixes.map(cell).join('; ')
+    const remedy = inventory.remedies.get(name)!
+    return remedy.kind === 'fixed' ? cell(remedy.fix) : remedy.kind === 'varies' ? VARYING_REMEDY : NO_FIXED_REMEDY
 }
 
 export function validateTroubleshootingIndex(inventory: DiagnosticInventory, bytes: string): readonly string[] {
@@ -365,9 +372,9 @@ export function renderReferences(input: ReferenceInput | CommittedReferenceInput
         const exits = Object.entries(EXIT_CODES).map(([name, value]) => `| ${value} | ${name} |\n`).join('')
         const sections = troubleshootingSections(input.troubleshooting)
         const guidance = (name: string) => {
-            const fix = inventoryRemedy(input.diagnostics, name)
+            const remedy = input.diagnostics.remedies.get(name)!
             const anchor = sections.get(name)
-            return [...(fix === NO_FIXED_REMEDY ? [] : [fix]), ...(anchor === undefined ? [] : [`[Troubleshooting](troubleshooting.md#${anchor})`])].join('; ')
+            return [...(remedy.kind === 'fixed' ? [cell(remedy.fix)] : []), ...(anchor === undefined ? [] : [`[Troubleshooting](troubleshooting.md#${anchor})`])].join('; ')
         }
         const commandDiagnostics = (names: readonly string[]) => {
             const rows = names.map(name => [code(name), guidance(name)] as const)

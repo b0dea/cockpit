@@ -386,6 +386,26 @@ describe('changed adjacent-owner test runner', () => {
         expect(fixture.dispatched()).toEqual(['packages/cockpit/src/chained.test.ts', 'packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/indirect.test.ts'])
     })
 
+    it('runs the owners of a changed libexec program: tests and modules that name it, and programs that run it', () => {
+        const fixture = withOwners({
+            'packages/cockpit/libexec/runner.cjs': 'runner\n',
+            'packages/cockpit/libexec/supervisor.cjs': "const RUNNER = path.join(__dirname, 'runner.cjs')\n",
+            'packages/cockpit/src/direct.test.ts': "const program = '../libexec/runner.cjs'\n",
+            'packages/cockpit/src/exec.ts': "export const supervisor = new URL('../libexec/supervisor.cjs', import.meta.url)\n",
+            'packages/cockpit/src/exec.test.ts': "import { supervisor } from './exec.js'\n",
+            'packages/cockpit/src/exec-user.ts': "export { supervisor } from './exec.js'\n",
+            'packages/cockpit/src/exec-user.test.ts': "import { supervisor } from './exec-user.js'\n",
+            'packages/cockpit/test-support/probe.ts': "export const probe = 'libexec/runner.cjs'\n",
+            'packages/cockpit/src/probe-user.test.ts': "import { probe } from '../test-support/probe.js'\n",
+        })
+        edit(fixture.root, 'packages/cockpit/libexec/runner.cjs')
+
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/direct.test.ts', 'packages/cockpit/src/exec.test.ts', 'packages/cockpit/src/probe-user.test.ts'])
+    })
+
     it('runs the tests that import a source file named differently from its tests, directly or through one module', () => {
         const fixture = withOwners({
             'packages/cockpit/src/table.ts': 'export const table = 1\n',

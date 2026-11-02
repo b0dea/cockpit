@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { diagnosticInventory } from '../../../../scripts/docs-lint.mjs'
+import { diagnosticInventoryFromSources, type DiagnosticRemedy } from '../../../../scripts/diagnostic-inventory.mjs'
 import { runCli } from '../cli.js'
 import { commands } from '../command-table.js'
 import { executeProbe } from '../environment-exec/execute.js'
@@ -98,7 +99,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 function input(troubleshooting = prose) {
     return { skills, troubleshooting, diagnostics: { items: ['diagnostic:SYNTHETIC_FAILURE'],
         owners: new Map([['SYNTHETIC_FAILURE', new Set(['packages/cockpit/src/document/command.ts'])]]),
-        remedies: new Map([['SYNTHETIC_FAILURE', new Set(['repair the synthetic input'])]]),
+        remedies: new Map([['SYNTHETIC_FAILURE', { kind: 'fixed' as const, fix: 'repair the synthetic input' }]]),
         commandDiagnostics: new Map([['document', new Set(['SYNTHETIC_FAILURE'])]]) },
         capabilities, guideCosts: [], adoptSkill }
 }
@@ -360,11 +361,12 @@ describe('reference generation', () => {
         const documentOwner = 'packages/cockpit/src/document/command.ts'
         const syncOwner = 'packages/cockpit/src/generated-environment/command.ts'
         const owned = (path: string) => new Set([path])
+        const none: DiagnosticRemedy = { kind: 'none' }
         const emitted = (handler: string) => new Set(['SHARED_FAILURE',
             ...handler === 'document' ? ['BARE_FAILURE', 'FIXED_FAILURE', 'GUIDED_FAILURE'] : handler === 'sync' ? ['OTHER_FAILURE'] : []])
         const diagnostics = { items: ['diagnostic:BARE_FAILURE', 'diagnostic:FIXED_FAILURE', 'diagnostic:GUIDED_FAILURE', 'diagnostic:OTHER_FAILURE', 'diagnostic:SHARED_FAILURE'],
             owners: new Map([['BARE_FAILURE', owned(documentOwner)], ['FIXED_FAILURE', owned(documentOwner)], ['GUIDED_FAILURE', owned(documentOwner)], ['OTHER_FAILURE', owned(syncOwner)], ['SHARED_FAILURE', owned(syncOwner)]]),
-            remedies: new Map([['BARE_FAILURE', new Set<string>()], ['FIXED_FAILURE', new Set(['repair the input'])], ['GUIDED_FAILURE', new Set<string>()], ['OTHER_FAILURE', new Set<string>()], ['SHARED_FAILURE', new Set<string>()]]),
+            remedies: new Map<string, DiagnosticRemedy>([['BARE_FAILURE', none], ['FIXED_FAILURE', { kind: 'fixed', fix: 'repair the input' }], ['GUIDED_FAILURE', none], ['OTHER_FAILURE', none], ['SHARED_FAILURE', none]]),
             commandDiagnostics: new Map(commands.map(command => [command.handler, emitted(command.handler)])) }
         const troubleshooting = `# Troubleshooting\n\n\`OTHER_FAILURE\` is named before any section.\n\n## Guided recovery, step one\n\n\`GUIDED_FAILURE\` means the guide applies.\n\n${begin}\nold index\n${end}\n`
         const rendered = renderReferences({ ...input(troubleshooting), diagnostics })
@@ -385,6 +387,37 @@ describe('reference generation', () => {
         expect(cli.match(/`SHARED_FAILURE`/g)).toHaveLength(1)
         // The troubleshooting index is the full lookup table and keeps one row per code.
         expect(rendered.troubleshooting.bytes).toContain('| `GUIDED_FAILURE` | see the message |')
+    })
+
+    it('repeats a fix in the troubleshooting index only when every place that raises the code states it', () => {
+        const contract = 'packages/cockpit/src/environment/contract.ts'
+        const owner = 'packages/cockpit/src/synthetic/owner.ts'
+        const sources = new Map([
+            [contract, "export const ENVIRONMENT_CODES = Object.freeze({\n    REGISTERED_FAILURE: 'REGISTERED_FAILURE',\n} as const)\nexport const EXECUTION_FAILURE_CODES = Object.freeze([] as const)\n"],
+            [owner, [
+                "import { ENVIRONMENT_CODES } from '../environment/contract.js'",
+                "function refusal(code: string, message: string, fix?: string) { return { code, message, ...(fix ? { fix } : {}) } }",
+                // Named through the registry, as environment codes must be, beside a literal fix.
+                "export function registered() { return { code: ENVIRONMENT_CODES.REGISTERED_FAILURE, message: 'm', fix: 'repair the registered input' } }",
+                "export function agreedFirst() { return { code: 'AGREED_FAILURE', message: 'm', fix: 'repair the shared input' } }",
+                "export function agreedSecond() { return refusal('AGREED_FAILURE', 'm', 'repair the shared input') }",
+                "export function differingFirst() { return { code: 'DIFFERING_FAILURE', message: 'm', fix: 'repair the first input' } }",
+                "export function differingSecond() { return refusal('DIFFERING_FAILURE', 'm', 'repair the second input') }",
+                // One place states a fix and another computes its own: neither is the code's fix.
+                "export function partialFirst() { return { code: 'PARTIAL_FAILURE', message: 'm', fix: 'repair the partial input' } }",
+                "export function partialSecond(detail: string) { return { code: 'PARTIAL_FAILURE', message: 'm', fix: `repair ${detail}` } }",
+            ].join('\n')],
+        ])
+        const inventory = diagnosticInventoryFromSources([...sources.keys()], sources)
+        const rendered = renderReferences({ ...input(), diagnostics: inventory })
+        expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
+        if (rendered.kind !== 'complete') return
+        const index = rendered.troubleshooting.bytes
+        expect(index).toContain('| `REGISTERED_FAILURE` | repair the registered input |\n')
+        expect(index).toContain('| `AGREED_FAILURE` | repair the shared input |\n')
+        expect(index).toContain('| `DIFFERING_FAILURE` | depends on what failed; see the message |\n')
+        expect(index).toContain('| `PARTIAL_FAILURE` | depends on what failed; see the message |\n')
+        expect(index).not.toMatch(/repair the (?:first|second|partial) input/)
     })
 
     it('lists under each command every code its CLI failure paths emit, and none its dispatch cannot reach', async () => {
@@ -481,7 +514,7 @@ describe('reference generation', () => {
         expect(validateTroubleshootingIndex(missingRemedies, row).length).toBeGreaterThan(0)
         const inventory = diagnosticInventory(process.cwd(), 'HEAD')
         expect(inventory.items.length).toBeGreaterThan(10)
-        expect((inventory as typeof inventory & { remedies: Map<string, Set<string>> }).remedies.size).toBe(inventory.items.length)
+        expect(inventory.remedies.size).toBe(inventory.items.length)
         const rendered = renderReferences({ ...input(), diagnostics: inventory })
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
         if (rendered.kind === 'complete') {
@@ -492,7 +525,10 @@ describe('reference generation', () => {
             const documentSection = cli.slice(cli.indexOf('## cockpit document'), cli.indexOf('## cockpit registry-resolve'))
             expect(documentSection).toContain('`DOCUMENT_GAP`')
             expect(cli).not.toContain('packages/cockpit/src/')
-            expect(documentSection).toContain('supply this value before treating the draft as valid')
+            expect(documentSection).toContain('| `OUTPUT_EXISTS` | choose a new path; replacement requires a future explicit option |')
+            // A gap's fix is chosen per gap, so neither the page nor the index presents one as the code's fix.
+            expect(documentSection).not.toContain('supply this value before treating the draft as valid')
+            expect(rendered.troubleshooting.bytes).toContain('| `DOCUMENT_GAP` | depends on what failed; see the message |')
         }
     })
 
