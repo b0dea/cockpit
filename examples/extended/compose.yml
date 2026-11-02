@@ -2,7 +2,7 @@ services:
   api:
     build: ${API_DIR:-./api}
     init: true
-    ports: ["${API_HOST_PORT:-4400}:3000"]
+    ports: ["127.0.0.1:${API_HOST_PORT:-4400}:3000"]
     volumes: ["./api:/app"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"]
