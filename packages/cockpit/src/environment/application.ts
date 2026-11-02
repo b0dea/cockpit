@@ -1616,8 +1616,9 @@ function ownerDiagnostic(
     code: EnvironmentDiagnostic['code'],
     message: string,
     target: string,
+    fix?: string,
 ): EnvironmentDiagnostic {
-    return { severity: 'error', code, message, target }
+    return { severity: 'error', code, message, target, ...(fix ? { fix } : {}) }
 }
 
 function attributePlannerDiagnostics(
@@ -2237,12 +2238,13 @@ function lifecycleRefusal(
     code: EnvironmentDiagnostic['code'],
     message: string,
     target: string,
+    fix?: string,
 ): Extract<EnvironmentCommandOutcome<never>, { kind: 'refusal' }> {
     return {
         kind: 'refusal',
         status: 2,
         result: null,
-        diagnostics: [ownerDiagnostic(code, message, target)],
+        diagnostics: [ownerDiagnostic(code, message, target, fix)],
     }
 }
 
@@ -2372,7 +2374,8 @@ async function publishLifecycleRecord(
             if (rebind && (!await withLifecycleConfiguration(context, async () => true)
                 || !await revalidatePortLeaseProjection({ projection: rebind, namespace: context.namespace }))) {
                 return abortStateTransaction(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-                    `configuration or sole-holder lease changed before generated lifecycle refresh; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId))
+                    `configuration or sole-holder lease changed before generated lifecycle refresh; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
+                    'rerun npx --no cockpit up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up'))
             }
             return lifecycleStateRecord(context, current, value, new Date().toISOString())
         },
@@ -2582,11 +2585,14 @@ async function prepareGeneratedBringup(
             : loaded
     })
     if (declared === undefined) return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        'lifecycle configuration could not be revalidated', context.configPath)
+        'cockpit.toml changed or became unreadable while up ran, so it could not be read again', context.configPath,
+        'finish editing cockpit.toml, run npx --no cockpit check --config <your cockpit.toml>, then rerun npx --no cockpit up --config <your cockpit.toml>')
     if (declared.kind === 'refusal') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        registryRefusalMessage(declared), context.configPath)
+        registryRefusalMessage(declared), context.configPath,
+        'correct cockpit.toml where the message points, run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit up --config <your cockpit.toml>')
     if (declared.kind === 'unavailable') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        'lifecycle configuration authority was already consumed', context.configPath)
+        'lifecycle configuration authority was already consumed', context.configPath,
+        'rerun npx --no cockpit up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up')
     if (!declared.value) return undefined
     const existing = await readLifecycleRecord(context)
     const completedCoTenant = existing && !('status' in existing) && existing.value.holderId !== context.holderId
@@ -2671,13 +2677,17 @@ async function completeGeneratedBringup(
             vendors: generated.vendors.map(({ id }) => id) })
     })
     if (selection?.kind === 'refusal') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        registryRefusalMessage(selection), context.stackId)
+        registryRefusalMessage(selection), context.stackId,
+        'correct cockpit.toml where the message points, run npx --no cockpit sync --config <your cockpit.toml>, then rerun npx --no cockpit up --config <your cockpit.toml>')
+    // The loader refuses a configuration this selection cannot plan, so reaching here means cockpit.toml
+    // or the running stack changed while up ran.
     if (!selection || selection.kind !== 'complete' || runtime.topology.stackId !== context.stackId
         || runtime.topology.configSha256 !== projection.runtimeSha256
         || runtime.topology.services.some((service) => service.generation !== projection.generation
             || service.sourceSha256 !== projection.runtimeSha256)) {
         return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-            'generated lifecycle source or runtime identity changed', context.stackId)
+            'cockpit.toml or the running stack changed while up ran, so the started containers no longer match the declaration up planned from', context.stackId,
+            'run npx --no cockpit down --config <your cockpit.toml> to remove the containers this up started, then rerun npx --no cockpit up --config <your cockpit.toml>')
     }
     const current = (value: EnvironmentObservation, issued: (value: unknown) => boolean) => issued(value)
         && value.stackId === context.stackId && value.observed.state === 'available'
@@ -2851,7 +2861,9 @@ async function completeGeneratedBringup(
         const vendorCheckpoint = await checkpoint()
         if (vendorCheckpoint) return { ...vendorCheckpoint, progress: progress() }
         const sourceCurrent = await withLifecycleConfiguration(context, async () => true)
-        if (!sourceCurrent) return unavailable(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED, 'configuration')
+        if (!sourceCurrent) return refusal(lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+            'cockpit.toml changed while up completed the generated environment', context.stackId,
+            'run npx --no cockpit down --config <your cockpit.toml> to remove the containers this up started, then rerun npx --no cockpit up --config <your cockpit.toml>'))
         for (const service of services) {
             const revalidated = await revalidateService(runtime.topology, { service: service.service, containerId: service.containerId }, adapters)
             if (revalidated.kind !== 'complete') return unavailable(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'runtime service')
@@ -2913,7 +2925,8 @@ async function executeUpRound(
                 || !isDeepStrictEqual(currentProgress.record, stored.record)
                 || !await revalidatePortLeaseProjection({ projection: ports.projection, namespace: context.namespace })) {
                 return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-                    `completed teardown requires unchanged configuration, lifecycle progress and a fresh sole-holder claim; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId) }
+                    `completed teardown requires unchanged configuration, lifecycle progress and a fresh sole-holder claim; rerun \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
+                    'rerun npx --no cockpit up --config <your cockpit.toml> once nothing else is changing cockpit.toml or bringing the stack up') }
             }
         }
         const resetProgress = forceReset || teardownComplete
@@ -3436,12 +3449,14 @@ export async function runSession(
         ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         `the command path resolves to ${commandPath}, outside the session working directory ${input.cwd}; give an absolute path or a PATH entry name`,
         argv0,
+        'name the command after -- by an absolute path, a path inside the session working directory, or a name found on PATH',
     )
     const executable = await adapters.resolveExecutable(commandPath, input.env)
     if (executable.state === 'unavailable') return lifecycleRefusal(
         ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
         executable.reason,
         input.argv[0],
+        'name the command after -- by an absolute path, a path inside the session working directory, or a name found on PATH',
     )
     const up = await adapters.up({ configPath: input.configPath })
     if (up.kind === 'refusal') return up

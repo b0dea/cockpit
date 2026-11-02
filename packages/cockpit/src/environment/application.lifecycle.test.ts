@@ -429,7 +429,8 @@ describe('lifecycle application contracts', () => {
             expect(await session('./node_modules/.bin/tool')).toMatchObject({ kind: 'complete', status: 3, result: { child: { exitCode: 3 } } })
             expect(up).toHaveBeenCalledOnce()
             for (const [argv0, reason] of [['../outside', /outside the session working directory/], ['./node_modules/.bin/missing', /unavailable/]] as const) {
-                expect(await session(argv0)).toMatchObject({ kind: 'refusal', diagnostics: [{ message: expect.stringMatching(reason), target: argv0 }] })
+                expect(await session(argv0)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED',
+                    message: expect.stringMatching(reason), target: argv0, fix: expect.stringContaining('name the command after --') }] })
             }
             expect(up).toHaveBeenCalledOnce()
         } finally {

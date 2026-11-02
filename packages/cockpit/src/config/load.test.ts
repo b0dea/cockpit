@@ -440,6 +440,44 @@ health = { property = "the process answers", probe = { location = "in-stack", se
         }] })
     })
 
+    it('refuses a toolchain sibling whose generated service mounts no dependency volume, naming the field and the fix', async () => {
+        // up installed into the mounted dependency volume and refused this shape only after starting
+        // the containers, while check and doctor passed it.
+        const baseline = readFileSync(resolve('fixtures/registries/generated-environment.toml'), 'utf8')
+            .replace('name = "generated-environment"', 'name = "generated-environment"\nsiblings_root = "."')
+        // The shape a first-time setup produced: a node sibling and a node install policy, with no
+        // dependency volume declared or mounted (and so no decisions about one).
+        const unmounted = [
+            /\[\[environment\.generated\.services\.mounts\]\]\nkind = "volume"\nsource = "dependencies"\n[^[]*/,
+            /\[\[environment\.generated\.volumes\]\]\nid = "dependencies"\n[\s\S]*?(?=\[\[)/,
+            /\[\[environment\.generated\.decisions\.entries\]\]\nid = "volume-dependencies"\n[\s\S]*?(?=\[\[)/,
+            /\[\[environment\.generated\.decisions\.entries\]\]\nid = "mount-dependencies"\n[\s\S]*?(?=\[\[)/,
+        ].reduce((text, block) => {
+            const next = text.replace(block, '')
+            expect(next).not.toBe(text)
+            return next
+        }, baseline)
+        expect((await loadCockpitConfig(fixture(baseline))).kind).toBe('complete')
+        expect(await loadCockpitConfig(fixture(unmounted))).toMatchObject({ kind: 'refusal', result: null, diagnostics: [{
+            severity: 'error', code: 'GENERATED_DEPENDENCY_VOLUME_MISSING',
+            message: 'sibling.0.toolchain is "node" for app, so up installs its dependencies into a dependency volume mounted in the generated service that runs it, but generated service app mounts none ("node" install policies fill "dependencies")',
+            fix: expect.stringContaining('set toolchain = "none" on the sibling'),
+        }] })
+        expect((await loadCockpitConfig(fixture(unmounted.replace('toolchain = "node"\npurpose = "Synthetic application"', 'toolchain = "none"\npurpose = "Synthetic application"'))))
+            .kind).toBe('complete')
+
+        // A sibling row's generated service is checked the same way once it joins the baseline: its
+        // only dependency volume is filled by a node policy, which a python sibling cannot use.
+        const row = readFileSync(resolve('packages/cockpit/src/surfaces/fixtures/one-row.toml'), 'utf8')
+        const pythonRow = row.replace('var = "WORKER_DIR"\ntoolchain = "node"', 'var = "WORKER_DIR"\ntoolchain = "python"')
+        expect(pythonRow).not.toBe(row)
+        expect((await loadCockpitConfig(fixture(`${baseline}\n${row}`))).kind).toBe('complete')
+        expect(await loadCockpitConfig(fixture(`${baseline}\n${pythonRow}`))).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'GENERATED_DEPENDENCY_VOLUME_MISSING',
+            message: expect.stringMatching(/^sibling\.1\.toolchain is "python" for worker, .* but generated service worker mounts none \(environment\.install_policies has no "python" row\)$/),
+        }] })
+    })
+
     it('names port families whose bases overlap across stacks and the step that separates them', async () => {
         const overlapping = await loadCockpitConfig(fixture(validConfig.replace(
             'bases = { APP_PORT = 4100 }', 'bases = { API_HOST_PORT = 4200, WEB_HOST_PORT = 4300 }')))
