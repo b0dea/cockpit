@@ -119,8 +119,10 @@ export async function observeWorkOrderIdentity(input: Readonly<{
     for (const worktree of worktrees) {
         const tracked = executed(await input.executeGit(worktree.root, ['ls-files', '-z', '--', target]), 'worktree target')
         if (tracked.stdout !== '' && tracked.stdout !== `${target}\0`) throw new Error('work-order identity worktree target is malformed')
+        // Traditional mode names an ignored target file itself; matching mode names its ignored directory
+        // instead, which it reports whether or not the target exists.
         const status = executed(await input.executeGit(worktree.root,
-            ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignored=matching', '--', target]), 'worktree status')
+            ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--ignored=traditional', '--', target]), 'worktree status')
         if (status.stdout && !status.stdout.endsWith('\0')) throw new Error('work-order identity worktree status is malformed')
         if (tracked.stdout || status.stdout) claimedBy = 'worktree'
         worktreeEvidence.push(Object.freeze({ ...worktree, tracked: tracked.stdout, status: status.stdout }))

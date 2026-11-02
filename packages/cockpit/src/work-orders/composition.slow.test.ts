@@ -100,6 +100,23 @@ it('rejects malformed and null Git object identities in refs and worktrees', asy
     }
 })
 
+it('claims an identity for an ignored target file but not for the ignored directory around an absent one', async () => {
+    // A checkout that ignores everything it does not list, as a cockpit kept beside its products does.
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-identity-ignored-'))); roots.push(root)
+    await mkdir(join(root, 'workorders'))
+    await writeFile(join(root, '.gitignore'), '/*\n!/.gitignore\n')
+    await writeFile(join(root, 'workorders/WO-001.md'), 'present\n')
+    const executeGit: WorkOrderIdentityGit = async (cwd, argv) => {
+        const result = spawnSync('git', argv, { cwd, encoding: 'utf8' })
+        return { kind: 'executed', exitCode: result.status, stdout: result.stdout, stderr: result.stderr, truncated: false }
+    }
+    for (const argv of [['init', '--quiet'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '--allow-empty', '-m', 'empty']]) {
+        const result = spawnSync('git', argv, { cwd: root, encoding: 'utf8' }); if (result.status !== 0) throw new Error(result.stderr)
+    }
+    await expect(observeWorkOrderIdentity({ root, id: 'WO-004', executeGit })).resolves.toMatchObject({ claimedBy: null })
+    await expect(observeWorkOrderIdentity({ root, id: 'WO-001', executeGit })).resolves.toMatchObject({ claimedBy: 'worktree' })
+})
+
 describe('configured durable work application composition', () => {
     it('reports status when Git has another hard link', async () => {
         const fixture = await configuredFixture({ hardlinkedGit: true })
