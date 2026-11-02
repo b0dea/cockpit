@@ -34,7 +34,7 @@ import { projectRuntimeExecutionEnvironment } from './runtime.js'
 export const mechanism = {
     id: 'environment-data-plane',
     module: 'packages/cockpit/src/environment/data-plane.ts',
-    exports: ['planDataMode', 'executeDataMode', 'isDataModeCompletion', 'readDataModeOutcome', 'consumeDataModeOutcomeProjection', 'projectDataModeObservationSteps', 'observeDataMode', 'isDataModeObservation', 'projectPersonaOutputs', 'observationDeclarations'],
+    exports: ['planDataMode', 'executeDataMode', 'isDataModeCompletion', 'readDataModeOutcome', 'consumeDataModeOutcomeProjection', 'dataModeOutcomeSavedAt', 'projectDataModeObservationSteps', 'observeDataMode', 'isDataModeObservation', 'projectPersonaOutputs', 'observationDeclarations'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -596,6 +596,11 @@ export async function readDataModeOutcome(input: {
         observedAt: record.value.updatedAt,
     }))
     return projection
+}
+
+// When the saved outcome was published, without consuming the projection the probes still need.
+export function dataModeOutcomeSavedAt(projection: DataModeOutcomeProjection): string | undefined {
+    return projection !== null && typeof projection === 'object' ? issuedOutcomeProjections.get(projection)?.observedAt : undefined
 }
 
 export function consumeDataModeOutcomeProjection(

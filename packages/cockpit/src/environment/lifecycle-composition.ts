@@ -7,7 +7,7 @@ import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { redirectedBindSources } from './compose-topology.js'
-import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import type { CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
@@ -23,6 +23,7 @@ import {
 } from './generated-application.js'
 import { admitDependencyRuntime, createDependencyRuntimePlan } from './dependency-runtime.js'
 import {
+    dataModeOutcomeSavedAt,
     executeDataMode,
     observeDataMode,
     planDataMode,
@@ -44,6 +45,7 @@ import { observeProcessStart, releaseDeadSessionHolders, type HolderProcess } fr
 import {
     ENVIRONMENT_CODES,
     isCanonicalTimestamp,
+    snapshotExecutionPlan,
     type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
     type ExecutionStep,
@@ -795,6 +797,39 @@ export function createLifecycleCommandAdapters(
             : reject('generated-vendors', 'generated vendor observations are incomplete')
     }
 
+    // A product-data volume removed after its data was applied (by `reset`, `docker volume prune` or
+    // a runtime reset) comes back empty at the next start, while the saved outcome still says the
+    // data was applied; `up` then only reran the read-only probes and refused on every retry. Docker
+    // records when each volume was created, so a volume created after the outcome was saved holds
+    // none of that data and the mode is applied again. Both instants come from clocks the runtime
+    // keeps in step with the host; a start always creates the volume before its data is applied.
+    const dataVolumesCreatedSince = async (context: LifecycleRunContext, cwd: string, ids: readonly string[], savedAt: string): Promise<boolean | undefined> => {
+        if (ids.length === 0 || !input) return false
+        const docker = await resolveDockerExecutable(input.env)
+        if (docker.state !== 'available') return undefined
+        const binding = bindings.get(context)
+        if (!binding) return undefined
+        const project = composeProjectName({ cockpitName: binding.config.cockpit.name, stackId: context.stackId })
+        const step = snapshotExecutionPlan({ steps: [Object.freeze({
+            id: 'data:volume-created', argv: Object.freeze([docker.value.canonicalPath, 'volume', 'inspect', '--format', '{{json .CreatedAt}}',
+                ...ids.map((id) => `${project}_${id}`)] as const),
+            argv0: docker.value.invocationPath, cwd, env: runtimeEnvironment(input.env), timeoutMs: input.timeoutMs,
+            stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536, paths: Object.freeze([]), ports: Object.freeze([]),
+            labels: Object.freeze({ stackId: context.stackId }), expected: Object.freeze([]),
+            consumedFiles: Object.freeze([Object.freeze({ path: docker.value.canonicalPath, sha256: docker.value.sha256, maxBytes: 536_870_912,
+                argvIndexes: Object.freeze([0]), executable: true, executionMode: docker.value.executionMode })]),
+            filesystemChecks: Object.freeze([]), compensation: Object.freeze([]),
+        })] })?.steps[0]
+        if (!step) return undefined
+        const outcome = authenticatedExecutionOutcome(await execute(step), step)
+        if (!outcome || outcome.kind !== 'complete' || outcome.execution.exitCode !== 0) return undefined
+        // `{{json .CreatedAt}}` prints one quoted instant per volume; anything else refuses below.
+        const created = Buffer.from(outcome.stdout).toString('utf8').trim().split('\n')
+            .map((line) => /^"[^"\\]+"$/.test(line) ? Date.parse(line.slice(1, -1)) : Number.NaN)
+        if (created.length !== ids.length || created.some((instant) => !Number.isFinite(instant))) return undefined
+        return created.some((instant) => instant > Date.parse(savedAt))
+    }
+
     const completeGeneratedData: LifecycleCommandAdapterComposition['completeGeneratedData'] = async (
         context,
         runtime,
@@ -849,7 +884,12 @@ export function createLifecycleCommandAdapters(
             return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
                 diagnostic?.target ?? 'generated-data', diagnostic?.message ?? 'generated data plan is unavailable')
         }
-        if (durable) {
+        const savedAt = durable ? dataModeOutcomeSavedAt(durable) : undefined
+        const recreated = savedAt === undefined ? false : await dataVolumesCreatedSince(context, binding.checkoutRoot,
+            generated.volumes.filter(({ purpose }) => purpose === 'product-data').map(({ id }) => id), savedAt)
+        if (recreated === undefined) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
+            'generated-data', 'the creation times of the product-data volumes could not be read, so cockpit cannot tell whether their data survived')
+        if (durable && !recreated) {
             const steps = projectDataModeObservationSteps({ plan: planned.plan, projection: durable })
             if (!steps) return leafRefusal<DataModeExecutionResult | import('./contract.js').EnvironmentObservation>(
                 'generated-data', 'generated data readback authority is unavailable')
