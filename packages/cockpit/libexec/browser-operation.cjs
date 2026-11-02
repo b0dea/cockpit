@@ -9,8 +9,9 @@
 // screenshot artifact flags); see operationStep in surfaces.ts for the full set.
 // stdout on success: one JSON 'cockpit-browser-observation/v1' object.
 // stderr on failure: one JSON 'cockpit-browser-failure/v1' object naming the phase and its category,
-// exit code 1. The failure deliberately carries no error text: page content, URLs and storage state
-// must not leak into cockpit's output.
+// and, when one is known, a fixed-vocabulary reason (a browser network error code such as
+// ERR_CONNECTION_REFUSED, HTTP_<status> or TIMEOUT), exit code 1. The failure deliberately carries no
+// error text: page content, URLs and storage state must not leak into cockpit's output.
 //
 // Requests to cockpit's own browser-control authorities and nested top-level navigations are blocked
 // so the page under test cannot reach the control plane that drives it.
@@ -40,7 +41,7 @@ async function main() {
     const resolverRule = args.includes('--resolver-rule') ? one('--resolver-rule') : undefined
     const categories = { connect: 'availability', context: 'setup', navigation: 'navigation', accessibility: 'observation',
         screenshot: 'observation', artifact: 'artifact', cleanup: 'cleanup' }
-    let browser, context, page, observation, failurePhase, cleanupFailed = false, phase = 'connect'
+    let browser, context, page, observation, failurePhase, failureReason, httpStatus, cleanupFailed = false, phase = 'connect'
     try {
         browser = connection === 'remote'
             ? await browserType.connect(one('--endpoint'), { timeout: remaining(), exposeNetwork: one('--expose-network') })
@@ -95,6 +96,7 @@ async function main() {
             return { url: displayed.href, epoch: documentEpoch, attempts: mainNavigationAttempts }
         }
         const response = await page.goto(url, { timeout: remaining() })
+        if (response && typeof response.status === 'function') httpStatus = response.status()
         if (!response || typeof response.ok !== 'function' || !response.ok()) throw new Error('navigation did not return a successful HTTP response')
         documentResponse = response
         const initialDocument = currentDocument()
@@ -150,7 +152,17 @@ async function main() {
             }
             observation = { schema: 'cockpit-browser-observation/v1', operation, finalUrl: displayedAfter.url, evidence: { sha256: digest(bytes), byteLength: bytes.byteLength } }
         } else throw new Error('unsupported operation')
-    } catch { failurePhase = phase }
+    } catch (error) {
+        failurePhase = phase
+        // Only identifiers leave this process: Chromium's net error code, the HTTP status or a timeout.
+        const message = error && typeof error.message === 'string' ? error.message : ''
+        const network = /net::(ERR_[A-Z0-9_]{1,64})\b/.exec(message)
+        failureReason = network ? network[1]
+            : error && error.name === 'TimeoutError' ? 'TIMEOUT'
+            : phase === 'navigation' && Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599
+                && (httpStatus < 200 || httpStatus > 299) ? 'HTTP_' + httpStatus
+            : undefined
+    }
     finally {
         for (const value of [page, context, browser]) if (value && typeof value.close === 'function') {
             try { await value.close() } catch { cleanupFailed = true }
@@ -159,7 +171,7 @@ async function main() {
     if (failurePhase || cleanupFailed || !observation) {
         const failedAt = failurePhase || 'cleanup'
         process.stderr.write(JSON.stringify({ schema: 'cockpit-browser-failure/v1', phase: failedAt,
-            category: categories[failedAt], cleanup: cleanupFailed }))
+            category: categories[failedAt], cleanup: cleanupFailed, ...(failurePhase && failureReason ? { reason: failureReason } : {}) }))
         process.exitCode = 1
         return
     }

@@ -535,7 +535,9 @@ function renderSkill(template: string, target: GuardSurfaceTarget, rows: readonl
         ? `Sign-in and persona selection are inapplicable: ${runtime.authentication.posture === 'none' ? 'the product has no sign-in' : 'authentication is bypassed'}.`
         : `Use mode-600 stored state from seeded users with transcript-safe sign-in; never print credentials or state contents. The active state policy is ${runtime.authentication.policy}.`
     const addressing = runtime.addressing.posture === 'port' ? 'Browser resolver rules: inapplicable for port addressing.'
-        : `Apply browser resolver rules: ${runtime.addressing.resolverRules!.join('; ')}.`
+        : runtime.connection.kind === 'remote'
+            ? `The generated runner resolves application names on the host, so its browser opens the same URLs a person does; the resolver rules (${runtime.addressing.resolverRules!.join('; ')}) apply only to the headed debugger.`
+            : `Apply browser resolver rules: ${runtime.addressing.resolverRules!.join('; ')}.`
     const transports = rows.map(row => `${row.transport}: ${row.declaration}; callable: ${row.callable}; harness: ${target} ${row.version}; historical measurement: ${row.measuredVersion} on ${row.measuredOn}. ${row.reason}${row.tool ? ` Tool: ${row.tool}.` : ''}${row.cli ? ` Pinned CLI argv: ${JSON.stringify(row.cli.argv)}; package: ${row.cli.package} ${row.cli.version}.` : ''}`)
     const guidance = [
         '# Drive the application', ...transports, auth, addressing,
@@ -601,10 +603,15 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
         approved: data.approved ? ['playwright'] : [], targets: data.harnesses.map(row => row.target) })
     if (collected.kind !== 'complete') throw new TypeError(`browser MCP declaration refused: ${collected.diagnostic.code}`)
     const server = collected.result.servers[0]!
-    if (server.name !== 'playwright' || server.cwd !== data.cockpitDirectory
-        || !server.args.includes(runtime.mcp.image)
-        || runtime.connection.kind === 'remote' && !server.args.includes(runtime.connection.endpoint)) {
-        throw new TypeError('browser MCP declaration must bind the issued image, endpoint and working directory')
+    if (server.name !== 'playwright') throw new TypeError('browser MCP declaration must be the playwright server')
+    if (server.cwd !== data.cockpitDirectory) {
+        throw new TypeError('the playwright MCP declaration must come from a sibling whose dir is the cockpit directory itself (dir = "."), so the server starts there')
+    }
+    if (!server.args.includes(runtime.mcp.image)) {
+        throw new TypeError(`the playwright MCP server's arguments must include browser.images.mcp.reference (${runtime.mcp.image})`)
+    }
+    if (runtime.connection.kind === 'remote' && !server.args.includes(runtime.connection.endpoint)) {
+        throw new TypeError('the playwright MCP server\'s arguments must include the bound browser endpoint')
     }
     const rows: BrowserTransportRow[] = []
     const files: RenderedSurfaceFile[] = []

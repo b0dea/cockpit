@@ -20,7 +20,7 @@ afterEach(async () => Promise.all(roots.splice(0).map(root => rm(root, { recursi
 
 type ModuleMode = 'connect' | 'context' | 'page' | 'goto' | 'aria' | 'screenshot' | 'http-error'
     | 'null-response' | 'redirect-return' | 'final-foreign' | 'same-origin-redirect' | 'popup-cross-origin' | 'control-plane-attempts'
-    | 'later-navigation'
+    | 'later-navigation' | 'refused'
     | 'oversize-aria' | 'oversize-screenshot' | 'preexisting-screenshot' | 'swap-root' | 'cleanup' | null
 
 function playwrightModule(input: { logPath: string; serverPath: string; artifactRoot: string; outsideRoot: string; mode: ModuleMode }): string {
@@ -37,7 +37,8 @@ const browser = () => ({
         return {
         route: async () => { throw new Error('page route bypasses context guard') }, mainFrame: () => frame,
         on: (name, handler) => { if (name === 'framenavigated') frameNavigatedHandler = handler },
-        goto: async url => { log(['goto', url]); ${input.mode === 'goto' ? "throw new Error('synthetic goto failure');" : 'current = url'};
+        goto: async url => { log(['goto', url]); ${input.mode === 'goto' ? "throw new Error('synthetic goto failure');"
+          : input.mode === 'refused' ? "throw new Error('page.goto: net::ERR_SOCKS_CONNECTION_FAILED at ' + url + ' synthetic page text');" : 'current = url'};
           if (${JSON.stringify(input.mode)} === 'control-plane-attempts') {
             for (const target of ['http://localhost:3001/control', 'http://127.0.0.1:3000/control', 'http://0.0.0.0:3000/control', 'http://loopback-alias.example.invalid:3000/control', 'https://cdn.example.invalid/asset.js']) await contextHandler({
               abort: async () => log(['blocked-http', target]), continue: async () => log(['network', target])
@@ -76,7 +77,7 @@ const browser = () => ({
         url: () => current,
         locator: selector => ({ ariaSnapshot: async () => {
           if (${JSON.stringify(input.mode)} === 'later-navigation') {
-            const later = 'http://app.local:4000/later'
+            const later = 'http://app.localhost:4000/later'
             let native = false
             await contextHandler({ abort: async () => log(['blocked-later', later]),
               continue: async () => { native = true; log(['network-later', later]) } },
@@ -171,7 +172,7 @@ async function fixture(options: { headed?: boolean; mode?: ModuleMode; engine?: 
             manifest: { bytes: manifest, sha256: digest(manifest) }, cli: { path: 'cli.js', bytes: '/* synthetic pinned CLI */', sha256: digest('/* synthetic pinned CLI */') },
             module: { path: 'index.js', bytes: moduleBytes, sha256: digest(moduleBytes) } },
         skillTemplate: await readFile('packages/cockpit/surfaces/skills/cockpit-browser.skill.md', 'utf8') })
-    const policy = issueBrowserRoutePolicy(runtime, { origin: 'http://app.local:4000', routes: [
+    const policy = issueBrowserRoutePolicy(runtime, { origin: 'http://app.localhost:4000', routes: [
         { name: 'home', path: '/' }, { name: 'settings', path: '/settings' }, { name: 'dashboard', path: '/dashboard' },
     ] })
     return { root, runtime, client: rendered.clients[0]!, policy, logPath, serverPath, outsideRoot, artifactRoot }
@@ -190,7 +191,7 @@ describe('browser driving commands', () => {
         if (result.kind !== 'complete') return
         expect(result.receipt).toMatchObject({ kind: 'drive', activation: 'application', authentication: { posture: 'bypassed' } })
         expect(result.receipt.surfaces.map(row => [row.name, row.url])).toEqual([
-            ['home', 'http://app.local:4000/'], ['settings', 'http://app.local:4000/settings'], ['dashboard', 'http://app.local:4000/dashboard'],
+            ['home', 'http://app.localhost:4000/'], ['settings', 'http://app.localhost:4000/settings'], ['dashboard', 'http://app.localhost:4000/dashboard'],
         ])
         expect(await calls(logPath)).toContainEqual(['browser.close'])
         expect(isIssuedBrowserCommandReceipt(result.receipt)).toBe(true)
@@ -217,14 +218,14 @@ describe('browser driving commands', () => {
     it('returns only bounded hashes for accessibility and a postchecked mode-600 screenshot', async () => {
         const accessibility = await fixture()
         const a11y = await executeBrowserCommand({ runtime: accessibility.runtime, client: accessibility.client,
-            policy: issueBrowserRoutePolicy(accessibility.runtime, { origin: 'http://app.local:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'accessibility' })
+            policy: issueBrowserRoutePolicy(accessibility.runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'accessibility' })
         expect(a11y.kind).toBe('complete')
         expect(JSON.stringify(a11y)).not.toContain('Synthetic fixture')
         if (a11y.kind === 'complete') expect(a11y.receipt.surfaces[0]).toMatchObject({ accessibility: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/), byteLength: 30 } })
 
         const screenshot = await fixture()
         const shot = await executeBrowserCommand({ runtime: screenshot.runtime, client: screenshot.client,
-            policy: issueBrowserRoutePolicy(screenshot.runtime, { origin: 'http://app.local:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'screenshot' })
+            policy: issueBrowserRoutePolicy(screenshot.runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'screenshot' })
         expect(shot.kind).toBe('complete')
         if (shot.kind !== 'complete') return
         const evidence = shot.receipt.surfaces[0]!.screenshot!
@@ -234,7 +235,7 @@ describe('browser driving commands', () => {
 
         const nested = await fixture({ artifactRoot: '.browser/cli' })
         const nestedShot = await executeBrowserCommand({ runtime: nested.runtime, client: nested.client,
-            policy: issueBrowserRoutePolicy(nested.runtime, { origin: 'http://app.local:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'screenshot' })
+            policy: issueBrowserRoutePolicy(nested.runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'dashboard', path: '/dashboard' }] }), kind: 'screenshot' })
         expect(nestedShot.kind).toBe('complete')
         if (nestedShot.kind === 'complete') {
             expect(nestedShot.receipt.surfaces[0]!.screenshot!.path).toMatch(/^\.browser\/cli\/screenshot-/)
@@ -259,16 +260,27 @@ describe('browser driving commands', () => {
     })
 
     it('refuses undeclared, copied, proxy-authority and cross-origin route policies', async () => {
-        const { runtime, client, policy } = await fixture()
+        const { runtime, client, policy, logPath } = await fixture()
         await expect(executeBrowserCommand({ runtime, client, policy: { ...policy } as never, kind: 'drive' }))
             .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('issued route policy') })
-        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'ws://app.local:4000', routes: [{ name: 'home', path: '/' }] })).toThrow('HTTP')
+        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'ws://app.localhost:4000', routes: [{ name: 'home', path: '/' }] })).toThrow('HTTP')
         expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://localhost:3001', routes: [{ name: 'home', path: '/' }] })).toThrow('browser-control')
         expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://127.0.0.1:3000', routes: [{ name: 'home', path: '/' }] })).toThrow('browser-control')
         expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://loopback-alias.example.invalid:3000', routes: [{ name: 'home', path: '/' }] })).toThrow('browser-control')
-        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://app.local:4000', routes: [{ name: 'escape', path: '//outside.invalid/' }] })).toThrow('relative')
-        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://app.local:4000', routes: [{ name: 'home', path: '/' }], extra: true } as never)).toThrow('closed')
-        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://app.local:4000', routes: [{ name: 'home', path: '/', extra: true } as never] })).toThrow('closed')
+        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'escape', path: '//outside.invalid/' }] })).toThrow('relative')
+        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'home', path: '/' }], extra: true } as never)).toThrow('closed')
+        expect(() => issueBrowserRoutePolicy(runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'home', path: '/', extra: true } as never] })).toThrow('closed')
+        // A remote browser reaches only exposed addresses through this client; anything else it would
+        // look for inside its own container, so the command refuses before dispatching.
+        const outside = issueBrowserRoutePolicy(runtime, { origin: 'http://app.example.invalid:4000', routes: [{ name: 'home', path: '/' }] })
+        const refused = await executeBrowserCommand({ runtime, client, policy: outside, kind: 'drive' })
+        expect(refused).toMatchObject({ kind: 'refusal', reason: expect.stringContaining(
+            'Browser application origin http://app.example.invalid:4000 is outside browser.network_exposure (<loopback>)') })
+        expect(await calls(logPath)).toEqual([])
+        const local = await fixture({ local: true })
+        await expect(executeBrowserCommand({ runtime: local.runtime, client: local.client, kind: 'drive',
+            policy: issueBrowserRoutePolicy(local.runtime, { origin: 'http://app.example.invalid:4000', routes: [{ name: 'home', path: '/' }] }) }))
+            .resolves.toMatchObject({ kind: 'complete' })
     })
 
     it('refuses accessor, proxy and non-closed command inputs before reading them or dispatching', async () => {
@@ -310,6 +322,10 @@ describe('browser driving commands', () => {
             await expect(executeBrowserCommand({ runtime: failed.runtime, client: failed.client, policy: failed.policy, kind: 'drive' }))
                 .resolves.toMatchObject({ kind: 'refusal', reason: expect.stringContaining('drive') })
         }
+        const unavailable = await fixture({ mode: 'http-error' })
+        expect(await executeBrowserCommand({ runtime: unavailable.runtime, client: unavailable.client, policy: unavailable.policy, kind: 'drive' }))
+            .toEqual({ kind: 'refusal', reason: 'Browser drive operation failed during navigation (navigation) for home: '
+                + 'http://app.localhost:4000/ answered HTTP 503, and a surface must answer 2xx' })
     })
 
     it('uses browser-native redirects and issues evidence only for an application document', async () => {
@@ -318,9 +334,9 @@ describe('browser driving commands', () => {
             policy: redirected.policy, kind: 'drive' })
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind === 'complete') expect(result.receipt.surfaces).toEqual([
-            { name: 'home', url: 'http://app.local:4000/' },
-            { name: 'settings', url: 'http://app.local:4000/settings' },
-            { name: 'dashboard', url: 'http://app.local:4000/dashboard' },
+            { name: 'home', url: 'http://app.localhost:4000/' },
+            { name: 'settings', url: 'http://app.localhost:4000/settings' },
+            { name: 'dashboard', url: 'http://app.localhost:4000/dashboard' },
         ])
         expect(await calls(redirected.logPath)).toContainEqual(['network', 'https://outside.example.invalid/private'])
 
@@ -361,24 +377,24 @@ describe('browser driving commands', () => {
     it('follows same-origin redirects and reports the validated terminal response URL', async () => {
         const redirected = await fixture({ mode: 'same-origin-redirect' })
         const policy = issueBrowserRoutePolicy(redirected.runtime, {
-            origin: 'http://app.local:4000', routes: [{ name: 'start', path: '/start' }],
+            origin: 'http://app.localhost:4000', routes: [{ name: 'start', path: '/start' }],
         })
         const result = await executeBrowserCommand({ runtime: redirected.runtime, client: redirected.client, policy, kind: 'drive' })
         expect(result).toMatchObject({ kind: 'complete' })
         if (result.kind === 'complete') expect(result.receipt.surfaces).toEqual([
-            { name: 'start', url: 'http://app.local:4000/redirected' },
+            { name: 'start', url: 'http://app.localhost:4000/redirected' },
         ])
-        expect(await calls(redirected.logPath)).toContainEqual(['network', 'http://app.local:4000/redirected'])
+        expect(await calls(redirected.logPath)).toContainEqual(['network', 'http://app.localhost:4000/redirected'])
 
         const later = await fixture({ mode: 'later-navigation' })
         const laterPolicy = issueBrowserRoutePolicy(later.runtime, {
-            origin: 'http://app.local:4000', routes: [{ name: 'start', path: '/start' }],
+            origin: 'http://app.localhost:4000', routes: [{ name: 'start', path: '/start' }],
         })
         const laterResult = await executeBrowserCommand({ runtime: later.runtime, client: later.client,
             policy: laterPolicy, kind: 'accessibility' })
         expect(laterResult).toMatchObject({ kind: 'refusal' })
         expect(await calls(later.logPath)).toContainEqual([
-            'ariaSnapshot', 'body', 'http://app.local:4000/start', 'http://app.local:4000/start#pending-navigation',
+            'ariaSnapshot', 'body', 'http://app.localhost:4000/start', 'http://app.localhost:4000/start#pending-navigation',
         ])
     })
 
@@ -436,6 +452,14 @@ describe('browser driving commands', () => {
             const observed = mode === 'connect' ? [] : await calls(failed.logPath)
             for (const call of expected) expect(observed, `${mode} cleanup`).toContainEqual(call)
         }
+        // A browser network error crosses as its code alone, with what to check next.
+        const unanswered = await fixture({ mode: 'refused' })
+        const config = join(unanswered.root, 'cockpit.toml')
+        const result = await executeBrowserCommand({ runtime: unanswered.runtime, client: unanswered.client, policy: unanswered.policy, kind: 'drive' })
+        expect(result).toEqual({ kind: 'refusal', reason: 'Browser drive operation failed during navigation (navigation) for home: '
+            + 'nothing answered at http://app.localhost:4000/ (ERR_SOCKS_CONNECTION_FAILED); check that the application is up with '
+            + `npx --no cockpit doctor --config ${config}` })
+        expect(JSON.stringify(result)).not.toContain('synthetic page text')
     })
 
     it('refuses headed use without an authenticated persistent debugger endpoint', async () => {

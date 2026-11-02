@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,7 +35,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
     ['docs/work-and-browser.md', [operator]],
     ['packages/cockpit/README.md', [packageInstall]],
     ['examples/synthetic/README.md', [packageInstall, operator, executed, operator, executed]],
-    ['examples/minimal/README.md', [executed, runtime]],
+    ['examples/minimal/README.md', [executed, runtime, runtime]],
     ['examples/docs-only/README.md', [executed]],
     ['examples/compose-first/README.md', [executed, runtime]],
     ['examples/extended/README.md', [executed]],
@@ -228,6 +228,20 @@ describe('the public synthetic cockpit', () => {
             path: 'docs/cockpit/environment-decisions.md', undecided: 2, subjects: ['port:api:http', 'service:api'],
         })
         expect(check.diagnostics).toContainEqual(expect.objectContaining({ severity: 'info', code: 'GENERATED_DECISIONS_UNDECIDED' }))
+    })
+
+    it('validates the browser variant of the minimal example up to the port lease that up creates', () => {
+        const root = join(scratch, 'minimal-browser')
+        cpSync(join(repositoryRoot, 'examples/minimal'), root, { recursive: true })
+        execFileSync('git', ['init', '--quiet', root])
+        // Every declared digest, pin and runner field is checked before the lease, so the only
+        // refusal left for a correct example is the one its README answers by running up first.
+        const result = run(root, ['cockpit', 'sync', '--config', 'cockpit.browser.toml', '--json'])
+        expect(result.status, result.stdout).toBe(2)
+        expect(result.response.diagnostics.filter((row: { severity: string }) => row.severity === 'error'))
+            .toEqual([expect.objectContaining({ code: 'GENERATED_INPUT_INVALID', target: 'browser' })])
+        expect(result.response.guidance).toContainEqual({ code: 'GENERATED_INPUT_INVALID', target: 'browser',
+            text: `run npx --no cockpit up --config ${join(realpathSync(root), 'cockpit.browser.toml')}, which leases the ports and publishes the runner; sync works while that lease is held` })
     })
 
     it('opens the generated guide with what the cockpit is, how to work in it and the rules with their reasons', () => {

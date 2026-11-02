@@ -252,18 +252,20 @@ export function createGeneratedCommandFixture() {
         application: GeneratedApplicationProjection,
         serviceGeneration = application.generation,
         reportedSources?: Readonly<Record<string, readonly string[]>>,
+        bases: Readonly<Record<string, number>> = { APP_HOST_PORT: 4100 },
     ) {
         const composePath = join(root, 'compose.generated.yml')
         const compose = await readFile(composePath, 'utf8')
-        const document = parseYaml(compose) as { services: Record<string, { image: string; labels: Record<string, string>; volumes?: { type: string; source: string; target: string }[] }> }
+        const document = parseYaml(compose) as { services: Record<string, { image: string; labels: Record<string, string>
+            volumes?: { type: string; source: string; target: string }[]; ports?: { target: number; published: string }[] }> }
         const currentCockpit = cockpitId({ name: 'generated-environment', mainCheckoutPath: root })
         const stack = stackId({ cockpitId: currentCockpit, checkoutId: checkoutId({ checkoutPath: root }), variant: { kind: 'shared' } })
-        const labels: Record<string, string> = {
-            ...document.services.app!.labels,
+        const labels = (service: { labels: Record<string, string> }): Record<string, string> => ({
+            ...service.labels,
             'dev.b0dea.cockpit.stack-id': stack,
             'dev.b0dea.cockpit.owner-id': currentCockpit,
             'dev.b0.cockpit.generation': serviceGeneration,
-        }
+        })
         const selected = await selectStateRoot({ platform: 'linux', home: root, cockpitId: currentCockpit })
         if (selected.kind !== 'complete') throw new Error('port state unavailable')
         const observedAt = new Date().toISOString()
@@ -272,11 +274,11 @@ export function createGeneratedCommandFixture() {
             stackId: stack,
             holderId: `holder:${'a'.repeat(64)}:session` as HolderId,
             checkoutId: checkoutId({ checkoutPath: root }),
-            config: { step: 10, count: 1, bases: { APP_HOST_PORT: 4100 } },
+            config: { step: 10, count: 1, bases },
             now: observedAt,
             listenerTimeoutMs: 1_000,
             listenerEvidence: [{
-                ports: [4100],
+                ports: Object.values(bases),
                 observation: { state: 'available', value: [], observedAt, producer: 'generated-command-control' },
             }],
         })
@@ -285,12 +287,13 @@ export function createGeneratedCommandFixture() {
         if (entrypoints.kind !== 'complete') throw new Error('port entrypoints unavailable')
         const portLeaseProjection = projectPortLeaseResult({ leaseResult: lease, entrypointResult: entrypoints })
         if (!portLeaseProjection) throw new Error('port projection unavailable')
-        const effectivePort = lease.lease.ports.APP_HOST_PORT!
+        // Compose reports each published `${VARIABLE:-default}` port as the leased value.
+        const published = (value: string) => String(lease.lease.ports[/^\$\{([A-Z][A-Z0-9_]*):-\d+\}$/.exec(value)?.[1] ?? '']!)
         const services = Object.fromEntries(Object.entries(document.services).map(([id, service]) => [id, {
-            image: service.image, labels, healthcheck: { test: ['CMD', 'true'] },
+            image: service.image, labels: labels(service), healthcheck: { test: ['CMD', 'true'] },
             volumes: (service.volumes ?? []).filter(({ type }) => type === 'bind').map((mount, index) =>
                 ({ ...mount, source: reportedSources?.[id]?.[index] ?? resolve(root, mount.source) })),
-            ...(id === 'app' ? { ports: [{ target: 3000, published: String(effectivePort) }] } : {}),
+            ...(service.ports ? { ports: service.ports.map(port => ({ target: port.target, published: published(port.published) })) } : {}),
         }]))
         const expectedMountSources = [...new Set(Object.values(services).flatMap(service => service.volumes.map(({ source }) => source)))].sort()
         const bin = join(root, '.test-bin')
@@ -317,7 +320,7 @@ export function createGeneratedCommandFixture() {
             runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
             composeVersion: '2.39.2', executable, operation: 'validate', cwd: root,
             composeFiles: [{ reference: 'compose.generated.yml', canonicalPath: composePath, source: compose, sha256: composeSha256 }],
-            projectName: 'synthetic', env: {}, ports: [effectivePort],
+            projectName: 'synthetic', env: {}, ports: Object.values(lease.lease.ports),
             labels: { stackId: stack, configSha256: application.runtimeSha256, batchId },
             timeoutMs: 5_000, stackId: stack, coldStartLimitMillis: 60_000, expectedMountSources,
         }, { generatedComposeAuthority: application.generatedComposeAuthority!, portLeaseProjection })

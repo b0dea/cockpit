@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -286,8 +286,24 @@ describe('generated browser runner rendering', () => {
         await writeFile(join(root, 'package-lock.json'), lockfile)
         await writeFile(join(bin, 'npm'), `#!/bin/sh
 set -eu
-mkdir -p node_modules/@playwright/test node_modules/playwright
+printf '%s\\n' "$*" >> "$COCKPIT_TEST_NPM"
+mkdir -p node_modules/@playwright/test node_modules/playwright node_modules/playwright-core
 printf '{"version":"1.2.3"}' > node_modules/@playwright/test/package.json
+cat > node_modules/playwright-core/cli.js <<'JS'
+const fs = require('node:fs'); const net = require('node:net')
+const args = process.argv.slice(2); const option = name => args[args.indexOf(name) + 1]
+fs.appendFileSync(process.env.COCKPIT_TEST_LAUNCH, JSON.stringify({ runServer: args }) + '\\n')
+if (args[0] !== 'run-server' || option('--host') !== '127.0.0.1') throw new Error('unsafe run-server')
+const listener = net.createServer(socket => socket.once('data', bytes => {
+  const value = bytes.toString('latin1'); const end = value.indexOf('\\r\\n\\r\\n'); const lines = value.slice(0, end).split('\\r\\n')
+  fs.appendFileSync(process.env.COCKPIT_TEST_UPSTREAM, JSON.stringify({ line: lines[0], headers: lines.slice(1), rest: value.slice(end + 4) }) + '\\n')
+  socket.write(lines[0] === 'GET ' + option('--path') + ' HTTP/1.1'
+    ? 'HTTP/1.1 101 Switching Protocols\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n'
+    : 'HTTP/1.1 403 Forbidden\\r\\nConnection: close\\r\\nContent-Length: 0\\r\\n\\r\\n')
+}))
+listener.listen(Number(option('--port')), '127.0.0.1', () => process.stdout.write('Listening on ws://127.0.0.1:' + listener.address().port + option('--path') + '\\n'))
+process.stdin.on('close', () => process.exit(0)); process.on('SIGTERM', () => process.exit(0))
+JS
 cat > node_modules/playwright/index.js <<'JS'
 const fs = require('node:fs'); const net = require('node:net'); const { EventEmitter } = require('node:events')
 const browserType = engine => ({ launchServer: async options => {
@@ -316,6 +332,7 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
         const workspaceRecord = join(root, 'workspace')
         const launchRecord = join(root, 'launches')
         const upstreamRecord = join(root, 'upstream-requests')
+        const npmRecord = join(root, 'npm-invocations')
         await writeFile(upstreamRecord, '')
         const child = spawn('/bin/sh', [resolve('packages/cockpit/surfaces/scripts/browser-runner.sh'), 'debugger',
             '--manifest', join(root, 'package.json'), '--lockfile', join(root, 'package-lock.json'),
@@ -323,7 +340,7 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
             '--server-port', '3000', '--proxy-port', '0', '--max-clients', serializedClientLimit, '--artifacts', join(root, 'artifacts'),
             '--allowed-host', 'localhost:4100', '--engine', 'chromium', '--deadline-seconds', '30', '--ws-path', '/public-debugger'], {
             env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COCKPIT_TEST_WORKSPACE: workspaceRecord,
-                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord }, stdio: ['ignore', 'pipe', 'pipe'],
+                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord, COCKPIT_TEST_NPM: npmRecord }, stdio: ['ignore', 'pipe', 'pipe'],
         })
         ownedChildren.add(child)
         const endpoint = await new Promise<string>((resolveEndpoint, reject) => {
@@ -443,25 +460,33 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
             '--manifest', join(root, 'package.json'), '--lockfile', join(root, 'package-lock.json'),
             '--manifest-sha256', sha(manifest), '--lock-sha256', sha(lockfile), '--driver-version', '1.2.3',
             '--server-port', String(serverPort), '--proxy-port', String(proxyPort), '--max-clients', serializedClientLimit, '--artifacts', join(root, 'remote-artifacts'),
-            '--allowed-host', `localhost:${proxyPort}`, '--engine', 'chromium', '--ws-path', '/fixed-token',
-            '--resolver-rule', 'MAP app.example.invalid 127.0.0.1'], {
+            '--allowed-host', `localhost:${proxyPort}`, '--engine', 'chromium', '--ws-path', '/fixed-token'], {
             env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COCKPIT_TEST_WORKSPACE: workspaceRecord,
-                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord }, stdio: ['ignore', 'pipe', 'pipe'],
+                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord, COCKPIT_TEST_NPM: npmRecord }, stdio: ['ignore', 'pipe', 'pipe'],
         })
         ownedChildren.add(remote)
         const remoteExit = new Promise<void>((resolveExit, reject) => { remote.once('exit', () => resolveExit()); remote.once('error', reject) })
         try {
             await waitForPublicProxy(remote, 'chromium', proxyPort)
-            const remoteResponse = await request(proxyPort, '/fixed-token', `localhost:${proxyPort}`)
+            // Only Playwright's run-server honours a client's exposeNetwork, which is how the served
+            // browser reaches host loopback origins; the runner still pins the engine and headless launch.
+            const remoteResponse = await request(proxyPort, '/fixed-token', `localhost:${proxyPort}`,
+                'x-playwright-browser: webkit\r\nx-playwright-launch-options: {"headless":false}\r\nx-playwright-proxy: <loopback>\r\n')
             expect(remoteResponse.bytes).toContain('101 Switching Protocols')
             remoteResponse.socket.destroy()
             const launches = (await readFile(launchRecord, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
-            expect(launches).toEqual(expect.arrayContaining([
-                expect.objectContaining({ headless: false, host: '127.0.0.1', port: 0 }),
-                expect.objectContaining({ headless: true, host: '127.0.0.1', port: serverPort,
-                    args: ['--host-resolver-rules=MAP app.example.invalid 127.0.0.1'] }),
-            ]))
-            expect(launches).toEqual(expect.not.arrayContaining([expect.objectContaining({ wsPath: expect.anything() })]))
+            const served = launches.find(row => Array.isArray(row.runServer))?.runServer as string[] | undefined
+            expect(served?.slice(0, 5)).toEqual(['run-server', '--host', '127.0.0.1', '--port', String(serverPort)])
+            const privatePath = served![served!.indexOf('--path') + 1]!
+            expect(privatePath).toMatch(/^\/[0-9a-f-]{36}$/)
+            const upstream = (await readFile(upstreamRecord, 'utf8')).trim().split('\n').filter(line => line.startsWith('{'))
+                .map(line => JSON.parse(line) as { line: string; headers: string[] })
+            expect(upstream.at(-1)).toMatchObject({ line: `GET ${privatePath} HTTP/1.1` })
+            expect(upstream.at(-1)!.headers).toEqual(expect.arrayContaining([`Host: 127.0.0.1:${serverPort}`, 'x-playwright-proxy: <loopback>',
+                'x-playwright-browser: chromium', 'x-playwright-launch-options: {"headless":true}']))
+            expect(upstream.at(-1)!.headers.filter(line => /^(?:host|x-playwright-browser|x-playwright-launch-options):/i.test(line))).toHaveLength(3)
+            // npm ci still verifies the lockfile on every start; the download cache only spares the registry.
+            expect((await readFile(npmRecord, 'utf8')).trim().split('\n').at(-1)).toMatch(/^ci .*--prefer-offline/)
         } finally {
             if (remote.exitCode === null) remote.kill('SIGTERM')
             await remoteExit
@@ -475,10 +500,9 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
             '--manifest', join(root, 'package.json'), '--lockfile', join(root, 'package-lock.json'),
             '--manifest-sha256', sha(manifest), '--lock-sha256', sha(lockfile), '--driver-version', '1.2.3',
             '--server-port', String(firefoxServerPort), '--proxy-port', String(firefoxProxyPort), '--max-clients', serializedClientLimit, '--artifacts', join(root, 'firefox-artifacts'),
-            '--allowed-host', `localhost:${firefoxProxyPort}`, '--engine', 'firefox', '--ws-path', '/fixed-token',
-            '--resolver-rule', 'MAP app.example.invalid 127.0.0.1'], {
+            '--allowed-host', `localhost:${firefoxProxyPort}`, '--engine', 'firefox', '--ws-path', '/fixed-token'], {
             env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COCKPIT_TEST_WORKSPACE: workspaceRecord,
-                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord }, stdio: ['ignore', 'pipe', 'pipe'],
+                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord, COCKPIT_TEST_NPM: npmRecord }, stdio: ['ignore', 'pipe', 'pipe'],
         })
         ownedChildren.add(firefox)
         const firefoxExit = new Promise<number | null>((resolveExit, reject) => { firefox.once('exit', resolveExit); firefox.once('error', reject) })
@@ -494,8 +518,18 @@ printf '%s' "$PWD" > "$COCKPIT_TEST_WORKSPACE"
         }
         expect(firefoxExitCode).toBe(143)
         const allLaunches = (await readFile(launchRecord, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
-        expect(allLaunches.at(-1)).toMatchObject({ engine: 'firefox', headless: true, host: '127.0.0.1', port: firefoxServerPort })
-        expect(allLaunches.at(-1)).not.toHaveProperty('wsPath')
-        expect(allLaunches.at(-1)).not.toHaveProperty('args')
+        expect(allLaunches.at(-1)).toMatchObject({ runServer: expect.arrayContaining(['--port', String(firefoxServerPort)]) })
+        const firefoxUpstream = JSON.parse((await readFile(upstreamRecord, 'utf8')).trim().split('\n').at(-1)!) as { headers: string[] }
+        expect(firefoxUpstream.headers).toContain('x-playwright-browser: firefox')
+        // Exposed traffic resolves on the connecting client's host, so a served rule would bind nothing.
+        const ruled = spawnSync('/bin/sh', [resolve('packages/cockpit/surfaces/scripts/browser-runner.sh'), 'serve',
+            '--manifest', join(root, 'package.json'), '--lockfile', join(root, 'package-lock.json'),
+            '--manifest-sha256', sha(manifest), '--lock-sha256', sha(lockfile), '--driver-version', '1.2.3',
+            '--server-port', String(firefoxServerPort), '--proxy-port', String(firefoxProxyPort), '--max-clients', serializedClientLimit,
+            '--artifacts', join(root, 'ruled-artifacts'), '--allowed-host', `localhost:${firefoxProxyPort}`, '--engine', 'chromium',
+            '--ws-path', '/fixed-token', '--resolver-rule', 'MAP app.example.localhost 127.0.0.1'], {
+            encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, COCKPIT_TEST_WORKSPACE: workspaceRecord,
+                COCKPIT_TEST_LAUNCH: launchRecord, COCKPIT_TEST_UPSTREAM: upstreamRecord, COCKPIT_TEST_NPM: npmRecord } })
+        expect({ status: ruled.status, stderr: ruled.stderr.trim() }).toEqual({ status: 2, stderr: 'browser resolver rules apply only to the foreground debugger' })
     }, 30_000)
 })

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "--network=host", "mcr.microsoft.com/playwright/mcp@sha256:690763cbb437ee7233f538a953bb5390bf03791eb5c965b471e59d17a6132fcb", "--endpoint", "ws://localhost:4101/playwright"]
+    }
+  }
+}

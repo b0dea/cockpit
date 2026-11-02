@@ -256,7 +256,7 @@ project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(di
 endpoint = "ws://localhost:3001/"
 max_clients = 4
 proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
-resolver = [{ hostname = "app.example.invalid", address = "127.0.0.1" }]
+resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
 authentication = ${variant.serialized ? '{ policy = "serialized", states = [{ worker = "shared", path = ".browser/auth/shared.json", source = "seeded" }] }' : '{ policy = "none", states = [] }'}
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
@@ -323,7 +323,9 @@ native_hooks = { install = "inspect" }
                 const compose = parseYaml(await readFile(join(fixture.root, 'compose.generated.yml'), 'utf8'))
                 if (variant.remote) {
                     const runner = compose.services['cockpit-browser-runner']
-                    expect(runner).toMatchObject({ extra_hosts: { 'app.example.invalid': '127.0.0.1' } })
+                    // Names resolve on the host through the client's exposed network, so the runner
+                    // container carries no alias that would point them at its own loopback.
+                    expect(runner).not.toHaveProperty('extra_hosts')
                     expect(runner.command[runner.command.indexOf('--max-clients') + 1]).toBe(variant.serialized ? '1' : '4')
                     expect(runner.command.slice(0, 3)).toEqual(['/bin/sh', '/cockpit/browser-runner.sh', 'serve'])
                     expect(runner.healthcheck.test).toEqual(['CMD-SHELL', "'/bin/sh' '/cockpit/browser-runner.sh' 'check' 'localhost:3001' '3001'"])

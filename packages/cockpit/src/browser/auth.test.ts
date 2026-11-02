@@ -106,7 +106,7 @@ async function fixture(authentication: 'real' | 'bypassed', mutateState: false |
         testPackage: { directory: 'node_modules/@playwright/test', artifactRoot: '.playwright-cli', manifest: { bytes: manifest, sha256: digest(manifest) },
             cli: { path: 'cli.js', bytes: '/* synthetic pinned CLI */', sha256: digest('/* synthetic pinned CLI */') }, module: { path: 'index.js', bytes: module, sha256: digest(module) } },
         skillTemplate: await readFile('packages/cockpit/surfaces/skills/cockpit-browser.skill.md', 'utf8') })
-    return { runtime, client: rendered.clients[0]!, policy: issueBrowserRoutePolicy(runtime, { origin: 'http://app.local:4000', routes: [{ name: 'account', path: '/account' }] }),
+    return { runtime, client: rendered.clients[0]!, policy: issueBrowserRoutePolicy(runtime, { origin: 'http://app.localhost:4000', routes: [{ name: 'account', path: '/account' }] }),
         state: { namespace: selected.value, stackId: stack, ownerId: owner }, statePath, logPath, address: selected.value.paths.coordination(stack) }
 }
 
@@ -114,7 +114,7 @@ describe('browser command authentication', () => {
     it('requires current non-replayable lower-level operation admission', async () => {
         const c = await fixture('real')
         const operation = {
-            kind: 'drive', surface: { name: 'account', url: 'http://app.local:4000/account' },
+            kind: 'drive', surface: { name: 'account', url: 'http://app.localhost:4000/account' },
             deadline: Date.now() + 5_000, role: 'operator',
         } as const
         expect(await executeBrowserProjectOperation(c.client, c.runtime, operation)).toBeUndefined()

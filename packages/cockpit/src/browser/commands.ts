@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
+import { isIP } from 'node:net'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { snapshotJson, type HolderId, type StackId } from '../environment/contract.js'
 import { inspectBrowserDebuggerPreparation, type BrowserDebuggerPreparation } from '../environment/generated-application.js'
 import { type StateNamespace } from '../environment/state.js'
+import { cockpitCommand } from '../fix-catalogue.js'
 import { assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, type BrowserRuntimeProjection } from './runtime.js'
 import { authenticateBrowserProjectClient, executeBrowserProjectOperation, withBrowserProjectOperationAdmission,
     type BrowserProjectClient, type BrowserProjectOperationAuthorization } from './surfaces.js'
@@ -62,22 +64,66 @@ function refusal(reason: string): BrowserCommandResult {
     return Object.freeze({ kind: 'refusal', reason })
 }
 
+// The reason vocabulary the operation program may report: identifiers only, never page text.
+const FAILURE_REASON = /^(?:ERR_[A-Z0-9_]{1,64}|HTTP_[1-5][0-9]{2}|TIMEOUT)$/
+const UNANSWERED = new Set(['ERR_CONNECTION_REFUSED', 'ERR_SOCKS_CONNECTION_FAILED', 'ERR_CONNECTION_RESET',
+    'ERR_CONNECTION_CLOSED', 'ERR_EMPTY_RESPONSE', 'ERR_ADDRESS_UNREACHABLE'])
+
 function parseBrowserFailure(value: Buffer): Readonly<{
     phase: keyof typeof browserFailureCategories
     category: (typeof browserFailureCategories)[keyof typeof browserFailureCategories]
     cleanup: boolean
+    reason?: string
 }> | undefined {
     if (value.byteLength === 0 || value.byteLength > 1_024) return undefined
     let parsed: unknown
     try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(value)) } catch { return undefined }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
     const row = parsed as Record<string, unknown>
-    if (Object.keys(row).sort().join(',') !== 'category,cleanup,phase,schema'
+    const keys = Object.keys(row).sort().join(',')
+    if (keys !== 'category,cleanup,phase,schema' && keys !== 'category,cleanup,phase,reason,schema'
         || row.schema !== 'cockpit-browser-failure/v1' || typeof row.phase !== 'string'
-        || !(row.phase in browserFailureCategories) || typeof row.cleanup !== 'boolean') return undefined
+        || !(row.phase in browserFailureCategories) || typeof row.cleanup !== 'boolean'
+        || row.reason !== undefined && (typeof row.reason !== 'string' || !FAILURE_REASON.test(row.reason))) return undefined
     const phase = row.phase as keyof typeof browserFailureCategories
     const category = browserFailureCategories[phase]
-    return row.category === category ? Object.freeze({ phase, category, cleanup: row.cleanup }) : undefined
+    return row.category === category
+        ? Object.freeze({ phase, category, cleanup: row.cleanup, ...(typeof row.reason === 'string' ? { reason: row.reason } : {}) })
+        : undefined
+}
+
+// What a person can do about a failed navigation, keyed by the reason the browser reported.
+function failureHint(reason: string | undefined, url: string, runtime: BrowserRuntimeProjection): string {
+    if (reason === undefined) return ''
+    if (UNANSWERED.has(reason)) {
+        return `: nothing answered at ${url} (${reason}); check that the application is up with ${cockpitCommand('doctor', { config: runtime.configurationPath })}`
+    }
+    if (reason === 'ERR_NAME_NOT_RESOLVED') return `: ${new URL(url).hostname} did not resolve (${reason}); use the declared .localhost hostname or 127.0.0.1`
+    if (reason.startsWith('ERR_CERT_')) {
+        return `: the browser does not trust the certificate at ${url} (${reason}); add the issuing CA to the ${runtime.connection.kind === 'remote' ? 'browser runner image' : 'host trust store'}`
+    }
+    if (reason.startsWith('HTTP_')) return `: ${url} answered HTTP ${reason.slice(5)}, and a surface must answer 2xx`
+    if (reason === 'TIMEOUT') return `: ${url} did not finish loading within the 30-second command deadline`
+    return ` (${reason})`
+}
+
+// Mirrors Playwright's exposeNetwork matching: a remote browser reaches an address through the
+// connecting client only when a rule covers it, and goes to its own network for everything else.
+function networkExposureCovers(exposure: string, origin: URL): boolean {
+    const hostname = origin.hostname.toLowerCase()
+    const port = Number(origin.port || (origin.protocol === 'http:' ? '80' : '443'))
+    const ip = isIP(hostname.replace(/^\[|\]$/g, '')) !== 0
+    return exposure.split(',').some(rule => {
+        const match = /^(.*?)(?::(\d+))?$/.exec(rule)
+        if (!match || match[2] !== undefined && Number(match[2]) !== port) return false
+        const host = match[1]!.toLowerCase()
+        if (host === '<loopback>') return ['localhost', '127.0.0.1', '[::1]'].includes(hostname) || hostname.endsWith('.localhost')
+        if (host === '*') return true
+        if (isIP(host.replace(/^\[|\]$/g, '')) !== 0) return host === hostname
+        if (ip) return false
+        const pattern = host.startsWith('.') ? `*${host}` : host
+        return pattern.startsWith('*.') ? hostname.endsWith(pattern.slice(1)) : hostname === pattern
+    })
 }
 
 function ownDataRecord(value: unknown, required: readonly string[], optional: readonly string[]): Record<string, unknown> | undefined {
@@ -240,7 +286,7 @@ async function run(input: BrowserCommandInput, client: BrowserProjectClient, pol
         const failure = authenticated.execution.exitCode === 0 ? undefined : parseBrowserFailure(authenticated.stderr)
         if (failure) {
             return refusal(`Browser ${input.kind} operation failed during ${failure.phase} (${failure.category})${failure.cleanup && failure.phase !== 'cleanup'
-                ? ' and cleanup also failed' : ''} for ${surface.name}`)
+                ? ' and cleanup also failed' : ''} for ${surface.name}${failureHint(failure.reason, surface.url, input.runtime)}`)
         }
         if (authenticated.kind !== 'complete') {
             return refusal(`Browser ${input.kind} operation was refused by the bounded executor for ${surface.name}`)
@@ -274,6 +320,11 @@ export async function executeBrowserCommand(value: BrowserCommandInput): Promise
     try { client = authenticateBrowserProjectClient(input.client, input.runtime) } catch { client = undefined }
     if (!client) return refusal('Browser command requires an issued project module client')
     if (issuedPolicies.get(input.policy) !== input.runtime) return refusal('Browser command requires an issued route policy for the current runtime')
+    if (input.runtime.connection.kind === 'remote' && !networkExposureCovers(input.runtime.networkExposure, new URL(input.policy.origin))) {
+        return refusal(`Browser application origin ${input.policy.origin} is outside browser.network_exposure (${input.runtime.networkExposure}): `
+            + 'the generated runner reaches host addresses only through that exposure, so the browser would look for the application inside its own container. '
+            + 'Use a 127.0.0.1, localhost or .localhost origin, or widen network_exposure with a network_exposure_reason')
+    }
     if (input.headed === true) {
         if (!input.runtime.debugger.enabled) return refusal('Headed browser use was not enabled by the runtime')
         const preparation = inspectBrowserDebuggerPreparation(input.debugger, input.runtime)

@@ -1,0 +1,88 @@
+# The minimal example plus a generated browser runner; see "Drive it with a browser" in README.md.
+[cockpit]
+name = "tinya"
+siblings_root = "."
+
+[[sibling]]
+slug = "api"
+dir = "api"
+mount = "always"
+acquire = "none"
+var = "API_DIR"
+purpose = "Tiny api"
+
+# The playwright MCP server starts in the directory of the sibling that declares it, and browser
+# surfaces require that to be the cockpit directory itself.
+[[sibling]]
+slug = "browser-declarations"
+dir = "."
+mount = "none"
+acquire = "none"
+var = "BROWSER_DECLARATIONS_DIR"
+purpose = "Browser MCP declaration"
+
+[sibling.derives]
+mcp_sources = [{ path = "browser/mcp.json", format = "mcp-json", provenance = { source = "browser/mcp.json", observed_on = "2026-11-02", kind = "declared", reason = "Playwright MCP transport for the browser runner" } }]
+
+[mcp]
+approved = ["playwright"]
+
+[ports.bases]
+API_HOST_PORT = 4100
+BROWSER_PROXY_PORT = 4101
+
+[environment]
+addressing = "port"
+authentication = "none"
+posture_requirements = [{ requirement = "leased-localhost-ports", addressing = "port" }]
+# Exactly the five browser artifact roots; cockpit owns and resets them.
+generated_host_paths = [".browser/runner", ".browser/mcp", ".browser/cli", ".browser/auth", ".browser/debugger"]
+# One origin, plus each further route the browser commands visit on it.
+entrypoint_derivatives = [
+  { name = "application", kind = "origin", port = "API_HOST_PORT", path = "/" },
+  { name = "about", kind = "entrypoint", port = "API_HOST_PORT", path = "/about" },
+]
+
+[environment.machine]
+runtime_memory_mb = 1536
+runtime_cpus = 1
+free_disk_mb = 4096
+cold_start_seconds = 120
+
+[environment.generated]
+compose_file = "compose.generated.yml"
+
+[[environment.generated.services]]
+id = "api"
+sibling = "api"
+build = { context = "." }
+command = ["node", "server.mjs"]
+ports = [{ name = "http", host_variable = "API_HOST_PORT", internal = 3000 }]
+
+[environment.generated.services.health]
+property = "GET /health returns 200"
+probe = { location = "in-stack", service = "api", cwd = ".", argv = ["node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"], timeout_seconds = 10 }
+interval_seconds = 5
+timeout_seconds = 3
+retries = 4
+start_period_seconds = 20
+
+[browser]
+# Browser commands drive through a harness row whose version cockpit has measured.
+harnesses = [{ target = "claudecode", version = "2.1.220" }]
+# Playwright v1.64.0-noble, and @playwright/mcp 0.0.83, which bundles Playwright 1.64.0-alpha; a
+# client and server must share major.minor. Both images are indexes for amd64 and arm64.
+images = { runner = { reference = "mcr.microsoft.com/playwright@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f", driver_version = "1.64.0", architectures = ["amd64", "arm64"] }, mcp = { reference = "mcr.microsoft.com/playwright/mcp@sha256:690763cbb437ee7233f538a953bb5390bf03791eb5c965b471e59d17a6132fcb", driver_version = "1.64.0" } }
+runner_health_measurement = { duration_seconds = 10, provenance = { source = "cockpit up", observed_on = "2026-11-02", kind = "measured", reason = "A recreated runner was healthy 5 s after start, npm ci download included" } }
+# The browser project holds only @playwright/test; the runner installs it with npm ci, and the
+# browser commands load the same pinned module on this machine.
+project = { manifest = "browser/package.json", manifest_sha256 = "a8fb63a5630e9aaa64fdcdfbc89fc25d4b88a5fa815b09c86ab373526e169819", lockfile = "browser/package-lock.json", sha256 = "47784dce2166cded64aa5d65d9ecc148105b62ae151f3c8c0230eb3bd79d2584", driver_version = "1.64.0" }
+# Setting an endpoint renders the runner into compose.generated.yml. Its browser reaches the
+# application's 127.0.0.1, localhost and .localhost URLs through the connecting client, as
+# network_exposure (default "<loopback>") allows.
+endpoint = "ws://localhost:4101/playwright"
+max_clients = 2
+proxy = { host_variable = "BROWSER_PROXY_PORT", server_port = 4102, proxy_port = 4101, allowed_hosts = ["localhost:4101"] }
+authentication = { policy = "none", states = [] }
+data = { mode = "empty", isolated = true, reaches_production = false }
+artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth", debugger = ".browser/debugger" }

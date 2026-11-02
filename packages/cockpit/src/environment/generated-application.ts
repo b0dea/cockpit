@@ -1371,39 +1371,61 @@ async function projectBrowserRunner(
         browser.runnerHealthMeasurement === undefined ? 'browser.runner_health_measurement' : undefined,
     ].filter((value): value is string => value !== undefined)
     if (missing.length > 0) return Object.freeze({ kind: 'refusal' as const,
-        message: `configured remote browser runner requires explicit ${missing.join(', ')}` })
+        message: `a generated browser runner (browser.endpoint is set) requires explicit ${missing.join(', ')}`,
+        fix: 'declare the missing [browser] fields as in the browser example in docs/work-and-browser.md, or remove browser.endpoint to drive a local browser, then run npx --no cockpit up --config <your cockpit.toml>' })
     const manifestPath = browser.project.manifest!
     const manifestSha256 = browser.project.manifestSha256!
     const hostVariable = browser.proxy.hostVariable!
     const architectures = browser.images.runner.architectures!
     const healthMeasurement = browser.runnerHealthMeasurement!
     if (portDefaults[hostVariable] !== browser.proxy.proxyPort) return Object.freeze({ kind: 'refusal' as const,
-        message: 'configured remote browser proxy host variable does not match its declared base port' })
+        message: `browser.proxy.host_variable ${hostVariable} must be a [ports.bases] entry whose value is browser.proxy.proxy_port (${browser.proxy.proxyPort})`,
+        fix: 'add the proxy host variable to [ports.bases] with browser.proxy.proxy_port as its value, then run npx --no cockpit up --config <your cockpit.toml>' })
+    // The served runner reaches the application through the connecting client's exposed network,
+    // so names resolve on the host, where .localhost is loopback; a rule for any other name or
+    // address would be configuration that no resolver in the path applies.
+    const unreachable = browser.resolver.find(({ hostname, address }) => !hostname.endsWith('.localhost')
+        || !['127.0.0.1', '::1'].includes(address))
+    if (unreachable) return Object.freeze({ kind: 'refusal' as const,
+        message: `browser.resolver maps ${unreachable.hostname} to ${unreachable.address}, but a generated browser runner resolves application names on the host, where only .localhost names reach loopback`,
+        fix: 'map a .localhost hostname to 127.0.0.1 or ::1, or remove browser.endpoint to drive a local browser that applies the rule, then run npx --no cockpit up --config <your cockpit.toml>' })
     const reads = await readAnchoredBatches(root, [
         Object.freeze({ path: browser.project.lockfile, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }),
         Object.freeze({ path: manifestPath, maxBytes: MAX_SURFACE_FILE_BYTES, action: 'read-file' as const }),
     ], node, adapters)
     if (!reads || reads.kind !== 'complete' || reads.results.length !== 2) return Object.freeze({ kind: 'refusal' as const,
-        message: 'configured remote browser project files could not be read through the authenticated root' })
+        message: `the browser project ${manifestPath} and ${browser.project.lockfile} could not be read inside the cockpit root`,
+        fix: 'commit the browser project package.json and its npm package-lock.json at the declared paths, then run npx --no cockpit up --config <your cockpit.toml>' })
     const [lockfile, manifest] = reads.results
-    if (!lockfile || !manifest || lockfile.kind !== 'complete' || manifest.kind !== 'complete'
-        || lockfile.sha256 !== browser.project.sha256
-        || manifestSha256 !== manifest.sha256) return Object.freeze({ kind: 'refusal' as const,
-            message: 'configured remote browser project manifest or lockfile could not be authenticated' })
+    if (!lockfile || !manifest || lockfile.kind !== 'complete' || manifest.kind !== 'complete') return Object.freeze({ kind: 'refusal' as const,
+        message: `the browser project ${manifestPath} and ${browser.project.lockfile} must both exist as regular files inside the cockpit root`,
+        fix: 'commit the browser project package.json and its npm package-lock.json at the declared paths, then run npx --no cockpit up --config <your cockpit.toml>' })
+    const stale = [
+        lockfile.sha256 !== browser.project.sha256 ? `browser.project.sha256 for ${browser.project.lockfile} (now ${lockfile.sha256})` : undefined,
+        manifestSha256 !== manifest.sha256 ? `browser.project.manifest_sha256 for ${manifestPath} (now ${manifest.sha256})` : undefined,
+    ].filter((value): value is string => value !== undefined)
+    if (stale.length > 0) return Object.freeze({ kind: 'refusal' as const,
+        message: `the declared browser project digests differ from the files: ${stale.join('; ')}`,
+        fix: 'review the browser project change, set the declared digest to the file\'s current sha256, then run npx --no cockpit up --config <your cockpit.toml>' })
     let packageJson: unknown
     let lockJson: unknown
     try {
         const decoder = new TextDecoder('utf-8', { fatal: true })
         packageJson = JSON.parse(decoder.decode(manifest.bytes))
         lockJson = JSON.parse(decoder.decode(lockfile.bytes))
-    } catch { return Object.freeze({ kind: 'refusal' as const, message: 'configured remote browser project files are not valid JSON' }) }
+    } catch (error) {
+        return Object.freeze({ kind: 'refusal' as const,
+            message: `the browser project ${manifestPath} or ${browser.project.lockfile} is not valid UTF-8 JSON: ${error instanceof Error ? error.message : String(error)}`,
+            fix: 'regenerate the browser project lockfile with npm install in its directory, then update both digests' })
+    }
     const dependencies = ownRecord(packageJson)?.dependencies
     const devDependencies = ownRecord(packageJson)?.devDependencies
     const declared = ownRecord(dependencies)?.['@playwright/test'] ?? ownRecord(devDependencies)?.['@playwright/test']
     const packages = ownRecord(ownRecord(lockJson)?.packages)
     const installed = ownRecord(packages?.['node_modules/@playwright/test'])?.version
     if (typeof declared !== 'string' || installed !== browser.project.driverVersion) return Object.freeze({ kind: 'refusal' as const,
-        message: 'configured remote browser project does not bind the exact driver version' })
+        message: `${manifestPath} must depend on @playwright/test and ${browser.project.lockfile} must lock it at browser.project.driver_version ${browser.project.driverVersion} (locked: ${typeof installed === 'string' ? installed : 'none'})`,
+        fix: 'run npm install --save-exact --save-dev @playwright/test@<driver_version> in the browser project directory, then update both digests' })
     const provenance = Object.freeze({ ...healthMeasurement.provenance })
     const allowedHosts = browser.proxy.allowedHosts.map(host => host.replace(/:\d+$/, `:\${${hostVariable}:-${browser.proxy.proxyPort}}`))
     const endpoint = new URL(browser.endpoint!)
@@ -1411,13 +1433,15 @@ async function projectBrowserRunner(
         '--manifest-sha256', manifest.sha256, '--lock-sha256', lockfile.sha256, '--driver-version', browser.project.driverVersion,
         '--server-port', String(browser.proxy.serverPort), '--proxy-port', String(browser.proxy.proxyPort), '--max-clients', String(browserClientLimit(browser.maxClients, browser.authentication.policy)),
         '--artifacts', '/cockpit/artifacts', '--engine', browser.engine, '--ws-path', endpoint.pathname,
-        ...[...new Set([...browser.proxy.allowedHosts, ...allowedHosts])].flatMap(host => ['--allowed-host', host]),
-        ...browser.resolver.flatMap(({ hostname, address }) => ['--resolver-rule', `MAP ${hostname} ${address}`])]
+        ...[...new Set([...browser.proxy.allowedHosts, ...allowedHosts])].flatMap(host => ['--allowed-host', host])]
     const command = ['/bin/sh', '/cockpit/browser-runner.sh', 'serve', ...fixedArgs]
     const probe = Object.freeze({ location: 'in-stack' as const, service: 'cockpit-browser-runner', cwd: '.' as const,
         argv: Object.freeze(['/bin/sh', '/cockpit/browser-runner.sh', 'check', browser.proxy.allowedHosts[0]!, String(browser.proxy.proxyPort)]), timeout_seconds: 10, provenance })
-    const manifestProbe = Object.freeze({ location: 'host' as const, cwd: '.' as const,
-        argv: Object.freeze(['docker', 'manifest', 'inspect', browser.images.runner.reference]), timeout_seconds: 30, provenance })
+    // Checked inside the running runner: generated observations authenticate no host executable but
+    // Node, so a host `docker manifest inspect` could never be planned and every up refused.
+    const manifestProbe = Object.freeze({ location: 'in-stack' as const, service: 'cockpit-browser-runner', cwd: '.' as const,
+        argv: Object.freeze(['node', '-e', 'process.exit(process.argv.slice(1).includes({ x64: "amd64", arm64: "arm64" }[process.arch]) ? 0 : 1)',
+            ...architectures]), timeout_seconds: 30, provenance })
     const reason = 'The package manifest path and digest are explicitly declared.'
     return Object.freeze({ service: Object.freeze({
         id: 'cockpit-browser-runner', sibling: declaration.services[0]!.sibling, role: 'service' as const, profiles: Object.freeze([]),
@@ -1426,7 +1450,6 @@ async function projectBrowserRunner(
             reason: 'The configured browser runner image is digest-pinned and its architectures are explicitly declared.', architectures,
             manifest_probe: manifestProbe, provenance }),
         ports: Object.freeze([{ name: 'browser-proxy', host_variable: hostVariable, host_ip: browser.proxy.bind, internal: browser.proxy.proxyPort }]),
-        ...(browser.resolver.length ? { host_aliases: browser.resolver } : {}),
         mounts: Object.freeze([
             { kind: 'environment-file' as const, source: '.cockpit/browser/runner.sh', target: '/cockpit/browser-runner.sh', source_type: 'file' as const },
             { kind: 'environment-file' as const, source: manifestPath, target: '/cockpit/project/package.json', source_type: 'file' as const },
@@ -1542,15 +1565,16 @@ async function prepare(input: unknown, adapters: GeneratedEnvironmentCommandAdap
     )
     const browserRunner = declaration
         ? await projectBrowserRunner(workEnvironment, declaration, config.ports.bases, root, node, adapters) : undefined
-    if (browserRunner && 'kind' in browserRunner) return refuse('GENERATED_DECLARATION_INVALID', browserRunner.message, 'browser')
+    if (browserRunner && 'kind' in browserRunner) return refuse('GENERATED_DECLARATION_INVALID', browserRunner.message, 'browser', browserRunner.fix)
     const projectedRunner = browserRunner && !('kind' in browserRunner) ? browserRunner : undefined
     const inspectedPorts = suppliedPorts ?? (projectedRunner && runtimeCheckout
         ? await retainedPortLease(config, runtimeCheckout, currentStack)
         : undefined)
     if (projectedRunner && !inspectedPorts) return refuse(
         'GENERATED_INPUT_INVALID',
-        'configured remote browser publication requires an authenticated current port lease',
+        'a generated browser runner is published with its leased proxy port, and this stack holds no port lease yet',
         'browser',
+        'run npx --no cockpit up --config <your cockpit.toml>, which leases the ports and publishes the runner; sync works while that lease is held',
     )
     const hostInputRoots: Record<string, GeneratedHostInputRoot> = {}
     for (const service of declaration?.services ?? []) {
@@ -2414,8 +2438,14 @@ async function prepareSurfaces(
         if (!checkout) return refuse('SURFACE_INPUT_INVALID', 'browser checkout identity is unavailable', prepared.configPath)
         const browserConfiguration = prepared.workEnvironment.browser
         const playwright = declarations.filter(row => row.name === 'playwright')
-        if (playwright.length !== 1 || !config.mcp.approved.includes('playwright')) {
-            return refuse('MCP_DECLARATION_INVALID', 'browser surfaces require one approved authenticated Playwright declaration', 'playwright')
+        if (playwright.length !== 1) {
+            return refuse('MCP_DECLARATION_INVALID',
+                `[browser] requires exactly one MCP server named playwright, and the declared MCP sources hold ${playwright.length}`, 'playwright',
+                'declare one playwright server in an mcp-json file listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
+        }
+        if (!config.mcp.approved.includes('playwright')) {
+            return refuse('MCP_DECLARATION_INVALID', '[browser] requires the playwright MCP server to be approved', 'playwright',
+                'add "playwright" to [mcp] approved, then run npx --no cockpit sync --config <your cockpit.toml>')
         }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)
@@ -2460,7 +2490,9 @@ async function prepareSurfaces(
             const browserMcp = prepared.browserRunner && runtime.connection.kind === 'remote'
                 ? bindBrowserMcpDeclaration(playwright[0]!, browserConfiguration.endpoint!, runtime.connection.endpoint)
                 : playwright[0]!
-            if (!browserMcp) throw new Error('browser MCP declaration does not contain exactly one configured endpoint argument')
+            if (!browserMcp) return refuse('MCP_DECLARATION_INVALID',
+                `the playwright MCP server must pass browser.endpoint (${browserConfiguration.endpoint}) as exactly one argument, so cockpit can bind it to the leased proxy port`,
+                'playwright', 'pass browser.endpoint verbatim as one argument of the playwright server in its mcp-json file, then run npx --no cockpit sync --config <your cockpit.toml>')
             const browserSkill = asset('skills/cockpit-browser.skill.md')
             browser = renderBrowserSurfaces({
                 runtime,

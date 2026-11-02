@@ -21,14 +21,15 @@ const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preapprove = true,
-    localHostname = false, nestedProject = false, policy: 'serialized' | 'per-worker' = 'serialized', moduleEntry = 'index.js'): Promise<BrowserSurfaceInput> {
+    localHostname = false, nestedProject = false, policy: 'serialized' | 'per-worker' = 'serialized', moduleEntry = 'index.js',
+    remoteHostname = false): Promise<BrowserSurfaceInput> {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-browser-surface-')))
     roots.push(root)
     const id = cockpitId({ name: 'fixture', mainCheckoutPath: root })
     const checkout = checkoutId({ checkoutPath: root })
     const stack = stackId({ cockpitId: id, checkoutId: checkout, variant: { kind: 'shared' } })
     const configPath = join(root, 'cockpit.toml')
-    const addressing = localHostname ? 'hostname' : 'port'
+    const addressing = localHostname || remoteHostname ? 'hostname' : 'port'
     await writeFile(configPath, `[cockpit]\nname = "fixture"\n[[sibling]]\nslug = "web"\ndir = "web"\nmount = "none"\nacquire = "none"\nvar = "WEB_DIR"\npurpose = "Synthetic web"\n[ports.bases]\nWEB = 3000\n[environment]\naddressing = "${addressing}"\nauthentication = "${authentication}"\nposture_requirements = [{ requirement = "synthetic-browser", addressing = "${addressing}", authentication = "${authentication}" }]\n`)
     const now = new Date().toISOString()
     const configuration = (await observeConfiguration({ path: configPath, stackId: stack, observedAt: now })).find(row => row.code === 'CONFIG_STALE')!
@@ -54,7 +55,8 @@ async function fixture(authentication: 'real' | 'bypassed' = 'bypassed', preappr
             ...(nestedProject ? { manifest: 'app/package.json', manifestSha256: digest(projectManifest) } : {}) },
         ...(localHostname ? {} : { endpoint: 'ws://localhost:3001/' }), maxClients: policy === 'per-worker' ? 2 : 1,
         proxy: { serverPort: 3000, proxyPort: 3001, allowedHosts: ['localhost:3001'] },
-        resolver: localHostname ? [{ hostname: 'app.example.invalid', address: '127.0.0.1' }] : [],
+        resolver: localHostname ? [{ hostname: 'app.example.invalid', address: '127.0.0.1' }]
+            : remoteHostname ? [{ hostname: 'app.example.localhost', address: '127.0.0.1' }] : [],
         authentication: authentication === 'real' ? { policy, states: policy === 'serialized'
             ? [{ worker: 'shared', path: '.browser/auth/shared.json', source: 'seeded' }]
             : [{ worker: 'shared', path: '.browser/auth/shared.json', source: 'seeded' }, { worker: 'auditor', path: '.browser/auth/auditor.json', source: 'seeded' }] } : { policy: 'none', states: [] },
@@ -220,6 +222,9 @@ describe('browser transport surfaces', () => {
         expect(open).toEqual({ mcp: { playwright: { type: 'local', command: ['/bin/sh', wrapper], enabled: true } } })
         expect(result.rows.every(row => row.productState === 'instructed')).toBe(true)
         expect(result.graderBrowserAccess).toBe('retained')
+        // A declaration read from any other sibling starts elsewhere; the refusal names where it must come from.
+        expect(() => renderBrowserSurfaces({ ...input, mcp: { ...input.mcp, cwd: join(input.cockpitDirectory, 'web') } }))
+            .toThrow('the playwright MCP declaration must come from a sibling whose dir is the cockpit directory itself (dir = ".")')
         const evaluator = await readFile('packages/cockpit/surfaces/agents/evaluator.agent.md', 'utf8')
         expect(evaluator).toContain('Retain browser tools')
         expect(evaluator).not.toMatch(/^(?:tools|allowed-tools):/m)
@@ -325,6 +330,12 @@ describe('browser transport surfaces', () => {
         expect(realSkill).toContain('serialized')
         expect(realSkill).toContain('seeded')
         expect(realSkill).toContain('resolver rules: inapplicable')
+        // The runner's traffic resolves on the host, so its agent is not told to apply rules it cannot.
+        const named = renderBrowserSurfaces(await fixture('bypassed', true, false, false, 'serialized', 'index.js', true))
+        const namedSkill = named.files.find(file => file.target === 'claudecode' && file.path.endsWith('/SKILL.md'))!.bytes
+        expect(namedSkill).toContain('The generated runner resolves application names on the host, so its browser opens the same URLs a person does; '
+            + 'the resolver rules (MAP app.example.localhost 127.0.0.1) apply only to the headed debugger.')
+        expect(namedSkill).not.toContain('Apply browser resolver rules')
         expect(realSkill).toContain('headed')
         expect(realSkill).toContain('mcp: instructed; callable: human_needed')
     })

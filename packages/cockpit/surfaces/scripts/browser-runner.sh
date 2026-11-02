@@ -59,6 +59,17 @@ done
 for value in "$manifest" "$lockfile" "$manifest_sha" "$lock_sha" "$driver" "$server_port" "$proxy_port" "$max_clients" "$artifacts" "$allowed_hosts" "$engine"; do
   [ -n "$value" ] || fail 'browser runner configuration is incomplete'
 done
+case "$engine" in chromium|firefox|webkit) :;; *) fail 'browser runner engine is invalid';; esac
+# The served browser sends exposed traffic back through the connecting client, which resolves names
+# on its own host, so rules here would only reach the container's resolver.
+[ -z "$resolver_rules" ] || [ "$operation" = debugger ] || fail 'browser resolver rules apply only to the foreground debugger'
+[ -z "$resolver_rules" ] || [ "$engine" = chromium ] || fail 'foreground browser resolver rules require chromium'
+if [ "$operation" = debugger ]; then
+  case "$deadline" in ''|*[!0-9]*) fail 'browser debugger deadline is invalid';; esac
+  [ "$deadline" -ge 1 ] && [ "$deadline" -le 14400 ] || fail 'browser debugger deadline is invalid'
+else
+  case "$ws_path" in /*) :;; *) fail 'browser runner websocket path is invalid';; esac
+fi
 [ "$(sha256 "$manifest")" = "$manifest_sha" ] || fail 'browser project manifest digest differs'
 [ "$(sha256 "$lockfile")" = "$lock_sha" ] || fail 'browser project lock digest differs'
 
@@ -69,26 +80,21 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 cp "$manifest" "$workspace/package.json"
 cp "$lockfile" "$workspace/package-lock.json"
-(cd "$workspace" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=warn)
+# npm ci verifies every package against the lockfile's integrity digests on each start. Preferring
+# the download cache lets a restarted runner reinstall without asking the registry again; a
+# recreated container starts with an empty cache and downloads once.
+(cd "$workspace" && npm ci --ignore-scripts --no-audit --no-fund --no-update-notifier --prefer-offline --loglevel=warn)
 installed=$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$workspace/node_modules/@playwright/test/package.json")
 [ "$installed" = "$driver" ] || fail 'installed browser driver version differs'
 mkdir -p "$artifacts"
-case "$engine" in chromium|firefox|webkit) :;; *) fail 'browser runner engine is invalid';; esac
-[ -z "$resolver_rules" ] || [ "$operation" = serve ] || [ "$engine" = chromium ] || fail 'foreground browser resolver rules require chromium'
-if [ "$operation" = debugger ]; then
-  case "$deadline" in ''|*[!0-9]*) fail 'browser debugger deadline is invalid';; esac
-  [ "$deadline" -ge 1 ] && [ "$deadline" -le 14400 ] || fail 'browser debugger deadline is invalid'
-else
-  case "$ws_path" in /*) :;; *) fail 'browser runner websocket path is invalid';; esac
-fi
 BROWSER_ALLOWED_HOSTS=$allowed_hosts BROWSER_RESOLVER_RULES=$resolver_rules exec node - "$workspace/node_modules/playwright" "$operation" "$engine" "$deadline" "$artifacts" "$max_clients" "$workspace" "$server_port" "$proxy_port" "$ws_path" <<'NODE'
 const fs = require('node:fs')
 const net = require('node:net')
+const { spawn } = require('node:child_process')
+const { randomUUID } = require('node:crypto')
 const [modulePath, operation, engine, deadline, artifactsPath, maxClients, workspace, serverPort, proxyPort, wsPath] = process.argv.slice(2)
-const api = require(modulePath)
-const browserType = api[engine]
-if (!browserType || typeof browserType.launchServer !== 'function') throw new Error('browser runner engine is unavailable')
 const handshakeDeadlineMs = 1000
+const serverStartMs = 60000
 let server, proxy, closing = false
 const close = async status => {
   if (closing) return
@@ -96,11 +102,41 @@ const close = async status => {
   try { proxy?.close(); await server?.close() } finally { fs.rmSync(workspace, { recursive: true, force: true }); process.exit(status) }
 }
 process.once('SIGINT', () => close(130)); process.once('SIGTERM', () => close(143))
+// The served runner uses Playwright's run-server mode rather than launchServer: only run-server
+// honours a client's exposeNetwork, which is how a browser in this container reaches the host
+// loopback origins (127.0.0.1, localhost, *.localhost) the person opens. launchServer accepts the
+// option and silently drops it, so every host URL refused its connection inside the container.
+const runServer = () => new Promise((resolve, reject) => {
+  const privatePath = `/${randomUUID()}`
+  const child = spawn(process.execPath, [`${workspace}/node_modules/playwright-core/cli.js`, 'run-server', '--host', '127.0.0.1',
+    '--port', serverPort, '--path', privatePath, '--max-clients', maxClients, '--artifacts-dir', artifactsPath],
+    { stdio: ['pipe', 'pipe', 'inherit'] })
+  let stdout = ''
+  const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('browser server did not report its listener in time')) }, serverStartMs)
+  child.once('error', error => { clearTimeout(timer); reject(error) })
+  child.once('exit', (code, signal) => { clearTimeout(timer); reject(new Error(`browser server exited before listening: ${code ?? signal}`)) })
+  child.stdout.on('data', chunk => {
+    stdout += chunk
+    const listening = /^Listening on (ws:\/\/\S+)$/m.exec(stdout)
+    if (!listening) return
+    clearTimeout(timer)
+    resolve({
+      wsEndpoint: () => listening[1],
+      on: (event, listener) => child.on(event === 'close' ? 'exit' : event, listener),
+      close: () => new Promise(done => { if (child.exitCode !== null || child.signalCode !== null) return done(); child.once('exit', done); child.kill('SIGTERM') }),
+    })
+  })
+})
 ;(async () => {
-  const resolverRules = process.env.BROWSER_RESOLVER_RULES ? process.env.BROWSER_RESOLVER_RULES.split('\n') : []
-  const launch = { headless: operation === 'serve', host: '127.0.0.1', port: operation === 'serve' ? Number(serverPort) : 0, downloadsPath: artifactsPath }
-  if (resolverRules.length && engine === 'chromium') launch.args = [`--host-resolver-rules=${resolverRules.join(',')}`]
-  server = await browserType.launchServer(launch)
+  if (operation === 'serve') server = await runServer()
+  else {
+    const browserType = require(modulePath)[engine]
+    if (!browserType || typeof browserType.launchServer !== 'function') throw new Error('browser runner engine is unavailable')
+    const resolverRules = process.env.BROWSER_RESOLVER_RULES ? process.env.BROWSER_RESOLVER_RULES.split('\n') : []
+    const launch = { headless: false, host: '127.0.0.1', port: 0, downloadsPath: artifactsPath }
+    if (resolverRules.length && engine === 'chromium') launch.args = [`--host-resolver-rules=${resolverRules.join(',')}`]
+    server = await browserType.launchServer(launch)
+  }
   const endpoint = new URL(server.wsEndpoint())
   const publicWsPath = wsPath || '/'
   if (endpoint.protocol !== 'ws:' || endpoint.hostname !== '127.0.0.1'
@@ -165,8 +201,15 @@ process.once('SIGINT', () => close(130)); process.once('SIGTERM', () => close(14
         forbidden()
         return
       }
-      const requestLineEnd = buffered.indexOf('\r\n')
-      const forwarded = Buffer.concat([Buffer.from(`GET ${endpoint.pathname} HTTP/1.1`, 'latin1'), buffered.subarray(requestLineEnd)])
+      // run-server lets each client pick its browser and launch options; the served runner pins
+      // them to the declared engine and a headless launch, as launchServer did. The Host header is
+      // the upstream's own loopback authority, which it checks; the public one was checked above.
+      const headers = operation === 'serve'
+        ? [...lines.slice(1).filter(line => !/^(?:host|x-playwright-browser|x-playwright-launch-options)\s*:/i.test(line)),
+          `Host: 127.0.0.1:${endpoint.port}`, `x-playwright-browser: ${engine}`, 'x-playwright-launch-options: {"headless":true}']
+        : lines.slice(1)
+      const forwarded = Buffer.concat([Buffer.from([`GET ${endpoint.pathname} HTTP/1.1`, ...headers, '', ''].join('\r\n'), 'latin1'),
+        buffered.subarray(end + 4)])
       upstream = net.createConnection({ host: '127.0.0.1', port: Number(endpoint.port) }, () => upstream.write(forwarded))
       upstream.on('data', data => socket.write(data)); socket.on('data', data => upstream.write(data))
       upstream.on('end', () => socket.end()); socket.on('end', () => upstream.end())

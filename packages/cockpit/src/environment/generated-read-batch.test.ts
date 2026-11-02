@@ -11,12 +11,13 @@ import { loadCockpitConfig } from '../config/load.js'
 import type { HolderId } from './contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { resolveGitExecutable } from './executable.js'
-import { projectGeneratedApplicationMountSources } from './generated-application.js'
+import { observeGeneratedApplication, projectGeneratedApplicationMountSources } from './generated-application.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { nodeAuthority, readAnchoredBatches } from '../generated-environment/transaction.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from './identity.js'
 import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
+import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { selectStateRoot, transactState } from './state.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
@@ -441,7 +442,7 @@ project = { manifest = "app/package.json", manifest_sha256 = ${JSON.stringify(di
 endpoint = "ws://localhost:3001/"
 max_clients = 4
 proxy = { host_variable = "BROWSER_PORT", server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }
-resolver = [{ hostname = "app.example.invalid", address = "127.0.0.1" }]
+resolver = [{ hostname = "app.example.localhost", address = "127.0.0.1" }]
 authentication = { policy = "none", states = [] }
 data = { mode = "empty", isolated = true, reaches_production = false }
 request_preapproval = true
@@ -487,6 +488,16 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
                     workBasisSha256: 'd'.repeat(64), operationGeneration: 'e'.repeat(64), completedServices: [] },
             }))
             if (lifecycle.kind !== 'complete') throw new Error('browser lifecycle authority unavailable')
+            // The runner resolves application names on the host through the client's exposed network,
+            // where only .localhost names reach loopback; any other rule would bind nothing.
+            const declared = await readFile(configPath, 'utf8')
+            await writeFile(configPath, declared.replace('"app.example.localhost"', '"app.example.invalid"'))
+            expect(await syncGeneratedEnvironment({ configPath }, {}, ports)).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
+                code: 'GENERATED_DECLARATION_INVALID', target: 'browser',
+                message: expect.stringContaining('browser.resolver maps app.example.invalid to 127.0.0.1'),
+                fix: expect.stringContaining('map a .localhost hostname to 127.0.0.1 or ::1'),
+            })] })
+            await writeFile(configPath, declared)
             const result = await syncGeneratedEnvironment({ configPath }, {}, ports)
             expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
             if (result.kind !== 'complete') throw new Error('browser surfaces were not published')
@@ -504,6 +515,12 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
             expect(compose.services['cockpit-browser-runner'].healthcheck.start_period).toBe('15s')
             expect(compose.services['cockpit-browser-runner']).toMatchObject({ mem_limit: '1024m', cpus: 0.75 })
             expect(await readFile(join(root, 'docs/cockpit/environment-decisions.md'), 'utf8')).toContain('- Resource ceilings: cockpit-browser-runner: {"memory_mb":1024,"cpus":0.75,')
+            // Generated observations authenticate no host executable but Node, so a runner observation
+            // that needs one could never be planned and every up would refuse.
+            const harness = await createGeneratedCommandFixture().generatedRuntime(root, result.result.application, undefined, undefined,
+                loaded.result.config.ports.bases)
+            await expect(observeGeneratedApplication(result.result.application, harness, executeProbe))
+                .resolves.toMatchObject({ applicability: { posture: 'generated-environment' } })
             await writeFile(join(root, 'app/.env'), 'SYNTHETIC_SETTING=1\n')
             const artifactDirectory = join(root, '.browser/runner')
             await expect(projectGeneratedApplicationMountSources(result.result.application)).resolves.toMatchObject({

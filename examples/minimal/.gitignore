@@ -1,6 +1,9 @@
-# The README commands write generated outputs here; only the declaration and api/ are tracked.
+# The README commands write generated outputs here; only the declarations, api/ and browser/ are tracked.
 /*
 !/.gitignore
 !/README.md
 !/cockpit.toml
+!/cockpit.browser.toml
 !/api/
+!/browser/
+/browser/node_modules/

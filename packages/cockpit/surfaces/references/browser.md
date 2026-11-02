@@ -21,7 +21,16 @@ For real sign-in, use mode-600 saved state minted from seeded users and the decl
 per-worker policy. Sign in through a channel that keeps credentials out of transcripts. Keep
 credentials, state contents, page content and production data out of transcripts and tracked
 files. With bypassed authentication, sign-in and persona selection do not apply. With hostname
-addressing the browser needs resolver rules; with port addressing it does not.
+addressing a local browser or the headed debugger needs resolver rules; with port addressing it
+does not.
+
+A generated runner's browser runs in a container but opens the same URLs a person opens: the
+commands connect with the declared network exposure (default `<loopback>`), so requests for
+`127.0.0.1`, `localhost` and `.localhost` names travel back through the command's own process on
+the host. An origin outside that exposure is refused before the browser starts. For that runner,
+resolver rules only restate what the host resolver does for `.localhost` names, and an `https`
+origin needs the development CA built into the runner image. A refusal that says nothing answered
+at a URL is the stack, not the product: check `doctor` before reporting it.
 
 Approving an MCP server enables it; letting its browser tools run without prompts is a separate
 decision. Only isolated empty or seeded data with no route to production can be eligible. Restored
