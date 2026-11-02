@@ -364,11 +364,16 @@ describe('changed adjacent-owner test runner', () => {
         ])
     })
 
-    it('runs the tests that import a changed script', () => {
+    it('runs the tests that import a changed script, directly or through the scripts that import it', () => {
         const fixture = withOwners({
             'scripts/task.mjs': 'export const value = 1\n',
             'scripts/task.d.mts': 'export const value: number\n',
+            'scripts/lint.mjs': "export { value } from './task.mjs'\n",
+            'scripts/docs-lint.mjs': "export { value } from './lint.mjs'\n",
+            'scripts/unrelated.mjs': "export { other } from './other-task.mjs'\n",
             'packages/cockpit/src/task.test.ts': "import { value } from '../../../scripts/task.mjs'\n",
+            'packages/cockpit/src/docs.test.ts': "import { value } from '../../../scripts/docs-lint.mjs'\n",
+            'packages/cockpit/src/unrelated-script.test.ts': "import { other } from '../../../scripts/unrelated.mjs'\n",
         })
         edit(fixture.root, 'scripts/task.mjs')
         edit(fixture.root, 'scripts/task.d.mts')
@@ -376,7 +381,7 @@ describe('changed adjacent-owner test runner', () => {
         const result = fixture.run()
 
         expect(result.status, result.stderr).toBe(0)
-        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/task.test.ts'])
+        expect(fixture.dispatched()).toEqual(['packages/cockpit/src/docs.test.ts', 'packages/cockpit/src/task.test.ts'])
     })
 
     it.each(['scripts/build-cockpit.mjs', 'packages/cockpit/scripts/build.mjs', 'packages/cockpit/scripts/build-helper.mjs'])(
@@ -519,6 +524,31 @@ describe('changed adjacent-owner test runner', () => {
             'packages/cockpit/src/guards/evaluator.test.ts', 'packages/cockpit/src/guards/helper-user.test.ts',
             'packages/cockpit/src/guards/repair-user.test.ts', 'packages/cockpit/src/guards/repair.slow.test.ts',
         ])
+    })
+
+    it('walks on from a changed file whose adjacent tests are all slow, and from every changed file under --wide', () => {
+        const fixture = withOwners({
+            'packages/cockpit/src/composition.ts': 'export const composition = 1\n',
+            'packages/cockpit/src/composition.slow.test.ts': "import { composition } from './composition.js'\n",
+            'packages/cockpit/src/cli.ts': "import { composition } from './composition.js'\n",
+            'packages/cockpit/src/cli.test.ts': "import { runCli } from './cli.js'\n",
+            'packages/cockpit/src/table.ts': 'export const table = 1\n',
+            'packages/cockpit/src/table.test.ts': "import { table } from './table.js'\n",
+            'packages/cockpit/src/commands.ts': "import { table } from './table.js'\n",
+            'packages/cockpit/src/commands.test.ts': "import { commands } from './commands.js'\n",
+        })
+        edit(fixture.root, 'packages/cockpit/src/composition.ts')
+        edit(fixture.root, 'packages/cockpit/src/table.ts')
+
+        const wide = fixture.run('--wide', '--list')
+        const result = fixture.run()
+
+        expect(result.status, result.stderr).toBe(0)
+        expect(fixture.dispatched()).toEqual([ARCHITECTURE, 'packages/cockpit/src/cli.test.ts', 'packages/cockpit/src/table.test.ts'])
+        expect(result.stderr).toContain('npm test -- packages/cockpit/src/composition.slow.test.ts\n')
+        expect(wide.status, wide.stderr).toBe(0)
+        expect(JSON.parse(wide.stdout)).toEqual([ARCHITECTURE, 'packages/cockpit/src/cli.test.ts', 'packages/cockpit/src/commands.test.ts',
+            'packages/cockpit/src/composition.slow.test.ts', 'packages/cockpit/src/table.test.ts'])
     })
 
     it('refuses a source file that no test imports', () => {

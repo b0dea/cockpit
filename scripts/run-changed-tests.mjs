@@ -68,7 +68,8 @@ function existingFile(root, path) {
 function parseArguments(argv) {
     const [base, ...rest] = argv
     if (!base || base.startsWith('-')) {
-        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--list] [--wide] [--extra-test <test-path>]...')
+        throw new Error('usage: node scripts/run-changed-tests.mjs <base-commit-ish> [--list] [--wide] [--extra-test <test-path>]...; '
+            + '--wide also runs the slow tier and every test that imports a changed file, directly or through other modules')
     }
     const extraTests = []
     const flags = new Set()
@@ -127,6 +128,26 @@ function testsReferencing(root, needle) {
     return packageTestFiles(root).filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
 }
 
+// A test reaches a script through the scripts that import it as well (docs-lint.mjs re-exports
+// diagnostic-inventory.mjs), so the tests naming any of those importers own it too.
+function testsReferencingScript(root, name) {
+    const scripts = readdirSync(resolve(root, 'scripts')).filter(entry => entry.endsWith('.mjs'))
+        .map(entry => entry.slice(0, -'.mjs'.length))
+    const visited = new Set([name])
+    const pending = [name]
+    const tests = new Set()
+    while (pending.length) {
+        const current = pending.pop()
+        for (const test of testsReferencing(root, `${current}.mjs`)) tests.add(test)
+        for (const importer of scripts) {
+            if (visited.has(importer) || !readFileSync(resolve(root, 'scripts', `${importer}.mjs`), 'utf8').includes(`./${current}.mjs`)) continue
+            visited.add(importer)
+            pending.push(importer)
+        }
+    }
+    return [...tests]
+}
+
 // Fixture readers can be shared through several helpers; use the same exact import graph as sources.
 function testsReadingFixtures(root, needle, imports) {
     const readers = walkFiles(root, 'packages')
@@ -148,7 +169,7 @@ function testsNamingLibexecProgram(root, program, imports) {
     while (pending.length) {
         const name = basename(pending.pop())
         for (const path of modules.filter(candidate => readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
-            const owners = TEST_PATH.test(path) ? [path] : SOURCE_PATH.test(path) ? sourceOwners(root, path, () => imports) : testsImporting(root, imports, path)
+            const owners = TEST_PATH.test(path) ? [path] : SOURCE_PATH.test(path) ? sourceOwners(root, path, () => imports, imports.wide) : testsImporting(root, imports, path)
             for (const test of owners) tests.add(test)
         }
         for (const path of programs.filter(candidate => !visited.has(candidate) && readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
@@ -217,10 +238,11 @@ function adjacentTests(root, path) {
         .filter(candidate => existingFile(root, candidate))
 }
 
-// A source file is owned by its adjacent tests, or, when it has none, by the tests that import it.
-function sourceOwners(root, path, imports) {
-    const candidates = adjacentTests(root, path)
-    return candidates.length ? candidates : testsImporting(root, imports(), path)
+// A source file is owned by its adjacent tests. When none of them is fast, or --wide asks for every
+// test above the change, the tests that import it own it too, by the same walk as an importer's.
+function sourceOwners(root, path, imports, wide) {
+    const adjacent = adjacentTests(root, path)
+    return wide || !adjacent.some(test => !SLOW_TEST_PATH.test(test)) ? [...adjacent, ...testsImporting(root, imports(), path)] : adjacent
 }
 
 function ownerTests(root, paths, extras, wide) {
@@ -250,7 +272,7 @@ function ownerTests(root, paths, extras, wide) {
         }
         if (SOURCE_PATH.test(path)) {
             sourceChanged = true
-            const owners = sourceOwners(root, path, () => imports ??= importedModules(root, wide))
+            const owners = sourceOwners(root, path, () => imports ??= importedModules(root, wide), wide)
             if (owners.length) for (const candidate of owners) selected.add(candidate)
             else unmapped.push(path)
             continue
@@ -271,7 +293,7 @@ function ownerTests(root, paths, extras, wide) {
         if (SURFACES_PATH.test(path)) {
             mapped.push(...packageTestFiles(root).filter(candidate => candidate.startsWith(`${TEST_DIRECTORY}/surfaces/`)))
         }
-        if (script) mapped.push(...testsReferencing(root, `${script[1]}.mjs`))
+        if (script) mapped.push(...testsReferencingScript(root, script[1]))
         if (LIBEXEC_PATH.test(path)) {
             imports ??= importedModules(root, wide)
             mapped.push(...testsNamingLibexecProgram(root, path, imports))
