@@ -129,6 +129,11 @@ const MEASURED = {
     opencode: { version: '1.18.15', date: '2026-08-25', tool: 'playwright_browser_navigate', cli: true },
 } as const
 
+/** The harness version each target's browser transport spelling was measured at, for diagnostics. */
+export function measuredBrowserHarnessVersions(): Readonly<Record<GuardSurfaceTarget, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(MEASURED).map(([target, row]) => [target, row.version])) as Record<GuardSurfaceTarget, string>)
+}
+
 const Sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const Version = z.string().regex(/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/).max(128)
 const Asset = z.object({ bytes: z.string().max(65_536), sha256: Sha256 }).strict()
