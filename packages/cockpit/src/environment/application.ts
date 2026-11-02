@@ -5188,8 +5188,9 @@ async function doctorHealth(
     }))
     let health: HealthEvaluation
     let doctor: ReturnType<typeof projectDoctor>
+    // A producer that refused says why, also when the observation is lost to a throw afterwards.
+    let refused: readonly EnvironmentDiagnostic[] | undefined
     try {
-        let refused: readonly EnvironmentDiagnostic[] | undefined
         const source = await adapters.load(input, issueHealthObservationSource, (diagnostics) => { refused = diagnostics; return undefined }, 'doctor')
         if (!source) {
             return unavailableDoctor(
@@ -5220,6 +5221,7 @@ async function doctorHealth(
             await surfaceOverrides,
             await freshness,
             await declarations,
+            refused,
         )
     }
     return Object.freeze({

@@ -737,6 +737,25 @@ else process.exit(64)
         expect(execute).not.toHaveBeenCalled()
     })
 
+    // An unresolvable declared remote made issuing the observation source throw, and a bare catch
+    // turned that into an unexplained unavailable source.
+    it('names an unresolvable local remote from doctor', async () => {
+        const candidate = await fixture()
+        await writeFile(join(dirname(candidate.configPath), 'siblings', 'plain-file'), 'not a directory')
+        await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8'))
+            .replace('dir = "api"\n', 'dir = "api"\nremote = "plain-file/api.git"\n').replace('acquire = "none"', 'acquire = "manual"'))
+        const adapters = createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: process.env.PATH, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe)
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, adapters)
+
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'LIFECYCLE_EVIDENCE_INVALID',
+            message: expect.stringContaining('sibling api: cannot resolve declared local remote "plain-file/api.git" (ENOTDIR)') }))
+    })
+
     it('rejects hostile public input without invoking its accessor', async () => {
         const candidate = await fixture()
         let reads = 0
