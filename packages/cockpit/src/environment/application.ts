@@ -1497,7 +1497,7 @@ function cloneFailureDiagnostics(
     return [
         {
             severity: 'error',
-            code: 'SETUP_CLONE_FAILED' satisfies typeof ENVIRONMENT_CODES.SETUP_CLONE_FAILED,
+            code: ENVIRONMENT_CODES.SETUP_CLONE_FAILED,
             message: `git could not clone ${sibling.remote} into ${target}: ${stderr ?? 'git reported no error text'}`
                 + (cloned.length === 0 ? '' : `; already cloned and left in place: ${cloned.join(', ')}`),
             target,

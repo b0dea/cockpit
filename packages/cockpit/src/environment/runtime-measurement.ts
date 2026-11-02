@@ -142,7 +142,7 @@ export async function runRuntimeMeasure(input: RuntimeMeasureInput, dependencies
         // The runtime answered, so the remedy is the image, not the runtime.
         return Object.freeze({ status: 2, result: null, artifact: null, destination: null, diagnostics: Object.freeze([Object.freeze({
             severity: 'error' as const,
-            code: 'RUNTIME_IMAGE_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.RUNTIME_IMAGE_UNAVAILABLE,
+            code: ENVIRONMENT_CODES.RUNTIME_IMAGE_UNAVAILABLE,
             message: `--image ${JSON.stringify(input.image)} is not a local image (${image.kind === 'complete' ? 'unexpected image ID' : image.detail}); the probe never pulls`,
             target: '--image',
             fix: 'pull or build it first (docker pull <image>), then run npx --no cockpit runtime measure --config <your cockpit.toml> --image <image> again',
