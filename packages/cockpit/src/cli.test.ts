@@ -872,12 +872,17 @@ describe('generated environment process contract', () => {
                 return { status: 0, diagnostics: [], result: null }
             },
         })).toBe(0)
-        for (const conflict of [['--probe-specifications', 'other.json'], ['--interactive'], ['--json']]) {
+        for (const conflict of [['--interactive'], ['--json'], ['--probe-specifications=']]) {
             expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', ...conflict],
                 captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } }),
             conflict.join(' ')).toBe(2)
         }
-        expect(selftestCalls).toEqual([{ configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' }])
+        expect(await runCli(['selftest', '--config', 'cockpit.toml', '--write-probe-specifications', 'probe.json', '--probe-specifications', 'earlier.json'],
+            captureIo().io, { selftest: async (input) => { selftestCalls.push(input); return { status: 0, diagnostics: [], result: null } } })).toBe(0)
+        expect(selftestCalls).toEqual([
+            { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json' },
+            { configPath: 'cockpit.toml', writeProbeSpecificationsPath: 'probe.json', previousProbeSpecificationsPath: 'earlier.json' },
+        ])
         const upgrade = captureIo()
         expect(await runCli(['upgrade', '--config', 'cockpit.toml', '--json'], upgrade.io, {
             upgrade: async (input) => {

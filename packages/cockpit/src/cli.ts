@@ -968,10 +968,14 @@ async function decodeRequest(
         if (draftPath !== undefined) {
             if (draftPath.length === 0) return usageOutcome('CLI_USAGE_INVALID', '--write-probe-specifications requires a non-empty path', '--write-probe-specifications')
             // Writing the file runs nothing, and --json would print the envelope without creating it.
-            const conflict = values['probe-specifications'] !== undefined ? '--probe-specifications'
-                : values.interactive ? '--interactive' : values.json ? '--json' : undefined
+            const conflict = values.interactive ? '--interactive' : values.json ? '--json' : undefined
             if (conflict) return usageOutcome('CLI_USAGE_INVALID', `--write-probe-specifications only writes the file; drop ${conflict}`, conflict)
-            return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath } }
+            const previous = values['probe-specifications']
+            if (previous !== undefined && previous.length === 0) {
+                return usageOutcome('CLI_USAGE_INVALID', '--probe-specifications requires a non-empty path', '--probe-specifications')
+            }
+            return { handler, input: { configPath: values.config, writeProbeSpecificationsPath: draftPath,
+                ...(previous === undefined ? {} : { previousProbeSpecificationsPath: previous }) } }
         }
         if (!values['probe-specifications']) return usageOutcome('CLI_USAGE_INVALID',
             'provide --probe-specifications <file>; write one with --write-probe-specifications <new file> first', '--probe-specifications')

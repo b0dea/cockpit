@@ -55,6 +55,8 @@ export interface ConfiguredSurfaceSelftestCommandInput {
 export interface SurfaceSelftestDraftInput {
     readonly configPath: string
     readonly writeProbeSpecificationsPath: string
+    /** An earlier probe-specification file whose filled rows for unchanged cells carry into the new one. */
+    readonly previousProbeSpecificationsPath?: string
 }
 
 export interface SurfaceSelftestCommandInput {
@@ -216,12 +218,14 @@ function probeSpecificationsArtifact(
     bytes: string,
     sourceSha256: string,
     generatedManifestSha256: string,
-): Readonly<{ kind: 'complete'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed' }> | Readonly<{ kind: 'stale' }> {
+): Readonly<{ kind: 'complete' | 'stale'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed' }> {
     let captured: Readonly<Record<string, unknown>> | undefined
     try { captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined } catch { return { kind: 'malformed' } }
     if (!captured || Object.keys(captured).sort().join('\0') !== ['generatedManifestSha256', 'schema', 'sourceSha256', 'specifications'].join('\0')
         || captured.schema !== PROBE_SPECIFICATIONS_SCHEMA || !Array.isArray(captured.specifications)) return { kind: 'malformed' }
-    if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) return { kind: 'stale' }
+    if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) {
+        return { kind: 'stale', specifications: captured.specifications }
+    }
     return { kind: 'complete', specifications: captured.specifications }
 }
 
@@ -612,7 +616,11 @@ export async function runConfiguredSurfaceSelftestApplication(
         return probeSpecificationsRefusal(`probe specification file ${artifactPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
     }
     if (artifact.kind === 'stale') {
-        return probeSpecificationsRefusal(`probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`)
+        return {
+            kind: 'refusal', status: 2, code: 'SELFTEST_SOURCE_INVALID',
+            reason: `probe specification file ${artifactPath} was written for a different cockpit.toml or generated manifest`,
+            fix: 'write a new file that keeps the rows you filled for unchanged cells with npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file> --probe-specifications <this file>, fill the fields it lists, then pass the new file to --probe-specifications',
+        }
     }
     const unfilled = unfilledSurfaceSelftestSpecifications(artifact.specifications)
     if (unfilled.length > 0) {
@@ -702,9 +710,25 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
         return refused(checked.diagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`).join('; ')
             || 'generated environment check refused configured selftest source')
     }
-    const draft = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest)
+    let previous: readonly unknown[] = []
+    let previousPath: string | undefined
+    if (input.previousProbeSpecificationsPath !== undefined) {
+        try { previousPath = await realpath(resolve(input.previousProbeSpecificationsPath)) } catch {
+            return refused(`earlier probe specification file ${resolve(input.previousProbeSpecificationsPath)} is missing or unreadable`)
+        }
+        const bytes = await readProbeSpecificationsArtifact(previousPath)
+        if (bytes === undefined) return refused(`earlier probe specification file ${previousPath} is unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes`)
+        // A stale file is the expected input: the digests changed, the rows may not have.
+        const earlier = probeSpecificationsArtifact(bytes, checked.result.application.sourceSha256,
+            checked.result.application.surfaceSelftest.manifestSha256)
+        if (earlier.kind === 'malformed') {
+            return refused(`earlier probe specification file ${previousPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
+        }
+        previous = earlier.specifications
+    }
+    const draft = draftSurfaceSelftestSpecifications(checked.result.application.surfaceSelftest, previous)
     if (!draft) return refused('generated selftest projection is invalid')
-    const { specifications, unprobeable } = draft
+    const { specifications, unprobeable, carried } = draft
     const destination = resolve(input.writeProbeSpecificationsPath)
     const unfilled = unfilledSurfaceSelftestSpecifications(specifications)
     return {
@@ -728,6 +752,9 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
             rows: specifications.length,
             fromGeneratedManifest: 'harness, capability, sample.skill and unavailableCode for every cell that needs evidence',
             fromCockpit: 'versionCommand and helpCommand, the --version and --help identity probes; review them when you approve the file',
+            ...(previousPath === undefined ? {} : {
+                carriedForward: `${carried} of ${specifications.length} row(s) kept unchanged from ${previousPath}; every other row is new or changed, or was not complete there`,
+            }),
             fromYou: 'each null: invocation (argv starting with the placeholder already in versionCommand, with exactly one {control}), candidateCode and brokenCode (the exact lines the tool prints for an accepted and a broken control), and sample.features for skill-parity rows',
             unfilled,
             then: cockpitCommand('selftest', { config: configPath, args: `--interactive --probe-specifications ${formatShellCommand([destination])}` }),

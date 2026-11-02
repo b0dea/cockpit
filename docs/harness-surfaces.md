@@ -256,6 +256,18 @@ Measure a custom capability yourself and record it as its `state` and `measured_
    It prints which rows it wrote and where each value came from. The generated manifest decides
    `harness`, `capability`, the skill in `sample` and `unavailableCode`. cockpit fills
    `versionCommand` and `helpCommand` with the tool's `--version` and `--help`.
+
+   After a change to `cockpit.toml` or the generated manifest, your filled file is stale. Write
+   the new file from it so the probes you wrote are kept:
+
+   ```sh
+   npx --no cockpit selftest --config ./cockpit.toml \
+     --write-probe-specifications ./.cockpit/local/probe-specifications-2.json \
+     --probe-specifications ./.cockpit/local/probe-specifications.json
+   ```
+
+   Each complete row whose cell still exists is copied as it was, and the output says how many.
+   Rows for new or changed cells, and rows you left partly `null`, start over with `null`s.
 2. Replace every `null` in the file. Nothing in the manifest says how a given tool version can be
    made to load a control file and report what it did, so these values come from you:
    - `invocation`: the arguments, starting with `{executable}` like `versionCommand`, with

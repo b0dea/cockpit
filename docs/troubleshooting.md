@@ -160,9 +160,10 @@ file is not a repair.
 
 `SELFTEST_SOURCE_INVALID` means the generated check, resolved probe-specification path, source
 digest, generated-manifest digest or specification size failed its check, or the file still has a
-`null` where a probe belongs. For a missing or stale file, write a fresh one with
+`null` where a probe belongs. For a missing file, write a fresh one with
 `npx --no cockpit selftest --config <path> --write-probe-specifications <new file>` and fill in its
-`null` fields; do not edit the stored digests. For a `null`, fill in the rows the message lists.
+`null` fields; for a stale one, add `--probe-specifications <stale file>` to that command so the
+rows you filled for unchanged cells are kept. Do not edit the stored digests. For a `null`, fill in the rows the message lists.
 [Skills and selftest evidence](harness-surfaces.md#skills-and-selftest-evidence) describes each
 field.
 

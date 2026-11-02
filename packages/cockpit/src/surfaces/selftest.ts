@@ -352,14 +352,35 @@ function builtinCell(cell: SelftestCellKey): cell is SelftestCellKey & Readonly<
  * probe itself left null. The version and help commands are the identity probes every built-in tool
  * answers with `--version` and `--help`; they run before the controls and are shown for approval.
  * Custom cells get no row (see SelftestProbeSpecification) and are returned as `unprobeable`.
+ *
+ * A row from `previous` (an earlier file, usually stale after a config change) is kept as it is when
+ * it is a complete, valid row for a cell that still exists, so the probes a person wrote survive the
+ * rewrite; a row for a changed or removed cell, or one still partly null, is not carried.
  */
 export function draftSurfaceSelftestSpecifications(
     projection: GeneratedSurfaceSelftestProjection,
-): Readonly<{ specifications: readonly SelftestProbeSpecificationDraft[]; unprobeable: readonly SelftestCellKey[] }> | undefined {
+    previous: readonly unknown[] = [],
+): Readonly<{
+    specifications: readonly (SelftestProbeSpecificationDraft | SelftestProbeSpecification)[]
+    unprobeable: readonly SelftestCellKey[]
+    carried: number
+}> | undefined {
     const expectation = surfaceSelftestExpectation(projection)
     if (!expectation) return undefined
-    return Object.freeze({
-        specifications: Object.freeze(expectation.cells.filter(builtinCell).map((cell) => Object.freeze({
+    const earlier = new Map<string, SelftestProbeSpecification>()
+    for (const row of previous) {
+        const key = specificationCellKey(row)
+        const captured = key === undefined ? undefined : snapshotGeneratedJson(row) as unknown as SelftestProbeSpecification | undefined
+        if (key !== undefined && captured !== undefined && !earlier.has(key)) earlier.set(key, captured)
+    }
+    let carried = 0
+    const specifications = expectation.cells.filter(builtinCell).map((cell) => {
+        const kept = earlier.get(cellKey(cell))
+        if (kept && validProbe(kept, cell)) {
+            carried += 1
+            return kept
+        }
+        return Object.freeze({
             harness: cell.harness,
             capability: cell.capability,
             invocation: null,
@@ -369,8 +390,12 @@ export function draftSurfaceSelftestSpecifications(
             brokenCode: null,
             unavailableCode: `${cell.capability.replaceAll('-', '_').toUpperCase()}_UNAVAILABLE`,
             sample: cell.capability === 'skill-parity' ? Object.freeze({ skill: cell.skill, features: null }) : null,
-        }))),
+        })
+    })
+    return Object.freeze({
+        specifications: Object.freeze(specifications),
         unprobeable: Object.freeze(expectation.cells.filter((cell) => !builtinCell(cell))),
+        carried,
     })
 }
 
