@@ -280,7 +280,6 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `DEPENDENCY_RUNTIME_UNAVAILABLE` | see the message |
 | `DEPENDENCY_RUNTIME_UNMOUNTED` | see the message |
 | `DIRECTORY_GRANTS_UNAVAILABLE` | see the message |
-| `DOCEV050_NAMED_REFERENCE_MISSING` | see the message |
 | `DOCUMENT_ANSWER_UNCONFIRMED` | see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_EXTRA` | see the message |
 | `DOCUMENT_CONFIGURATION_ANSWER_INVALID` | see the message |
