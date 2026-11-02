@@ -35,7 +35,7 @@ This generated reference is for users authoring or reviewing `cockpit.toml`. It 
     "deny": []
   },
   "mcp": {
-    "approved": []
+    "approved": {}
   },
   "workorders": {
     "attempt_cap": 2,
@@ -2752,10 +2752,11 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
       "type": "object",
       "properties": {
         "approved": {
-          "default": [],
-          "type": "array",
-          "items": {
-            "type": "string"
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
           }
         }
       },
