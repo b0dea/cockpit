@@ -21,6 +21,7 @@ export const mechanism = {
         'Gate',
         'EnvironmentFile',
         'MachineFloor',
+        'MAX_COLD_START_SECONDS',
         'ResettableVolumeId',
         'GeneratedHostPath',
         'parseBrowserNetworkExposure',
@@ -133,12 +134,18 @@ export const EnvironmentFile = z
         path: ['instance'],
     })
 
+// `up` holds one authority window open while every service starts, and each start step runs for
+// the declared budget. A budget beyond what that window can hold was silently cut to five minutes,
+// so a stack that needed more was killed and reported unhealthy on every retry. An hour covers a
+// first start that builds images and installs dependencies; a longer one is refused here.
+export const MAX_COLD_START_SECONDS = 3_600
+
 export const MachineFloor = z
     .object({
         runtime_memory_mb: z.number().int().positive(),
         runtime_cpus: z.number().positive(),
         free_disk_mb: z.number().int().positive(),
-        cold_start_seconds: z.number().int().positive(),
+        cold_start_seconds: z.number().int().positive().max(MAX_COLD_START_SECONDS),
     })
     .strict()
 
@@ -1380,6 +1387,14 @@ export function mounted(cfg: CockpitConfig, profiles: readonly string[]): Siblin
 // a container, so editing it must leave a running stack alone.
 const SIBLING_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set(['purpose', 'guides', 'instruction_pointer', 'remote', 'branch', 'acquire', 'host_reason', 'gate'])
 
+// What the host checks or reports around the containers: the machine floor and cold-start budget
+// `up` and preflight hold the host to, the posture preflight reads, the volumes `reset` may delete,
+// and the URLs derived from leased ports. Hashing them made raising cold_start_seconds strand a
+// healthy stack behind a demand to run `down`.
+const ENVIRONMENT_NON_RUNTIME_FIELDS: ReadonlySet<string> = new Set([
+    'machine', 'addressing', 'authentication', 'posture_requirements', 'resettable_volumes', 'entrypoint_derivatives',
+])
+
 function canonicalJson(value: unknown): string {
     return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
         ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
@@ -1394,7 +1409,8 @@ function canonicalJson(value: unknown): string {
  *
  * It covers everything except what is known not to reach a container: comments and formatting,
  * guards, MCP, work orders, surfaces, testing, the guide settings, generated decision records, the
- * descriptive sibling fields, and siblings with mount "none" that no generated service names. A new field is therefore counted
+ * descriptive sibling fields, the host-only environment fields, and siblings with mount "none" that
+ * no generated service names. A new field is therefore counted
  * as runtime until someone decides otherwise: the failure is a needless down, never a stack running
  * an older declaration than the one on disk. The contents of `environment.compose_files` are
  * outside it: only their paths are declared here, and `up` hands the files to Compose as they are.
@@ -1406,7 +1422,8 @@ export function runtimeDeclarationSha256(cfg: CockpitConfig): string {
         .filter((row) => row.mount !== 'none' || servedSiblings.has(row.slug) || row.derives !== undefined || row.toolchain !== 'none')
         .map((row) => Object.fromEntries(Object.entries(row).filter(([field]) => !SIBLING_NON_RUNTIME_FIELDS.has(field))))
         .sort((left, right) => String(left.slug) < String(right.slug) ? -1 : 1)
-    const { generated: _generated, ...environment } = cfg.environment
+    const { generated: _generated, ...declared } = cfg.environment
+    const environment = Object.fromEntries(Object.entries(declared).filter(([field]) => !ENVIRONMENT_NON_RUNTIME_FIELDS.has(field)))
     const { decisions: _decisions, ...declaration } = generated ?? {}
     return createHash('sha256').update(canonicalJson({
         cockpit: { name: cfg.cockpit.name, siblings_root: cfg.cockpit.siblings_root },

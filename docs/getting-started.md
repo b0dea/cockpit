@@ -371,8 +371,8 @@ what changes.
 While a stack is up or asleep, both commands act at once only on a repository the stack does not
 use (`mount = "none"`, named by no generated service); for any other they refuse and ask for
 `./node_modules/.bin/cockpit down --config ./cockpit.toml` first. Hand edits follow the same rule:
-a change that never reaches a container (a `purpose`, guards, MCP, skills, surfaces, comments)
-needs only `sync`, and the next `up` resumes the same stack. A change to services, ports, mounts,
+a change that never reaches a container (a `purpose`, guards, MCP, skills, surfaces, comments,
+the `[environment.machine]` floor and cold-start budget) needs only `sync`, and the next `up` resumes the same stack. A change to services, ports, mounts,
 images or anything else the containers receive makes `up` refuse with `LIFECYCLE_PROGRESS_INVALID`,
 because `up` never replaces a running stack in place; run the `down` it prints, then `up`.
 

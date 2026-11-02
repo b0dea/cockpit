@@ -8,7 +8,7 @@ import {
     type GeneratedComposeArtifactAuthority,
 } from './generated-render.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
-import type { MachineFloor } from '../schema.js'
+import { MAX_COLD_START_SECONDS, type MachineFloor } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
 import {
     ENVIRONMENT_CODES,
@@ -66,7 +66,7 @@ import { composeProcessEnvironment } from './compose-environment.js'
 export const mechanism = {
     id: 'runtime-planning',
     module: 'packages/cockpit/src/environment/runtime.ts',
-    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations'],
+    exports: ['classifyResolvedRuntimeLiterals', 'createRuntimeAdapter', 'createRuntimeTopologyPlan', 'admitRuntimeTopology', 'isRuntimeTopologyEvidence', 'resolveRuntimeServiceOrder', 'projectRuntimeExecutionEnvironment', 'projectRuntimeLifecycle', 'consumeRuntimeLifecycleProjection', 'projectDependencyRuntime', 'consumeDependencyRuntimeProjection', 'createRuntimeServicePlan', 'admitBuiltImageLauncher', 'admitRuntimeServiceStageOutcome', 'createRuntimeServiceRevalidationPlan', 'admitRuntimeServiceRevalidationStatus', 'admitRuntimeServiceRevalidation', 'createRuntimeServiceHealthPlan', 'admitRuntimeServiceObservation', 'admitRuntimeServiceHealth', 'observeRuntimeMountMaterialization', 'observeRuntimePortFamily', 'runtimeHealthObservationDeclarations', 'observeRuntimeServiceColdStart', 'isRuntimeServiceEvidence', 'admitRuntimeServicePlanFailure', 'admitRuntimeServiceInspectFailure', 'consumeRuntimeServiceFailureForLogs', 'consumeRuntimeServiceObservationForFailureLogs', 'createRuntimeStopPlan', 'createRuntimeStopObservationPlan', 'admitRuntimeStopped', 'consumeRuntimeStopped', 'admitRuntimeStopFailure', 'consumeRuntimeStopFailure', 'issueMachineFloorAuthority', 'createMachineFloorPlan', 'collectMachineFloorEvidence', 'isMachineFloorEvidence', 'measureMachineFloor', 'measureColdStart', 'observeRuntimeExecution', 'isRuntimeObservation', 'classifyRuntimeProbe', 'observeDockerRuntime', 'runtimeIdentity', 'admitRuntimeMeasurement', 'observeRuntimeMeasurement', 'observedVersionCore', 'issueRuntimeMeasurementProbeAuthority', 'runtimeMeasurementProbeObservation', 'observationDeclarations', 'OBSERVATION_WINDOW_HEADROOM_MS'],
 } as const
 
 export const observationDeclarations = Object.freeze([
@@ -1245,7 +1245,10 @@ const issuedTopologyEvidence = new WeakMap<object, TopologyEvidenceContract>()
 const MAX_TOPOLOGY_BYTES = 1_048_576
 const MAX_TOPOLOGY_SERVICES = 4_096
 const MAX_TOPOLOGY_EDGES = 16_384
-const MAX_OBSERVATION_WINDOW_MS = 300_000
+// One `up` starts every service inside a single observation window: the declared cold start plus
+// headroom for stop graces and the ordinary probes around each start.
+export const OBSERVATION_WINDOW_HEADROOM_MS = 300_000
+const MAX_OBSERVATION_WINDOW_MS = MAX_COLD_START_SECONDS * 1_000 + OBSERVATION_WINDOW_HEADROOM_MS
 // `compose stop` waits up to each service's stop grace (Compose default 10s) before it kills a
 // process that ignores SIGTERM, which a shell or Node.js running as PID 1 does. It stops dependents
 // before their dependencies, one dependency level at a time, so the grace is paid once per level. A

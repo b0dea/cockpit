@@ -255,7 +255,9 @@ that failed. The holder and lease stay, so the next `up` resumes and `down` remo
 
 When `up` starts services, it times the start, from the earliest recorded service start to the
 moment the last newly started service reports healthy. If that exceeds `cold_start_seconds`, `up`
-refuses with `MACHINE_COLD_START_EXCEEDED`. A successful result reports `coldStart.measuredMillis`,
+refuses with `MACHINE_COLD_START_EXCEEDED`. Each service start may run for the whole declared
+budget, and the configuration refuses a budget above 3600 seconds, the longest `up` holds one
+start open. A successful result reports `coldStart.measuredMillis`,
 `limitMillis` and `headroomMillis`. A partial resume times only the services that run started.
 Joining a stack that is already running, or that another holder started, reports no duration
 rather than an invented one.
@@ -336,7 +338,9 @@ destroys the records cockpit needs to repair it safely.
 A stack's identity, carried in its ownership labels and saved progress, is a digest of the
 declarations that reach its containers, not of the bytes of `cockpit.toml`. Editing a sibling's
 `purpose`, the guards, MCP, surfaces, comments or formatting leaves a running stack alone, and the
-next `up` resumes it. `sleep` and `reset` keep the previous generated identity so the stack can
+next `up` resumes it. So do the fields the host checks rather than the containers receive:
+`[environment.machine]` (including `cold_start_seconds`), `addressing`, `authentication`,
+`posture_requirements`, `resettable_volumes` and `entrypoint_derivatives`. `sleep` and `reset` keep the previous generated identity so the stack can
 resume.
 
 A change to services, ports, mounts, images or anything else the containers receive gives the

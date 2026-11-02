@@ -352,17 +352,20 @@ describe('lifecycle planning', () => {
         }
     })
 
-    it('binds the authenticated lifecycle stage into the up work basis', () => {
-        const steady = projections()
-        const steadyPlan = planUp({ lifecycleStage: steady.stage as never, runtime: steady.runtime as never, ports: steady.ports as never, progress: null, completedServices: [], operationGeneration: generation })
+    // The first `up` moves the stage from bootstrap to steady itself. When the stage was part of the
+    // work, the second `up` refused its own progress, re-ran every start and reported a fresh start.
+    it('keeps a complete first up current after it moves the lifecycle stage to steady', () => {
         const bootstrap = projections()
         owners.stages.set(bootstrap.stage, Object.freeze({ stackId, stage: 'bootstrap' }))
-        const bootstrapPlan = planUp({ lifecycleStage: bootstrap.stage as never, runtime: bootstrap.runtime as never, ports: bootstrap.ports as never, progress: null, completedServices: [], operationGeneration: generation })
-        expect(steadyPlan.kind).toBe('execute')
-        expect(bootstrapPlan.kind).toBe('execute')
-        if (steadyPlan.kind === 'execute' && bootstrapPlan.kind === 'execute') {
-            expect(steadyPlan.plan.progress.workBasisSha256).not.toBe(bootstrapPlan.plan.progress.workBasisSha256)
-        }
+        const first = planUp({ lifecycleStage: bootstrap.stage as never, runtime: bootstrap.runtime as never, ports: bootstrap.ports as never, progress: null, completedServices: [], operationGeneration: generation })
+        if (first.kind !== 'execute') throw new Error('first up plan unavailable')
+        const [db, api] = [serviceEvidence('db'), serviceEvidence('api')]
+        const steady = projections()
+        expect(planUp({
+            lifecycleStage: steady.stage as never, runtime: steady.runtime as never, ports: steady.ports as never,
+            progress: { ...first.plan.progress, completedServices: [db, api].map(({ service, containerId }) => ({ service, containerId })) },
+            completedServices: [db, api], operationGeneration: generation,
+        })).toMatchObject({ kind: 'noop' })
     })
 
     it('gives reordered set-like execution values one canonical work basis', () => {
@@ -427,10 +430,10 @@ describe('lifecycle planning', () => {
         }
     })
 
-    it('changes the work basis for entrypoint, execution, dependency, and mount bytes', () => {
-        const digest = (change: 'entrypoint' | 'execution' | 'dependency' | 'mount' | null) => {
+    it('changes the work basis for leased port, execution, dependency, and mount bytes', () => {
+        const digest = (change: 'port' | 'execution' | 'dependency' | 'mount' | null) => {
             const input = projections()
-            const changed = change === 'entrypoint'
+            const changed = change === 'port'
                 ? input.semantics
                 : {
                     ...input.semantics,
@@ -446,9 +449,9 @@ describe('lifecycle planning', () => {
                         : input.semantics.services,
                 }
             owners.runtimes.set(input.runtime, Object.freeze({ topology: input.topology, semantics: changed }))
-            if (change === 'entrypoint') {
+            if (change === 'port') {
                 owners.ports.set(input.ports, Object.freeze({
-                    lease: Object.freeze({ stackId, offset: 0, ports: Object.freeze({ APP_PORT: 8080 }) }),
+                    lease: Object.freeze({ stackId, offset: 1, ports: Object.freeze({ APP_PORT: 8081 }) }),
                     ownership: Object.freeze({ change: 'unchanged', holderId, recordRevision: 7, holderCount: 1, holderIds: Object.freeze([holderId]) }),
                     entrypoints: Object.freeze([Object.freeze({ name: 'app', kind: 'entrypoint', port: 'APP_PORT', value: 'http://127.0.0.1:8081' })]),
                 }))
@@ -458,7 +461,7 @@ describe('lifecycle planning', () => {
             return result.plan.progress.workBasisSha256
         }
         const baseline = digest(null)
-        expect(digest('entrypoint')).not.toBe(baseline)
+        expect(digest('port')).not.toBe(baseline)
         expect(digest('execution')).not.toBe(baseline)
         expect(digest('dependency')).not.toBe(baseline)
         expect(digest('mount')).not.toBe(baseline)

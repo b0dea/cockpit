@@ -68,7 +68,6 @@ interface PlannerEvidence {
 }
 
 interface WorkBasisContext {
-    readonly lifecycleStage?: 'bootstrap' | 'steady'
     readonly reclaim?: ReclaimTargetEnvelope
 }
 
@@ -164,7 +163,7 @@ function canonicalExecution(value: RuntimeLifecycleExecutionSemantics): unknown 
     if (compensation.some((item) => item === undefined)) return undefined
     return {
         argv: [...value.argv], argv0: value.argv0, cwd: value.cwd, env: { ...value.env },
-        timeoutCeilingMs: value.timeoutCeilingMs, stdoutLimitBytes: value.stdoutLimitBytes,
+        stdoutLimitBytes: value.stdoutLimitBytes,
         stderrLimitBytes: value.stderrLimitBytes, paths, ports, expected: expected.map((item) => ({ ...item })),
         consumedFiles: consumedFiles.map((item) => ({ ...item, argvIndexes: [...item.argvIndexes] })),
         filesystemChecks: filesystemChecks.map((item) => ({ ...item })), compensation,
@@ -208,14 +207,18 @@ function workBasis(
     const expectedMountSources = canonicalSet(semantics.runtimeChecks.expectedMountSources, String)
     if (!expectedMountSources || ports.lease.stackId !== semantics.stackId
         || !unique(ports.entrypoints, (entrypoint) => entrypoint.name)) return undefined
+    // The basis names the work, so saved progress stays valid while the work is the same. Budgets
+    // (cold start, step timeouts) and the lifecycle stage are left out: the first `up` itself moves
+    // the stage to steady, and the next `up` read that as different work, re-ran every start as a
+    // no-op and reported a fresh start with an invented cold-start time. The leased ports stand in
+    // for the entrypoint URLs derived from them, which only name those ports.
     const basis = canonicalValue({
         domain: DOMAIN, verb, stackId: semantics.stackId, configSha256: semantics.configSha256,
         runtimeVersion: semantics.runtimeVersion, composeVersion: semantics.composeVersion,
         projectName: semantics.projectName,
-        runtimeChecks: { coldStartLimitMillis: semantics.runtimeChecks.coldStartLimitMillis, expectedMountSources },
+        runtimeChecks: { expectedMountSources },
         topology: { order, services: topologyServices }, services: serviceSemantics,
-        entrypoints: ports.entrypoints.map((entrypoint) => ({ ...entrypoint })),
-        ...(context.lifecycleStage === undefined ? {} : { lifecycleStage: context.lifecycleStage }),
+        ports: { ...ports.lease.ports },
         ...(context.reclaim === undefined ? {} : {
             reclaim: {
                 planDigest: context.reclaim.planDigest,
@@ -346,7 +349,7 @@ export function admitUpProgress(input: {
     if (!stage || !evidence || stage.stackId !== evidence.runtime.semantics.stackId) {
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning evidence is invalid', 'up')
     }
-    const basis = workBasis('up', evidence.runtime.semantics, evidence.ports, { lifecycleStage: stage.stage })
+    const basis = workBasis('up', evidence.runtime.semantics, evidence.ports)
     if (!basis) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle work evidence is invalid', 'up')
     const prior = progressValue(captured.progress)
     if (prior === undefined || prior !== null && (prior.workBasisSha256 !== basis

@@ -1753,7 +1753,15 @@ fi
         // pinned image may pull it, so every start is held to the declared cold start. Holding the
         // rest to the command budget killed a first `up` moments before its container became healthy.
         expect(pinnedStart.start.timeoutMs).toBe(70_000)
-        const composeFirst = { services: { api: {
+        // A declared budget beyond five minutes is honoured, not cut to a fixed window: a service
+        // healthy after 330s of a 600s budget was killed at 300s and reported unhealthy.
+        const longEvidence = (await topologyEvidence(built, [], { timeoutMs: 10_000, coldStartLimitMillis: 600_000 })).admitted
+        if (longEvidence.kind !== 'complete') throw new Error(longEvidence.reason)
+        const longStart = createRuntimeServicePlan({ topology: longEvidence.topology, service: 'api' })
+        if (longStart.kind !== 'planned' || !longStart.build) throw new Error('long cold-start service plan unavailable')
+        expect(longStart.start.timeoutMs).toBe(610_000)
+        expect(longStart.build.timeoutMs).toBe(600_000)
+        const composeFirst ={ services: { api: {
             build: { context: directory, dockerfile: 'Dockerfile' },
             labels: { 'dev.b0dea.cockpit.stack-id': stack, 'dev.b0dea.cockpit.config-sha256': configSha256 },
             healthcheck: { test: ['CMD', 'true'], interval: '25s' },

@@ -76,6 +76,7 @@ import {
     createRuntimeAdapter,
     createRuntimeTopologyPlan,
     issueMachineFloorAuthority,
+    OBSERVATION_WINDOW_HEADROOM_MS,
     observeDockerRuntime,
     observeRuntimeMeasurement,
     projectRuntimeLifecycle,
@@ -107,7 +108,6 @@ export const mechanism = {
 
 const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
-const MAX_TOPOLOGY_OBSERVATION_WINDOW_MS = 300_000
 const SAFE_DOCKER_ENV = new Set(['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'])
 
 function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string): readonly EnvironmentDiagnostic[] {
@@ -1009,7 +1009,7 @@ export function createLifecycleCommandAdapters(
             batchId,
             observationWindow: {
                 startedAt,
-                expiresAt: new Date(Date.parse(startedAt) + MAX_TOPOLOGY_OBSERVATION_WINDOW_MS).toISOString(),
+                expiresAt: new Date(Date.parse(startedAt) + machine.cold_start_seconds * 1_000 + OBSERVATION_WINDOW_HEADROOM_MS).toISOString(),
             },
         })
         if (topologyPlan.kind !== 'planned') return undefined
