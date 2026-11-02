@@ -74,6 +74,7 @@ function captureOwnValues(value: unknown, keys: readonly string[]): Readonly<Rec
         for (const key of keys) captured[key] = (value as Record<string, unknown>)[key]
         return Object.freeze(captured)
     } catch {
+        // A throwing accessor or proxy trap means the value is malformed.
         return undefined
     }
 }
@@ -143,6 +144,7 @@ export function planLogs(
         }
         suppliedPortProjection = descriptor?.value as PortLeaseProjection | undefined
     } catch {
+        // A throwing accessor or proxy trap on the authority is what the message calls malformed.
         return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'compose-first log port authority is malformed' }
     }
     const portProjection = suppliedPortProjection === undefined ? undefined : inspectPortLeaseProjection(suppliedPortProjection)
@@ -319,6 +321,7 @@ export function planFailureLogs(input: FailureLogRequest): FailureLogPlan {
         issuedFailureLogPlans.set(plan, Object.freeze({ evidence, step, early: failureContext !== undefined }))
         return plan
     } catch {
+        // Any throw while building the plan yields the unavailable plan; log content and executor errors can echo secrets.
         return unavailableFailurePlan()
     }
 }
@@ -411,6 +414,7 @@ export function admitFailureLogs(input: {
             || (left.stream === right.stream ? 0 : left.stream === 'stdout' ? -1 : 1))
         return Object.freeze({ kind: 'complete', records: Object.freeze(records) })
     } catch {
+        // Any throw while parsing yields unavailable; log content and parser errors can echo secrets.
         return unavailable()
     }
 }
@@ -531,7 +535,7 @@ export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, e
         const firstNewline = truncated ? output.indexOf(0x0a) : -1
         const whole = !truncated ? output : firstNewline === -1 ? Buffer.alloc(0) : output.subarray(firstNewline + 1)
         let text: string
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(whole) } catch { return unreadable(`the container runtime returned ${stream} that is not UTF-8`) }
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(whole) } catch { /* Invalid UTF-8 is the only throw and is what the message names. */ return unreadable(`the container runtime returned ${stream} that is not UTF-8`) }
         const streamStart = records.length
         for (const line of text.split('\n').filter(Boolean)) {
             const match = line.match(/^(\S+)\s+(.*)$/)

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, delimiter, isAbsolute, join, normalize } from 'node:path'
+import { errorCause } from './contract.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from '../environment-exec/verified-digest.js'
 
 export const mechanism = {
@@ -49,6 +50,7 @@ export function resolvedExecutable(value: unknown): ResolvedExecutable | undefin
             ? Object.freeze({ canonicalPath, invocationPath, sha256, executionMode })
             : undefined
     } catch {
+        // A throwing accessor or proxy trap means the identity is malformed.
         return undefined
     }
 }
@@ -82,7 +84,7 @@ const EXECUTABLE_BYTE_LIMIT = 536_870_912
 const PATH_ENTRY_LIMIT = 256
 
 function searchPath(env: Readonly<Record<string, string | undefined>>): Readonly<{ kind: 'selected'; path: unknown }> | Readonly<{ kind: 'unreadable' }> {
-    try { return { kind: 'selected', path: env.PATH } } catch { return { kind: 'unreadable' } }
+    try { return { kind: 'selected', path: env.PATH } } catch { /* A throwing PATH getter means the environment is unreadable; the caller reports it as unavailable. */ return { kind: 'unreadable' } }
 }
 
 function unavailable(reason: string): ExecutableResolution {
@@ -121,6 +123,7 @@ async function digestRegularFile(path: string): Promise<string | undefined> {
         file = undefined
         return sha256
     } catch {
+        // Any read failure means no digest; the caller reports the executable identity as unavailable.
         return undefined
     } finally {
         try { await file?.close() } catch { /* The caller receives unavailable; no descriptor authority survives. */ }
@@ -132,12 +135,12 @@ export async function resolveExecutablePath(path: string): Promise<ExecutableRes
         return unavailable('Executable path must be an exact absolute path')
     }
     let invocation
-    try { invocation = await lstat(path) } catch { return unavailable(`Executable is unavailable: ${path}`) }
+    try { invocation = await lstat(path) } catch (error) { return unavailable(`Executable is unavailable: ${path}: ${errorCause(error)}`) }
     if (!(invocation.isFile() || invocation.isSymbolicLink()) || invocation.isFile() && (invocation.mode & 0o111) === 0) {
         return unavailable(`Executable is unavailable: ${path}`)
     }
     let canonicalPath: string
-    try { canonicalPath = await realpath(path) } catch { return unavailable(`Executable is unavailable: ${path}`) }
+    try { canonicalPath = await realpath(path) } catch (error) { return unavailable(`Executable is unavailable: ${path}: ${errorCause(error)}`) }
     const sha256 = await digestRegularFile(canonicalPath)
     if (sha256 === undefined) return unavailable(`Executable identity is unavailable: ${path}`)
     const value = resolvedExecutable({ canonicalPath, invocationPath: path, sha256, executionMode: 'verified-path' })

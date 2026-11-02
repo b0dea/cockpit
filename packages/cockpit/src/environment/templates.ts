@@ -66,6 +66,7 @@ function localSink(value: unknown): value is string {
         return url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname === '127.0.0.1'
             || DECLARATION_ID.test(url.hostname)
     } catch {
+        // URL parsing throws for any non-URL, which is not a local sink.
         return false
     }
 }
@@ -310,6 +311,7 @@ async function projectKeys(root: string, path: string, maxBytes: number): Promis
             }
         }
     } catch (error) {
+        // The unreadable result carries a code, not a cause, because read errors echo environment-file paths.
         return { kind: 'unreadable', code: ENVIRONMENT_CODES.ENVIRONMENT_FILE_UNREADABLE }
     } finally {
         await handle.close()
@@ -344,6 +346,7 @@ export async function inspectEnvironmentKeys(input: {
         if (root.isSymbolicLink() || !root.isDirectory()) throw new Error('invalid root')
         canonicalRoot = await realpath(input.siblingRoot)
     } catch {
+        // The unreadable result carries the template-path code, not a cause.
         return {
             kind: 'unreadable',
             file: 'template',
@@ -594,6 +597,7 @@ async function hasSafeComponents(root: string, relativePath: string, includeLeaf
             const canonical = await realpath(current)
             if (!isContained(root, canonical)) return false
         } catch {
+            // Any filesystem failure on a component means it is not safely contained; the caller refuses the path.
             return false
         }
     }
@@ -618,6 +622,7 @@ export async function planEnvironmentSeed(input: {
         root = await secureIdentity(input.siblingRoot)
         canonicalRoot = await realpath(input.siblingRoot)
     } catch {
+        // The refusal carries a code and path, not a cause.
         return refusal(ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT, input.siblingRoot)
     }
     if (root.symbolicLink || !root.directory) {
@@ -647,11 +652,13 @@ export async function planEnvironmentSeed(input: {
     try {
         sourceState = await secureIdentity(source)
     } catch {
+        // The refusal carries a code and path, not a cause.
         return refusal(ENVIRONMENT_CODES.TEMPLATE_NOT_FOUND, source)
     }
     try {
         parentState = await secureIdentity(dirname(destination))
     } catch {
+        // The refusal carries a code and path, not a cause.
         return refusal(ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT, destination)
     }
     if (sourceState.symbolicLink || !sourceState.file || parentState.symbolicLink || !parentState.directory) {
@@ -665,6 +672,7 @@ export async function planEnvironmentSeed(input: {
             return refusal(ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT, source)
         }
     } catch {
+        // The refusal carries a code and path, not a cause.
         return refusal(ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT, source)
     }
 
@@ -730,6 +738,7 @@ function revalidatePlan(
             ? undefined
             : ENVIRONMENT_CODES.ENVIRONMENT_SEED_PRECONDITION_CHANGED
     } catch {
+        // Any filesystem failure while rechecking means the paths are no longer provably inside the root.
         return ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT
     }
 }
@@ -869,6 +878,7 @@ function seedFromPinnedDirectory(plan: EnvironmentSeedPlan & { kind: 'ready' }):
                                               path: plan.destination,
                                           }
                             } catch {
+                                // The refusal carries a code and path, not a cause.
                                 result = {
                                     kind: 'refusal',
                                     code: ENVIRONMENT_CODES.TEMPLATE_PATH_OUTSIDE_ROOT,
@@ -883,6 +893,7 @@ function seedFromPinnedDirectory(plan: EnvironmentSeedPlan & { kind: 'ready' }):
             }
         }
     } catch {
+        // The refusal carries a code and path, not a cause.
         result = {
             kind: 'refusal',
             code: ENVIRONMENT_CODES.ENVIRONMENT_SEED_FAILED,

@@ -145,6 +145,8 @@ describe('resolved executable identity', () => {
         await expect(resolveExecutable('../comparison-tool', { PATH: root })).resolves.toEqual(expect.objectContaining({ state: 'unavailable' }))
         await expect(resolveExecutable('comparison-tool', { Path: root }))
             .resolves.toEqual({ state: 'unavailable', reason: 'Executable search path is missing or invalid' })
+        await expect(resolveExecutablePath(join(root, 'absent-tool')))
+            .resolves.toEqual({ state: 'unavailable', reason: expect.stringMatching(/absent-tool: ENOENT/) })
     })
 
     it('binds disk capacity to the current Node executable without searching PATH', async () => {

@@ -9,6 +9,7 @@ import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     filesystemObjectIdentity,
     isCanonicalTimestamp,
     sameFilesystemObject,
@@ -76,6 +77,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     try {
         return typeof Reflect.get(value, 'then') === 'function'
     } catch {
+        // A throwing getter is treated as thenable so the caller rejects the value.
         return true
     }
 }
@@ -113,6 +115,7 @@ async function resolvedDirectory(path: string): Promise<{
         if (canonicalPath !== path || !after.isDirectory() || after.isSymbolicLink()) return undefined
         return Object.freeze({ canonicalPath, beforeIdentity: directoryIdentity(before), afterIdentity: directoryIdentity(after) })
     } catch {
+        // Any lstat/realpath failure means the directory identity is not established; callers report the failed observation.
         return undefined
     }
 }
@@ -165,6 +168,7 @@ async function stableFile(path: string): Promise<StableFile | undefined> {
             byteLength: bytes.length,
         })
     } catch {
+        // Any read failure means no file evidence; callers report the unavailable observation.
         return undefined
     } finally {
         try { await handle?.close() } catch { /* Unavailable evidence carries no file authority. */ }
@@ -313,6 +317,7 @@ function ignoreStatusOutput(
         }
         return Object.freeze({ instanceIgnored: statuses[0], templateIgnored: statuses[1] })
     } catch {
+        // Unparseable ignore output yields no projection; callers report the failed observation.
         return undefined
     }
 }
@@ -362,6 +367,7 @@ async function closedIdentity(path: string, identity: DirectoryIdentity): Promis
                 || !Number.isSafeInteger(ancestor.dev) || !Number.isSafeInteger(ancestor.ino)) return undefined
             ancestors.push(Object.freeze(ancestor))
         } catch {
+            // Any lstat failure means the ancestor identity is not established; callers report the failed observation.
             return undefined
         }
     }
@@ -439,7 +445,7 @@ async function ignoreRepositoryChecks(
     const lines = output && exactLines(output, 3)
     if (!lines || !lines.every(canonicalAbsolutePath)) return undefined
     const [topLevel, gitDirectory, commonDirectory] = await Promise.all(lines.map(async (path) => {
-        try { return await realpath(path) } catch { return undefined }
+        try { return await realpath(path) } catch { /* An unresolvable Git path yields no identity; the caller reports the failed observation. */ return undefined }
     }))
     if (topLevel !== root.canonicalPath || !gitDirectory || !commonDirectory) return undefined
     const [git, common] = await Promise.all([stableDirectory(gitDirectory), stableDirectory(commonDirectory)])
@@ -453,6 +459,7 @@ async function ignoreRepositoryChecks(
         if (status.isFile() && !status.isSymbolicLink()) administrativeFile = dotGit
         else if (!status.isDirectory() || status.isSymbolicLink()) return undefined
     } catch {
+        // A missing or unreadable .git entry yields no authority; the caller reports the failed observation.
         return undefined
     }
     const administrative = await worktreeAdministrativeAuthority(common.canonicalPath)
@@ -661,6 +668,7 @@ function exactLines(bytes: Buffer, count: number): readonly string[] | undefined
         const lines = decoded.slice(0, -1).split('\n')
         return lines.length === count && lines.every((line) => line.length > 0) ? lines : undefined
     } catch {
+        // Invalid UTF-8 is the only throw and means the Git output is malformed.
         return undefined
     }
 }
@@ -707,6 +715,7 @@ function worktreeInventory(bytes: Buffer): readonly WorktreeRecord[] | undefined
         }
         return Object.freeze(result)
     } catch {
+        // A malformed worktree listing yields no administrative authority; callers report the failed observation.
         return undefined
     }
 }
@@ -730,6 +739,7 @@ async function validConfigurationInventory(
         if (!decoded.endsWith('\0')) return false
         fields = decoded.slice(0, -1).split('\0')
     } catch {
+        // Invalid UTF-8 is the only throw and means the Git configuration is malformed.
         return false
     }
     if (fields.length === 0 || fields.length % 2 !== 0 || fields.length > 8_192) return false
@@ -754,6 +764,7 @@ async function validConfigurationInventory(
         try {
             canonical = await realpath(isAbsolute(path) ? path : resolve(checkout, path))
         } catch {
+            // An unresolvable origin path is not an allowed worktree; the caller returns false.
             return false
         }
         if (!allowed.has(canonical)) return false
@@ -774,6 +785,7 @@ async function authorityFingerprint(checks: readonly FilesystemCheck[]): Promise
                     const status = await lstat(ancestor.path, { bigint: true })
                     if (!status.isDirectory() || status.isSymbolicLink() || !sameFilesystemObject(status, ancestor)) return undefined
                 } catch {
+                    // Any lstat failure means the authority fingerprint cannot be established; callers report the failed observation.
                     return undefined
                 }
             }
@@ -875,6 +887,7 @@ async function setupFilesystemChecks(input: {
                 checks.set(check.path, check)
             } else return undefined
         } catch {
+            // Any lstat failure means the check cannot be built; callers report the failed observation.
             return undefined
         }
     }
@@ -905,6 +918,7 @@ async function worktreeAdministrativeAuthority(commonDirectory: string): Promise
     try {
         entries = await readdir(root, { withFileTypes: true })
     } catch {
+        // An unreadable worktree directory yields no administrative authority; callers report the failed observation.
         return undefined
     }
     if (entries.length > 4_096 || entries.some((entry) => !entry.isDirectory() || entry.isSymbolicLink())) return undefined
@@ -926,7 +940,7 @@ async function gitIdentity(
     const lines = output && exactLines(output, 3)
     if (!lines || !lines.every(canonicalAbsolutePath)) return undefined
     const [topLevel, gitDirectory, commonDirectory] = await Promise.all(lines.map(async (path) => {
-        try { return await realpath(path) } catch { return undefined }
+        try { return await realpath(path) } catch { /* An unresolvable Git path yields no identity; the caller reports the failed observation. */ return undefined }
     }))
     return topLevel && gitDirectory && commonDirectory
         ? Object.freeze({ topLevel, gitDirectory, commonDirectory })
@@ -1224,6 +1238,7 @@ export function consumeSetupCheckoutProjection(
         issuedSetupCheckoutProjections.delete(projection)
         return binding
     } catch {
+        // A throwing accessor or proxy trap means the projection is not one we issued.
         return undefined
     }
 }
@@ -1283,6 +1298,7 @@ function captureGeneratedCheckoutInput(input: unknown): Readonly<{
         return Object.freeze({ source: Object.freeze({ path: source.path, byteLength: source.byteLength, sha256: source.sha256 }),
             cockpitName, env: Object.freeze(env) })
     } catch {
+        // A throwing accessor or proxy trap means the caller-supplied environment is malformed.
         return undefined
     }
 }
@@ -1457,6 +1473,7 @@ function decodeLines(bytes: Buffer): readonly string[] | undefined {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
         return source.trimEnd().split(/\r?\n/)
     } catch {
+        // Invalid UTF-8 is the only throw and means the file cannot be read as lines.
         return undefined
     }
 }
@@ -1525,7 +1542,7 @@ async function pathChecks(target: string, siblingsRoot: string): Promise<
                         checks,
                     }
                 }
-                return { kind: 'observation', observation: failure('the .git entry could not be inspected'), checks }
+                return { kind: 'observation', observation: failure(`the .git entry could not be inspected: ${errorCause(error)}`), checks }
             }
             if (dotGitStat.isSymbolicLink()) return { kind: 'observation', observation: available({ kind: 'symlink' }), checks }
             if (dotGitStat.isDirectory()) {
@@ -1544,8 +1561,8 @@ async function pathChecks(target: string, siblingsRoot: string): Promise<
                     return { kind: 'observation', observation: failure('the .git entry changed during inspection'), checks }
                 }
                 let canonicalDotGit: string
-                try { canonicalDotGit = await realpath(dotGit) } catch {
-                    return { kind: 'observation', observation: failure('the .git entry changed during inspection'), checks }
+                try { canonicalDotGit = await realpath(dotGit) } catch (error) {
+                    return { kind: 'observation', observation: failure(`the .git entry changed during inspection: ${errorCause(error)}`), checks }
                 }
                 const check = await boundedFileCheck(canonicalDotGit)
                 if (!check || check.expected !== 'file') {
@@ -1611,8 +1628,8 @@ export async function observeSetupPath(
         canonicalTarget = await realpath(target)
         canonicalGitDirectory = await realpath(gitDirectory)
         canonicalCommonDirectory = await realpath(commonDirectory)
-    } catch {
-        return failure('Git returned a path that could not be canonicalized')
+    } catch (error) {
+        return failure(`Git returned a path that could not be canonicalized: ${errorCause(error)}`)
     }
     if (
         resolve(topLevel) !== canonicalTarget ||

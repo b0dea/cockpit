@@ -145,6 +145,7 @@ export function decodeGitObservation(
     try {
         source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     } catch {
+        // Invalid UTF-8 is the only throw and is what the message names.
         return unavailable('Git evidence is not valid UTF-8')
     }
     let revision: string | undefined
@@ -430,7 +431,7 @@ export function createComparisonRemoteRefStep(input: {
 function decodeComparisonRef(bytes: Buffer, binding: ComparisonBinding): Readonly<{ remoteName: string; upstreamRef: string }> | undefined {
     if (bytes.byteLength === 0 || bytes.byteLength > COMPARISON_OUTPUT_LIMIT) return undefined
     let value: string
-    try { value = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { return undefined }
+    try { value = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { /* Invalid UTF-8 is the only throw; the caller treats the undefined ref as unavailable. */ return undefined }
     const lines = value.replace(/\n$/, '').split(/\r?\n/)
     if (lines.length !== 1) return undefined
     const fields = lines[0].split('\0')
@@ -474,6 +475,7 @@ export function observeComparisonRemoteUrl(stage: ComparisonRemoteUrlStage, outc
     }
     let raw: string
     try { raw = new TextDecoder('utf-8', { fatal: true }).decode(authenticated.stdout) } catch {
+        // Invalid UTF-8 is the only throw; the message says the remote identity is unavailable.
         return comparisonUnavailable(`comparison remote identity is unavailable for sibling ${binding.sibling}`, binding.remoteName)
     }
     const lines = raw.replace(/\n$/, '').split(/\r?\n/)
@@ -509,6 +511,7 @@ export function observeComparisonRemoteRevalidation(
     if (authenticated?.kind === 'complete' && authenticated.stdout.byteLength <= COMPARISON_OUTPUT_LIMIT) {
         let raw: string
         try { raw = new TextDecoder('utf-8', { fatal: true }).decode(authenticated.stdout) } catch {
+            // Invalid UTF-8 is the only throw; the message says the upstream could not be authenticated.
             return comparisonUnavailable(`comparison upstream changed while authenticating sibling ${binding.sibling}`, binding.remoteName)
         }
         const lines = raw.replace(/\n$/, '').split(/\r?\n/)

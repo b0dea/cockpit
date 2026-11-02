@@ -66,7 +66,7 @@ async function secureFenceSocketDirectory(fence: ExecutionFence): Promise<boolea
         const identity = await lstat(directory)
         return identity.isDirectory() && !identity.isSymbolicLink()
             && identity.uid === (process.getuid?.() ?? identity.uid) && (identity.mode & 0o077) === 0
-    } catch { return false }
+    } catch { /* Any lstat failure means the fence directory is not provably private; the caller refuses the fence. */ return false }
 }
 
 function exactFenceMarker(value: unknown, fence: ExecutionFence, identity: {
@@ -208,7 +208,7 @@ export async function repairFencedExecution(fence: ExecutionFence): Promise<
             const timer = setTimeout(() => { socket.destroy(); resolve(false) }, FENCE_REPAIR_MS)
             socket.setEncoding('utf8'); socket.once('connect', () => socket.write(`${fence.attemptId}\n`)); socket.on('data', chunk => { input += chunk })
             socket.once('error', () => { clearTimeout(timer); resolve(false) })
-            socket.once('close', () => { clearTimeout(timer); try { const reply = JSON.parse(input); resolve(reply.attemptId === fence.attemptId && reply.supervisorPid === expectedPid) } catch { resolve(false) } })
+            socket.once('close', () => { clearTimeout(timer); try { const reply = JSON.parse(input); resolve(reply.attemptId === fence.attemptId && reply.supervisorPid === expectedPid) } catch { /* An unparseable reply is not an acknowledgement from the expected supervisor; repair stays required. */ resolve(false) } })
         })
         if (!acknowledged) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
     }
@@ -238,7 +238,7 @@ export async function cleanupFencedExecution(fence: ExecutionFence): Promise<boo
         const directory = await open(dirname(fence.markerPath), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
         try { await directory.sync() } finally { await directory.close() }
         return true
-    } catch { return false }
+    } catch { /* A marker that cannot be removed durably leaves the fence unreleased, which the false result reports. */ return false }
 }
 
 export function consumeFencedExecutionTermination(evidence: FencedExecutionTermination, fence: ExecutionFence): boolean {
@@ -407,6 +407,7 @@ function filesystemIdentitiesPass(checks: readonly FilesystemCheck[]): boolean {
             return typeMatches && !status.isSymbolicLink() && sameFilesystemObject(status, check.identity)
         })
     } catch {
+        // Any lstat failure means the checked path no longer matches its recorded identity; false reports the change.
         return false
     }
 }
@@ -461,6 +462,7 @@ async function stageVerifiedFile(file: ConsumedFile, snapshot: string): Promise<
         await chmod(snapshot, 0o400)
         return digest
     } catch {
+        // Staging failures surface as the staging-failed outcome; the outcome carries a code, not a cause.
         return undefined
     } finally {
         try { await staged?.close() } catch { /* The private incomplete file will be removed with its staging directory. */ }
@@ -502,6 +504,7 @@ async function consumedFileMatches(file: ConsumedFile): Promise<boolean> {
         if (matches && fileFingerprint(file.path, after) === fingerprint) recordVerifiedDigest(fingerprint, file.sha256)
         return matches
     } catch {
+        // Any read or stat failure means the file does not match its pinned digest; false reports the mismatch.
         return false
     } finally {
         try { await source?.close() } catch { /* Failure remains closed even when descriptor cleanup also fails. */ }
@@ -516,6 +519,7 @@ async function removePreparedDirectory(directory: string): Promise<boolean> {
         ownedStagingDirectories.delete(directory)
         return true
     } catch {
+        // A directory that cannot be removed is reported as the cleanup-failed outcome.
         return false
     }
 }
@@ -563,6 +567,7 @@ async function prepareExecutionPlan(plan: ExecutionPlan): Promise<PreparationRes
         }
         return { kind: 'prepared', plan: { directory, steps: prepared } }
     } catch {
+        // Both the changed-input marker and fs failures surface through the typed failure reason chosen above.
         if (directory !== undefined && !await removePreparedDirectory(directory)) return { kind: 'failure', reason: 'cleanup-failed' }
         return { kind: 'failure', reason }
     }
@@ -611,6 +616,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 detached: true,
             })
     } catch {
+        // The outcome carries the spawn-failed code; spawn errors echo argv and environment details.
         return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED)
     }
     const startedAt = new Date().toISOString()
@@ -910,6 +916,7 @@ function captureProbeOutcome(value: unknown): CapturedProbeOutcome | undefined {
                 : { kind, code: code as ExecutionFailureCode, execution: ownedExecution, receipt: ownedReceipt, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) } as const
         return { outcome: Object.freeze(owned), sourceReceipt: receipt }
     } catch {
+        // A throwing accessor or proxy trap means the outcome is not authentic; the caller refuses it.
         return undefined
     }
 }
@@ -977,6 +984,7 @@ function captureForegroundInput(input: ForegroundProcessInput): ForegroundProces
             env: Object.freeze(environment),
         })
     } catch {
+        // A throwing accessor or proxy trap means the step is malformed; the caller refuses it.
         return undefined
     }
 }
@@ -992,6 +1000,7 @@ export async function executeForegroundProcess(
         signal = options.signal
         if (signal !== undefined && Object.getPrototypeOf(signal) !== AbortSignal.prototype) throw new TypeError('invalid signal')
     } catch {
+        // A throwing accessor or proxy trap on the options means they are malformed, which is refused.
         return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
             exitCode: 1, signal: null, started: false, terminationConfirmed: true })
     }
@@ -1012,6 +1021,7 @@ export async function executeForegroundProcess(
     try {
         if (await realpath(executable.invocationPath) !== executable.canonicalPath) throw new Error('identity changed')
     } catch {
+        // A changed or unresolvable executable path is reported by the precondition-changed refusal.
         return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
             exitCode: 1, signal: null, started: false, terminationConfirmed: true })
     }
@@ -1026,6 +1036,7 @@ export async function executeForegroundProcess(
             detached: true,
         })
     } catch {
+        // The refusal carries the spawn-failed code; spawn errors echo argv and environment details.
         return Object.freeze({ kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED,
             exitCode: 1, signal: null, started: false, terminationConfirmed: true })
     }
@@ -1112,7 +1123,7 @@ export async function executeProbe(
     try {
         signal = options.signal
         if (signal !== undefined && Object.getPrototypeOf(signal) !== AbortSignal.prototype) optionsReadable = false
-    } catch { optionsReadable = false }
+    } catch { /* A throwing accessor or proxy trap on the options means they are malformed, which is refused below. */ optionsReadable = false }
     const resolved = optionsReadable ? snapshotExecutionStep(step) : undefined
     const preparation = resolved === undefined ? undefined : await prepareExecutionPlan({ steps: [resolved] })
     let observation: InternalStepExecution
@@ -1152,7 +1163,7 @@ export async function executePlan(plan: ExecutionPlan, options: { signal?: Abort
     try {
         signal = options.signal
         if (signal !== undefined && Object.getPrototypeOf(signal) !== AbortSignal.prototype) optionsReadable = false
-    } catch { optionsReadable = false }
+    } catch { /* A throwing accessor or proxy trap on the options means they are malformed, which is refused below. */ optionsReadable = false }
     const resolvedPlan = optionsReadable ? snapshotExecutionPlan(plan) : undefined
     if (resolvedPlan === undefined) return immutablePlanOutcome({
         kind: 'refusal', status: 2, result: null,

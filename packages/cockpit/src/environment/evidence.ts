@@ -266,6 +266,7 @@ function ownedResults(value: unknown): readonly StabilityStepResult[] | undefine
             || length === undefined || length.enumerable || !('value' in length) || length.value !== 2) return undefined
         return Object.freeze([first.value as StabilityStepResult, second.value as StabilityStepResult])
     } catch {
+        // A throwing accessor or proxy trap means the result pair is malformed.
         return undefined
     }
 }
@@ -282,6 +283,7 @@ function captureAuthenticationInput(value: unknown): { readonly plan: unknown; r
             || results === undefined || !results.enumerable || !('value' in results)) return undefined
         return { plan: plan.value, results: results.value }
     } catch {
+        // A throwing accessor or proxy trap means the capture input is malformed.
         return undefined
     }
 }
@@ -350,7 +352,7 @@ export function authenticateStabilityCapture(input: {
     try {
         processIdentity = new TextDecoder('utf-8', { fatal: true }).decode(first.stdout).trim()
         contentHash = new TextDecoder('utf-8', { fatal: true }).decode(second.stdout).trim().split(/\s+/)[0]
-    } catch { return unavailable('stability result encoding is invalid') }
+    } catch { /* Invalid UTF-8 is the only throw here and is what the message names. */ return unavailable('stability result encoding is invalid') }
     if (!/^\d+ \d+$/.test(processIdentity) || !SHA256.test(contentHash)) return unavailable('stability result shape is invalid')
     const payload = Object.freeze({
         stackId: labels.stackId as StackId, configSha256: labels.configSha256,
@@ -363,6 +365,7 @@ export function authenticateStabilityCapture(input: {
     issuedCaptures.set(capture, payload)
     return capture
     } catch {
+        // A throwing accessor or proxy trap means the capture input is not readable, which the message names.
         return unavailable('stability capture input is not readable')
     }
 }
@@ -424,7 +427,7 @@ export function captureRuntimeEvidence(input: RuntimeEvidenceInput): RuntimeEvid
         if (capture === undefined) {
             return unavailable('runtime evidence was not produced by an authenticated capture')
         }
-    } catch { return unavailable('runtime evidence capture is not readable') }
+    } catch { /* A throwing accessor or proxy trap means the capture is not readable, which the message names. */ return unavailable('runtime evidence capture is not readable') }
     if (!validAuthenticatedCapture(capture)) return unavailable('runtime evidence provenance is invalid')
     const [processStepId, contentStepId] = capture.command.stepIds
     if (!STACK_ID.test(capture.stackId) || !SHA256.test(capture.configSha256)
@@ -646,6 +649,7 @@ export function isEnvironmentBaselineAuthentic(value: unknown): value is Environ
         return value !== null && typeof value === 'object' && issuedEnvironmentBaselines.has(value)
             && validBaseline(value)
     } catch {
+        // A throwing accessor or proxy trap means the baseline is not authentic.
         return false
     }
 }

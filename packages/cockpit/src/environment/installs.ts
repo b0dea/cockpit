@@ -16,6 +16,7 @@ import {
     type ExecutionFailureCode,
     type ExecutionStep,
     type HolderId,
+    errorCause,
     type EnvironmentObservation,
     type StackId,
 } from './contract.js'
@@ -308,7 +309,7 @@ async function stableFileSnapshot(path: string, limit = FILE_LIMIT): Promise<{ b
         return after.dev === opened.dev && after.ino === opened.ino && named.dev === opened.dev && named.ino === opened.ino
             && after.size === opened.size && named.size === opened.size && total === opened.size
             ? { bytes: Buffer.concat(chunks), dev: opened.dev, ino: opened.ino, mode: opened.mode } : undefined
-    } catch { return undefined } finally { try { await handle?.close() } catch { /* The refusal carries no descriptor authority. */ } }
+    } catch { /* Any read failure means the file is not provably stable; callers refuse with their own message. */ return undefined } finally { try { await handle?.close() } catch { /* The refusal carries no descriptor authority. */ } }
 }
 
 async function stableFile(path: string, limit = FILE_LIMIT): Promise<Buffer | undefined> {
@@ -323,8 +324,8 @@ export async function resolveInstallExecutables(node: ResolvedExecutable): Promi
         'resolveInstallExecutables requires a captured Node executable identity', 'node')
     let currentNode: string
     try { currentNode = await realpath(process.execPath) }
-    catch { return refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-        'resolveInstallExecutables cannot resolve the running Node executable', 'node') }
+    catch (error) { return refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+        `resolveInstallExecutables cannot resolve the running Node executable: ${errorCause(error)}`, 'node') }
     const bytes = captured.canonicalPath === currentNode ? await stableFile(currentNode) : undefined
     if (!bytes || createHash('sha256').update(bytes).digest('hex') !== captured.sha256) {
         return refuse(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
@@ -374,12 +375,12 @@ function helperStep(authority: Pick<Authority, 'node' | 'helper' | 'settings'>, 
 
 async function runHelper(authority: Pick<Authority, 'node' | 'helper' | 'settings'>, cwd: string, request: object, options: ExecutionOptions): Promise<{ result?: Record<string, unknown>; refusal?: InstallRefusal }> {
     let helper: ExecutionStep
-    try { helper = helperStep(authority, cwd, request) } catch {
-        return { refusal: refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'filesystem helper request is invalid or oversized', authority.helper.path) }
+    try { helper = helperStep(authority, cwd, request) } catch (error) {
+        return { refusal: refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, `filesystem helper request is invalid or oversized: ${errorCause(error)}`, authority.helper.path) }
     }
     let raw: ExecuteProbeOutcome
-    try { raw = await options.execute(helper) } catch {
-        return { refusal: refuse(ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED, 'filesystem helper could not be executed', authority.helper.path) }
+    try { raw = await options.execute(helper) } catch (error) {
+        return { refusal: refuse(ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED, `filesystem helper could not be executed: ${errorCause(error)}`, authority.helper.path) }
     }
     const outcome = authenticatedExecutionOutcome(raw, helper)
     if (outcome === undefined) return { refusal: refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, 'filesystem helper outcome is not authentic', authority.helper.path) }
@@ -423,8 +424,8 @@ async function runHelper(authority: Pick<Authority, 'node' | 'helper' | 'setting
             if (record.path !== expected || (record.kind === 'residue' && (!Array.isArray(record.entries) || record.entries.some((entry) => typeof entry !== 'string')))) throw new Error('invalid release result')
         }
         return { result: record }
-    } catch {
-        return { refusal: refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'filesystem helper returned malformed or mismatched evidence', authority.helper.path) }
+    } catch (error) {
+        return { refusal: refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, `filesystem helper returned malformed or mismatched evidence: ${errorCause(error)}`, authority.helper.path) }
     }
 }
 
@@ -454,7 +455,7 @@ function parseOwner(bytes: Buffer): { holderId: HolderId; pid: number } | undefi
             && isCanonicalTimestamp(row.acquiredAt) && typeof row.token === 'string' && UUID_V4.test(row.token)
             && `${JSON.stringify(row)}\n` === text
             ? { holderId: row.holderId as HolderId, pid: row.pid as number } : undefined
-    } catch { return undefined }
+    } catch { /* Unparseable or non-UTF-8 lock bytes mean the holder metadata is malformed, which the caller refuses. */ return undefined }
 }
 
 async function inspectExistingLock(path: string, encodedOwner: unknown, observe: PlanInstallInput['observeHolder']): Promise<InstallRefusal> {
@@ -464,10 +465,11 @@ async function inspectExistingLock(path: string, encodedOwner: unknown, observe:
     const owner = parseOwner(bytes)
     if (!owner) return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'install lock holder metadata is malformed', path, `inspect ${path} before recovery`)
     let state: HolderState = 'unknown'
-    try { state = observe ? await observe(owner) : 'unknown' } catch { state = 'unknown' }
+    let observeCause = ''
+    try { state = observe ? await observe(owner) : 'unknown' } catch (error) { observeCause = `: ${errorCause(error)}` }
     if (state === 'live') return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_HELD, `install lock is held by ${owner.holderId}`, path)
     if (state === 'dead') return refuse(ENVIRONMENT_CODES.INSTALL_STALE_PATH, `install lock belongs to dead holder ${owner.holderId}`, path, `reclaim ${path} only after confirming the holder evidence`)
-    return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, `install lock holder ${owner.holderId} has unknown liveness`, path, `inspect ${path} before recovery`)
+    return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, `install lock holder ${owner.holderId} has unknown liveness${observeCause}`, path, `inspect ${path} before recovery`)
 }
 
 function snapshotInput(input: PlanInstallInput): PlanInstallInput | undefined {
@@ -538,7 +540,7 @@ function snapshotInput(input: PlanInstallInput): PlanInstallInput | undefined {
         const execution = Object.freeze({ ...settings, env: Object.freeze(Object.fromEntries(Object.entries(env).sort(([left], [right]) => left.localeCompare(right)))) })
         return Object.freeze({ checkoutId, holderId, pid, checkoutRoot, lockfilePath, state, runtime, policy, execution,
             executables: Object.freeze(executables) as PlanInstallInput['executables'], ...(observeHolder ? { observeHolder } : {}) })
-    } catch { return undefined }
+    } catch { /* A throwing accessor or proxy trap means the caller-supplied request is malformed. */ return undefined }
 }
 
 export async function planInstall(input: PlanInstallInput, options: ExecutionOptions): Promise<PlanInstallResult> {
@@ -579,8 +581,8 @@ export async function planInstall(input: PlanInstallInput, options: ExecutionOpt
     try {
         lockPath = request.state.paths.installLock(identity.cacheId)
         stampPath = request.state.paths.cache(identity.checkoutId, identity.cacheId).path
-    } catch {
-        return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'state namespace could not derive install authority', request.state.root)
+    } catch (error) {
+        return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, `state namespace could not derive install authority: ${errorCause(error)}`, request.state.root)
     }
     if (!confined(request.state.root, lockPath) || !confined(request.state.root, stampPath)) {
         return refuse(ENVIRONMENT_CODES.INSTALL_LOCK_INVALID, 'derived install authority escaped its root', lockPath)
@@ -660,8 +662,10 @@ async function lockfileChanged(planned: PlannedInstall, authority: Authority): P
         || current.ino !== authority.lockfile.ino || current.mode !== authority.lockfile.mode
 }
 
-async function executeAuthenticated(step: ExecutionStep, options: ExecutionOptions): Promise<ExecuteProbeOutcome | undefined> {
-    try { return admitDependencyExecution({ step, outcome: await options.execute(step) }) } catch { return undefined }
+type AuthenticatedExecution = Readonly<{ outcome: ExecuteProbeOutcome | undefined; cause: string }>
+
+async function executeAuthenticated(step: ExecutionStep, options: ExecutionOptions): Promise<AuthenticatedExecution> {
+    try { return { outcome: admitDependencyExecution({ step, outcome: await options.execute(step) }), cause: '' } } catch (error) { return { outcome: undefined, cause: `: ${errorCause(error)}` } }
 }
 
 export async function verifyInstall(planned: PlannedInstall, options: ExecutionOptions): Promise<VerifyInstallResult> {
@@ -676,19 +680,19 @@ export async function verifyInstall(planned: PlannedInstall, options: ExecutionO
         if (!planned.lockfileBytes.equals(authority.lockfile.bytes) || await lockfileChanged(planned, authority)) {
             result = refuse(ENVIRONMENT_CODES.INSTALL_LOCKFILE_CHANGED, 'install lockfile changed before execution', planned.lockfilePath)
         } else if (planned.installStep) {
-            const outcome = await executeAuthenticated(planned.installStep, options)
+            const { outcome, cause: installCause } = await executeAuthenticated(planned.installStep, options)
             if (outcome?.execution.started && outcome.receipt) attempted.add('install')
             if (outcome?.kind === 'complete') { applied.add('install'); attempted.delete('install') }
             if (await lockfileChanged(planned, authority)) result = refuse(ENVIRONMENT_CODES.INSTALL_LOCKFILE_CHANGED, `dependency command ${planned.installStep.argv0} changed the lockfile`, planned.lockfilePath)
-            else if (!outcome) result = refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, 'install executor outcome is not authentic', planned.installStep.argv0)
+            else if (!outcome) result = refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, `install executor outcome is not authentic${installCause}`, planned.installStep.argv0)
             else if (outcome.kind === 'refusal') result = refuse(outcome.code, 'dependency install command failed', planned.installStep.argv0)
         }
         if (!result) {
-            const probe = await executeAuthenticated(planned.loadProbeStep, options)
+            const { outcome: probe, cause: probeCause } = await executeAuthenticated(planned.loadProbeStep, options)
             if (probe?.execution.started && probe.receipt) attempted.add('load')
             if (probe?.kind === 'complete') { applied.add('load'); attempted.delete('load') }
             if (await lockfileChanged(planned, authority)) result = refuse(ENVIRONMENT_CODES.INSTALL_LOCKFILE_CHANGED, `dependency command ${planned.loadProbeStep.argv0} changed the lockfile`, planned.lockfilePath)
-            else if (!probe) result = refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, 'dependency load probe outcome is not authentic', planned.loadProbeStep.argv0)
+            else if (!probe) result = refuse(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, `dependency load probe outcome is not authentic${probeCause}`, planned.loadProbeStep.argv0)
             else if (probe.kind === 'refusal') result = refuse(probe.code, 'dependency load probe failed', planned.loadProbeStep.argv0)
             else if (planned.installStep) {
                 const stampRoot = authority.stateRoot
@@ -795,7 +799,7 @@ export async function observeDependencyLoad(
     const planned = createDependencyLoadPlan(input)
     if (planned.kind !== 'planned') return undefined
     let outcome: ExecuteProbeOutcome
-    try { outcome = await options.execute(planned.step) } catch { return undefined }
+    try { outcome = await options.execute(planned.step) } catch { /* The result type carries no reason; an executor failure leaves no observation and the caller refuses it. */ return undefined }
     const authenticated = authenticatedExecutionOutcome(outcome, planned.step)
     if (!authenticated?.receipt) return undefined
     const admitted = admitDependencyLoad({ plan: planned, outcome })
