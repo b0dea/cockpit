@@ -251,7 +251,7 @@ native_hooks = { install = "inspect" }
 
 Nx compares the base with the current working tree, so uncommitted edits count. For other tools, keep the stage shape and change the command:
 
-- **Bazel:** `bazel test //...` as the only stage. Bazel reruns a test only when the test or its dependencies changed (`--cache_test_results` defaults to `auto`), so the full gate is already change-aware.
+- **Bazel:** `bazel test //...` for both gates. With the default `--cache_test_results=auto`, Bazel reports cached results for tests whose inputs did not change and passed before, so the full run is already change-aware.
 - **Turborepo:** `npx turbo run test --affected` for the targeted stage and `npx turbo run test` for the full one. Turborepo documents `--affected` as `--filter=...[main...HEAD]`, a comparison of commits, so commit work in progress before relying on it.
 - **A runner's changed-file mode:** `npx vitest run --changed origin/main` or `npx jest --changedSince=origin/main` for the targeted stage, and the plain run for the full one.
 
