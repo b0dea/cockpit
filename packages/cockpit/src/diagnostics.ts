@@ -71,6 +71,10 @@ const COMMON_REFUSAL_GUIDANCE: Readonly<Record<string, Readonly<{ why: string; f
         why: 'rewiring an existing checkout to a different repository could replace the wrong source',
         fix: `correct the checkout remote or the sibling declaration, then run ${cockpitCommand('setup')} again`,
     }),
+    SETUP_REMOTE_UNRESOLVABLE: Object.freeze({
+        why: 'a relative local remote that cannot be resolved cannot be compared with, or cloned into, a checkout',
+        fix: `make the remote path readable or declare an absolute path or URL, then run ${cockpitCommand('setup')} again`,
+    }),
 })
 
 interface HumanReviewOutcome {

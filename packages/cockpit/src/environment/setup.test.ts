@@ -306,6 +306,27 @@ describe('setup planner', () => {
         expect(other.kind).toBe('refusal')
     })
 
+    it('refuses with a named code when a local remote path cannot be resolved', async () => {
+        const siblingsRoot = root()
+        // A path through a regular file fails realpath with ENOTDIR, not the ENOENT of a missing path.
+        writeFileSync(join(siblingsRoot, 'plain-file'), 'not a directory')
+        const declared = sibling({ remote: 'plain-file/api.git', branch: undefined })
+        const unresolved = expect.objectContaining({
+            code: 'SETUP_REMOTE_UNRESOLVABLE',
+            message: expect.stringMatching(/"plain-file\/api\.git".*ENOTDIR/),
+            fix: expect.stringContaining('npx --no cockpit setup'),
+        })
+
+        const clone = await planSetup({ siblingsRoot, sibling: declared, observation: observed({ kind: 'absent' }), env })
+        expect(clone).toEqual(expect.objectContaining({ kind: 'refusal', status: 2, diagnostics: [unresolved] }))
+
+        const wiring = await planSetup({
+            siblingsRoot, sibling: sibling({ remote: 'api.git', branch: undefined, acquire: 'manual' }),
+            observation: observed({ kind: 'repository', remotes: { origin: 'plain-file/api.git' } }), env,
+        })
+        expect(wiring).toEqual(expect.objectContaining({ kind: 'refusal', status: 2, diagnostics: [unresolved] }))
+    })
+
     it('keeps option-like remote and branch values as single argv elements', async () => {
         const outcome = await planSetup({
             siblingsRoot: root(), sibling: sibling({ remote: '--upload-pack=touch injected', branch: '-danger' }),

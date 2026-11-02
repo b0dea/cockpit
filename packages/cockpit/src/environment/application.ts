@@ -1353,8 +1353,10 @@ function exactSetupResult(
     const origin = evidence.remotes && typeof evidence.remotes === 'object' && !Array.isArray(evidence.remotes)
         ? (evidence.remotes as Record<string, unknown>).origin
         : undefined
-    const remoteMatches = sibling.remote !== undefined && typeof origin === 'string'
-        && resolveLocalRemote(origin, siblingsRoot) === resolveLocalRemote(sibling.remote, siblingsRoot)
+    const originResolution = typeof origin === 'string' ? resolveLocalRemote(origin, siblingsRoot) : undefined
+    const declaredResolution = sibling.remote === undefined ? undefined : resolveLocalRemote(sibling.remote, siblingsRoot)
+    const remoteMatches = originResolution?.kind === 'resolved' && declaredResolution?.kind === 'resolved'
+        && originResolution.remote === declaredResolution.remote
     const allowed = outcomeKind === 'complete' && action === 'report' && (
         sibling.acquire === 'none' && ['absent', 'directory', 'repository'].includes(observedKind as string)
         || sibling.acquire === 'manual' && observedKind === 'absent'
@@ -4847,6 +4849,10 @@ function issueHealthObservationSource(
         if (!preflight) return undefined
         const siblingsRoot = resolve(dirname(loaded.source.path), loaded.config.cockpit.siblings_root)
         const comparisons = loaded.config.sibling.map((sibling) => {
+            const declared = sibling.remote === undefined ? undefined : resolveLocalRemote(sibling.remote, siblingsRoot)
+            if (declared?.kind === 'unresolvable') {
+                throw new Error(`sibling ${sibling.slug}: cannot resolve declared local remote ${JSON.stringify(declared.declared)} (${declared.errno})`)
+            }
             const checkoutRoot = resolve(siblingsRoot, sibling.dir)
             if (!confinedPath(siblingsRoot, checkoutRoot)) throw new TypeError('sibling checkout escapes its configured root')
             return Object.freeze({
@@ -4859,7 +4865,7 @@ function issueHealthObservationSource(
                 source: `${loaded.source.path}:${sibling.slug}`,
                 sibling: sibling.slug,
                 acquire: sibling.acquire,
-                ...(sibling.remote === undefined ? {} : { declaredRemote: resolveLocalRemote(sibling.remote, siblingsRoot) }),
+                ...(declared === undefined ? {} : { declaredRemote: declared.remote }),
             })
         })
         const prepared = Object.freeze({
@@ -4876,8 +4882,11 @@ function issueHealthObservationSource(
         const source = Object.freeze({ kind: 'health-observation-source' as const })
         issuedHealthObservationSources.set(source, prepared)
         return source
-    } catch {
-        return undefined
+    } catch (error) {
+        throw new Error(
+            `health observation source could not be issued: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+        )
     }
 }
 
@@ -5204,10 +5213,10 @@ async function doctorHealth(
         }
         health = await evaluateApplicationHealth(observed, adapters)
         doctor = projectDoctor(health.preflight)
-    } catch {
+    } catch (error) {
         return unavailableDoctor(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            'doctor requires authentic observation and lifecycle evidence',
+            `doctor requires authentic observation and lifecycle evidence: ${error instanceof Error ? error.message : String(error)}`,
             await surfaceOverrides,
             await freshness,
             await declarations,

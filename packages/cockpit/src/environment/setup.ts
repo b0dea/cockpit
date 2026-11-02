@@ -81,17 +81,45 @@ export function gitEnvironment(ambient: Readonly<Record<string, string | undefin
 // the siblings root (the directory clone runs in) before it is cloned and before it is compared with
 // the observed origin. URLs, scp-like `host:path` (a colon before any slash) and option-like values
 // are left exactly as declared.
-export function resolveLocalRemote(remote: string, siblingsRoot: string): string {
-    if (remote === '' || remote.startsWith('-') || isAbsolute(remote) || remote.startsWith('~')) return remote
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(remote)) return remote
+//
+// A path that exists but cannot be resolved (permissions, a path through a regular file, a symlink
+// loop) is reported as a value, not thrown, so the caller refuses with the declared remote named.
+export type LocalRemoteResolution =
+    | { readonly kind: 'resolved'; readonly remote: string }
+    | { readonly kind: 'unresolvable'; readonly declared: string; readonly errno: string }
+
+export function resolveLocalRemote(remote: string, siblingsRoot: string): LocalRemoteResolution {
+    const resolved = (value: string): LocalRemoteResolution => ({ kind: 'resolved', remote: value })
+    if (remote === '' || remote.startsWith('-') || isAbsolute(remote) || remote.startsWith('~')) return resolved(remote)
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(remote)) return resolved(remote)
     const colon = remote.indexOf(':')
-    if (colon !== -1 && !remote.slice(0, colon).includes('/')) return remote
+    if (colon !== -1 && !remote.slice(0, colon).includes('/')) return resolved(remote)
     const path = resolve(siblingsRoot, remote)
     try {
-        return realpathSync(path)
+        return resolved(realpathSync(path))
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path
-        throw new Error(`cannot resolve local remote ${JSON.stringify(remote)} (${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`, { cause: error })
+        const errno = (error as NodeJS.ErrnoException).code
+        if (errno === 'ENOENT') return resolved(path)
+        return { kind: 'unresolvable', declared: remote, errno: errno ?? 'unknown error' }
+    }
+}
+
+function unresolvableRemoteRefusal(
+    value: Extract<LocalRemoteResolution, { kind: 'unresolvable' }>,
+    which: 'declared' | 'existing origin',
+    target: string,
+): EnvironmentCommandOutcome<SetupResult> {
+    return {
+        kind: 'refusal',
+        status: 2,
+        diagnostics: [{
+            severity: 'error',
+            code: ENVIRONMENT_CODES.SETUP_REMOTE_UNRESOLVABLE,
+            message: `cannot resolve ${which} local remote ${JSON.stringify(value.declared)} (${value.errno})`,
+            target,
+            fix: 'make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again',
+        }],
+        result: null,
     }
 }
 
@@ -181,7 +209,9 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
         }
     }
 
-    const remote = resolveLocalRemote(input.sibling.remote!, siblingsRoot)
+    const declared = resolveLocalRemote(input.sibling.remote!, siblingsRoot)
+    if (declared.kind === 'unresolvable') return unresolvableRemoteRefusal(declared, 'declared', target)
+    const remote = declared.remote
     if (observation.kind === 'absent') {
         if (input.sibling.acquire === 'manual') {
             return {
@@ -224,7 +254,9 @@ export async function planSetup(input: PlanSetupInput): Promise<EnvironmentComma
     }
 
     const observedOrigin = observation.remotes?.origin
-    const current = observedOrigin === undefined ? undefined : resolveLocalRemote(observedOrigin, siblingsRoot)
+    const observedResolution = observedOrigin === undefined ? undefined : resolveLocalRemote(observedOrigin, siblingsRoot)
+    if (observedResolution?.kind === 'unresolvable') return unresolvableRemoteRefusal(observedResolution, 'existing origin', target)
+    const current = observedResolution?.remote
     if (current === remote) return { kind: 'complete', status: 0, diagnostics: [], result: result('report', false) }
     if (input.sibling.acquire === 'auto') {
         return refusal(

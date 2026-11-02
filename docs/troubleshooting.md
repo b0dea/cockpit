@@ -525,6 +525,7 @@ Each diagnostic message names what failed and how to fix it. Where every place t
 | `SETUP_POSITIONAL_UNSUPPORTED` | see the message |
 | `SETUP_POSTCHECK_FAILED` | see the message |
 | `SETUP_REMOTE_MISMATCH` | see the message |
+| `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again |
 | `SIBLING_DIRECTORY_MISSING` | see the message |
 | `SIBLING_DIR_DUPLICATE` | see the message |
 | `SIBLING_GIT_FAILED` | see the message |

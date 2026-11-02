@@ -397,6 +397,7 @@ Reads `cockpit.toml` from `--config`.
 | `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run npx --no cockpit setup --config <your cockpit.toml> --write-instruction-pointers |
 | `SETUP_MANUAL_MISSING` | create the checkout, then run npx --no cockpit setup --config <your cockpit.toml> again; [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `SETUP_REMOTE_MISMATCH` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
+| `SETUP_REMOTE_UNRESOLVABLE` | make the remote path readable, or declare the remote as a URL or an absolute path to an existing repository, then run npx --no cockpit setup --config <your cockpit.toml> again |
 | `STATE_FORMAT_UNSUPPORTED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 | `STATE_RECORD_MALFORMED` | [Troubleshooting](troubleshooting.md#clear-cockpit-state) |
 
