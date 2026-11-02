@@ -11,6 +11,7 @@ import {
     type BaselineObservation,
     type LogObservation,
     type LogsCommandAdapters,
+    type ReadinessRefusal,
 } from './application.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import type { GeneratedComposeArtifactAuthority } from './generated-stack.js'
@@ -332,7 +333,9 @@ export function createReadCommandAdapters(
     const previews = new WeakMap<object, PendingBaseline>()
     const latestPreviews = new Map<string, PendingBaseline>()
 
-    const prepare = async (signal?: AbortSignal): Promise<StableReadContext> => {
+    // `refuse` receives the lifecycle's own refusal, such as an unmeasured runtime, so a caller can
+    // report it instead of a generic unavailable context.
+    const prepare = async (signal?: AbortSignal, refuse?: ReadinessRefusal<never>): Promise<StableReadContext> => {
         if (!input || typeof execute !== 'function') throw new TypeError('read command composition is unavailable')
         const lifecycle = createLifecycleCommandAdapters({
             configPath: input.configPath,
@@ -347,7 +350,10 @@ export function createReadCommandAdapters(
         if (loaded.kind === 'refusal' && loaded.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED)) {
             throw new DeclarationRefusalError(runtimeNotDeclared(input.configPath))
         }
-        if (loaded.kind !== 'complete') throw new TypeError('authenticated lifecycle context is unavailable')
+        if (loaded.kind !== 'complete') {
+            if (refuse && loaded.diagnostics.length > 0) refuse(loaded.diagnostics)
+            throw new TypeError('authenticated lifecycle context is unavailable')
+        }
         const context = loaded.result
         const configurationResult = await loadCockpitConfig(input.configPath)
         if (configurationResult.kind !== 'complete') throw new TypeError('configuration projection is unavailable')
@@ -366,7 +372,7 @@ export function createReadCommandAdapters(
         const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: context.entrypointDerivatives })
         const ports: PortLeaseProjection | undefined = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
         if (!ports) throw new TypeError('retained port projection is unavailable')
-        const readiness = await lifecycle.withRuntimeReadiness(context, async (value) => value, ports)
+        const readiness = await lifecycle.withRuntimeReadiness(context, async (value) => value, ports, refuse)
         if (!readiness) throw new TypeError('authenticated runtime topology is unavailable')
         const generatedApplication = generated ? await lifecycle.withGeneratedRuntime(context, readiness,
             async ({ application }) => application) : undefined
@@ -427,7 +433,7 @@ export function createReadCommandAdapters(
 
     const observeLogs = async (request: { readonly configPath: string; readonly service: string }): Promise<LogObservation> => {
         if (!input || resolve(request.configPath) !== input.configPath) throw new TypeError('log configuration path does not match')
-        const context = await prepare(input.signal)
+        const context = await prepare(input.signal, (diagnostics) => { throw new DeclarationRefusalError(diagnostics[0]!) })
         const declared = context.topology.services.map(({ id }) => id)
         if (!declared.includes(request.service)) throw new DeclarationRefusalError(serviceNotDeclared(request.service, declared))
         const completed = context.lifecycle.completedServices.find(({ service }) => service === request.service)

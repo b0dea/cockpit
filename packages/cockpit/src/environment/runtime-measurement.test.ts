@@ -23,11 +23,12 @@ const CONFIG = [
 ].join('\n')
 
 // A docker stand-in answering only the reads the measure command makes before it hands over to the probe.
-async function measuredHost(endpoint = 'unix:///synthetic/docker.sock') {
+async function measuredHost(endpoint = 'unix:///synthetic/docker.sock', configName = 'cockpit.toml') {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-runtime-measure-test-')))
     roots.push(root)
-    const configPath = join(root, 'cockpit.toml')
-    await writeFile(configPath, CONFIG)
+    const configPath = join(root, configName)
+    const config = CONFIG.replace('source = "cockpit.toml"', `source = ${JSON.stringify(configName)}`)
+    await writeFile(configPath, config)
     await writeFile(join(root, 'endpoint'), `${endpoint}\n`)
     const docker = join(root, 'docker')
     await writeFile(docker, [
@@ -49,7 +50,7 @@ async function measuredHost(endpoint = 'unix:///synthetic/docker.sock') {
         '',
     ].join('\n'), { mode: 0o700 })
     await chmod(docker, 0o700)
-    return { root, configPath, env: { PATH: `${root}:/usr/bin:/bin`, HOME: root } }
+    return { root, configPath, config, env: { PATH: `${root}:/usr/bin:/bin`, HOME: root } }
 }
 
 async function machineStateRoot(host: Awaited<ReturnType<typeof measuredHost>>): Promise<string> {
@@ -83,7 +84,7 @@ function verdict(passed: boolean, runtimeExecutableSha256: string): RuntimeProbe
 
 describe('runtime measurement recording', () => {
     it('records this machine\'s measurement outside cockpit.toml and replaces only the same runtime on a re-measure', async () => {
-        const host = await measuredHost()
+        const host = await measuredHost(undefined, 'cockpit.alternate.toml')
         const executionEnvironments: Readonly<Record<string, string>>[] = []
         const prefixes: string[] = []
         const probe: RuntimeMeasureProbe = async (request) => {
@@ -110,11 +111,12 @@ describe('runtime measurement recording', () => {
 
         expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
         expect(outcome.artifact).toContain('it replaces the measurement from 2026-09-01 (engine 28.0.0)')
+        expect(outcome.artifact).toContain('cockpit.alternate.toml is unchanged; next: ')
         expect(executionEnvironments.slice(0, 2)).toEqual([{ PATH: host.env.PATH }, { PATH: host.env.PATH }])
         expect(executionEnvironments.length).toBeGreaterThan(2)
         for (const env of executionEnvironments.slice(2)) expect(env).toEqual({ PATH: host.env.PATH, DOCKER_CONTEXT: 'synthetic' })
         expect(prefixes).toEqual(['synthetic-measure'])
-        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readFile(host.configPath, 'utf8')).toBe(host.config)
         expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toEqual({
             kind: 'read', path: record,
             rows: [other, { runtime: 'orbstack', daemon: 'orbstack', engineVersion: '29.4.0', composeFloor: '5.1.2', measuredOn: today }],
@@ -154,7 +156,7 @@ describe('runtime measurement recording', () => {
             expect(outcome.status, JSON.stringify(outcome.diagnostics)).toBe(0)
         }
         expect(selections).toEqual([undefined, endpoint])
-        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readFile(host.configPath, 'utf8')).toBe(host.config)
     })
 
     // The guard asks before an `env -u DOCKER_CONTEXT` wrapper, and an ask is a denial for some
@@ -212,7 +214,7 @@ describe('runtime measurement recording', () => {
             expect(steps.every((argv) => argv[1] === 'context')).toBe(true)
             if (env.DOCKER_HOST !== undefined) expect(steps).toEqual([])
         }
-        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readFile(host.configPath, 'utf8')).toBe(host.config)
     })
 
     it('refuses context endpoint whitespace instead of trimming it into a different identity', async () => {
@@ -223,7 +225,7 @@ describe('runtime measurement recording', () => {
         })
         expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
         expect(calls).toBe(0)
-        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readFile(host.configPath, 'utf8')).toBe(host.config)
     })
 
     it('refuses malformed local endpoints without invoking the runtime probe or writing configuration', async () => {
@@ -239,7 +241,7 @@ describe('runtime measurement recording', () => {
             expect(outcome, JSON.stringify(endpoint)).toMatchObject({ status: 2, diagnostics: [{ code: 'CLI_USAGE_INVALID', target: 'DOCKER_HOST' }] })
         }
         expect(calls).toBe(0)
-        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readFile(host.configPath, 'utf8')).toBe(host.config)
     })
 
     it('tells a person to pull a missing image rather than to start a runtime that is running', async () => {
@@ -270,7 +272,7 @@ describe('runtime measurement recording', () => {
             code: 'RUNTIME_UNAVAILABLE',
             message: expect.stringMatching(/^runtime orbstack was not measured as supported \(candidate failed, broken control rejected\): profile activation.*nothing was recorded$/),
         }] })
-        expect(await readFile(host.configPath, 'utf8')).toBe(CONFIG)
+        expect(await readFile(host.configPath, 'utf8')).toBe(host.config)
         expect(await readLocalRuntimeMeasurements(await machineStateRoot(host))).toMatchObject({ kind: 'read', rows: [] })
     })
 

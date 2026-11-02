@@ -5257,7 +5257,7 @@ export async function runLogs(
         observe = adapters.observe
         execute = adapters.execute
     } catch {
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'log request must be readable')
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, 'log request must be readable')
     }
     const configPath = captured?.configPath
     const service = captured?.service
@@ -5268,13 +5268,13 @@ export async function runLogs(
     if (typeof configPath !== 'string' || typeof service !== 'string' || typeof since !== 'string'
         || typeof tail !== 'number' || typeof follow !== 'boolean' || typeof json !== 'boolean'
         || typeof observe !== 'function' || typeof execute !== 'function') {
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'log request must contain exact public options')
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, 'log request must contain exact public options')
     }
     if (!validPublicLogOptions(service, since, tail)) {
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'log service, time range, and tail must be valid and bounded')
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, 'log service, time range, and tail must be valid and bounded')
     }
     if (follow && signal === undefined) {
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, 'follow logs require a cancellation signal')
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, 'follow logs require a cancellation signal')
     }
     if (signal?.aborted) return logsCancelled(json)
     let observation: LogObservation
@@ -5284,13 +5284,13 @@ export async function runLogs(
         if (signal?.aborted) return logsCancelled(json)
         if (error instanceof DeclarationRefusalError) return Object.freeze({ kind: 'refusal', status: 2, result: null,
             diagnostics: Object.freeze([error.diagnostic]) })
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log observation is unavailable for service ${service}`)
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation is unavailable for service ${service}: ${error instanceof Error ? error.message : String(error)}`)
     }
     if (signal?.aborted) return logsCancelled(json)
     const observed = ownDataValues(observation, ['request'], ['restart', 'generatedComposeAuthority', 'ownComposeAuthority'])
     const request = ownDataValues(observed?.request, logRequestBaseKeys, ['restartBatches'])
     if (!request || request.service !== service) {
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log observation does not match service ${service}`)
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log observation does not match service ${service}`)
     }
     const resolvedRequest = Object.freeze({ ...request, since, tail, follow }) as unknown as LogRequest
     const plan = planLogs(
@@ -5302,11 +5302,11 @@ export async function runLogs(
     let collected: Awaited<ReturnType<typeof collectLogs>>
     try {
         collected = await collectLogs(plan, execute, signal, observed?.restart as RestartWindow | undefined)
-    } catch {
-        return logsRefusal(ENVIRONMENT_CODES.RUNTIME_UNMEASURED, `log collection failed for service ${service}`)
+    } catch (error) {
+        return logsRefusal(ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, `log collection failed for service ${service}: ${error instanceof Error ? error.message : String(error)}`)
     }
     if (collected.kind === 'unavailable') {
-        return logsRefusal(collected.code, 'authenticated log collection is unavailable')
+        return logsRefusal(collected.code, `the logs of service ${service} are unavailable: ${collected.reason}`)
     }
     const diagnostics = collected.truncated
         ? logsTruncated(service, collected.records.length, plan.step) : Object.freeze([])
