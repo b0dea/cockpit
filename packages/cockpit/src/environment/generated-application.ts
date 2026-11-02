@@ -1991,7 +1991,7 @@ function openCodeReadDenials(
 const CODEX_CONFIG_DIRECTORY = '.codex'
 
 /** The machine-local file `sync` writes with a sibling's absolute directory, for OpenCode to read. */
-export function openCodeGrantFile(slug: string): string {
+function openCodeGrantFile(slug: string): string {
     return `${GUARD_LOCAL_PATHS.directory}/opencode-grant-${slug}`
 }
 

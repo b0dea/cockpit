@@ -12,7 +12,7 @@ import { SURFACE_TARGETS } from './harness-registry.js'
 export const mechanism = {
     id: 'surface-ownership',
     module: 'packages/cockpit/src/surfaces/ownership.ts',
-    exports: ['classifySurfaceOwnership', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
+    exports: ['classifySurfaceOwnership', 'symlinkSource', 'captureOpenCodeRootMembers', 'renderSharedPostimage', 'removeSharedOwnership',
         'encodeOwnershipManifest', 'parseOwnershipManifest', 'projectGeneratedPathFacts',
         'bindSurfaceOwnershipIdentity', 'classifyGeneratedPaths'],
 } as const
