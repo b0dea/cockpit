@@ -6,6 +6,7 @@ import { isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { InstallPolicy, type InstallPolicy as InstallPolicyValue } from '../schema.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     isCanonicalTimestamp,
     snapshotJson,
     type CheckoutId,
@@ -109,7 +110,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return false
     try {
         return typeof Reflect.get(value, 'then') === 'function'
-    } catch {
+    } catch { // A throwing getter on caller-supplied data is treated as promise-like, which the caller refuses.
         return true
     }
 }
@@ -172,10 +173,10 @@ function catalogSha256(policies: readonly InstallPolicyValue[]): string {
     return createHash('sha256').update(JSON.stringify(rows)).digest('hex')
 }
 
-async function stableRoot(path: string): Promise<{ canonicalPath: string; identity: FileIdentity } | undefined> {
+async function stableRoot(path: string): Promise<{ canonicalPath: string; identity: FileIdentity } | Readonly<{ reason: string }>> {
     try {
         const before = await lstat(path, { bigint: true })
-        if (!before.isDirectory() || before.isSymbolicLink()) return undefined
+        if (!before.isDirectory() || before.isSymbolicLink()) return { reason: 'it is not a plain directory' }
         const canonicalPath = await realpath(path)
         const after = await lstat(canonicalPath, { bigint: true })
         const beforeIdentity = identity(before)
@@ -183,9 +184,9 @@ async function stableRoot(path: string): Promise<{ canonicalPath: string; identi
         return canonicalPath === path && after.isDirectory() && !after.isSymbolicLink()
             && sameIdentity(beforeIdentity, afterIdentity)
             ? { canonicalPath, identity: afterIdentity }
-            : undefined
-    } catch {
-        return undefined
+            : { reason: 'it is not canonical or changed while it was read' }
+    } catch (error) {
+        return { reason: errorCause(error) }
     }
 }
 
@@ -280,7 +281,7 @@ export async function observeInstallPolicyLockfiles(input: unknown): Promise<Ins
     }
 
     const root = await stableRoot(value.checkoutRoot)
-    if (!root) return failure('unavailable', 'checkout root is unavailable')
+    if ('reason' in root) return failure('unavailable', `checkout root is unavailable: ${root.reason}`)
     if (deriveCheckoutId({ checkoutPath: root.canonicalPath }) !== value.checkoutId) {
         return failure('failed', 'checkout root does not match its declared identity')
     }
@@ -335,7 +336,7 @@ export async function withInstallPolicyProjection<T>(
         || trustedCurrentTime > Date.parse(binding.validThrough)) return undefined
 
     const root = await stableRoot(binding.checkoutRoot)
-    if (!root || !sameIdentity(root.identity, binding.rootIdentity)
+    if ('reason' in root || !sameIdentity(root.identity, binding.rootIdentity)
         || deriveCheckoutId({ checkoutPath: root.canonicalPath }) !== binding.checkoutId) return undefined
     for (const lockfile of binding.lockfiles) {
         const current = await inspectLockfile(binding.checkoutRoot, lockfile.relativePath)
@@ -366,7 +367,7 @@ export function consumeInstallPolicyProjection(
         if (!binding) return undefined
         issuedProjections.delete(projection)
         return binding
-    } catch {
+    } catch { // A throwing accessor or proxy trap on the projection makes it malformed; the caller refuses it.
         return undefined
     }
 }

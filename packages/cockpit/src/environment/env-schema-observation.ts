@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     isCanonicalTimestamp,
     snapshotEnvironmentObservation,
     snapshotExecutionStep,
@@ -90,7 +91,7 @@ function reduceReport(stdout: Buffer): Report {
     let parsed: unknown
     try {
         parsed = JSON.parse(stdout.toString('utf8'))
-    } catch {
+    } catch { // Parser text would quote varlock output, which can hold environment values.
         return { kind: 'malformed' }
     }
     if (!isRecord(parsed) || !isRecord(parsed.config)) return { kind: 'malformed' }
@@ -174,8 +175,8 @@ async function checkSibling(
     let raw: ExecuteProbeOutcome
     try {
         raw = await execute(step)
-    } catch {
-        return { state: 'unavailable', cause: 'varlock execution is unavailable' }
+    } catch (error) {
+        return { state: 'unavailable', cause: `varlock execution is unavailable: ${errorCause(error)}` }
     }
     const outcome = authenticatedExecutionOutcome(raw, step)
     if (!outcome) return { state: 'unavailable', cause: 'varlock execution evidence is unauthenticated' }

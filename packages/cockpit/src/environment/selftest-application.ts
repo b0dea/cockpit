@@ -21,7 +21,7 @@ import {
 } from './generated-application.js'
 import { redactSensitiveMessage } from './sensitive.js'
 import {
-    snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep,
+    snapshotExecutionStep, snapshotGeneratedJson, ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionStep,
 } from './contract.js'
 import { resolveExecutable, type ResolvedExecutable } from './executable.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
@@ -139,7 +139,7 @@ function captureProbeEnvironment(value: unknown): Readonly<Record<string, string
             env[key] = descriptor.value
         }
         return Object.freeze(env)
-    } catch { return undefined }
+    } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
 }
 
 function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
@@ -156,7 +156,7 @@ function commandInput(value: unknown): SurfaceSelftestCommandInput | undefined {
         const specifications = descriptors.specifications!.value
         if (typeof root !== 'string' || !env || !Array.isArray(specifications)) return undefined
         return Object.freeze({ application: descriptors.application!.value, root, specifications, env }) as SurfaceSelftestCommandInput
-    } catch { return undefined }
+    } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
 }
 
 function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestCommandInput | undefined {
@@ -175,7 +175,7 @@ function configuredCommandInput(value: unknown): ConfiguredSurfaceSelftestComman
             || typeof probeSpecificationsPath !== 'string' || probeSpecificationsPath.length === 0
             || probeSpecificationsPath.includes('\0') || !env) return undefined
         return Object.freeze({ configPath, probeSpecificationsPath, env })
-    } catch { return undefined }
+    } catch { return undefined } // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
 }
 
 function sha256(value: string | Buffer): string {
@@ -186,7 +186,8 @@ function refusal(code: Extract<SurfaceSelftestCommandOutcome, { kind: 'refusal' 
     return Object.freeze({ kind: 'refusal', status: 2, code, reason })
 }
 
-async function readProbeSpecificationsArtifact(path: string): Promise<string | undefined> {
+// A string is the file's text, `undefined` a file that is not a bounded regular file, and `{ cause }` an I/O or decoding failure.
+async function readProbeSpecificationsArtifact(path: string): Promise<string | Readonly<{ cause: string }> | undefined> {
     let handle: Awaited<ReturnType<typeof open>> | undefined
     try {
         const before = await lstat(path)
@@ -207,7 +208,7 @@ async function readProbeSpecificationsArtifact(path: string): Promise<string | u
         const after = await handle.stat()
         if (total !== opened.size || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs) return undefined
         return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, total))
-    } catch { return undefined } finally { await handle?.close() }
+    } catch (error) { return { cause: errorCause(error) } } finally { await handle?.close() }
 }
 
 const PROBE_SPECIFICATIONS_SCHEMA = 'cockpit-selftest-probe-specifications/v1'
@@ -218,15 +219,19 @@ function probeSpecificationsArtifact(
     bytes: string,
     sourceSha256: string,
     generatedManifestSha256: string,
-): Readonly<{ kind: 'complete' | 'stale'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed' }> {
+): Readonly<{ kind: 'complete' | 'stale'; specifications: readonly unknown[] }> | Readonly<{ kind: 'malformed'; cause?: string }> {
     let captured: Readonly<Record<string, unknown>> | undefined
-    try { captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined } catch { return { kind: 'malformed' } }
+    try { captured = snapshotGeneratedJson(JSON.parse(bytes)) as Readonly<Record<string, unknown>> | undefined } catch (error) { return { kind: 'malformed', cause: errorCause(error) } }
     if (!captured || Object.keys(captured).sort().join('\0') !== ['generatedManifestSha256', 'schema', 'sourceSha256', 'specifications'].join('\0')
         || captured.schema !== PROBE_SPECIFICATIONS_SCHEMA || !Array.isArray(captured.specifications)) return { kind: 'malformed' }
     if (captured.sourceSha256 !== sourceSha256 || captured.generatedManifestSha256 !== generatedManifestSha256) {
         return { kind: 'stale', specifications: captured.specifications }
     }
     return { kind: 'complete', specifications: captured.specifications }
+}
+
+function causeSuffix(cause: string | undefined): string {
+    return cause ? `: ${cause}` : ''
 }
 
 // Every refusal about the file itself names the command that writes a fresh one.
@@ -264,7 +269,7 @@ async function hasExecutableAuthority(
             if (typeof identity !== 'string' || !isAbsolute(identity) || identity.includes('\0')) continue
             try {
                 if (await realpath(identity) === executable.canonicalPath) return true
-            } catch { continue }
+            } catch { continue } // An unresolvable test identity cannot match; the next one is tried and none matching refuses.
         }
     }
     return false
@@ -282,7 +287,7 @@ function exactLine(value: string, code: string): boolean {
 
 function boundedStream(value: Buffer): string | undefined {
     let text: string
-    try { text = new TextDecoder('utf-8', { fatal: true }).decode(value) } catch { return undefined }
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(value) } catch { return undefined } // Fatal decoding throws only for invalid UTF-8, which the caller rejects as an unusable stream.
     const redacted = redactSensitiveMessage(text)
     if (redacted === undefined) return undefined
     text = redacted
@@ -371,48 +376,51 @@ function authenticationRequired(outcome: ExecuteProbeOutcome): boolean {
     return /(?:not authenticated|not logged in|authentication required|unauthorized|\b401\b|\b403\b)/i.test(text)
 }
 
-async function ensurePlainDirectory(path: string): Promise<boolean> {
-    try {
+// Returns undefined for a plain directory, otherwise why it is not one.
+async function ensurePlainDirectory(path: string): Promise<string | undefined> {
+    const inspect = async (): Promise<string | undefined> => {
         const status = await lstat(path)
         return status.isDirectory() && !status.isSymbolicLink() && await realpath(path) === path
+            ? undefined : `${path} is not a plain directory`
+    }
+    try {
+        return await inspect()
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false
+        if (!hasErrorCode(error, 'ENOENT')) return `${path} could not be inspected: ${errorCause(error)}`
         try { await mkdir(path, { mode: 0o700 }) } catch (createError) {
-            if ((createError as NodeJS.ErrnoException).code !== 'EEXIST') return false
+            if (!hasErrorCode(createError, 'EEXIST')) return `${path} could not be created: ${errorCause(createError)}`
         }
-        try {
-            const status = await lstat(path)
-            return status.isDirectory() && !status.isSymbolicLink() && await realpath(path) === path
-        } catch { return false }
+        try { return await inspect() } catch (inspectError) {
+            return `${path} could not be inspected: ${errorCause(inspectError)}`
+        }
     }
 }
 
-async function ensureEvidenceDirectory(root: string): Promise<string | undefined> {
+async function ensureEvidenceDirectory(root: string): Promise<string | Readonly<{ reason: string }>> {
     try {
-        if (await realpath(root) !== root) return undefined
+        if (await realpath(root) !== root) return { reason: `${root} is not canonical` }
         let directory = root
         for (const segment of PROBE_EVIDENCE_ROOT.split('/')) {
             directory = join(directory, segment)
-            if (!await ensurePlainDirectory(directory)) return undefined
+            const problem = await ensurePlainDirectory(directory)
+            if (problem) return { reason: problem }
         }
         return directory
-    } catch { return undefined }
+    } catch (error) { return { reason: `${root} could not be resolved: ${errorCause(error)}` } }
 }
 
 async function writeControlPair(
     directory: string,
     probe: PlannedSelftestProbe,
 ): Promise<{ candidate: string; broken: string; candidateSha256: string; brokenSha256: string } | undefined> {
-    try {
-        const candidate = join(directory, 'candidate.json')
-        const broken = join(directory, 'broken.json')
-        const candidateBytes = selectedEntryBytes(probe)
-        if (!candidateBytes || Buffer.byteLength(candidateBytes) > MAX_CONTROL_BYTES) return undefined
-        const brokenBytes = '{\n'
-        await writeFile(candidate, candidateBytes, { flag: 'wx', mode: 0o600 })
-        await writeFile(broken, brokenBytes, { flag: 'wx', mode: 0o600 })
-        return { candidate, broken, candidateSha256: sha256(candidateBytes), brokenSha256: sha256(brokenBytes) }
-    } catch { return undefined }
+    const candidate = join(directory, 'candidate.json')
+    const broken = join(directory, 'broken.json')
+    const candidateBytes = selectedEntryBytes(probe)
+    if (!candidateBytes || Buffer.byteLength(candidateBytes) > MAX_CONTROL_BYTES) return undefined
+    const brokenBytes = '{\n'
+    await writeFile(candidate, candidateBytes, { flag: 'wx', mode: 0o600 })
+    await writeFile(broken, brokenBytes, { flag: 'wx', mode: 0o600 })
+    return { candidate, broken, candidateSha256: sha256(candidateBytes), brokenSha256: sha256(brokenBytes) }
 }
 
 function consumedExecutable(executable: ResolvedExecutable): ConsumedFile {
@@ -422,15 +430,18 @@ function consumedExecutable(executable: ResolvedExecutable): ConsumedFile {
     }
 }
 
+// An evidence probe that could not run for an I/O reason, as opposed to one that ran and was inconclusive.
+type ProbeFailure = Readonly<{ probeFailure: string }>
+
 async function runEvidenceProbe(
     root: string,
-    evidenceRoot: string | undefined,
+    evidenceRoot: string | Readonly<{ reason: string }>,
     expectation: SelftestExpectation,
     probe: PlannedSelftestProbe,
     env: SurfaceSelftestCommandInput['env'],
     adapters: SurfaceSelftestCommandAdapters,
     approvedExecutables: OperatorExecutableIdentities,
-): Promise<SelftestEvidenceRecord | ReturnType<typeof surfaceSelftestHumanNeeded> | undefined> {
+): Promise<SelftestEvidenceRecord | ReturnType<typeof surfaceSelftestHumanNeeded> | ProbeFailure | undefined> {
     const harnessName = probe.harness.name
     const observedAt = new Date().toISOString()
     const resolution = await resolveExecutable(BUILTIN_EXECUTABLES[probe.harness.target], env)
@@ -446,16 +457,17 @@ async function runEvidenceProbe(
             `Provide an operator-approved absolute executable identity for ${harnessName} and rerun its ${probe.capability} probe`,
         )
     }
-    if (!evidenceRoot) return surfaceSelftestHumanNeeded(
+    if (typeof evidenceRoot !== 'string') return surfaceSelftestHumanNeeded(
         expectation, probe.cell, 'isolation_unavailable', observedAt,
-        `${PROBE_EVIDENCE_ROOT} could not be created as a plain directory, so probe controls cannot be kept apart from the checkout; make it a plain directory and rerun the ${harnessName} ${probe.capability} probe`,
+        `${PROBE_EVIDENCE_ROOT} could not be created as a plain directory (${evidenceRoot.reason}), so probe controls cannot be kept apart from the checkout; make it a plain directory and rerun the ${harnessName} ${probe.capability} probe`,
     )
     let directory: string
+    let controls: Awaited<ReturnType<typeof writeControlPair>>
     try {
         directory = join(evidenceRoot, `selftest-${randomBytes(12).toString('hex')}`)
         await mkdir(directory, { mode: 0o700 })
-    } catch { return undefined }
-    const controls = await writeControlPair(directory, probe)
+        controls = await writeControlPair(directory, probe)
+    } catch (error) { return { probeFailure: `could not write probe controls: ${errorCause(error)}` } }
     if (!controls) return undefined
     const candidatePath = relativeEvidencePath(root, controls.candidate)
     const brokenPath = relativeEvidencePath(root, controls.broken)
@@ -558,6 +570,7 @@ export async function runSurfaceSelftestApplication(
             root, evidenceRoot, plan.expectation, probe, capturedInput.env, adapters, approvedExecutables,
         )
         if (!record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}`)
+        if ('probeFailure' in record) return refusal('SELFTEST_EXECUTION_INVALID', `probe execution could not establish ${probe.capability} for ${probe.harness.name}: ${record.probeFailure}`)
         records.push(record)
     }
     for (const cell of plan.unprobeable) {
@@ -589,8 +602,8 @@ export async function runConfiguredSurfaceSelftestApplication(
     const capturedInput = configuredCommandInput(input)
     if (!capturedInput) return refusal('SELFTEST_SOURCE_INVALID', 'configured selftest input must contain only bounded own data')
     let configPath: string
-    try { configPath = await realpath(resolve(capturedInput.configPath)) } catch {
-        return refusal('SELFTEST_SOURCE_INVALID', 'configured selftest source could not be resolved')
+    try { configPath = await realpath(resolve(capturedInput.configPath)) } catch (error) {
+        return refusal('SELFTEST_SOURCE_INVALID', `configured selftest source could not be resolved: ${errorCause(error)}`)
     }
     const checked = await checkGeneratedEnvironment({ configPath })
     if (checked.kind !== 'complete') {
@@ -602,18 +615,18 @@ export async function runConfiguredSurfaceSelftestApplication(
         return refusal('SELFTEST_SOURCE_INVALID', 'probe specification artifact path must resolve to a canonical absolute path')
     }
     let artifactPath: string
-    try { artifactPath = await realpath(requestedArtifactPath) } catch {
-        return probeSpecificationsRefusal(`probe specification file ${requestedArtifactPath} is missing or unreadable`)
+    try { artifactPath = await realpath(requestedArtifactPath) } catch (error) {
+        return probeSpecificationsRefusal(`probe specification file ${requestedArtifactPath} is missing or unreadable: ${errorCause(error)}`)
     }
     const bytes = await readProbeSpecificationsArtifact(artifactPath)
-    if (bytes === undefined) return probeSpecificationsRefusal(`probe specification file ${artifactPath} is missing, unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes`)
+    if (typeof bytes !== 'string') return probeSpecificationsRefusal(`probe specification file ${artifactPath} is missing, unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes${causeSuffix(bytes?.cause)}`)
     const artifact = probeSpecificationsArtifact(
         bytes,
         checked.result.application.sourceSha256,
         checked.result.application.surfaceSelftest.manifestSha256,
     )
     if (artifact.kind === 'malformed') {
-        return probeSpecificationsRefusal(`probe specification file ${artifactPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
+        return probeSpecificationsRefusal(`probe specification file ${artifactPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications${causeSuffix(artifact.cause)}`)
     }
     if (artifact.kind === 'stale') {
         return {
@@ -702,8 +715,8 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
         status: 2, diagnostics: [{ severity: 'error', code: 'SELFTEST_SOURCE_INVALID', message }], result: null,
     })
     let configPath: string
-    try { configPath = await realpath(resolve(input.configPath)) } catch {
-        return refused('configured selftest source could not be resolved')
+    try { configPath = await realpath(resolve(input.configPath)) } catch (error) {
+        return refused(`configured selftest source could not be resolved: ${errorCause(error)}`)
     }
     const checked = await checkGeneratedEnvironment({ configPath })
     if (checked.kind !== 'complete') {
@@ -713,16 +726,16 @@ export async function writeConfiguredSurfaceSelftestSpecifications(
     let previous: readonly unknown[] = []
     let previousPath: string | undefined
     if (input.previousProbeSpecificationsPath !== undefined) {
-        try { previousPath = await realpath(resolve(input.previousProbeSpecificationsPath)) } catch {
-            return refused(`earlier probe specification file ${resolve(input.previousProbeSpecificationsPath)} is missing or unreadable`)
+        try { previousPath = await realpath(resolve(input.previousProbeSpecificationsPath)) } catch (error) {
+            return refused(`earlier probe specification file ${resolve(input.previousProbeSpecificationsPath)} is missing or unreadable: ${errorCause(error)}`)
         }
         const bytes = await readProbeSpecificationsArtifact(previousPath)
-        if (bytes === undefined) return refused(`earlier probe specification file ${previousPath} is unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes`)
+        if (typeof bytes !== 'string') return refused(`earlier probe specification file ${previousPath} is unreadable, not a regular file or larger than ${MAX_PROBE_SPECIFICATIONS_BYTES} bytes${causeSuffix(bytes?.cause)}`)
         // A stale file is the expected input: the digests changed, the rows may not have.
         const earlier = probeSpecificationsArtifact(bytes, checked.result.application.sourceSha256,
             checked.result.application.surfaceSelftest.manifestSha256)
         if (earlier.kind === 'malformed') {
-            return refused(`earlier probe specification file ${previousPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications`)
+            return refused(`earlier probe specification file ${previousPath} is not ${PROBE_SPECIFICATIONS_SCHEMA} JSON with exactly schema, sourceSha256, generatedManifestSha256 and specifications${causeSuffix(earlier.cause)}`)
         }
         previous = earlier.specifications
     }

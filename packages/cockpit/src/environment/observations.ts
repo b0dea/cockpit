@@ -88,7 +88,7 @@ function boundedDenseArray(value: unknown): readonly unknown[] | undefined {
             items.push(descriptor.value)
         }
         return Object.freeze(items)
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }
@@ -111,7 +111,7 @@ function stageDeclarationSnapshot(value: unknown): ObservationStageDeclaration |
             && Buffer.byteLength(reason, 'utf8') <= 1_024
             ? Object.freeze({ stage, disposition, reason })
             : undefined
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }
@@ -143,7 +143,7 @@ function declarationSnapshot(value: unknown): ObservationDeclaration | undefined
             isIssued: descriptors.isIssued!.value as ObservationDeclaration['isIssued'],
             ...(issuedAtDescriptor ? { issuedAt: issuedAtDescriptor.value as ObservationDeclaration['issuedAt'] } : {}),
         })
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }

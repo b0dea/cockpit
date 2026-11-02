@@ -102,7 +102,7 @@ function ownRecord(value: unknown, required: readonly string[], optional: readon
             || required.some((key) => !(key in descriptors))
             || Object.values(descriptors).some((descriptor) => !descriptor.enumerable || !('value' in descriptor))) return undefined
         return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]))
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }
@@ -121,7 +121,7 @@ function ownArray(value: unknown): readonly unknown[] | undefined {
             result.push(descriptor.value)
         }
         return result
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }

@@ -140,7 +140,7 @@ function captureInput(value: DestructiveCompositionInput): CapturedCompositionIn
             ...(activeProfiles === undefined ? {} : { activeProfiles: Object.freeze([...activeProfiles].sort()) }),
             ...(runtimeMeasurementProbeAuthority === undefined ? {} : { runtimeMeasurementProbeAuthority }),
         })
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }

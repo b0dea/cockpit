@@ -8,7 +8,7 @@ import { dirname, isAbsolute, normalize, relative, sep } from 'node:path'
 import { isProxy } from 'node:util/types'
 import { loadCockpitConfig } from '../config/load.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type AddressingPosture, type AuthPosture } from '../schema.js'
-import { ENVIRONMENT_CODES, snapshotJson, type CockpitId, type EnvironmentObservation,
+import { ENVIRONMENT_CODES, errorCause, snapshotJson, type CockpitId, type EnvironmentObservation,
     type JsonSnapshot, type ObservationLifecycleStage, type StackId } from './contract.js'
 import { checkoutId, stackId as deriveStackId, type StackVariant } from './identity.js'
 import { authenticateLifecycleStageAuthority, type LifecycleStageAuthority } from './lifecycle-stage.js'
@@ -42,7 +42,7 @@ function boundedDenseArray(value: unknown): readonly unknown[] | undefined {
             items.push(descriptor.value)
         }
         return Object.freeze(items)
-    } catch {
+    } catch { // A throwing accessor or proxy trap makes the input malformed; the caller refuses it.
         return undefined
     }
 }
@@ -78,8 +78,8 @@ function currentConfigurationRevision(path: string): string | undefined {
             || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || named.size !== opened.size
             || after.mtimeNs !== opened.mtimeNs || after.ctimeNs !== opened.ctimeNs || total !== Number(opened.size)) return undefined
         return hash.digest('hex')
-    } catch {
-        return undefined
+    } catch (error) {
+        throw new TypeError(`configuration could not be re-read after posture resolution: ${errorCause(error)}`)
     } finally {
         if (descriptor !== undefined) {
             try { closeSync(descriptor) } catch { /* A failed identity check grants no authority. */ }
