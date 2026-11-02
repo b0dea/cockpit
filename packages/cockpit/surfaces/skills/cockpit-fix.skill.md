@@ -8,7 +8,7 @@ cockpit:
     claudecode: [Bash]
     codexcli: [shell]
     opencode: [bash]
-  commands: [doctor, up, logs, check]
+  commands: [doctor, up, logs, check, test-run]
   changes: [the repository that owns the reproduced defect]
   non-goals: [scaffolding a cockpit, creating programme ceremony, copying environment policy]
   procedure: procedures/onboarding.md
@@ -31,7 +31,7 @@ opencode:
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow **Fix**.
-Route through `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit logs --config cockpit.toml --service <service>`, and `npx --no cockpit check --config cockpit.toml` as the defect requires. Use `npx --no cockpit up --config cockpit.toml` only for behavior that depends on a live process or integration.
+Run the declared gate with `npx --no cockpit test-run --config cockpit.toml --gate <gate>` before and after the change. Route through `npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit logs --config cockpit.toml --service <service>`, and `npx --no cockpit check --config cockpit.toml` as the defect requires. Use `npx --no cockpit up --config cockpit.toml` only for behavior that depends on a live process or integration.
 
 This is the direct-fix door. It changes only the repository that owns a reproduced defect.
 It does not scaffold a cockpit or copy the environment, tier, or proof decisions that the CLI makes.

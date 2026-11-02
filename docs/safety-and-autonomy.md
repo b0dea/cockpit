@@ -211,6 +211,12 @@ A file such a command names, like `--intent`, `--candidate` or `--event-file`, i
 the command may quote it in a refusal. A declared instance or a file below `.secrets` is denied,
 and an undeclared `.env` file, a symlink or a path outside the configured roots prompts.
 
+"Allowed" means the guard does not object. Claude Code also needs its own allow rule, which the
+generated settings carry for the commands the shipped skills use
+([Claude Code command rules](harness-surfaces.md#claude-code-command-rules)); in Codex's sandbox
+most of these commands must run outside it
+([Run cockpit outside the Codex sandbox](harness-surfaces.md#run-cockpit-outside-the-codex-sandbox)).
+
 Run these exactly as shown. A prefix such as `env -u NAME` or `nohup` makes any of them a wrapped
 invocation, which prompts, and none needs one: `down`, `reset` and `runtime measure` choose their
 Docker daemon themselves, as [Choose the Docker daemon](environment.md#choose-the-docker-daemon)

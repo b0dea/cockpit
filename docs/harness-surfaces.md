@@ -124,6 +124,41 @@ inside a session does the same per hook. `cockpit doctor` and `cockpit check` re
 configuration without changing it and report `CODEX_HOOK_UNTRUSTED` until every generated hook is
 trusted, or when they cannot verify it.
 
+### Run cockpit outside the Codex sandbox
+
+The generated `.codex/config.toml` runs Codex in its `workspace-write` sandbox with the sibling
+checkouts as extra writable roots. Inside that sandbox Codex keeps `.git`, `.agents` and `.codex`
+read-only and blocks cockpit's per-user state root and the Docker socket, so only `cockpit check`,
+`cockpit sync --dry-run` and `--help` work there. Measured on 2026-11-02 with Codex 0.166.0's
+`codex sandbox` and its built-in workspace profile, which agreed with a Codex session under the
+generated configuration: `doctor`, `preflight`, `logs` and `work status` could not read cockpit's
+state and `test-run` reported `DEGRADED`, while outside the sandbox they reported the real state and
+the gate passed.
+
+Run every other cockpit command outside the sandbox: from a terminal, or by approving Codex's
+request to run it unsandboxed. That covers `init`, `sync`, `up`, `down`, `test-run`, `work` and
+`git commit` in the cockpit. A `codex exec` run cannot ask, so a person runs those commands.
+
+cockpit grants nothing more on purpose. Docker socket access controls the whole machine, which
+would defeat the sandbox. The state root differs by host and user (see
+[Clear cockpit state](troubleshooting.md#clear-cockpit-state)), so no committed path fits every
+clone, and Codex keeps `.git`, `.agents` and `.codex` read-only inside every writable root.
+
+### Claude Code command rules
+
+Claude Code's default mode runs no shell command without an allow rule, so a headless session was
+refused even the `test-run` its own skill asks for. The generated `.claude/settings.json` therefore
+allows, by prefix, the cockpit commands the shipped skills tell an agent to run and the guard
+admits (see [Cockpit commands an agent can run](safety-and-autonomy.md#cockpit-commands-an-agent-can-run)),
+spelled both as `npx --no cockpit <command>` and as `./node_modules/.bin/cockpit <command>`.
+Person-only commands such as `sync`, `down` and `work accept` keep prompting. The guard hook still
+runs first, and its ask or deny wins over a rule. Claude Code ignores a project's allow rules
+until a person has trusted the workspace by starting Claude Code there once. Measured with Claude
+Code 2.1.316 on 2026-11-02 beside a command with no rule.
+
+OpenCode allows shell commands unless configured otherwise, and Codex runs them inside its sandbox
+without asking, so cockpit writes no command rules for either.
+
 ### OpenCode native reads
 
 OpenCode's native `read`, `grep` and `glob` tools never reach a shell, so the generated plugin

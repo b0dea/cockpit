@@ -14,6 +14,9 @@ then run this example in a `git init` copy. `check` lists the decisions still op
 ./node_modules/.bin/cockpit check --config cockpit.toml --json
 ```
 
+Commit the copy before running `preflight`, which otherwise exits 2 with `GIT_STATE_UNHEALTHY`:
+`git add -A && git commit -m 'Minimal cockpit'`.
+
 With Docker running, measure the runtime with a local image, then bring the stack up, hold it for
 one command, put it to sleep and resume it, and remove it:
 

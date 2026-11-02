@@ -14,7 +14,7 @@ help, for example `cockpit sync --help`.
 
 | Diagnostic | Why it stops | Fix |
 | --- | --- | --- |
-| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `npx --no cockpit init . --target <target>` command. |
+| `INIT_CANONICAL_OWNERSHIP_MISSING` | The saved bootstrap stage and generated ownership disagree. | Restore the committed ownership metadata, then rerun the same `npx --no cockpit init . --target <tool>` command. |
 | `SURFACE_SOURCE_UNAVAILABLE` | A declared sibling source cannot be read or checked. | Restore the named checkout at its declared path, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `SURFACE_OWNERSHIP_INVALID` | Cockpit cannot tell which settings it may replace. | Restore the last committed ownership metadata, then rerun `npx --no cockpit sync --config cockpit.toml`. |
 | `SURFACE_STATE_CONFLICT` | Sync would overwrite settings cockpit does not own. | Review the file and use `npx --no cockpit sync --adopt <path> --config cockpit.toml` only with a person's approval. |

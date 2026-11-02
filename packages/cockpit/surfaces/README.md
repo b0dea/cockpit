@@ -26,6 +26,6 @@ contract compares every rendered copy of [skills/procedures/onboarding.md](skill
 for every harness.
 
 References under `references/` are pulled on demand. `cockpit-setup` carries the test-data
-and identity-provider references beside its entry point; they sit outside the skill contract because the
+reference beside its entry point; it sits outside the skill contract because the
 contract covers only entry points and the shared procedure. `cockpit-browser` reads the test-data
 reference through its sibling skill instead of carrying a second copy.

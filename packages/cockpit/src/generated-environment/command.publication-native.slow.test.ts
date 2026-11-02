@@ -66,7 +66,7 @@ describe('public surface publication transaction', () => {
             const settings = JSON.parse(await readFile(join(fixture.root, '.claude/settings.json'), 'utf8')) as {
                 enabledMcpjsonServers: string[]
                 disabledMcpjsonServers: string[]
-                permissions: { deny?: string[] }
+                permissions: { deny?: string[]; allow?: string[] }
             }
             const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as {
                 mcp_servers: Record<string, { enabled?: boolean }>
@@ -109,6 +109,13 @@ describe('public surface publication transaction', () => {
             // Claude's Read, Grep and Glob bypass the guard hook, so the read denial is native: every
             // secrets directory, and each declared instance by its clone-independent sibling suffix.
             expect(settings.permissions.deny).toEqual(['Read(//**/.secrets/**)', 'Read(//**/app/.env)', 'Read(//**/external/.env)'])
+            // Claude's default mode runs no Bash without a rule, so the commands the skills tell an
+            // agent to run are allowed by prefix; person-only commands keep prompting.
+            expect(settings.permissions.allow).toEqual(expect.arrayContaining([
+                'Bash(npx --no cockpit test-run *)', 'Bash(./node_modules/.bin/cockpit check *)', 'Bash(npx --no cockpit sync * --dry-run)',
+            ]))
+            expect(settings.permissions.allow!.filter(rule => /cockpit (down|sync|reset|work (accept|renew|answer|reverse)) /.test(rule)
+                && !rule.endsWith('--dry-run)'))).toEqual([])
             expect(Object.keys(codex.mcp_servers).sort()).toEqual(['approved-server', 'unapproved-server'])
             expect([codex.mcp_servers['approved-server']?.enabled !== false, codex.mcp_servers['unapproved-server']?.enabled]).toEqual([true, false])
             expect(codex).toMatchObject({

@@ -30,8 +30,8 @@ Why it matters: generated files no longer match the canonical cockpit configurat
 Fix: npx --no cockpit sync --config /path/to/cockpit-demo/cockpit.toml
 ```
 
-Every diagnostic has that shape (what failed, why it matters, the exact fix), so a person or an
-agent can act on it without reading the source.
+Diagnostics name what failed, why it matters and the fix, so a person or an agent can act on them
+without reading the source.
 
 ## Why cockpit
 
@@ -132,7 +132,8 @@ watch `check` catch it, then read the configuration section by section.
   permissions for Claude Code, Codex CLI and OpenCode, from one source.
 - **One guard policy.** The guard hook denies pushes to protected branches, reads and edits of
   declared environment files and `.secrets`, and commands that reach declared hosted databases or
-  vendor hosts, and fails closed on input it cannot parse. See
+  vendor hosts, and fails closed on input it cannot parse. Unrecognised commands, such as
+  `npm test` or `git commit`, ask a person; loops and `$(…)` substitutions are refused. See
   [Safety and autonomy](docs/safety-and-autonomy.md).
 - **Preview before every write.** `sync --dry-run` and `reset` show the exact change; deleting
   stale files or resetting data needs you to confirm that exact preview.
@@ -140,8 +141,8 @@ watch `check` catch it, then read the configuration section by section.
   narrow gate while iterating and the full gate before handing back, with `cockpit test-run`.
 - **Graded work orders**. Acceptance criteria, declared checks and a separate
   evaluator that grades each criterion from the check results.
-- **Browser checks**. Drive, screenshot and run accessibility checks against the
-  running application.
+- **Browser checks**. Drive the running application's declared routes, save screenshots and
+  record a digest of each page's accessibility (ARIA) state.
 - **Safe on a shared machine.** Port leases and holder tracking mean one agent cannot stop another
   agent's stack.
 - **Adopt what you already have.** `cockpit init` previews a first setup for one agent tool, and

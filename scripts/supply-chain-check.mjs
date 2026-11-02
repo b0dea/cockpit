@@ -99,7 +99,6 @@ const STATIC_PACKAGE_FILES = Object.freeze([
     'surfaces/guards/codex.adapter.json',
     'surfaces/guards/opencode.adapter.json',
     'surfaces/references/browser.md',
-    'surfaces/references/identity-provider-clerk.md',
     'surfaces/references/test-data-and-personas.md',
     'surfaces/references/testing-tiers.md',
     'surfaces/scripts/browser-runner.sh',

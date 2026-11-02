@@ -12,7 +12,7 @@ signed in: the independent reviewers and the grader run in it, whichever agent t
 
 ## Declare work and the files it may change
 
-The `cockpit-work` skill walks an agent through the loop below. It first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence) and reports what it saw, with proof, without editing code.
+The `cockpit-work` skill walks an agent through the loop below. It first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`, a direct fix proven with the declared test gate before and after, which needs no intake. The `cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence) and reports what it saw, with proof, without editing code.
 
 <!-- cockpit:ref command=work intake --> Start with `cockpit work intake --config cockpit.toml --intent intents/task.json`. The intent is a JSON file, not a sentence or a work-order document. Cockpit reads the upstream file, checks which route applies and whether there is capacity, and only then reads a candidate. A fix creates no work-order files. A work-order route returns `candidateRequired: true`; follow the examples below to prepare a draft. Existing orders can be inspected with `--work-order WO-001`.
 

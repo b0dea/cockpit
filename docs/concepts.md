@@ -49,7 +49,10 @@ database or vendor host. The same policy is installed as a hook in each harness 
 ### Drift
 
 A difference between a generated file on disk and what the current configuration would generate.
-`cockpit check` reports it without changing anything; `cockpit sync` replaces the files it wrote.
+`cockpit check` reports it without changing anything. `cockpit sync` rewrites a changed generated
+artifact such as `compose.generated.yml`, but refuses a changed surface (a skill, agent settings or
+a cockpit-owned region) with `SURFACE_STATE_CONFLICT`, because it can no longer prove it wrote
+those bytes.
 
 ### Holder
 

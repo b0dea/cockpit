@@ -92,10 +92,12 @@ From the intended cockpit directory, install a temporary executable and preview:
 ```sh
 COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
 npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/cockpit
-"$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target codexcli --json
+"$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target <tool> --json
 ```
 
-Run every remaining `init` command, including acceptance, with that same temporary executable.
+Replace `<tool>` with your agent tool's target, listed under
+[Bootstrap a new product](#bootstrap-a-new-product). Run every remaining `init` command, including
+acceptance, with that same temporary executable.
 Then continue with [Bootstrap a new product](#bootstrap-a-new-product). Once `init` has written
 the cockpit's `package.json`, install cockpit in the cockpit directory as above and check
 `./node_modules/.bin/cockpit --help`. Remove the temporary installation only after the
@@ -111,12 +113,13 @@ what `init` discovers.
 
 ### Bootstrap an existing product
 
-From inside the product repository, install the same temporary executable and preview:
+From inside the product repository, install the same temporary executable and preview, replacing
+`<tool>` as above:
 
 ```sh
 COCKPIT_BOOTSTRAP_DIR="$(mktemp -d)"
 npm install --prefix "$COCKPIT_BOOTSTRAP_DIR" --save-dev --save-exact @b0dea/cockpit
-"$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target codexcli --json
+"$COCKPIT_BOOTSTRAP_DIR/node_modules/.bin/cockpit" init "$(pwd)" --target <tool> --json
 ```
 
 The first question is the cockpit root (`cockpit.root`). Answer `"dedicated"`, the
@@ -138,11 +141,12 @@ This is the `init` interview every bootstrap goes through. The commands below us
 `./node_modules/.bin/cockpit`; until the cockpit directory has its own installation, run them with
 the temporary executable from the bootstrap step.
 
-Pick your agent harness's target identifier from the [capability matrix](capability-matrix.md);
-Codex, for example, is `codexcli`. Preview:
+Replace `<tool>` in these commands with your agent tool's target: `claudecode` (Claude Code),
+`codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build). The
+[capability matrix](capability-matrix.md) says what each one enforces. Preview:
 
 ```sh
-./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --json
+./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --json
 ```
 
 The preview writes nothing. It returns the files it would install (the cockpit-setup skill for
@@ -150,7 +154,7 @@ that harness), a `previewSha256` digest and the next step. To accept, run the sa
 terminal and type the digest it shows:
 
 ```sh
-./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --interactive
+./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --interactive
 ```
 
 `init` reads the repositories under the directory and asks for every fact it cannot read from
@@ -202,9 +206,9 @@ preview and accept its fresh `previewSha256`. A missing or edited bootstrap file
 left in place for inspection.
 
 ```sh
-./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --json
-./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --json
-./node_modules/.bin/cockpit init "$(pwd)" --target codexcli --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --json
+./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --json
+./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
 ```
 
 The answers file spells each field as a TOML path, so `ports.bases` is the `bases` key of a
@@ -258,7 +262,7 @@ entry and runs `cockpit sync`. The setup agent's side is in
 Recorded answers are kept, so you can pass the same file on every run. A different value for a
 recorded field is refused (`INIT_ANSWER_CONFLICT`) before anything is published; drop the field to
 keep the recorded answer. To change one before `cockpit.toml` is written, preview resetting it and
-every later dependent answer with `cockpit init <root> --target <target> --reset-answer <field> --json`,
+every later dependent answer with `cockpit init <root> --target <tool> --reset-answer <field> --json`,
 then repeat with `--accept-reset <previewSha256>`; the resumed interview asks for explicit answers
 and defaults acceptance again. A field the interview never asked for is reported as
 `INIT_ANSWER_UNUSED`.

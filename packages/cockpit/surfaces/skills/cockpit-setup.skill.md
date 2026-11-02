@@ -29,8 +29,8 @@ opencode:
 
 Use `Bash` in Claude Code, `shell` in Codex CLI, or `bash` in OpenCode.
 Read the generated [procedures/onboarding.md](procedures/onboarding.md) beside this skill and follow the section that matches the request: **Add a repository** (`npx --no cockpit sibling add <slug> --config cockpit.toml`), **After upgrading cockpit** (follow the *Review an upgrade* section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`, install that exact release, then ask a human to run `npx --no cockpit sync --config cockpit.toml --interactive`), or **Diagnose** (`npx --no cockpit doctor --config cockpit.toml`, `npx --no cockpit check --config cockpit.toml`, `npx --no cockpit preflight --config cockpit.toml`).
-**Bootstrap** (`npx --no cockpit init . --target <target>`, `npx --no cockpit document .`, `npx --no cockpit up --config cockpit.toml`) is what the first install ran; a repository that has never run locally follows **Create a local setup**.
-For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`. Read the identity-provider reference it names only when the lockfile shows that provider.
+**Bootstrap** (`npx --no cockpit init . --target <tool>`, `npx --no cockpit document .`, `npx --no cockpit up --config cockpit.toml`) is what the first install ran; a repository that has never run locally follows **Create a local setup**.
+For test users, roles and signed-in browser state, read `references/test-data-and-personas.md`.
 
 Preview every proposed mutation and obtain explicit confirmation before irreversible work.
 The init command resumes after an interruption and runs the final environment checks; show its actual result and anything still unconfirmed.

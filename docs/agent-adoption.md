@@ -18,8 +18,9 @@ Follow these rules for the whole adoption:
    - creating a Git remote or a hosted repository;
    - any destructive command (`down`, `reset`, `sync --interactive` removals, deleting files);
    - `cockpit sync --adopt`, which moves the team's own agent settings;
-   - accepting an `init` digest (`--accept-preview`, `--accept-defaults`);
-   - committing in the cockpit repository, unless the human asked you to commit.
+   - accepting an `init` digest (`--accept-preview`, `--accept-defaults`).
+
+   The person commits the cockpit repository: hand them the command instead of running it.
 2. **Show the exact preview before you ask:** the `sync --dry-run` listing, the `init` preview
    with its `previewSha256`, the answers file, or the defaults digest. Consent binds to those
    bytes; a digest from anything but the latest pending run is refused.
@@ -76,8 +77,9 @@ the first `init` runs from a temporary installation:
 4. If the executable is absent, repair the install. Never use a command runner that downloads a
    missing package: it bypasses the project's reviewed version.
 
-Every `init` needs `--target <id>` for your agent tool. The examples use `claudecode`; Codex CLI
-is `codexcli` and OpenCode is `opencode`. These three get cockpit's guard hook. Other targets get
+Every `init` needs `--target <tool>` for your agent tool: `claudecode` (Claude Code), `codexcli`
+(Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build); replace `<tool>`
+in the examples with yours. The first three get cockpit's guard hook. Other targets get
 generated files and no guard, and generation alone does not establish guard or permission
 enforcement; for an instructions-only tool follow
 [Capability states](harness-surfaces.md#capability-states). The
@@ -122,7 +124,7 @@ decisions until its repositories exist.
 1. **Preview** from the directory that will hold the cockpit:
 
    ```sh
-   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --json
    ```
 
    `result.interview.outstanding` lists `cockpit.name` (proposed: the directory name),
@@ -233,7 +235,7 @@ several: instructions, guards and settings. Each step stops for the human.
 1. **Preview.** It writes nothing:
 
    ```sh
-   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --json
    ```
 
    Read `result.previewSha256` and `result.interview.outstanding`: every field `init` will ask, in
@@ -262,7 +264,7 @@ several: instructions, guards and settings. Each step stops for the human.
 3. **Accept the preview and the answers** once the human agrees:
 
    ```sh
-   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --json
    ```
 
    The run stops at the first unanswered field, or at `configuration.defaults`. There,
@@ -274,7 +276,7 @@ several: instructions, guards and settings. Each step stops for the human.
 4. **Accept the defaults** after the human has read those attributed values:
 
    ```sh
-   ./node_modules/.bin/cockpit init "$(pwd)" --target claudecode --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+   ./node_modules/.bin/cockpit init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
    ```
 
    This writes `cockpit.toml`, syncs, checks and runs `preflight`. Where a runtime is declared,
@@ -284,9 +286,10 @@ several: instructions, guards and settings. Each step stops for the human.
    Clear them, then rerun the same command:
    - The cockpit repository must be committed and clean
      ([Preflight observations](environment.md#preflight-observations)). A new one reports
-     `GIT_STATE_UNHEALTHY` (no commits yet), and the row's fix stages and commits every file Git
-     does not ignore. Show the human `git status --short` and ask before committing (rule 1 of the
-     [Safety contract](#safety-contract)).
+     `GIT_STATE_UNHEALTHY` (no commits yet). The person commits, not you: the first commit
+     stages the guard's own files, which the guard does not let an agent stage. Show them
+     `git status --short` and hand them the row's fix to run in a terminal:
+     `git -C <cockpit root> add -A && git -C <cockpit root> commit -m 'Add the cockpit'`.
    - The runtime must be measured ([Measure the runtime](#measure-the-runtime)), and then the stack
      brought up once with `cockpit up --config cockpit.toml`.
 

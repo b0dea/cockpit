@@ -129,10 +129,10 @@ ERROR GENERATED_ARTIFACT_DRIFT [compose.generated.yml]: owned generated artifact
 ...
 ```
 
-`check` exits 2, names the file and prints the fix; it never repairs anything itself. A changed
-skill file reports `SURFACE_STATE_CONFLICT` instead, because cockpit will not overwrite a surface
-it can no longer prove it owns. Undo the edit or run the suggested `sync`, and `check` passes
-again. Your own text outside a cockpit-owned region, such as notes at the end of AGENTS.md, is not
+`check` exits 2, names the file and prints the fix; it never repairs anything itself. Run the
+suggested `sync`, which rewrites the file, and `check` passes again. A changed skill file reports
+`SURFACE_STATE_CONFLICT` instead, and `sync` refuses it too, because cockpit will not overwrite a
+surface it can no longer prove it owns: undo that edit. Your own text outside a cockpit-owned region, such as notes at the end of AGENTS.md, is not
 drift.
 
 ## Read the configuration

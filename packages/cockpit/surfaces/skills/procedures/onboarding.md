@@ -12,15 +12,18 @@ executable, `./node_modules/.bin/cockpit`, or through its `npx --no` form, such 
 `npx --no cockpit check --config cockpit.toml`, which runs that same binary and never downloads
 one. If the binary is absent, stop: do not use a command runner that can download a missing
 package implicitly. The user guide this procedure cites is installed with cockpit: open each page
-with a file read from `./node_modules/@b0dea/cockpit/docs/`.
+with a file read from `./node_modules/@b0dea/cockpit/docs/`. In Codex's sandbox only `check`,
+`sync --dry-run` and `--help` run; ask the person to approve running any other cockpit command
+outside the sandbox, or to run it in a terminal.
 
 ## Bootstrap
 
-Choose the current harness target explicitly from the capability matrix,
-`./node_modules/@b0dea/cockpit/docs/capability-matrix.md`, which separates what cockpit generates
-from what has been tested as enforced.
-For Codex CLI, preview with `./node_modules/.bin/cockpit init . --target codexcli --json`; substitute the selected
-target for another harness. Supply `--registry` only when adopting an existing registry.
+Replace `<tool>` below with the target of the agent tool you are running in: `claudecode` (Claude
+Code), `codexcli` (Codex CLI), `opencode` (OpenCode), `cursor` (Cursor) or `grokcli` (Grok Build).
+The capability matrix, `./node_modules/@b0dea/cockpit/docs/capability-matrix.md`, separates what
+cockpit generates for each from what has been tested as enforced.
+Preview with `./node_modules/.bin/cockpit init . --target <tool> --json`. Supply `--registry` only
+when adopting an existing registry.
 The CLI reads the registry, shows the preview, keeps state, writes the generated files and checks the environment.
 Do not redo those steps here.
 
@@ -29,7 +32,7 @@ and CLI output cannot answer, in a small answerable round. Present inferred fact
 for confirmation. These conversation controls are instructed; no harness enforces their count.
 
 Show the exact preview before mutation. In a human terminal, run
-`./node_modules/.bin/cockpit init . --target codexcli --interactive` and accept only the exact displayed digest.
+`./node_modules/.bin/cockpit init . --target <tool> --interactive` and accept only the exact displayed digest.
 JSON mode returns a preview without acceptance. An agent session has no terminal, so it uses the
 non-interactive form instead. Run the `--json` preview and read `interview.outstanding`: every field
 the interview will ask, each with its inferred values and the file each came from. Write the answers
@@ -44,8 +47,9 @@ named gaps. Where a runtime is declared, preflight needs a completed first bring
 stops with `STATE_UNSEEDED` (exit 2, stage `draft-observed`); that is the expected stop, and the
 diagnostics beside it name every other gap found without a running stack. Preflight also passes
 only once the cockpit repository is committed and clean, so a new one reports `GIT_STATE_UNHEALTHY`
-(no commits yet) with the commands that commit the generated files. Show the human
-`git status --short` and ask before committing, unless they asked you to commit. Then bring the
+(no commits yet) with the commands that commit the generated files. The person commits, not you:
+the first commit stages the guard's own files, which the guard does not let an agent stage. Show
+them `git status --short` and hand them that fix to run in a terminal. Then bring the
 stack up (step 6 of **Create a local setup**) and re-run the same command. The step is done when
 the result reports `environment-verified`; a cockpit that declares no runtime reports it, with
 `ENVIRONMENT_NOT_DECLARED` as information, without a bring-up. Native discovery, a real interview
@@ -233,11 +237,11 @@ section of `./node_modules/@b0dea/cockpit/docs/harness-surfaces.md`.
 3. A human runs `./node_modules/.bin/cockpit sync --config cockpit.toml --interactive` in a terminal and approves the exact
    stale-removal digest when the upgrade renamed or retired an owned surface. The guard blocks an agent from
    regenerating its own guard, so do not try to route around it; ask the human to run it.
-4. Review the diff. A hand edit to an owned file stops sync with a conflict (`SURFACE_STATE_CONFLICT`):
+4. Review the diff. A hand edit to a skill, agent settings file or cockpit-owned region stops sync with a conflict (`SURFACE_STATE_CONFLICT`):
    move that change into a `[surfaces].overlays` entry instead of editing the generated file. An upgrade that
    changes something you overrode reports `OVERRIDDEN_CORE_CHANGED`: review the new built-in against your
    override before updating its recorded hash.
-5. Commit the lockfile and the regenerated files together.
+5. Ask the person to commit the lockfile and the regenerated files together.
 6. Read the newly installed `./node_modules/@b0dea/cockpit/CHANGELOG.md` between the old and new
    version for lines starting `Upgrade:`. Each names a step
    that sync alone does not do. The convention is in `.changeset/README.md` in the cockpit repository.
@@ -256,67 +260,46 @@ the environment must pass the blocking gate, and **Explain** to turn the result 
 Run only the read-only command that answers the question. Use `./node_modules/.bin/cockpit doctor --config cockpit.toml --json`
 for environment health and wiring, `./node_modules/.bin/cockpit check --config cockpit.toml --json` for generated-surface
 drift, or `./node_modules/.bin/cockpit preflight --config cockpit.toml --json` for dependency and readiness checks.
-Combine them only when the question crosses those boundaries. Explain the relevant installed lanes,
+Combine them only when the question crosses those boundaries. When explaining drift, say what each
+command does: `check` repairs nothing; `sync` rewrites a hand-edited generated artifact such as
+`compose.generated.yml`, and refuses a hand-edited skill, agent settings file or cockpit-owned
+region with `SURFACE_STATE_CONFLICT`. Explain the relevant installed lanes,
 wired repositories, recorded reasons, current gaps and next accepted commands.
 For a secret question, follow **Secret handling** and distinguish tracked schema, encrypted/provider
 source, redacted status, trusted child injection and unavailable same-user read confinement.
 
 ## Fix
 
-Before creating files, ask cockpit which route applies and whether there is capacity
-(`./node_modules/.bin/cockpit work intake --config cockpit.toml --intent intents/task.json`).
-Start from the task, issue, specification, decision record or next programme item; do not require an
-empty work-order template. Independent certification, work that must carry on in a later session, or a programme requires the
-work-order lane. A fix result creates zero work-order files. Re-evaluate the route when scope
-changes or the work must carry on in a later session; do not wait until hand-back to discover that boundary.
-
-Inspect repository- and user-installed skills for applicable brainstorming, research, specification
-and planning procedures before using a cockpit fallback. Reuse their procedures and link their
-outputs as upstream sources instead of copying or replacing the planning system. Record capability
-selection, chosen source, applicability and reason in the source audit, with the auditor and linked
-output sources. Record explicit absence when no applicable skill is available; absence never skips
-the required source audit. A generated skill inventory or a file hash alone proves no applicability.
-
-Only after the route and capacity check pass, prepare a draft with
-`./node_modules/.bin/cockpit work intake --config cockpit.toml --intent intents/task.json --candidate drafts/task.md`. Link the
-upstream file in the draft's Authority list, audit its sources and unresolved gaps, and validate the canonical
-contract. Keep programme intent in its ordered ledger; prepare only its next item that capacity allows
-against the estate that exists now. A person must still accept the draft as a separate step.
+A fix is a change you make and prove yourself. It needs no intake, draft, source audit or
+work-order file. Use **Work** instead when someone else must certify the result, or the work must
+carry on in a later session or belongs to a programme; check that again whenever the scope changes,
+not at hand-back.
 
 Name the defect, expected behavior, and observed behavior. Reproduce at the narrowest real boundary:
 for logic-only changes use the owning product test or read-only command without starting the stack;
 use `./node_modules/.bin/cockpit up --config cockpit.toml` only when the behavior depends on a live process or integration.
-Then change the repository that owns it. Use `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`
+Run the declared gate that covers the change before you edit
+(`./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id --json`, with its ID from
+`[testing.gates]`), so you know what already passed, and again after. Then change the repository that owns
+the defect. Use `./node_modules/.bin/cockpit logs --config cockpit.toml --service service-id`
 and `./node_modules/.bin/cockpit doctor --config cockpit.toml` only for relevant runtime output. Use
 `./node_modules/.bin/cockpit check --config cockpit.toml` for generated-surface drift. Replace `service-id` with the
 declared service being inspected. Follow the generated testing tiers: extend the nearest behavior
-test through its public surface, iterate with the narrowest selector, and batch complete or shared
-gates after the change stabilizes. Do not repeat weaker proof already established by a stronger test. In the
-work-order lane, persist step checks and heartbeat before moving on; record attempts, root causes,
-open questions for a human and results with the matching cockpit commands, and leave answers and decisions to a
-person, who records them with `work answer`. Keep each layer of results separate.
+test through its public surface, iterate with the narrowest selector, and run the full gate once
+after the change stabilizes. Do not repeat weaker proof already established by a stronger test.
 For environment or credential defects, follow **Secret handling** before invoking the exact declared
 product command.
 
-After each substantial implementation batch and again before grading, perform simplification first,
-then independent code review, with security emphasis when the changed boundary warrants it. Reuse an
-applicable installed code-review or security-review skill and its procedure; otherwise use a
-specialist reviewer or apply that sequence directly. Keep findings in the existing review output,
-not a parallel checklist or plan. Persist findings and dispositions, fix blocking findings, and
-re-run the affected proof. The grader starts only after final declared verification is current. Apply the same sequence proportionally to
-a fix without adding work-order files or an independent grading requirement.
+After the change stabilizes, simplify it, then review it independently, with security emphasis when
+the changed boundary warrants it. Reuse an applicable installed code-review or security-review skill;
+otherwise apply that sequence directly. Fix blocking findings and re-run the affected proof.
 
 Before you report back, list the exact files, temporary files, processes and stack claims this
 task created. Remove only the temporary files this task created. Keep earlier uncommitted changes, other
 agents' files, claims held by other holders and the review results. Release a stack claim only with the existing
 cockpit lifecycle command, following any approval step it already requires. Trust its
 result; when cockpit cannot confirm that release is safe, keep the claim and report who holds it, the refusal and the output.
-Report every item this task created that you kept, and why.
-
-Semantic applicability and these conversation steps are instructed, including skill and review
-routing. Contract validation, capacity checks, saved progress and completion checks are done by
-the CLI. Report any check the CLI cannot do as a gap; never describe an instruction as
-an enforced harness restriction.
+Report every item this task created that you kept, and why, and the gate results before and after.
 
 If a second person must certify this, use cockpit-work instead.
 

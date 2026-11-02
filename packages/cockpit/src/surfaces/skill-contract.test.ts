@@ -215,29 +215,25 @@ describe('shipped skill contract', () => {
         expect(projectInspectedSkillOutputs(result, 'codexcli', 'explain' as 'cockpit-setup')).toMatchObject({ kind: 'refusal' })
     }, 120_000)
 
-    it('ships intent routing, installed capability discovery and reviews before grading in every fix procedure', async () => {
+    it('ships a direct fix procedure that proves the change with the declared gate and needs no work order', async () => {
         const result = await inspectSkillSet(input(await shippedSources()))
         expect(result.kind).toBe('complete')
         if (result.kind !== 'complete') throw new Error('Shipped preparation workflow was refused')
         for (const target of SURFACE_TARGETS) {
             const procedure = result.files.find(file => file.target === target && file.path.endsWith('/cockpit-fix/procedures/onboarding.md'))
             expect(procedure, target).toBeDefined()
-            const body = procedure!.bytes.replace(/\s+/g, ' ')
-            const routing = body.indexOf('Before creating files, ask cockpit which route applies')
-            const discovery = body.indexOf('Inspect repository- and user-installed skills')
-            const drafting = body.indexOf('Only after the route and capacity check pass, prepare a draft')
-            const reviews = body.indexOf('After each substantial implementation batch and again before grading')
-            expect(routing).toBeGreaterThan(-1)
-            expect(discovery).toBeGreaterThan(routing)
-            expect(drafting).toBeGreaterThan(discovery)
-            expect(reviews).toBeGreaterThan(drafting)
-            expect(body).toContain('A fix result creates zero work-order files')
-            expect(body).toContain('Re-evaluate the route when scope changes')
-            expect(body).toContain('Record capability selection, chosen source, applicability and reason')
-            expect(body).toContain('simplification first, then independent code review')
-            expect(body).toContain('Persist findings and dispositions')
-            expect(body).toContain('The grader starts only after final declared verification is current')
-            expect(body).toContain('Semantic applicability and these conversation steps are instructed')
+            const fix = procedure!.bytes.slice(procedure!.bytes.indexOf('## Fix\n'), procedure!.bytes.indexOf('## Work\n')).replace(/\s+/g, ' ')
+            // A one-line fix that had to pass intake and a source audit first sent an agent into the
+            // work-order lane; only work someone else certifies belongs there.
+            expect(fix).not.toContain('work intake')
+            expect(fix).toContain('It needs no intake, draft, source audit or work-order file')
+            expect(fix).toContain('Use **Work** instead when someone else must certify the result')
+            const before = fix.indexOf('cockpit test-run --config cockpit.toml --gate')
+            const edit = fix.indexOf('Then change the repository that owns the defect')
+            expect(before).toBeGreaterThan(-1)
+            expect(edit).toBeGreaterThan(before)
+            expect(fix).toContain('before you edit')
+            expect(fix).toContain('simplify it, then review it independently')
         }
     }, 120_000)
 
@@ -450,7 +446,9 @@ describe('shipped skill descriptions', () => {
 describe('shipped onboarding commands', () => {
     it('routes every onboarding command with its required source arguments', async () => {
         const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
-        const invocations = [...procedure.matchAll(/`\.\/node_modules\/\.bin\/cockpit ([^`]+)`/g)].map(match => match[1]!.split(' '))
+        // `<tool>` is the reader's own agent tool target; any valid one routes the same way.
+        const invocations = [...procedure.matchAll(/`\.\/node_modules\/\.bin\/cockpit ([^`]+)`/g)]
+            .map(match => match[1]!.replaceAll('<tool>', 'claudecode').split(' '))
         expect(invocations.length).toBeGreaterThanOrEqual(9)
         // The procedure is run by a person at a terminal; a CI runner's CI variable would make the
         // interactive sync step refuse, correctly, before routing.

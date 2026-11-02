@@ -16,9 +16,9 @@ commands and probes, auth setup, ignore rules and authorization tests. Extend th
 **Why.** A second seeder or a guessed library version disagrees with the product's own writers, and the
 disagreement shows up later as failures that look like product bugs.
 **How.** Resolve test-library versions from the consumer lockfile. Never make up a version,
-provider setting, custom role or permission. If the lockfile shows an identity provider with a reference
-in this skill's `references/` folder (`identity-provider-clerk.md`), read that reference now; otherwise do
-not load it.
+provider setting, custom role or permission. Read the roles the identity provider's instance exposes and
+the product's authorization code before assigning one: a role that looks standard may not exist there, and
+an assumed role signs in and then fails authorization for a reason that looks like a product bug.
 
 ## Declare personas
 
@@ -63,7 +63,9 @@ product defects.
 1. Warm the application first, then wait for the provider session to exist before saving state. Done when a
    signed-in page has rendered.
 2. Mint serially from a clean context under the declared ignored auth root: directory mode 0700, files 0600,
-   one state per persona, using the consumer's own Playwright package.
+   one state per persona, using the consumer's own Playwright package. Sign in through the identity
+   provider's own testing helper when it ships one, and do not wrap it in a second token helper: a
+   duplicate hides which one failed.
 3. Verify the active synthetic identity, organization, role and application permission before saving.
 4. Re-mint after any reseed or reset. Name files so the reset patterns match them; a file outside those
    patterns survives a reset. Replay every wipe pattern against a synthetic fixture before relying on it.

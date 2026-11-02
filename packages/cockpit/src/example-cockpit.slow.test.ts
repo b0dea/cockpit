@@ -256,7 +256,7 @@ describe('cockpits without a generated environment', () => {
         }
         expect(existsSync(join(root, '.claude/skills/cockpit-setup/SKILL.md'))).toBe(true)
         expect(existsSync(join(root, '.claude/skills/cockpit-work/SKILL.md'))).toBe(true)
-        for (const reference of ['test-data-and-personas.md', 'identity-provider-clerk.md']) {
+        for (const reference of ['test-data-and-personas.md']) {
             expect(readFileSync(join(root, '.claude/skills/cockpit-setup/references', reference), 'utf8')).not.toContain('cockpit:verified')
         }
         expect(existsSync(join(root, 'AGENTS.md'))).toBe(true)

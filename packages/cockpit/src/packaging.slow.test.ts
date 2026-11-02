@@ -337,7 +337,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'surfaces/skills/cockpit-work.skill.md',
                 'surfaces/skills/procedures/onboarding.md',
                 'surfaces/references/test-data-and-personas.md',
-                'surfaces/references/identity-provider-clerk.md',
             ]),
         )
     })

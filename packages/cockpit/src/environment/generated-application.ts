@@ -588,7 +588,6 @@ const RESTRICTION_ASSETS = Object.freeze([
 // shared procedure, and these are pulled on demand like the browser reference.
 const REFERENCE_ASSETS = Object.freeze([
     'references/test-data-and-personas.md',
-    'references/identity-provider-clerk.md',
 ] as const)
 const WORK_ASSETS = Object.freeze([
     'skills/cockpit-browser.skill.md',
@@ -2048,6 +2047,25 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
         .map(grant => `{file:${openCodeGrantFile(grant.slug)}}/**`))].sort(compareCodeUnits).map(pattern => [pattern, 'allow' as const]))
 }
 
+// The cockpit commands the shipped skills tell an agent to run and the guard admits without a
+// prompt. Claude Code allows nothing in its default mode without a rule, so a headless session was
+// denied even `test-run` from its own skill. A rule only lets Claude run the command without asking:
+// the guard hook still runs first, and its ask or deny wins over the rule. Person-only commands
+// (`down`, `sync`, `work accept`, `work answer` and the rest that prompt) are left out so they keep
+// asking. Measured with Claude Code 2.1.316 on 2026-11-02 beside an unruled control: `Bash(<prefix> *)`
+// ran a matching command headless, the control and a chain with an unmatched part were denied, a hook
+// `ask` denied a matching command, and Claude ignores these rules until a person trusts the workspace.
+const AGENT_COCKPIT_COMMANDS = [
+    'check *', 'doctor *', 'preflight *', 'logs *', 'sync * --dry-run', 'up *', 'sleep *', 'runtime measure *', 'test-run *',
+    'work status *', 'work resume *', 'work intake *', 'work record *', 'work execute *', 'work review *', 'work grade *', 'work sweep *',
+    'browser drive *', 'browser accessibility *', 'browser screenshot *',
+] as const
+
+function claudeCommandAllowances(): Readonly<Record<string, 'allow'>> {
+    return Object.fromEntries(['npx --no cockpit', './node_modules/.bin/cockpit']
+        .flatMap(launcher => AGENT_COCKPIT_COMMANDS.map(command => [`${launcher} ${command}`, 'allow' as const])))
+}
+
 // What each harness loads at start, from the dated instruction-loading runs. Claude Code applies a
 // scoped rule only to matching files, so a scoped source counts separately there.
 const GUIDE_LOAD_CHARACTERIZATIONS = Object.freeze(Object.fromEntries(shippedInstructionCapabilities()
@@ -2088,7 +2106,10 @@ function nativeSources(
     sources.push(Object.freeze({ path: 'permissions.jsonc', bytes: `${JSON.stringify({
         permission: {},
         claudecode: {
-            permission: { read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])) },
+            permission: {
+                read: Object.fromEntries(claudeReadDenials(siblings, instances).map(rule => [rule, 'deny'])),
+                bash: claudeCommandAllowances(),
+            },
             permissions: { additionalDirectories: paths('claudecode') },
             enabledMcpjsonServers,
             ...(disabledMcpjsonServers.length > 0 ? { disabledMcpjsonServers } : {}),

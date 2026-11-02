@@ -251,7 +251,6 @@ describe('generated application authenticated read batching', () => {
             'skills/cockpit-work.skill.md',
             'skills/procedures/onboarding.md',
             'references/test-data-and-personas.md',
-            'references/identity-provider-clerk.md',
             'guards/bash-guard.sh',
             'guards/claude.adapter.json',
             'guards/codex.adapter.json',
@@ -263,6 +262,7 @@ describe('generated application authenticated read batching', () => {
         ])
         const individualSurfaceAssets: string[] = []
         const ownershipReadOffsets: number[] = []
+        const singleEntryReads: Array<{ offset: number; path: string }> = []
         const result = await syncGeneratedEnvironment({ configPath }, {
             execute: async (step) => {
                 if (step.labels.action === 'read-batch') batches.push(JSON.parse(step.argv[3]!))
@@ -271,6 +271,7 @@ describe('generated application authenticated read batching', () => {
                     if ([...request.segments, request.name].join('/') === '.cockpit/generated-environment-ownership.json') {
                         ownershipReadOffsets.push(batches.length)
                     }
+                    singleEntryReads.push({ offset: batches.length, path: [...request.segments, request.name].join('/') })
                 }
                 if (step.labels.action === 'read-file') {
                     const request = JSON.parse(step.argv[3]!) as { segments: string[]; name: string }
@@ -302,7 +303,6 @@ describe('generated application authenticated read batching', () => {
             ...skillRoots.flatMap(prefix => [
                 ...skills.flatMap(name => [`${prefix}/${name}/SKILL.md`, `${prefix}/${name}/procedures/onboarding.md`]),
                 `${prefix}/cockpit-setup/references/test-data-and-personas.md`,
-                `${prefix}/cockpit-setup/references/identity-provider-clerk.md`,
             ]),
             ...skills.map(name => `.agents/skills/${name}/agents/openai.yaml`),
             '.claude/agents/evaluator.md', '.codex/agents/evaluator.toml', '.opencode/agents/evaluator.md',
@@ -318,9 +318,14 @@ describe('generated application authenticated read batching', () => {
         const surfaceObservationBatches = batches.slice(0, admissionBatchOffset).filter(batch => batch.entries.every(entry => entry.maxBytes === 1)
             && batch.entries.some(entry => entry.action === 'read-entry' && surfacePaths.has([...entry.segments, entry.name].join('/'))))
         const observedSurfaceEntries = surfaceObservationBatches.flatMap(batch => batch.entries)
-        expect(surfaceObservationBatches.map(batch => batch.entries.length)).toEqual([64, 6])
-        expect(observedSurfaceEntries.map(entry => ({ action: entry.action, path: [...entry.segments, entry.name].join('/') })))
-            .toEqual([...expectedSurfacePaths, 'opencode.json'].sort().map(path => ({ action: 'read-entry', path })))
+        // A batch holds at most 64 entries; a single remainder is read on its own.
+        expect(surfaceObservationBatches.map(batch => batch.entries.length)).toEqual([64])
+        const batched = observedSurfaceEntries.map(entry => [...entry.segments, entry.name].join('/'))
+        const remainder = new Set(singleEntryReads.filter(read => read.offset <= admissionBatchOffset! && surfacePaths.has(read.path)
+            && !batched.includes(read.path)).map(read => read.path))
+        expect([...batched, ...remainder].sort())
+            .toEqual([...expectedSurfacePaths, 'opencode.json'].sort())
+        expect(observedSurfaceEntries.every(entry => entry.action === 'read-entry')).toBe(true)
         expect(surfaceObservationBatches.flatMap(batch => batch.entries).every(entry => entry.maxBytes === 1)).toBe(true)
         const surfaceAssetBatches = batches.filter(batch => batch.entries.length === surfaceAssets.size
             && batch.entries.every(entry => surfaceAssets.has([...entry.segments, entry.name].join('/'))))

@@ -740,11 +740,10 @@ relying on it; a file outside those patterns survives a reset.
 The shipped `cockpit-setup` skill carries an on-demand reference for this
 (`references/test-data-and-personas.md`), which `cockpit-browser` also loads before signed-in
 testing. It keeps stable synthetic persona IDs and the product's own rows separate from what the
-identity provider owns, and asks for both an allowed and a denied authorization check. Its Clerk
-recipe, a separate reference read only when the lockfile shows Clerk, uses the product's current
-supported Clerk and Playwright APIs. It does not make cockpit an identity provider, does not create
-provider identities without explicit permission, and does not treat an existing state file as
-proof of a live Clerk login. Provider writes and cleanup stay limited to an approved development
+identity provider owns, and asks for both an allowed and a denied authorization check. It works
+with whichever identity provider the product's lockfile shows, through the product's own adapter
+and Playwright. It does not make cockpit an identity provider, does not create provider identities
+without explicit permission, and does not treat an existing state file as proof of a live login. Provider writes and cleanup stay limited to an approved development
 instance and the exact operation that was approved.
 
 | Symptom | Likely cause |

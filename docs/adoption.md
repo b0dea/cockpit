@@ -42,11 +42,12 @@ registry found elsewhere.
 
 ## Bootstrap one harness
 
-Preview for one harness, then accept:
+Preview for one harness, then accept. Replace `<tool>` with its target, listed under
+[Bootstrap a new product](getting-started.md#bootstrap-a-new-product):
 
 ```sh
-./node_modules/.bin/cockpit init . --target codexcli --registry ./env/lib/instance.sh --json
-./node_modules/.bin/cockpit init . --target codexcli --registry ./env/lib/instance.sh --interactive
+./node_modules/.bin/cockpit init . --target <tool> --registry ./env/lib/instance.sh --json
+./node_modules/.bin/cockpit init . --target <tool> --registry ./env/lib/instance.sh --interactive
 ```
 
 The first command writes nothing; the second needs a terminal and the exact preview digest.
