@@ -147,6 +147,7 @@ Does not read `cockpit.toml`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -749,6 +750,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -916,6 +918,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -1254,6 +1257,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -1456,6 +1460,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -1651,6 +1656,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -1854,6 +1860,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -2049,6 +2056,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -2166,6 +2174,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MACHINE_COLD_START_EXCEEDED` | make the services start faster, or raise environment.machine.cold_start_seconds in cockpit.toml above the measured time and run npx --no cockpit sync --config <your cockpit.toml>; then run npx --no cockpit down --config <your cockpit.toml> and npx --no cockpit up --config <your cockpit.toml> |
 | `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
@@ -2249,6 +2258,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -2529,6 +2539,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -2745,6 +2756,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -2876,6 +2888,7 @@ Reads `cockpit.toml` from `--config`.
 | `GENERATED_OWNERSHIP_INVALID` | [Troubleshooting](troubleshooting.md#common-refusal-guidance) |
 | `GENERATED_STALE_APPROVAL_INVALID` | [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
 | `GENERATED_STALE_APPROVAL_REQUIRED` | a person runs npx --no cockpit sync --config <your cockpit.toml> --interactive in a terminal outside CI, reviews the stale entries it lists, and types the digest it shows only if every removal is intended; [Troubleshooting](troubleshooting.md#merge-ownership-and-generation) |
+| `LOGS_TRUNCATED` | lower --tail to the number of recent records you need, or read the older records from the container runtime directly |
 | `MACHINE_CPU_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MACHINE_DISK_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
 | `MACHINE_MEMORY_BELOW_FLOOR` | give the container runtime more resources (its VM or Docker Desktop settings) or lower the declared environment.machine floor in cockpit.toml deliberately and run npx --no cockpit sync --config <your cockpit.toml>, then retry |
@@ -2955,6 +2968,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -3147,6 +3161,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -3344,6 +3359,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -3582,6 +3598,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -3821,6 +3838,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -4061,6 +4079,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -4299,6 +4318,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -4538,6 +4558,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -4777,6 +4798,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -5016,6 +5038,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -5254,6 +5277,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -5492,6 +5516,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -5730,6 +5755,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -5970,6 +5996,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -6207,6 +6234,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -6445,6 +6473,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -6683,6 +6712,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -6921,6 +6951,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -7159,6 +7190,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -7397,6 +7429,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
@@ -7635,6 +7668,7 @@ Reads `cockpit.toml` from `--config`.
 | `COMPOSE_BIND_UNDECLARED` |
 | `COMPOSE_HEALTHCHECK_MISSING` |
 | `COMPOSE_IMAGE_UNPINNED` |
+| `COMPOSE_PORT_ALL_INTERFACES` |
 | `COMPOSE_PORT_NOT_LEASED` |
 | `COMPOSE_SIBLING_NOT_MOUNTED` |
 | `CONFIG_CHANGED_DURING_EXECUTION` |
