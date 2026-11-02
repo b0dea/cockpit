@@ -2760,6 +2760,20 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 1
+        },
+        "verification_timeout_seconds": {
+          "default": 1800,
+          "description": "Seconds one declared work-order verification command may run before it is stopped and reported as not run.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
+        },
+        "evaluator_timeout_seconds": {
+          "default": 900,
+          "description": "Seconds one independent review or grading run of the evaluator may take before it is stopped.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
         }
       },
       "additionalProperties": false
@@ -3365,6 +3379,53 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 7200
+              },
+              "select": {
+                "description": "Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value.",
+                "type": "object",
+                "properties": {
+                  "spec": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "file": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "test": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "route": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "required": [
