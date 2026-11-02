@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { diagnosticInventory } from '../../../../scripts/docs-lint.mjs'
+import { workingTreeDiagnosticInventory } from '../../test-support/working-tree-inventory.js'
 import { diagnosticInventoryFromSources, type DiagnosticRemedy } from '../../../../scripts/diagnostic-inventory.mjs'
 import { runCli } from '../cli.js'
 import { commands } from '../command-table.js'
@@ -421,7 +421,7 @@ describe('reference generation', () => {
     })
 
     it('lists under each command every code its CLI failure paths emit, and none its dispatch cannot reach', async () => {
-        const inventory = diagnosticInventory(process.cwd(), 'HEAD')
+        const inventory = workingTreeDiagnosticInventory(process.cwd())
         expect([...inventory.commandDiagnostics.keys()]).toEqual(commands.map(command => command.handler))
         const rendered = renderReferences({ ...input(), diagnostics: inventory })
         expect(rendered.kind, JSON.stringify(rendered)).toBe('complete')
@@ -512,7 +512,7 @@ describe('reference generation', () => {
         expect(validateTroubleshootingIndex(input().diagnostics, row.replace('repair the synthetic input', 'stale remedy')).length).toBeGreaterThan(0)
         const missingRemedies = { ...input().diagnostics, remedies: new Map() } as Parameters<typeof validateTroubleshootingIndex>[0]
         expect(validateTroubleshootingIndex(missingRemedies, row).length).toBeGreaterThan(0)
-        const inventory = diagnosticInventory(process.cwd(), 'HEAD')
+        const inventory = workingTreeDiagnosticInventory(process.cwd())
         expect(inventory.items.length).toBeGreaterThan(10)
         expect(inventory.remedies.size).toBe(inventory.items.length)
         const rendered = renderReferences({ ...input(), diagnostics: inventory })

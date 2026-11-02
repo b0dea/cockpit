@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { diagnosticInventory } from '../../../scripts/docs-lint.mjs'
+import { workingTreeDiagnosticInventory } from '../test-support/working-tree-inventory.js'
 import { READINESS_CATALOGUE, readinessReport } from './readiness.js'
 
 describe('readiness catalogue', () => {
     // The catalogue explains prerequisites; it must never name a code nothing emits, or call a
     // prerequisite required while no command refuses without it.
     it('names only emitted codes, and each required prerequisite is refused by the command it names', () => {
-        const inventory = diagnosticInventory(process.cwd(), 'HEAD') as {
-            owners: ReadonlyMap<string, unknown>
-            commandDiagnostics: ReadonlyMap<string, ReadonlySet<string>>
-        }
+        const inventory = workingTreeDiagnosticInventory(process.cwd())
         for (const entry of READINESS_CATALOGUE) {
             for (const code of entry.codes) expect(inventory.owners.has(code), `${entry.id}: ${code}`).toBe(true)
             if (entry.level === 'recommended') {
