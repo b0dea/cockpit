@@ -56,7 +56,7 @@ export async function inspectProjectReadiness(
         severity: 'warning' as const,
         // A literal, so the diagnostic inventory captures the fix beside the code.
         code: 'GUARD_SEARCH_PATH_RELATIVE' satisfies typeof ENVIRONMENT_CODES.GUARD_SEARCH_PATH_RELATIVE,
-        message: `PATH holds the relative entry ${JSON.stringify(relativeEntry)}${relativeEntry === '' ? ' (an empty entry, from a stray colon, is the working directory)' : ''}; an agent harness started with this PATH gets a guard that asks before every command, because a file the agent wrote could run in place of the command, and Codex and OpenCode refuse what it asks about`,
+        message: `PATH holds the relative entry ${JSON.stringify(relativeEntry)}${relativeEntry === '' ? ' (an empty entry is the working directory)' : ''}; an agent harness started with this PATH gets a guard that asks before every command, because a file the agent wrote could run in place of the command, and Codex and OpenCode refuse what it asks about`,
         target: 'PATH',
         fix: 'remove every relative or empty entry from PATH where the shell profile or launcher that starts the agent harness sets it, then restart the harness',
     }))

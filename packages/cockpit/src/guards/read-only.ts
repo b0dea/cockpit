@@ -164,9 +164,10 @@ function files(argv: readonly string[], table: OptionTable): Classified {
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
 // Diff output that names files or counts lines; any other diff output prints file content.
 const GIT_NAME_ONLY = set('--stat', '--numstat', '--shortstat', '--name-only', '--name-status', '--summary', '--raw', '--dirstat', '-s', '--no-patch', '--quiet')
-// Options that turn on patch output. Git also accepts some short options bundled, so any single-dash
-// word holding one of these letters counts, at the cost of asking for an attached `-S` pickaxe value.
-const GIT_PATCH = /^(?:--patch(?:-with-(?:stat|raw))?|--cc|--dd|--remerge-diff|--diff-merges|--word-diff|--color-words|--function-context|--unified|--binary)$/
+// Options that print changed lines: patch output, and `--check`, which quotes each line it flags. Git
+// also accepts some short options bundled, so any single-dash word holding one of these letters
+// counts, at the cost of asking for an attached `-S` pickaxe value.
+const GIT_PATCH = /^(?:--patch(?:-with-(?:stat|raw))?|--cc|--dd|--remerge-diff|--diff-merges|--word-diff|--color-words|--function-context|--unified|--binary|--check)$/
 
 /** What file content `git diff`, `show` or `log` prints, or undefined when it prints none. */
 function gitTrackedContent(verb: string, args: readonly string[]): ReadOnlyAccess['trackedContent'] {
@@ -181,7 +182,8 @@ function gitTrackedContent(verb: string, args: readonly string[]): ReadOnlyAcces
     if (!(verb === 'log' ? patch : patch || !nameOnly || verb === 'show' && revisions)) return undefined
     const pathspecs = end < 0 ? null : args.slice(end + 1)
     // Magic and wildcard pathspecs match more than their spelling, so they limit nothing.
-    return { limitedTo: pathspecs === null || verb !== 'log' && revisions || pathspecs.length === 0
+    // `--full-diff` prints every file a commit the pathspec selects changed.
+    return { limitedTo: pathspecs === null || verb !== 'log' && revisions || pathspecs.length === 0 || options.includes('--full-diff')
         || pathspecs.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? null : pathspecs }
 }
 
@@ -204,8 +206,9 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     if (verb === undefined || !GIT_READ_VERBS.has(verb)) return undefined
     // --output writes a file, an external diff driver runs a program, and --no-index prints any file.
     if (args.some(arg => /^--(?:output|ext-diff|textconv|no-index)(?:=|$)/.test(arg))) return undefined
-    // Revision operands that name a blob (`HEAD:path`) print content the path inspection cannot see.
-    if (args.some(arg => !arg.startsWith('-') && arg.includes(':'))) return undefined
+    // Revision operands that name a blob (`HEAD:path`) print content the path inspection cannot see, and
+    // so does `git log -L<range>:<path>`, whose path is attached to the option.
+    if (args.some(arg => !arg.startsWith('-') && arg.includes(':') || /^-L/.test(arg))) return undefined
     // Operands may be pathspecs whose content is printed, and a path outside the repository turns
     // `git diff` into a file comparison, so every operand is inspected as a read.
     const trackedContent = verb === 'status' ? undefined : gitTrackedContent(verb, args)

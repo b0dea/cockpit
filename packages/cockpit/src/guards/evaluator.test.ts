@@ -675,7 +675,9 @@ describe('built-in read-only profile', () => {
                 ...(request.operation === 'repository' ? { tracked } : {}) }))
         const decide = tracking([`${root}/.env`, `${root}/.env.example`], [`${root}/.env.example`])
         // A revision may name a blob, which diff and show print whatever pathspec or option follows.
-        for (const command of ['git diff', 'git diff --cached', 'git show HEAD', 'git show -s abc123', 'git show HEAD --stat -- src', 'git log -p', 'git log -p5 -- .', 'git log --patch', 'git diff -U3 -- src/..']) {
+        // `--full-diff` prints a selected commit's other files, and `--check` quotes the lines it flags.
+        for (const command of ['git diff', 'git diff --cached', 'git show HEAD', 'git show -s abc123', 'git show HEAD --stat -- src', 'git log -p', 'git log -p5 -- .', 'git log --patch', 'git diff -U3 -- src/..',
+            'git log -p --full-diff -- src', 'git log --check', 'git diff --stat --check']) {
             expect(decide(command), command).toEqual({ decision: 'ask',
                 reason: 'This Git command can print .env, a tracked environment file, secrets file or declared instance. Limit it with `-- <path>` to paths that do not hold one.' })
         }
@@ -683,6 +685,8 @@ describe('built-in read-only profile', () => {
             expect(decide(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
         }
         expect(tracking([`${root}/.env.example`], [`${root}/.env.example`])('git diff').decision).toBe('allow')
+        // The line-range form attaches its path to the option, where neither check would see it.
+        for (const command of ['git log -L1,99:.env', 'git log -L1,99:config/active.instance']) expect(tracking([])(command).decision, command).not.toBe('allow')
         expect(tracking(null)('git log -p').reason).toBe('The guard could not list the environment files and secrets this repository tracks, so it cannot prove this Git command prints none of them.')
         expect(tracking([])('npm test && git diff -- src').reason)
             .toBe('This Git command prints committed content, and another command in this call can change what the repository tracks first. Run it on its own.')

@@ -190,10 +190,14 @@ async function gitPaths(git: ResolvedExecutable, repository: string, args: reado
         && outcome.execution.exitCode === 1 && outcome.execution.signal === null ? [] : null
 }
 
+function present(path: string): boolean {
+    try { lstatSync(path); return true } catch (error) { if (missing(error)) return false; throw error }
+}
+
 /** The nearest directory at or above `directory` holding a `.git` entry, or undefined. */
 function repositoryAbove(directory: string): string | undefined {
     for (let cursor = directory; ; cursor = dirname(cursor)) {
-        try { lstatSync(join(cursor, '.git')); return cursor } catch (error) { if (!missing(error)) throw error }
+        if (present(join(cursor, '.git'))) return cursor
         if (dirname(cursor) === cursor) return undefined
     }
 }
@@ -201,8 +205,8 @@ function repositoryAbove(directory: string): string | undefined {
 /**
  * The paths a default ripgrep search of `path` reads that are named `.env*`, lie below a `.secrets`
  * directory or are one of `watched`, each reported at its first such name, as Git lists what the
- * enclosing repository does not ignore; null past the protected location bound or when Git did not
- * answer. Undefined when Git's list cannot stand for ripgrep's: outside a repository, through a
+ * enclosing repository does not ignore; null past the protected location bound. Undefined when Git
+ * did not answer or its list cannot stand for ripgrep's: outside a repository, through a
  * nested repository or submodule, below an `.ignore` or `.rgignore` file, which ripgrep reads and Git
  * does not, or when the search names an ignored directory, whose children ripgrep may still read.
  *
@@ -218,26 +222,34 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
     if (realpathSync.native(path) !== path) return undefined
     const start = status.isDirectory() ? path : dirname(path)
     for (let cursor = start; ; cursor = dirname(cursor)) {
-        for (const name of ['.ignore', '.rgignore']) {
-            try { lstatSync(join(cursor, name)); return undefined } catch (error) { if (!missing(error)) throw error }
-        }
+        if (present(join(cursor, '.ignore')) || present(join(cursor, '.rgignore'))) return undefined
         if (dirname(cursor) === cursor) break
     }
     const repository = repositoryAbove(start)
     if (repository === undefined) return undefined
     const below = relative(repository, path)
-    if (/[*?[\\]/.test(below)) return undefined
+    // check-ignore takes no pathspec magic, so a name it would read as magic or a wildcard is walked.
+    if (/^:|[*?[\\]/.test(below)) return undefined
     const scope = below === '' ? [] : [`:(literal)${below}`]
     if (below !== '' && (await gitPaths(git, repository, ['check-ignore', '--no-index', '--', below], execute))?.length !== 0) return undefined
     const prefix = below === '' ? '' : `${below}/`
-    const [cached, others, ignoreFiles] = await Promise.all([
+    const inside = watched.filter(item => item === path || item.startsWith(`${path}/`)).map(item => `:(icase,literal)${relative(repository, item)}`)
+    const [cached, others, ignored] = await Promise.all([
         gitPaths(git, repository, ['ls-files', '-z', '--stage', '--', ...scope], execute),
         gitPaths(git, repository, ['ls-files', '-z', '--others', '--exclude-per-directory=.gitignore', '--', ...scope], execute),
         gitPaths(git, repository, ['ls-files', '-z', '--others', '--ignored', '--exclude-per-directory=.gitignore', '--',
-            `:(icase,glob)${prefix}**/.ignore`, `:(icase,glob)${prefix}**/.rgignore`], execute),
+            ...['.ignore', '.rgignore', '.env*', '.env*/**', '.secrets/**'].map(name => `:(icase,glob)${prefix}**/${name}`), ...inside], execute),
     ])
-    if (cached === null || others === null || ignoreFiles === null) return null
-    if (ignoreFiles.length) return undefined
+    if (cached === null || others === null || ignored === null || ignored.length > GUARD_PROTECTED_LOCATION_LIMIT) return undefined
+    const boundary = (directory: string) => ['.git', '.jj'].some(name => present(join(directory, name)))
+    for (const entry of ignored) {
+        if (entry.split('/').some(name => ['.ignore', '.rgignore'].includes(foldGuardSpelling(name)))) return undefined
+        // ripgrep stops applying the ignore files above a directory holding `.git` or `.jj`, which Git
+        // does not, so a protected file Git ignores is unread only when no such directory lies above it.
+        for (let directory = dirname(join(repository, entry)); directory !== repository; directory = dirname(directory)) {
+            if (boundary(directory)) return undefined
+        }
+    }
     const listed: string[] = []
     for (const line of cached) {
         const tab = line.indexOf('\t')
@@ -255,7 +267,8 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
     for (const entry of listed) {
         if (entry.split('/').some(name => ['.ignore', '.rgignore'].includes(foldGuardSpelling(name)))) return undefined
         const absolute = join(repository, entry)
-        if (absolute !== path && !absolute.startsWith(`${path}/`)) continue
+        // Every query is scoped to `path`, so an entry outside it is a spelling Git and the volume disagree on.
+        if (absolute !== path && !absolute.startsWith(`${path}/`)) return undefined
         const names = absolute === path ? [] : relative(path, absolute).split('/')
         const first = names.findIndex(sensitiveName)
         if (first >= 0) found.add(join(path, ...names.slice(0, first + 1)))

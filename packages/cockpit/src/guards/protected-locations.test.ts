@@ -102,6 +102,13 @@ describe('guard protected locations', () => {
         write('node_modules/.rgignore', '!.env\n')
         expect(await unignored('.')).toBeUndefined()
         rmSync(join(root, 'node_modules/.rgignore'))
+        // ripgrep stops applying the ignore files above a directory holding `.git` or `.jj`; Git does not.
+        write('.gitignore', '.env\nnode_modules\nconfig/runtime.env\n')
+        expect(await unignored('.')).toEqual([join(root, '.env.local'), join(root, 'pkg/.secrets')])
+        mkdirSync(join(root, 'config/.jj'))
+        expect(await unignored('.')).toBeUndefined()
+        rmSync(join(root, 'config/.jj'), { recursive: true })
+        write('.gitignore', '.env\nnode_modules\n')
         execFileSync('git', ['init', '-q', join(root, 'vendor/nested')])
         expect(await unignored('.')).toBeUndefined()
         expect(await unignored('src')).toEqual([])

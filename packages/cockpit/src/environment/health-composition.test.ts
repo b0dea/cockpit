@@ -488,7 +488,7 @@ else process.exit(64)
         expect((await doctor('/usr/bin:./node_modules/.bin:/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'GUARD_SEARCH_PATH_RELATIVE',
             message: expect.stringContaining('PATH holds the relative entry "./node_modules/.bin"') }))
         expect((await doctor('/usr/bin::/bin')).diagnostics).toContainEqual(expect.objectContaining({ code: 'GUARD_SEARCH_PATH_RELATIVE',
-            message: expect.stringContaining('an empty entry, from a stray colon, is the working directory') }))
+            message: expect.stringContaining('an empty entry is the working directory') }))
     })
 
     it('warns from doctor when the cockpit has work orders but the Codex CLI that grades them is not on PATH', async () => {
