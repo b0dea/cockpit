@@ -1624,7 +1624,7 @@ async function acquireLock(
                 catch (error) {
                     // A lock directory this acquisition created but could not remove blocks every
                     // later acquisition, so the operator must be told it exists.
-                    leftover = `; the lock directory this acquisition created at ${namespace.paths.stateLock} could not be removed: ${(error as Error).message}`
+                    leftover = `; the lock directory this acquisition created at ${namespace.paths.stateLock} could not be removed: ${errorCause(error)}`
                 }
             }
             return refusal(
@@ -1710,6 +1710,14 @@ function sameNode(
     return actual.dev === expected.dev && actual.ino === expected.ino
 }
 
+// Release reports its own failures as written and anything else through errorCause: a hook or
+// filesystem error from another source may carry text this module did not write.
+class LockReleaseStepError extends Error {}
+
+function releaseStepCause(error: unknown): string {
+    return error instanceof LockReleaseStepError ? error.message : errorCause(error)
+}
+
 class LockReleaseError extends Error {
     constructor(
         message: string,
@@ -1745,7 +1753,7 @@ async function releaseLock(
         || verifiedLock.isSymbolicLink()
         || !privatelyOwned(verifiedLock)
     ) {
-        throw new Error('state lock changed before release')
+        throw new LockReleaseStepError('state lock changed before release')
     }
     const currentOwner = await readRegularFileSnapshotNoFollow(ownerPath, async () => {
         const root = await lstat(releaseRoot)
@@ -1756,14 +1764,14 @@ async function releaseLock(
             && samePrivateNode(lock, verifiedLock)
     })
     if (currentOwner.bytes.toString('utf8') !== ownerBytes) {
-        throw new Error('state lock ownership changed before release')
+        throw new LockReleaseStepError('state lock ownership changed before release')
     }
     const parsedOwner = StateLockSchema.parse(JSON.parse(ownerBytes))
     await beforeRelease?.()
     if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
         || !samePrivateNode(lstatSync(lockPath), verifiedLock)
         || !samePrivateNode(lstatSync(ownerPath), currentOwner)) {
-        throw new Error('state lock permissions or ownership changed before release')
+        throw new LockReleaseStepError('state lock permissions or ownership changed before release')
     }
 
     const tombstone = join(releaseRoot, `.state.lock.release-${parsedOwner.token}`)
@@ -1780,7 +1788,7 @@ async function releaseLock(
             || movedLock.isSymbolicLink()
             || !samePrivateNode(movedLock, verifiedLock)
         ) {
-            throw new Error('moved lock directory does not match verified owner')
+            throw new LockReleaseStepError('moved lock directory does not match verified owner')
         }
         const movedOwner = await readRegularFileSnapshotNoFollow(movedOwnerPath, async () => {
             const root = await lstat(releaseRoot)
@@ -1791,11 +1799,11 @@ async function releaseLock(
                 && samePrivateNode(lock, movedLock)
         })
         if (!sameNode(movedOwner, currentOwner) || movedOwner.bytes.toString('utf8') !== ownerBytes) {
-            throw new Error('moved lock owner does not match verified owner')
+            throw new LockReleaseStepError('moved lock owner does not match verified owner')
         }
         const entries = await readdir(tombstone)
         if (entries.length !== 1 || entries[0] !== 'owner.json') {
-            throw new Error('quarantined lock contains unexpected entries')
+            throw new LockReleaseStepError('quarantined lock contains unexpected entries')
         }
         const deletionRoot = await lstat(releaseRoot)
         const deletionLock = await lstat(tombstone)
@@ -1805,7 +1813,7 @@ async function releaseLock(
             || !samePrivateNode(deletionLock, movedLock)
             || !samePrivateNode(deletionOwner, movedOwner)
         ) {
-            throw new Error('quarantined lock changed before deletion')
+            throw new LockReleaseStepError('quarantined lock changed before deletion')
         }
         const ownerBackupPath = `${tombstone}.owner.json`
         await link(movedOwnerPath, ownerBackupPath)
@@ -1813,19 +1821,19 @@ async function releaseLock(
         const linkedOwner = await lstat(movedOwnerPath)
         const linkedBackup = await lstat(ownerBackupPath)
         if (!samePrivateNode(linkedOwner, movedOwner) || !samePrivateNode(linkedBackup, movedOwner)) {
-            throw new Error('quarantined lock owner changed after evidence link')
+            throw new LockReleaseStepError('quarantined lock owner changed after evidence link')
         }
         // Node has no portable fd-relative conditional unlink. This checkpoint protects cooperative
         // concurrent processes and injected pre-syscall interference, not a malicious same-UID syscall race.
         await beforeLockMetadata?.('owner-unlink')
         if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
             || !samePrivateNode(lstatSync(tombstone), movedLock)) {
-            throw new Error('state lock permissions changed before owner unlink')
+            throw new LockReleaseStepError('state lock permissions changed before owner unlink')
         }
         const ownerBeforeUnlink = await lstat(movedOwnerPath)
         const backupBeforeUnlink = await lstat(ownerBackupPath)
         if (!samePrivateNode(ownerBeforeUnlink, movedOwner) || !samePrivateNode(backupBeforeUnlink, movedOwner)) {
-            throw new Error('quarantined lock owner changed before unlink')
+            throw new LockReleaseStepError('quarantined lock owner changed before unlink')
         }
         await unlink(movedOwnerPath)
         evidencePath = ownerBackupPath
@@ -1840,12 +1848,12 @@ async function releaseLock(
             const emptyRoot = await lstat(releaseRoot)
             const emptyLock = await lstat(tombstone)
             if (!samePrivateNode(emptyRoot, verifiedRoot) || !samePrivateNode(emptyLock, movedLock)) {
-                throw new Error('quarantined lock changed before directory removal')
+                throw new LockReleaseStepError('quarantined lock changed before directory removal')
             }
             await beforeLockMetadata?.('tombstone-rmdir')
             if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
                 || !samePrivateNode(lstatSync(tombstone), movedLock)) {
-                throw new Error('state lock permissions changed before directory removal')
+                throw new LockReleaseStepError('state lock permissions changed before directory removal')
             }
             await rmdir(tombstone)
             await syncDirectory(releaseRoot)
@@ -1854,14 +1862,14 @@ async function releaseLock(
                 await restoreOwnerEvidence(ownerBackupPath, movedOwnerPath, movedOwner, tombstone, beforeLockMetadata)
                 evidencePath = movedOwnerPath
             } catch (restoreError) {
-                throw new Error(`${(error as Error).message}; owner evidence remains at ${evidencePath}; restoration failed: ${(restoreError as Error).message}`)
+                throw new LockReleaseStepError(`${releaseStepCause(error)}; owner evidence remains at ${evidencePath}; restoration failed: ${releaseStepCause(restoreError)}`)
             }
             throw error
         }
         await beforeLockMetadata?.('backup-unlink')
-        if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)) throw new Error('state locks root permissions changed before backup cleanup')
+        if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)) throw new LockReleaseStepError('state locks root permissions changed before backup cleanup')
         const finalBackup = await lstat(ownerBackupPath)
-        if (!samePrivateNode(finalBackup, movedOwner)) throw new Error('owner evidence backup changed before cleanup')
+        if (!samePrivateNode(finalBackup, movedOwner)) throw new LockReleaseStepError('owner evidence backup changed before cleanup')
         await unlink(ownerBackupPath)
         try {
             await syncDirectory(releaseRoot)
@@ -1879,7 +1887,7 @@ async function releaseLock(
         }
     } catch (error) {
         throw new LockReleaseError(
-            `state lock release quarantined an unverified holder: ${(error as Error).message}`,
+            `state lock release quarantined an unverified holder: ${releaseStepCause(error)}`,
             tombstone,
             evidencePath === movedOwnerPath
                 ? 'inspect the quarantined lock holder and restore or reclaim it using positive owner evidence'
@@ -1960,9 +1968,8 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
             recovery: lockRecovery,
             value: outcome.value,
         }
-        const cause = outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
         return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
-            `scoped state operation failed (${cause}) and its lock could not be released safely`,
+            `scoped state operation failed (${errorCause(outcome.error)}) and its lock could not be released safely`,
             release?.target ?? binding.path, lockRecovery)
     }
     if (outcome.kind === 'thrown') throw outcome.error
@@ -1978,7 +1985,7 @@ async function restoreOwnerEvidence(
 ): Promise<void> {
     const backup = await lstat(backupPath)
     if (!backup.isFile() || backup.isSymbolicLink() || !samePrivateNode(backup, expectedOwner)) {
-        throw new Error('owner evidence backup changed before restoration')
+        throw new LockReleaseStepError('owner evidence backup changed before restoration')
     }
     try {
         await beforeLockMetadata?.('owner-restore-link')
@@ -1987,7 +1994,7 @@ async function restoreOwnerEvidence(
         if (!root.isDirectory() || root.isSymbolicLink() || !privatelyOwned(root)
             || !lock.isDirectory() || lock.isSymbolicLink() || !privatelyOwned(lock)
             || !samePrivateNode(lstatSync(backupPath), expectedOwner)) {
-            throw new Error('state lock path became unsafe before owner restoration')
+            throw new LockReleaseStepError('state lock path became unsafe before owner restoration')
         }
         await link(backupPath, ownerPath)
     } catch (error) {
@@ -1995,7 +2002,7 @@ async function restoreOwnerEvidence(
     }
     const restored = await lstat(ownerPath)
     if (!restored.isFile() || restored.isSymbolicLink() || !samePrivateNode(restored, expectedOwner)) {
-        throw new Error('owner evidence path changed during restoration')
+        throw new LockReleaseStepError('owner evidence path changed during restoration')
     }
     await syncDirectory(tombstone)
 }
@@ -2342,9 +2349,8 @@ export async function transactState<T>(
     } catch (error) {
         const release = error instanceof LockReleaseError ? error : undefined
         if (operationFailed) {
-            const cause = operationFailure instanceof Error ? operationFailure.message : String(operationFailure)
             return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
-                `state transaction operation failed (${cause}) and its lock could not be released safely`,
+                `state transaction operation failed (${errorCause(operationFailure)}) and its lock could not be released safely`,
                 release?.target ?? stableNamespace.paths.stateLock,
                 release?.recovery ?? 'inspect the recorded lock owner before explicit reclamation')
         }

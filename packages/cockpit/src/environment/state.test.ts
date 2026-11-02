@@ -975,6 +975,19 @@ describe('transactState', () => {
         })
     })
 
+    // An operation's error can quote the input it was parsing; the refusal names its class only.
+    it.each(['scoped operation', 'state transaction'])('names a failed %s by class when its lock cannot be released', async (kind) => {
+        const { namespace, address } = await selectedNamespace()
+        const options = { ownerId: holderA, beforeRelease: async () => { throw new Error('injected release failure') } }
+        const fail = () => { throw new SyntaxError('Unexpected token in JSON: "CANARY_SECRET_5d1e"') }
+        const result = kind === 'scoped operation'
+            ? await withStateScopedLock(namespace, issueStateScopedLock(namespace, { owner: 'browser-worker', identity: 'd'.repeat(64) })!, options, fail)
+            : await transactState(namespace, address, options, fail)
+
+        expect(result).toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED, message: expect.stringContaining('failed (SyntaxError)') })
+        expect(JSON.stringify(result)).not.toContain('CANARY_SECRET_5d1e')
+    })
+
     it('names a lock directory it created but could not remove when a release quarantine races acquisition', async () => {
         const { namespace, address } = await selectedNamespace()
         const lockPath = namespace.paths.stateLock
