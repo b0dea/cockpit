@@ -844,7 +844,9 @@ the kept staging directory. `EXECUTION_COMPENSATION_TIMEOUT` and
 `EXECUTION_COMPENSATION_STEP_FAILED` mean the cleanup also failed; check what owns the resources
 before running another lifecycle command. `LIFECYCLE_EVIDENCE_INVALID` and
 `LIFECYCLE_PROGRESS_INVALID` mean cockpit's lifecycle records or saved progress must be recovered
-before you retry.
+before you retry. When `preflight` cannot read a running stack because the generated files no
+longer match `cockpit.toml` (an edit not yet synced, say), it reports
+`GENERATED_ENVIRONMENT_UNAVAILABLE` with the drift it found instead; run `sync`, then `up`.
 
 ### Ports, claims, and dependency installation
 
@@ -921,7 +923,9 @@ passes only when it has a commit and no modified or untracked file outside `.git
 the gate vouches for the cockpit as committed, not for local edits. A repository with no commits
 yet, such as one `init` has just created, fails this one row with "has no commits yet"; the row's
 fix names the `git -C <cockpit root> status --short` review and the `git add -A` and `git commit`
-that make the first commit. `GUIDE_CAP_EXCEEDED` means you must shrink the selected guide set.
+that make the first commit. `GUIDE_CAP_EXCEEDED` names the measured lines and the cap; shrink the
+root or linked sibling guides, or raise `cockpit.guide_cap`. A sibling's own guide edit counts too,
+but never makes the link itself a conflict.
 `SKILL_BUDGET_UNAVAILABLE` and `HARNESS_SURFACE_UNAVAILABLE` mean cockpit could not read the
 declared agent inputs; make them readable.
 

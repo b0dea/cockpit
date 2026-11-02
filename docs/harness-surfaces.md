@@ -43,10 +43,14 @@ changes and runs `sync`.
 Core declarations and `[surfaces].overlays` merge by name. An overlay that reuses a core name must
 set `replaces` to that name and the recorded SHA-256 of the original. An overlay cannot replace
 `permissions` or `mcp`. When a later cockpit version changes an original you overrode,
-`OVERRIDDEN_CORE_CHANGED` names the overlay before you accept new output. `doctor` lists active
-overrides and changed originals from a read-only generation preview, and says so when the preview
-cannot run. Markdown frontmatter you write must use plain `---` YAML delimiters (no language tag)
-and valid YAML of reasonable size; anything else is rejected before the generator runs.
+`OVERRIDDEN_CORE_CHANGED` names the overlay and the current digest, and `sync` and `check` refuse
+until you review the new original and update `replaces.sha256`. `sync --dry-run` and `doctor` list
+active overrides and changed originals from a read-only generation preview, and `doctor` says so
+when the preview cannot run. Markdown frontmatter you write must use plain `---` YAML delimiters
+(no language tag) and valid YAML of reasonable size; anything else is rejected before the generator
+runs. A rules overlay is written into the instruction file every harness loads at start, so Rulesync
+frontmatter such as `root: false` is accepted, but one that narrows itself with `globs` is refused
+as `SURFACE_RULE_SCOPE_UNSUPPORTED`.
 [Extending cockpit](extending.md) lists every extension point and the build-beside pattern.
 
 The generator uses a checked-in, SHA-pinned bundle of Rulesync only to spell the output for each
@@ -57,8 +61,10 @@ list, ownership and publication. It accepts a generator result only when the fil
 reports match the files read back from its isolated output directory.
 
 Setting `[surfaces].bundles = ["claudecode-plugin"]` also publishes a Claude plugin bundle at
-**.cockpit/bundles/claudecode-plugin/**: a manifest plus the generated skills, subagents, hooks and
-MCP declaration that apply. These files share the ownership and drift check of other surfaces, and
+**.cockpit/bundles/claudecode-plugin/**: a manifest plus the generated skills (with the references
+they tell the agent to read), subagents, overlay hooks and MCP declaration that apply. It does not
+carry the guard hook, which reads the cockpit checkout and stays in the checkout's own
+`.claude/settings.json`. These files share the ownership and drift check of other surfaces, and
 a file in that directory that cockpit does not own is left alone. Writing the bundle does not show
 that Claude loaded it; that needs a run in Claude Code.
 
@@ -169,11 +175,17 @@ cell.
 ## MCP servers and restrictions
 
 `[mcp].approved` is the shared allowlist. A declared server absent from it is rendered disabled
-for every configured harness and reports `MCP_NOT_APPROVED`. A name on the allowlist without a
+for every configured harness (for Claude Code through `disabledMcpjsonServers`, because it ignores
+`disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED`. A name on the allowlist without a
 declaration reports `MCP_APPROVAL_UNKNOWN`. Cockpit rejects conflicting commands for one server,
 credential-like arguments, environment values that are not same-name references, and working
-directories outside the declared sibling. Generated wrappers start with an empty environment and
-pass only the declared environment names.
+directories outside the declared sibling. Each harness starts the generated wrapper as
+`.cockpit/mcp/<id>.sh` relative to the directory the agent was launched in, and the wrapper finds
+its sibling from its own location, so the committed files are the same in every clone; start the
+agent in the cockpit root, as the guard hooks already require. Wrappers start with an empty
+environment and pass `PATH`, the same non-secret variables product test stages receive (`HOME`,
+`USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`) and the declared environment
+names.
 
 Browser transport is published only for harnesses that can use it. A harness with no applicable
 MCP server receives no MCP-only output; its instructions, skills and permissions still publish.
@@ -187,19 +199,29 @@ tool restriction.
 
 ## Sibling projection and standing cost
 
-Cockpit reads each sibling's guide from its declared root, records a digest of its content, and
-links it into the generated root instructions through confined symlinks. It refuses a link if the
-guide changes between reading and planning, escapes its root, conflicts with the mount or directory
-grant, or would replace a link cockpit does not own.
+Cockpit reads each sibling's guide from its declared root and links it into the generated root
+instructions through confined symlinks. It refuses a link if the guide changes between reading and
+planning within one `sync`, escapes its root, conflicts with the mount or directory grant, or would
+replace a link cockpit does not own. The guide belongs to the sibling team: the ownership manifest
+records only the sibling and the guide's path inside it, so an edit, checkout or clone leaves the
+link current, while a link replaced by a file or pointed elsewhere is still refused.
 
 Codex sibling grants are `sandbox_workspace_write.writable_roots` entries under
-`sandbox_mode = "workspace-write"`. Cockpit keeps them relative to the checkout so clones do not
+`sandbox_mode = "workspace-write"`. Codex resolves a relative root from `.codex/`, so cockpit writes
+each one relative to that directory (`../../api` for a sibling at `../api`) and clones do not
 drift, and emits no competing permission profile, because Codex ignores one when the
 workspace-write settings are present. This is generated configuration, not a measured claim that
 Codex enforces it; run the [selftest procedure](#skills-and-selftest-evidence) before
 promoting that matrix cell.
 
-The `[cockpit].guide_cap` limit applies to always-loaded guidance. Cockpit reports the line cost per
+OpenCode matches `external_directory` against absolute paths only and has no token for the
+project root, so the committed pattern is `{file:.cockpit/local/opencode-grant-<slug>}/**`: OpenCode
+substitutes the absolute sibling directory that `sync` writes to that machine-local, ignored file,
+and refuses to start, naming the file, until `sync` has run on the machine.
+
+The `[cockpit].guide_cap` limit applies to always-loaded guidance, linked sibling guides included;
+going over it makes `sync`, `check` and `preflight` report `GUIDE_CAP_EXCEEDED` with the measured
+lines and the cap. Cockpit reports the line cost per
 harness only when it has a dated test of how that harness loads guidance; without one the cost is
 `unavailable`, not zero. When a harness loads every rule regardless of scope, scoped text still
 counts toward the total.
