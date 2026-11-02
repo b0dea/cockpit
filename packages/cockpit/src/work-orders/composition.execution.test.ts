@@ -94,7 +94,7 @@ artifacts = { runner = ".browser/runner", mcp = ".browser/mcp", cli = ".browser/
 `)
         const browserCurrentness = await prepareGeneratedEnvironmentCurrentness({ configPath: fixture.configPath })
         expect(browserCurrentness.outcome).toMatchObject({ kind: 'refusal', diagnostics: [expect.objectContaining({
-            code: 'GENERATED_INPUT_INVALID', message: expect.stringContaining('current port lease'),
+            code: 'GENERATED_INPUT_INVALID', message: expect.stringContaining('holds no port lease'),
         })] })
         const configured = await createConfiguredWorkApplicationComposition({ configPath: fixture.configPath, env: fixture.environment })
         expect(configured).toMatchObject({ kind: 'complete' })
