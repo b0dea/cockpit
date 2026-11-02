@@ -45,7 +45,7 @@ describe('produced work metrics', () => {
         expect(zero).toMatchObject({ kind: 'metrics', counts: expect.arrayContaining([expect.objectContaining({ name: 'fix-runs', value: 0, writer: 'run-observer' })]), ratios: expect.arrayContaining([expect.objectContaining({ name: 'fix-door-ratio', value: undefined, denominator: 0 })]) })
         expect(absent).toMatchObject({ kind: 'metrics', counts: expect.arrayContaining([expect.objectContaining({ name: 'fix-runs', value: undefined, writer: 'unavailable' })]), ratios: expect.arrayContaining([expect.objectContaining({ name: 'fix-door-ratio', value: undefined, denominator: undefined })]) })
         if (!absent || absent.kind !== 'metrics') throw new Error('metrics required')
-        expect(renderWorkOrderMetrics(absent)).toContain('fix-runs: undefined')
+        expect(renderWorkOrderMetrics(absent)).toContain('fix-runs: unavailable')
     })
 
     it('retains the all-orders denominator when parking work and states partial history', () => {

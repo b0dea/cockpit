@@ -323,8 +323,8 @@ contract and the independent grading, not the thinking: reuse the planning skill
    files the Authority lists. If the work needs another file, stop and ask for a renewed contract
    (`work-renew`) rather than editing outside it. Record progress with `./node_modules/.bin/cockpit work-record --config cockpit.toml --work-order WO-001 --event-file workorders/events/progress.json`;
    keep event files under `workorders/events/`, where they do not make earlier proof stale.
-3. **Check each Plan step** with `./node_modules/.bin/cockpit work-execute --config cockpit.toml --work-order WO-001 --approach "what you did" --json`
-   once its work is done. It runs that step's declared verification command; a failure returns the command's exit
+3. **Check each Plan step** with `./node_modules/.bin/cockpit work-execute --config cockpit.toml --work-order WO-001 --approach first-try --json`
+   once its work is done, replacing `first-try` with a short name for your approach. It runs that step's declared verification command; a failure returns the command's exit
    status and the end of its output in `result.verification`. Fix and rerun. While iterating, the declared gate
    (`./node_modules/.bin/cockpit test-run --config cockpit.toml --gate declared-gate-id --json`, with its ID from `[testing.gates]`) is
    faster feedback; it does not check a step. Done when `./node_modules/.bin/cockpit work-resume --config cockpit.toml --json`
