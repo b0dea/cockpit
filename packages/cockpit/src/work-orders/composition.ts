@@ -31,7 +31,7 @@ import type { CompletionDependencies, CompletionRecord, CompletionWriter } from 
 import { CRITERION_OUTCOMES, prepareWorkOrderVerification, type GraderContext, type GraderResponse, type GradingInput, type PreparedWorkOrderVerification,
     type VerificationObservation, type WorkOrderSubjectDependencies } from '../grading/verifier.js'
 import type { GateDependencies, GateRegistry, GateRequest, ProductGateInvocation } from '../testing/gates.js'
-import { parseWorkOrder, type ParsedWorkOrder, type WorkOrderFinding } from './contract.js'
+import { parseWorkOrder, WORK_ORDER_ID, WORK_ORDER_LOCKS, type ParsedWorkOrder, type WorkOrderFinding } from './contract.js'
 import type { WorkOrderExecutionDependencies, WorkOrderExecutionInput } from './executor.js'
 import {
     activateAcceptedWorkOrder, createWorkOrderAcceptanceRecord, isCurrentWorkOrderAcceptance, readmitWorkOrderAcceptance, routeWorkOrder,
@@ -252,7 +252,7 @@ const digest = (value: Uint8Array | string): string => createHash('sha256').upda
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
 function boundedName(value: unknown): value is string {
-    return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)
+    return typeof value === 'string' && WORK_ORDER_ID.test(value)
 }
 
 function exactSource(source: SourceProvenance): boolean {
@@ -859,8 +859,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
     const privateRoot = contained(root, '.cockpit', true)
     const acceptanceStoreDigest = digest(Buffer.from(privateRoot))
     const transactionScope = new AsyncLocalStorage<ReadonlySet<string>>()
-    const capacityLock = '.admission-capacity'
-    const identityLock = '.identity-admission'
+    const capacityLock = WORK_ORDER_LOCKS.capacity
+    const identityLock = WORK_ORDER_LOCKS.identity
     const nativeThreads = new Set<string>()
     const nativeActorBindings = new Map<string, Readonly<{ role: string; runId: string; threadId: string }>>()
     const admittedAcceptances = new Map<string, Readonly<{ recordDigest: string; contractDigest: string; accepted: AcceptedWorkOrder }>>()

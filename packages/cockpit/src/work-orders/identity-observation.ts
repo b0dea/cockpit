@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
 
+import { WORK_ORDER_ID } from './contract.js'
+
 export const mechanism = {
     id: 'work-order-identity-observation',
     module: 'packages/cockpit/src/work-orders/identity-observation.ts',
@@ -78,7 +80,7 @@ export async function observeWorkOrderIdentity(input: Readonly<{
     executeGit: WorkOrderIdentityGit
 }>): Promise<WorkOrderIdentityObservation> {
     if (!input || typeof input.root !== 'string' || !isAbsolute(input.root) || resolve(input.root) !== input.root
-        || typeof input.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.id)
+        || typeof input.id !== 'string' || !WORK_ORDER_ID.test(input.id)
         || typeof input.executeGit !== 'function') throw new Error('work-order identity observation input is invalid')
     const target = `workorders/${input.id}.md`
     const commonResult = executed(await input.executeGit(input.root,

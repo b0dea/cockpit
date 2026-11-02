@@ -3,8 +3,14 @@ import { createHash } from 'node:crypto'
 export const mechanism = {
     id: 'work-order-contract',
     module: 'packages/cockpit/src/work-orders/contract.ts',
-    exports: ['WORK_ORDER_FINDING_CODES', 'WORK_ORDER_LIMITS', 'WORK_ORDER_SECTIONS', 'WORK_ORDER_STATUSES', 'isParsedWorkOrder', 'parseWorkOrder'],
+    exports: ['WORK_ORDER_FINDING_CODES', 'WORK_ORDER_ID', 'WORK_ORDER_LIMITS', 'WORK_ORDER_LOCKS', 'WORK_ORDER_SECTIONS', 'WORK_ORDER_STATUSES', 'isParsedWorkOrder', 'parseWorkOrder'],
 } as const
+
+// One inert word, never a path or an option: the shape of a work-order id, which the CLI, the
+// application and the store each admit before it can name a file. The two admission locks
+// have fixed dotted names beside the ids.
+export const WORK_ORDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+export const WORK_ORDER_LOCKS = Object.freeze({ capacity: '.admission-capacity', identity: '.identity-admission' } as const)
 
 // A small executable document fits in 64 KiB; independent structural caps prevent
 // a single dense line or thousands of tiny records from consuming that whole budget.

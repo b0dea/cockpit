@@ -34,7 +34,7 @@ const C = ENVIRONMENT_CODES
 const BOTH: readonly ReadinessState[] = Object.freeze(['surfaces-only', 'runtime'])
 const RUNTIME: readonly ReadinessState[] = Object.freeze(['runtime'])
 
-const entries: readonly ReadinessEntry[] = [
+export const READINESS_CATALOGUE: readonly ReadinessEntry[] = [
     { id: 'cockpit-git', level: 'required', appliesTo: BOTH, codes: [C.SETUP_PATH_TYPE_INVALID],
         refusedBy: { command: 'setup', code: C.SETUP_PATH_TYPE_INVALID },
         needs: 'setup confines every repository write to the cockpit\'s Git working tree, and teammates get the cockpit by cloning it',
@@ -88,10 +88,6 @@ const entries: readonly ReadinessEntry[] = [
         needs: 'work review and work grade run the Codex CLI as the evaluator independent of the agent that did the work',
         fix: 'install the Codex CLI and sign in with codex login' },
 ]
-
-export const READINESS_CATALOGUE: readonly ReadinessEntry[] = Object.freeze(entries.map((entry) => Object.freeze({
-    ...entry, codes: Object.freeze([...entry.codes]),
-    ...(entry.refusedBy ? { refusedBy: Object.freeze({ ...entry.refusedBy }) } : {}) })))
 
 export interface ReadinessFinding {
     readonly code: string

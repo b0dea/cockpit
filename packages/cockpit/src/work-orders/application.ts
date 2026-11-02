@@ -4,7 +4,7 @@ import { evaluateUiGate } from '../browser/ui-gate.js'
 import { completeWorkOrder } from '../grading/completion.js'
 import { runGate } from '../testing/gates.js'
 import { executeWorkOrderStep } from './executor.js'
-import type { ParsedWorkOrder, WorkOrderDecision } from './contract.js'
+import { WORK_ORDER_ID, WORK_ORDER_LOCKS, type ParsedWorkOrder, type WorkOrderDecision } from './contract.js'
 import { acceptWorkOrder, beginWorkOrderAcceptance, beginWorkOrderRenewal, intakeWorkOrder, routeWorkOrder } from './intake.js'
 import { collectWorkOrderMetrics, renderWorkOrderMetrics } from './metrics.js'
 import { assessWorkOrderSize, assessWorkPressure, applyWorkOrderSweep, planWorkOrderSweep, reverseWorkOrderSweep } from './pressure.js'
@@ -74,15 +74,15 @@ export function captureWorkApplicationRequest(value: unknown): WorkApplicationRe
     const allowed = [...shape.required, ...(shape.optional ?? [])]; const keys = Object.keys(row)
     if (keys.some(key => !allowed.includes(key)) || shape.required.some(key => !Object.hasOwn(row, key))) return undefined
     const requiresWorkOrderId = shape.required.includes('workOrderId')
-    if (requiresWorkOrderId && !bounded(row.workOrderId, /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/, 128)
+    if (requiresWorkOrderId && !bounded(row.workOrderId, WORK_ORDER_ID, 128)
         || !requiresWorkOrderId && row.workOrderId !== undefined
-            && !bounded(row.workOrderId, /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/, 128)) return undefined
+            && !bounded(row.workOrderId, WORK_ORDER_ID, 128)) return undefined
     if ('approach' in row && !bounded(row.approach, /^.+$/, 4_096)) return undefined
     if ('programmeId' in row && !bounded(row.programmeId, /^[a-z][a-z0-9-]{0,63}$/, 64)) return undefined
     if ('itemKey' in row && row.itemKey !== undefined && !bounded(row.itemKey, /^[a-z][a-z0-9-]{0,63}$/, 64)) return undefined
     if ('eventFile' in row && !relativeSelector(row.eventFile)) return undefined
-    if ('lockId' in row && row.lockId !== '.admission-capacity' && row.lockId !== '.identity-admission'
-        && !bounded(row.lockId, /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/, 128)) return undefined
+    if ('lockId' in row && row.lockId !== WORK_ORDER_LOCKS.capacity && row.lockId !== WORK_ORDER_LOCKS.identity
+        && !bounded(row.lockId, WORK_ORDER_ID, 128)) return undefined
     if ('intent' in row && !relativeSelector(row.intent) || 'candidate' in row && row.candidate !== undefined && !relativeSelector(row.candidate)) return undefined
     if (operation === 'work-intake' && (typeof row.workOrderId === 'string') === (typeof row.intent === 'string')
         || operation === 'work-intake' && row.candidate !== undefined && typeof row.intent !== 'string') return undefined

@@ -1,6 +1,7 @@
 import { SURFACE_TARGETS } from './surfaces/contract.js'
 import type { ParseArgsConfig } from 'node:util'
 import { isAbsolute, normalize, resolve } from 'node:path'
+import { WORK_ORDER_ID, WORK_ORDER_LOCKS } from './work-orders/contract.js'
 import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from './environment/contract.js'
 import type { GuardInvocationProfile } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
@@ -581,10 +582,8 @@ export interface OrdinaryInvocationAuthority {
 
 // An image reference or ID as Docker spells it; the command itself refuses one that is not local.
 const LOCAL_IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$/
-// A work order, lock, programme, item or browser role id: one inert word, never a path or an option.
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-// The admission locks have fixed dotted names beside the work-order ids.
-const WORK_LOCKS = new Set(['.admission-capacity', '.identity-admission'])
+// A work order, lock, programme, item or browser role id shares the work-order id shape.
+const WORK_LOCKS: ReadonlySet<string> = new Set(Object.values(WORK_ORDER_LOCKS))
 // A selected value that starts with `-` would reach the product's tool as an option of its own.
 const GATE_SELECTOR = /^(?:spec|file|test|route):[^-]/
 
@@ -676,8 +675,8 @@ export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authori
             : option.role === 'declared-gate' ? source.gates.includes(text)
             : option.role === 'gate-mode' ? ['canonical', 'full', 'staged'].includes(text)
             : option.role === 'gate-selector' ? GATE_SELECTOR.test(text)
-            : option.role === 'identifier' ? IDENTIFIER.test(text)
-            : option.role === 'work-lock' ? IDENTIFIER.test(text) || WORK_LOCKS.has(text)
+            : option.role === 'identifier' ? WORK_ORDER_ID.test(text)
+            : option.role === 'work-lock' ? WORK_ORDER_ID.test(text) || WORK_LOCKS.has(text)
             : option.role === 'label' ? true
             : option.role === 'field' ? isRecordedAnswerField(text)
             : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
