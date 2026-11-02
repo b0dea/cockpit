@@ -251,7 +251,7 @@ describe('selectStateRoot', () => {
         await expect(selectStateRoot(hostile)).resolves.toEqual({
             kind: 'refusal',
             code: ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-            message: 'state root input could not be read safely',
+            message: 'state root input could not be read safely: Error',
             target: 'state root input',
         })
     })
@@ -708,7 +708,7 @@ describe('readState', () => {
         await expect(readState(hostile)).resolves.toEqual({
             kind: 'refusal',
             code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            message: 'state record address could not be read safely',
+            message: 'state record address could not be read safely: Error',
             target: 'state record address',
         })
     })

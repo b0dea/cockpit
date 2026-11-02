@@ -13,6 +13,7 @@ import { checkoutId as deriveCheckoutId, type BootstrapLockOwnerId } from './ide
 import { redactSensitiveText } from './sensitive.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     snapshotEnvironmentObservation,
     snapshotJson,
     isCanonicalTimestamp,
@@ -405,6 +406,7 @@ export function authenticateStatePublication(input: {
                 || ownedAddress[key] !== (expectedAddress as unknown as Record<string, unknown>)[key])) return undefined
         return Object.freeze({ status: issued.status, record: issued.record })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -442,6 +444,7 @@ async function usableBase(path: string, uid: number): Promise<boolean> {
         await access(path, constants.W_OK)
         return true
     } catch {
+        // Any failure to prove the directory private and writable means it is unusable; the caller refuses an unusable root.
         return false
     }
 }
@@ -483,6 +486,7 @@ async function safeDescendant(base: string, candidate: string, uid: number): Pro
             try {
                 await access(cursor, constants.W_OK)
             } catch {
+                // Any failure to prove the directory private and writable means it is unusable; the caller refuses an unusable root.
                 return false
             }
         } catch (error) {
@@ -741,8 +745,8 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                 throw new Error('state inventory changed during observation')
             }
         }
-    } catch {
-        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state namespace inventory changed during observation', target,
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `state namespace inventory changed during observation: ${errorCause(error)}`, target,
             'retry after all coordination writers finish; inspect the named state entry if the refusal persists')
     }
     return { kind: 'complete', value: result }
@@ -822,6 +826,7 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             }),
         }) as StateNamespace
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -842,7 +847,10 @@ export function snapshotBootstrapStateNamespace(value: BootstrapStateNamespace):
         if (typeof bootstrap !== 'function' || typeof stateLock !== 'string') return undefined
         return Object.freeze({ root, checkoutRoot, checkoutId, target,
             paths: Object.freeze({ bootstrap, stateLock }) }) as BootstrapStateNamespace
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 type StateRefusal = Extract<StateResult<never>, { kind: 'refusal' }>
@@ -895,8 +903,8 @@ export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootIn
     try {
         stableInput = Object.freeze({ platform: input.platform, home: input.home, xdgStateHome: input.xdgStateHome,
             checkoutRoot: input.checkoutRoot, target: input.target, uid: input.uid })
-    } catch {
-        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'bootstrap state root input could not be read safely', 'bootstrap state root input')
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `bootstrap state root input could not be read safely: ${errorCause(error)}`, 'bootstrap state root input')
     }
     const uid = stableInput.uid ?? process.getuid?.()
     if (uid === undefined || typeof stableInput.checkoutRoot !== 'string' || !isAbsolute(stableInput.checkoutRoot)
@@ -916,8 +924,8 @@ export async function selectBootstrapStateRoot(input: SelectBootstrapStateRootIn
             || await realpath(stableInput.checkoutRoot) !== stableInput.checkoutRoot) throw new Error('unsafe checkout')
         const id = deriveCheckoutId({ checkoutPath: stableInput.checkoutRoot })
         return { kind: 'complete', value: bootstrapNamespace(root, stableInput.checkoutRoot, id, stableInput.target) }
-    } catch {
-        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'checkout identity cannot scope the bootstrap state root safely', stableInput.checkoutRoot)
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `checkout identity cannot scope the bootstrap state root safely: ${errorCause(error)}`, stableInput.checkoutRoot)
     }
 }
 
@@ -937,10 +945,10 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
             cockpitId: input.cockpitId,
             uid: input.uid,
         })
-    } catch {
+    } catch (error) {
         return refusal(
             ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE,
-            'state root input could not be read safely',
+            `state root input could not be read safely: ${errorCause(error)}`,
             'state root input',
         )
     }
@@ -975,13 +983,14 @@ export async function selectStateRoot(input: SelectStateRootInput): Promise<Stat
 
     try {
         return { kind: 'complete', value: namespace(root, stableInput.cockpitId) }
-    } catch {
-        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, 'cockpit identity cannot scope the state root safely', root)
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.STATE_ROOT_UNAVAILABLE, `cockpit identity cannot scope the state root safely: ${errorCause(error)}`, root)
     }
 }
 
-function malformed<T>(address: StateAddress | BootstrapStateAddress): StateResult<T> {
-    return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'state record is malformed or does not match its address', address.path)
+function malformed<T>(address: StateAddress | BootstrapStateAddress, error?: unknown): StateResult<T> {
+    return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
+        `state record is malformed or does not match its address${error === undefined ? '' : `: ${errorCause(error)}`}`, address.path)
 }
 
 function expectedAddressPath(address: StateAddress | BootstrapStateAddress): string | undefined {
@@ -1121,10 +1130,10 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
             ...(qualifier ? { qualifier } : {}),
         })
         }
-    } catch {
+    } catch (error) {
         return refusal(
             ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            'state record address could not be read safely',
+            `state record address could not be read safely: ${errorCause(error)}`,
             'state record address',
         )
     }
@@ -1134,15 +1143,15 @@ export async function readState(address: StateAddress | BootstrapStateAddress): 
         bytes = await readRegularFileNoFollow(stableAddress.path, () => addressIsSafe(stableAddress))
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing', path: stableAddress.path }
-        return malformed(stableAddress)
+        return malformed(stableAddress, error)
     }
 
     let parsed: unknown
     try {
         const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
         parsed = JSON.parse(source)
-    } catch {
-        return malformed(stableAddress)
+    } catch (error) {
+        return malformed(stableAddress, error)
     }
 
     if (
@@ -1322,9 +1331,9 @@ export async function resetBootstrapAnswer(
     try {
         stableInput = Object.freeze({ ownerId: input.ownerId, field: input.field, updatedAt: input.updatedAt,
             ...(input.acceptedPreviewSha256 === undefined ? {} : { acceptedPreviewSha256: input.acceptedPreviewSha256 }) })
-    } catch {
+    } catch (error) {
         return answerResetRefusal('BOOTSTRAP_ANSWER_RESET_FIELD_INVALID',
-            'recorded answer reset input could not be read safely', 'recorded answer reset input')
+            `recorded answer reset input could not be read safely: ${errorCause(error)}`, 'recorded answer reset input')
     }
     let acceptedPreview: BootstrapAnswerResetPreview | undefined
     const outcome = await transactState(namespace, address, { ownerId: stableInput.ownerId }, current => {
@@ -1397,8 +1406,8 @@ export async function refreshBootstrapObservation(
         stableInput = Object.freeze({ ownerId: input.ownerId, expectedRevision: input.expectedRevision,
             expectedSourceObservationSha256: input.expectedSourceObservationSha256,
             greenfield: Object.freeze(parsed.data), updatedAt: input.updatedAt })
-    } catch {
-        return observationRefreshRefusal('invalid', 'fresh estate observation replacement could not be read safely')
+    } catch (error) {
+        return observationRefreshRefusal('invalid', `fresh estate observation replacement could not be read safely: ${errorCause(error)}`)
     }
     const outcome = await transactState(namespace, address, { ownerId: stableInput.ownerId }, current => {
         const greenfield = current?.value.greenfield
@@ -1476,8 +1485,8 @@ export async function refreshBootstrapPublication(
             expectedCommandSha256: input.expectedCommandSha256,
             expectedPublished: expectedPublished.data, sources: sources.data,
             previewSha256: input.previewSha256, published: published.data, updatedAt: input.updatedAt })
-    } catch {
-        return publicationRefreshRefusal('invalid', 'bootstrap publication refresh evidence could not be read safely')
+    } catch (error) {
+        return publicationRefreshRefusal('invalid', `bootstrap publication refresh evidence could not be read safely: ${errorCause(error)}`)
     }
     const outcome = await transactState(namespace, address, { ownerId: stableInput.ownerId }, current => {
         if (current === null || current.revision !== stableInput.expectedRevision
@@ -1514,24 +1523,25 @@ async function inspectLock(
         const parsed = StateLockSchema.safeParse(JSON.parse(source))
         if (!parsed.success) throw new Error('invalid lock metadata')
         let holderState: LockHolderState = 'unknown'
+        let observationFailure = ''
         if (observeHolder) {
             try {
                 holderState = await observeHolder({ ownerId: parsed.data.ownerId as HolderId | BootstrapLockOwnerId, pid: parsed.data.pid })
-            } catch {
-                holderState = 'unknown'
+            } catch (error) {
+                observationFailure = `; holder observation failed: ${errorCause(error)}`
             }
         }
         return {
             holderState,
-            description: `state is locked by ${parsed.data.ownerId} (${holderState})`,
+            description: `state is locked by ${parsed.data.ownerId} (${holderState}${observationFailure})`,
             recovery: holderState === 'dead'
                 ? 'request explicit state-lock reclamation using the recorded holder evidence'
                 : 'inspect the named holder and retry after it releases the state lock',
         }
-    } catch {
+    } catch (error) {
         return {
             holderState: 'invalid',
-            description: 'state lock metadata is missing or malformed',
+            description: `state lock metadata is missing or malformed: ${errorCause(error)}`,
             recovery: 'inspect the lock directory and establish positive holder evidence before explicit reclamation',
         }
     }
@@ -1589,11 +1599,11 @@ async function acquireLock(
         let concurrentQuarantine: string | undefined
         try {
             concurrentQuarantine = await releaseQuarantine(locksRoot)
-        } catch {
+        } catch (error) {
             createdLock = false
             return refusal(
                 ENVIRONMENT_CODES.STATE_LOCKED,
-                'state locks root changed while acquiring the state lock',
+                `state locks root changed while acquiring the state lock: ${errorCause(error)}`,
                 namespace.paths.stateLock,
                 'inspect the state locks root and establish positive holder evidence before explicit recovery',
             ) as Extract<StateResult<never>, { kind: 'refusal' }>
@@ -1896,7 +1906,10 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
             ...(values.contentionTimeoutMs !== undefined ? { contentionTimeoutMs: values.contentionTimeoutMs } : {}),
             ...(values.beforeRelease ? { beforeRelease: values.beforeRelease as StateTransactionOptions['beforeRelease'] } : {}),
             ...(values.beforeLockMetadata ? { beforeLockMetadata: values.beforeLockMetadata as StateTransactionOptions['beforeLockMetadata'] } : {}) })
-    } catch { stableOptions = undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        stableOptions = undefined
+    }
     if (!authenticated || !binding || binding.namespace !== authenticated || !stableOptions || typeof operation !== 'function') {
         return refusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'scoped state lock authority is malformed', 'scoped state lock')
     }
@@ -1912,7 +1925,7 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
     let backoffMs = 5
     while (true) {
         try { acquired = await acquireLock(stableNamespace, stableOptions) }
-        catch { return refusal(ENVIRONMENT_CODES.STATE_LOCKED, 'scoped state lock could not be acquired safely', binding.path) }
+        catch (error) { return refusal(ENVIRONMENT_CODES.STATE_LOCKED, `scoped state lock could not be acquired safely: ${errorCause(error)}`, binding.path) }
         if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED) break
         const remainingMs = deadline - Date.now()
         if (remainingMs <= 0 || stableOptions.contentionTimeoutMs === undefined) break
@@ -2042,6 +2055,7 @@ function preparedRecordMatches(
         ) return false
         return bytes.subarray(0, offset).equals(expectedBytes)
     } catch {
+        // A file that cannot be re-read proves nothing; the caller treats the mismatch as unsafe.
         return false
     } finally {
         if (descriptor !== undefined) closeSync(descriptor)
@@ -2102,7 +2116,8 @@ async function publishRecord(
         temporaryExists = false
         try {
             await syncDirectory(dirname(address.path))
-        } catch (error) {
+        } catch {
+            // The rename already happened; the caller reports the durability as indeterminate and tells the user to re-read the record.
             return 'indeterminate'
         }
         return 'durable'
@@ -2195,10 +2210,10 @@ export async function transactState<T>(
             beforeRelease: options.beforeRelease,
             beforeLockMetadata: options.beforeLockMetadata,
         })
-    } catch {
+    } catch (error) {
         return refusal(
             ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
-            'state transaction input could not be read safely',
+            `state transaction input could not be read safely: ${errorCause(error)}`,
             'state transaction input',
         )
     }
@@ -2235,8 +2250,8 @@ export async function transactState<T>(
         try {
             acquired = await acquireLock(stableNamespace, stableOptions,
                 bootstrapTransaction ? bootstrapHolderIdentity : holderIdentity)
-        } catch {
-            return refusal(ENVIRONMENT_CODES.STATE_LOCKED, 'state lock could not be acquired safely', stableNamespace.paths.stateLock)
+        } catch (error) {
+            return refusal(ENVIRONMENT_CODES.STATE_LOCKED, `state lock could not be acquired safely: ${errorCause(error)}`, stableNamespace.paths.stateLock)
         }
         if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED) break
         const remainingMs = deadline - Date.now()
@@ -2304,11 +2319,11 @@ export async function transactState<T>(
                           error.target,
                           'inspect and remove the preserved temporary path only after proving its ownership',
                       )
-                    : malformed(stableAddress)
+                    : malformed(stableAddress, error)
             }
         }
-    } catch {
-        result = malformed(stableAddress)
+    } catch (error) {
+        result = malformed(stableAddress, error)
     }
     try {
         await releaseLock(

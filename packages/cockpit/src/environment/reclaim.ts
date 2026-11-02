@@ -27,6 +27,7 @@ import {
 } from './claims.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     filesystemObjectIdentity,
     isCanonicalTimestamp,
     isFilesystemObjectIdentity,
@@ -625,6 +626,7 @@ function selectionRow(bytes: Buffer): Record<string, unknown> | undefined {
         const parsed: unknown = JSON.parse(text.trim())
         return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
     } catch {
+        // Unparseable docker output is unproven; the caller refuses the discovery.
         return undefined
     }
 }
@@ -669,6 +671,7 @@ export function admitDockerSelection(
         consumedSelectionProbePlans.add(steps)
         return token
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -794,7 +797,10 @@ function inspectionRows(stdout: Buffer, ids: readonly string[]): readonly Record
     for (const line of lines) {
         if (Buffer.byteLength(line) > INSPECTION_OBJECT_BUDGET) return undefined
         let row: unknown
-        try { row = JSON.parse(line) } catch { return undefined }
+        try { row = JSON.parse(line) } catch {
+            // Unparseable docker output is unproven; the caller refuses the discovery.
+            return undefined
+        }
         if (row === null || typeof row !== 'object' || Array.isArray(row)) return undefined
         rows.push(row as Record<string, unknown>)
     }
@@ -869,6 +875,7 @@ export function admitImageInspections(
         }))
         return snapshot
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -928,6 +935,7 @@ export function admitVolumeInspections(
         }))
         return snapshot
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -984,7 +992,10 @@ function holderRows(stdout: Buffer): readonly { readonly id: string; readonly ne
     for (const line of text.split('\n')) {
         if (line.length === 0) continue
         let row: unknown
-        try { row = JSON.parse(line) } catch { return undefined }
+        try { row = JSON.parse(line) } catch {
+            // Unparseable docker output is unproven; the caller refuses the discovery.
+            return undefined
+        }
         if (row === null || typeof row !== 'object' || Array.isArray(row) || !exactKeys(row, ['id', 'networks'])) return undefined
         const { id, networks } = row as Record<string, unknown>
         if (typeof id !== 'string' || !RESOURCE_ID.test(id) || typeof networks !== 'string') return undefined
@@ -1084,6 +1095,7 @@ export function admitNetworkInspections(
         }))
         return snapshot
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -1170,7 +1182,10 @@ export function admitReclaimDiscovery(
         for (const line of text.split('\n')) {
             if (line.length === 0) continue
             let parsed: unknown
-            try { parsed = JSON.parse(line) } catch { return undefined }
+            try { parsed = JSON.parse(line) } catch {
+                // Unparseable docker output is unproven; the caller refuses the discovery.
+                return undefined
+            }
             if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
             const owned = dockerResource(parsed, kind)
             if (owned === undefined) return undefined
@@ -1206,6 +1221,7 @@ export function admitReclaimDiscovery(
         consumedPlannedDiscoverySteps.add(step)
         return snapshot
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -1244,6 +1260,7 @@ export function combineReclaimDiscoveries(snapshots: readonly ReclaimDiscoverySn
         consumedSelectionAuthorities.add(first.selectionAuthority)
         return combined
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -1550,6 +1567,7 @@ async function inspectHostPath(declaration: HostPathDeclaration): Promise<HostPa
             }
         }
     } catch {
+        // A declared path that cannot be identified is refused by the caller as an unidentified target.
         return undefined
     }
     return undefined
@@ -1950,8 +1968,8 @@ export async function planReset(rawInput: PlanResetInput): Promise<ResetPreview 
         if (coldTargetsMatch) issuedResetRecoveryPlans.set(result, reclaimTargetEnvelope('reset', input.stackId,
             input.configSha256, digest, targetCommitments(coldIdentities!)))
         return result
-    } catch {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reset input could not be inspected safely', 'reset')
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, `reset input could not be inspected safely: ${errorCause(error)}`, 'reset')
     }
 }
 
@@ -2245,8 +2263,8 @@ export async function planTeardown(rawInput: PlanTeardownInput): Promise<Teardow
             'down', input.stackId, input.configSha256, discoveryDigest, targetCommitments(coldTargetsMatch ? coldIdentities! : targetIdentities),
         ))
         return result
-    } catch {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'teardown input could not be inspected safely', 'teardown')
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, `teardown input could not be inspected safely: ${errorCause(error)}`, 'teardown')
     }
 }
 
@@ -2361,6 +2379,7 @@ function committedTargetIdentities(recovery: FailedReclaimRecovery): readonly Re
         })
         return identities.length === targets.length ? Object.freeze(identities) : undefined
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -2458,6 +2477,7 @@ async function identityBoundFilesystemCheck(expected: PathTargetIdentity): Promi
             identity: Object.freeze({ ...filesystemObjectIdentity(target), ancestors: Object.freeze(ancestors) }),
         })
     } catch {
+        // A target that cannot be re-identified no longer matches; the caller refuses it.
         return undefined
     }
 }
@@ -2528,7 +2548,10 @@ export async function redeemReclaimAction(input: {
         if (Reflect.ownKeys(descriptors).length !== 2 || !('value' in descriptors.actionAuthority!) || !('value' in descriptors.attempt!)) return undefined
         actionAuthority = descriptors.actionAuthority!.value as object
         attemptAuthority = descriptors.attempt!.value as DrainAttemptAuthority
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
     if (!actionAuthority || typeof actionAuthority !== 'object' || !attemptAuthority || typeof attemptAuthority !== 'object') return undefined
     const reset = pendingResetActions.get(actionAuthority)
     const teardown = pendingTeardownActions.get(actionAuthority)
@@ -2621,7 +2644,10 @@ export function redeemAbsentReclaimAction(input: {
         absentReclaimExecutions.set(authority, { pending, execution,
             reservation: candidate.reservation, attempt: candidate.attempt })
         return Object.freeze({ authority })
-    } catch { return undefined }
+    } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
+        return undefined
+    }
 }
 
 export async function reconcileAbsentReclaimAction(input: {
@@ -2666,9 +2692,9 @@ export async function reconcileAbsentReclaimAction(input: {
         issuedReclaimCompleted.set(resultAuthority, settled)
         return Object.freeze({ kind: 'complete', continuation: remainder.length === 0 ? null : pending.continuation,
             authority: resultAuthority })
-    } catch {
+    } catch (error) {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
-            'fresh discovery did not prove the exact interrupted removal and remaining target set', 'reclaim-reconciliation')
+            `fresh discovery did not prove the exact interrupted removal and remaining target set: ${errorCause(error)}`, 'reclaim-reconciliation')
     }
 }
 
@@ -2689,7 +2715,10 @@ function samePathTargetIdentity(expected: PathTargetIdentity): boolean {
         const current = lstatSync(expected.path, { bigint: true })
         const type = current.isDirectory() ? 'directory' : current.isFile() ? 'file' : undefined
         return type === expected.type && sameFilesystemObject(current, expected)
-    } catch { return false }
+    } catch {
+        // A path that cannot be re-identified no longer matches the recorded identity.
+        return false
+    }
 }
 
 function pathIsAbsent(path: string): boolean {
@@ -2773,8 +2802,8 @@ export function admitReclaimFailure(input: {
         const authority = Object.freeze({})
         issuedReclaimFailures.set(authority, settled)
         return Object.freeze({ kind: 'complete', authority, continuation: pending.continuation })
-    } catch {
-        return Object.freeze({ kind: 'unavailable', reason: 'reclaim failure evidence is unavailable' })
+    } catch (error) {
+        return Object.freeze({ kind: 'unavailable', reason: `reclaim failure evidence is unavailable: ${errorCause(error)}` })
     }
 }
 
@@ -2829,8 +2858,8 @@ export function reconcileReclaimAction(input: {
         authority = descriptors.authority!.value as object
         outcomeInput = descriptors.outcome!.value as ExecuteProbeOutcome
         discovery = descriptors.discovery!.value as ReclaimDiscoverySnapshot
-    } catch {
-        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim reconciliation input is malformed', 'reclaim-reconciliation')
+    } catch (error) {
+        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, `reclaim reconciliation input is malformed: ${errorCause(error)}`, 'reclaim-reconciliation')
     }
     if (authority === null || typeof authority !== 'object') {
         return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH, 'reclaim reconciliation authority is missing or stale', 'reclaim-reconciliation')

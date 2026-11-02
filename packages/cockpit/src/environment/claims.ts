@@ -7,6 +7,7 @@ import { platform } from 'node:os'
 import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     OBSERVATION_PRODUCER_BYTE_LIMIT,
     OBSERVATION_REASON_BYTE_LIMIT,
     REFUSAL_CODES,
@@ -184,6 +185,7 @@ function isCanonicalJson(body: string): boolean {
     try {
         return JSON.stringify(canonicalJsonValue(JSON.parse(body))) === body
     } catch {
+        // Unparseable JSON is simply not canonical.
         return false
     }
 }
@@ -957,7 +959,10 @@ export function collectHolderProcessProbe(plan: ExecutionPlan, outcomes: readonl
     const observations: HolderObservationInput[] = []
     for (const [index, outcome] of authenticated.entries()) {
         let result: string
-        try { result = new TextDecoder('utf-8', { fatal: true }).decode(outcome!.stdout) } catch { return undefined }
+        try { result = new TextDecoder('utf-8', { fatal: true }).decode(outcome!.stdout) } catch {
+            // Non-UTF-8 probe output is unproven; the caller refuses a missing probe.
+            return undefined
+        }
         if (result !== 'live' && result !== 'absent' && result !== 'unavailable') return undefined
         observations.push(Object.freeze({
             holderId: contract.holderIds[index]!,
@@ -1293,6 +1298,7 @@ function exactArrayLength(value: unknown, expected: number): number | undefined 
         ) return undefined
         return descriptor.value
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -1301,7 +1307,10 @@ function hasExactKeys(value: object, keys: readonly string[]): boolean {
     try {
         const actual = Reflect.ownKeys(Object.getOwnPropertyDescriptors(value))
         return actual.length === keys.length && actual.every((key) => typeof key === 'string' && keys.includes(key))
-    } catch { return false }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return false
+    }
 }
 
 function snapshotHolderObservations(
@@ -1368,6 +1377,7 @@ function snapshotHolderObservations(
             snapshots.push(Object.freeze({ holderId: holderId as HolderId, observation: Object.freeze(observation) }))
         }
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
     return Object.freeze(snapshots)
@@ -1455,6 +1465,7 @@ export function removeExactCoordinationHolder(
             lastReleasedHolder: holderId,
         }
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -1532,7 +1543,10 @@ function snapshotDrainRequest(value: unknown): DrainReservationRequest | undefin
             generation: request.generation, targetIds, actions,
             expectedCoordinationRevision: request.expectedCoordinationRevision,
         })
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 function sameDrainRequest(left: DrainReservation, right: DrainReservationRequest): boolean {
@@ -1593,7 +1607,10 @@ function snapshotDrainTargets(value: unknown): readonly string[] | undefined {
             || targets.some((target, index) => target.length === 0 || Buffer.byteLength(target, 'utf8') > 512
                 || target.includes('\0') || index > 0 && targets[index - 1]! >= target)) return undefined
         return Object.freeze(targets)
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 function snapshotDataOnly(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown | undefined {
@@ -1630,7 +1647,10 @@ function snapshotDataOnly(value: unknown, seen = new WeakSet<object>(), depth = 
             result[key] = item
         }
         return result
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 function snapshotDrainActions(value: unknown): readonly DrainAction[] | undefined {
@@ -1651,7 +1671,10 @@ function snapshotDrainActions(value: unknown): readonly DrainAction[] | undefine
             actions.push(snapshotDrainAction(parsed.data))
         }
         return Object.freeze(actions)
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 function sameDrainActions(left: readonly DrainAction[], right: readonly DrainAction[]): boolean {
@@ -1761,6 +1784,7 @@ export async function reserveDrain(input: {
         namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
         request = snapshotDrainRequest(descriptors.request!.value)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
         request = undefined
     }
@@ -1906,6 +1930,7 @@ export async function reserveDrainAttempt(input: {
         reservation = reservationAuthority.reservation
         namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
         reservation = undefined
         reservationAuthority = undefined
@@ -2097,7 +2122,10 @@ function exactDataProperties(value: unknown, keys: readonly string[]): Readonly<
         const descriptors = Object.getOwnPropertyDescriptors(value)
         if (keys.some((key) => !('value' in descriptors[key]!))) return undefined
         return Object.freeze(Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value])))
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 export function openRuntimeDrainExecution(input: {
@@ -2235,6 +2263,7 @@ function prepareDrainOutcomeRecord(input: {
         const candidate = Number.isFinite(observedTime) ? new Date(observedTime).toISOString() : undefined
         updatedAt = candidate && isCanonicalTimestamp(candidate) ? candidate : undefined
     } catch {
+        // A clock that cannot yield a canonical timestamp leaves updatedAt undefined, which the caller refuses.
         updatedAt = undefined
     }
     const notBefore = outcome?.kind === 'failure'
@@ -2601,6 +2630,7 @@ export async function inspectDestructiveDrainRecovery(input: {
         holderId = suppliedHolderId as HolderId
         purpose = suppliedPurpose
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
     }
     if (!namespace || !stackId || !holderId || !purpose) {
@@ -2677,6 +2707,7 @@ export async function inspectSleepDrainRecovery(input: {
         stackId = suppliedStackId as StackId
         holderId = suppliedHolderId as HolderId
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
     }
     if (!namespace || !stackId || !holderId) {
@@ -2748,6 +2779,7 @@ export async function recoverSleepDrainReservation(input: {
         namespace = authenticateStateNamespace(descriptors.namespace!.value)
         request = snapshotDrainRequest(descriptors.request!.value)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
     }
     if (!namespace || !authority || !request || !issued) {
@@ -2807,6 +2839,7 @@ export async function recoverDrainReservation(input: {
         namespace = snapshotStateNamespace(descriptors.namespace!.value as StateNamespace)
         request = snapshotDrainRequest(descriptors.request!.value)
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
         request = undefined
     }
@@ -2891,6 +2924,7 @@ export function inspectFailedReclaimRecovery(input: {
         failedReclaimRecoveries.set(candidateAuthority, recovery)
         return candidateAuthority
     } catch {
+        // Any failure leaves the authority unminted; the caller refuses a missing authority.
         return undefined
     }
 }
@@ -2987,7 +3021,10 @@ function snapshotExactReducerInput(value: unknown, keys: readonly string[]): Rea
             result[key] = snapshot
         }
         return Object.freeze(result)
-    } catch { return undefined }
+    } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
+        return undefined
+    }
 }
 
 // CAS callbacks may retry; burn outcome authority only after publication is definite.
@@ -3069,6 +3106,7 @@ function restoreAuthorityInput(input: unknown): Omit<RestoreExecutionContract, '
             || !validIdentity(configSha256, sha256Identity) || !validIdentity(stepSha256, sha256Identity)) return undefined
         return Object.freeze({ namespace, stackId, holderId, requesterId, configPath, configSha256, stepSha256 })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -3153,9 +3191,9 @@ export async function consumeRestoreExecutionAuthority(input: {
             configSha256: descriptors.configSha256!.value,
             stepSha256: descriptors.stepSha256!.value,
         })
-    } catch {
+    } catch (error) {
         // The exact owner must retry with the original token; malformed envelopes cannot authorize releasing its reservation.
-        return restoreAuthorityRefusal('restore authority consumption input is malformed', 'restore authority input')
+        return restoreAuthorityRefusal(`restore authority consumption input is malformed: ${errorCause(error)}`, 'restore authority input')
     }
     const contract = authority && restoreExecutionAuthorities.get(authority)
     if (!contract) return restoreAuthorityRefusal('restore authority is absent or already consumed', 'restore authority')
@@ -3229,6 +3267,7 @@ export async function settleRestoreExecutionAuthority(input: {
         namespace = authenticateStateNamespace(descriptors.namespace.value)
         lease = descriptors.lease.value as RestoreExecutionLease
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         namespace = undefined
         lease = undefined
     }
@@ -3280,8 +3319,8 @@ export async function acquireClaim(input: {
             holder: Object.freeze({ holderId: input.holder.holderId, checkoutId: input.holder.checkoutId }),
             now: input.now,
         })
-    } catch {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim acquisition input could not be read safely', 'claim acquisition input')
+    } catch (error) {
+        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `claim acquisition input could not be read safely: ${errorCause(error)}`, 'claim acquisition input')
     }
     if (
         !validIdentity(request.stackId, stackIdentity)
@@ -3379,8 +3418,8 @@ export async function releaseClaim(input: {
             ...(authority ? { authority } : {}),
             now: input.now,
         })
-    } catch {
-        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'claim release input could not be read safely', 'claim release input')
+    } catch (error) {
+        return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, `claim release input could not be read safely: ${errorCause(error)}`, 'claim release input')
     }
     if (
         !validIdentity(request.stackId, stackIdentity)
@@ -3587,8 +3626,8 @@ export async function classifyHolders(input: {
         requester = input.requester
         requestedAt = input.requestedAt
         timeoutMs = input.timeoutMs
-    } catch {
-        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, 'holder classification input could not be read safely', 'holder classification input')
+    } catch (error) {
+        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, `holder classification input could not be read safely: ${errorCause(error)}`, 'holder classification input')
     }
     let stack: string
     let revision: number | undefined
@@ -3597,14 +3636,14 @@ export async function classifyHolders(input: {
         stack = record?.subjectId ?? ''
         revision = record?.revision
         value = decodeCoordinationRecord(record, stack as StackId)
-    } catch {
-        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, 'holder classification record could not be read safely', 'holder classification record')
+    } catch (error) {
+        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, `holder classification record could not be read safely: ${errorCause(error)}`, 'holder classification record')
     }
     let suppliedObservations: readonly HolderObservationInput[]
     try {
         suppliedObservations = input.observations
-    } catch {
-        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, 'holder classification input could not be read safely', 'holder classification input')
+    } catch (error) {
+        return refuse(ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN, `holder classification input could not be read safely: ${errorCause(error)}`, 'holder classification input')
     }
     const probeContract = issuedHolderObservations.get(suppliedObservations)
     if (!value || !Number.isSafeInteger(revision) || revision! < 0) {
