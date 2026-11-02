@@ -3445,6 +3445,13 @@ The procedure `packages/cockpit/surfaces/skills/procedures/onboarding.md` is rea
               },
               "requires_stack": {
                 "type": "boolean"
+              },
+              "timeout_seconds": {
+                "default": 1800,
+                "description": "Seconds the stage may run before it is stopped and the gate reports DEGRADED.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7200
               }
             },
             "required": [
