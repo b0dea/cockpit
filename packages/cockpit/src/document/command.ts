@@ -1078,7 +1078,7 @@ async function completeConfigurationDocument(
         const question = configurationQuestion(context, 'estate.runnable', runnableWhy(estateGaps))
         const read = readConfigurationAnswer(configuration.answers, answerIndex, question)
         if (read.kind === 'pending') return pendingConfiguration({ name, defaults, siblings: documentedRows(siblingRows),
-            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, undefined, inference), gaps: [] },
+            attributions: defaultAttributions(defaults, siblingAnswerRows, detected, root, defaultSource, siblingsRoot, inference), gaps: [] },
             input.output ? resolve(input.output) : null, question)
         if (read.kind === 'refusal') return read.outcome
         if (!read.value || typeof read.value !== 'object' || Array.isArray(read.value)

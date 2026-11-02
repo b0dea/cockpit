@@ -449,6 +449,8 @@ describe('public estate observation', () => {
         configuration.answers.push(answerQuestion(pending.question!, generatedConfig.sibling))
         pending = await documentObservedCommand({ root: canonical, configuration })
         expect(pending).toMatchObject({ kind: 'gap-draft', question: { field: 'estate.runnable' } })
+        // The observed repositories are children of the root, so the draft says so at every step.
+        expect(pending.diagnostics).toContainEqual(expect.objectContaining({ code: 'DOCUMENT_INFERRED', target: 'cockpit.siblings_root' }))
         configuration.answers.push(answerQuestion(pending.question!, {
             app: { runnable: true, service: 'app', command: ['node', 'server.mjs'] },
         }))
