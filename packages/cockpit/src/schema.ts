@@ -1297,6 +1297,24 @@ export const CockpitConfig = z
             ...(globalGenerated?.volumes ?? []).map((volume) => ({ value: volume.id, path: ['environment', 'generated', 'volumes'] })),
             ...generatedRows.flatMap(({ index, generated }) => (generated.volumes ?? []).map((volume) => ({ value: volume.id, path: ['sibling', index, 'derives', 'generated', 'volumes'] }))),
         ], 'generated volume identities must be unique across global and row declarations')
+        // Reset matches each entry against a Compose volume key, so a name no volume declares
+        // would reset nothing while reading as a control. A compose-first stack's keys live in its
+        // Compose files and are checked where `sync`, `check` and `up` read them.
+        if (globalGenerated !== undefined || cfg.environment.compose_files.length === 0) {
+            const declared = [
+                ...(globalGenerated?.volumes ?? []).map(({ id }) => id),
+                ...generatedRows.flatMap(({ generated }) => (generated.volumes ?? []).map(({ id }) => id)),
+            ]
+            cfg.environment.resettable_volumes.forEach((name, index) => {
+                if (declared.includes(name)) return
+                ctx.addIssue({
+                    code: 'custom', path: ['environment', 'resettable_volumes', index],
+                    message: globalGenerated === undefined
+                        ? `resettable volume ${JSON.stringify(name)} names no volume: the environment declares neither generated volumes nor compose_files`
+                        : `resettable volume ${JSON.stringify(name)} is not a generated volume id${declared.length === 0 ? '' : ` (declared: ${declared.join(', ')})`}`,
+                })
+            })
+        }
         uniqueAcrossRows([
             ...(globalGenerated?.decisions.entries ?? []).map((entry) => ({ value: entry.id, path: ['environment', 'generated', 'decisions', 'entries'] })),
             ...generatedRows.flatMap(({ index, generated }) => generated.decisions.map((entry) => ({ value: entry.id, path: ['sibling', index, 'derives', 'generated', 'decisions'] }))),

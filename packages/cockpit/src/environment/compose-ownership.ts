@@ -29,11 +29,14 @@ export function renderComposeOwnership(input: Readonly<{
     stackId: string
     cockpitId: string
     configSha256: string
+    /** `environment.resettable_volumes`: each must name a volume these files create. */
+    resettableVolumes: readonly string[]
 }>): ComposeOwnershipRender {
     const services = new Set<string>()
     const built = new Set<string>()
     // Each owned volume and the labels its own files already declare, as KEY -> value.
     const volumes = new Map<string, Map<string, string>>()
+    const external = new Set<string>()
     for (const { reference, source } of input.sources) {
         const refuse = (reason: string) => Object.freeze({ kind: 'refusal' as const, reason, target: reference })
         if (Buffer.byteLength(source) > SOURCE_LIMIT_BYTES) return refuse('the Compose file exceeds 1 MiB')
@@ -52,7 +55,10 @@ export function renderComposeOwnership(input: Readonly<{
                 // An external volume is created outside this stack, and Compose refuses labels on one.
                 const record = declaration !== null && typeof declaration === 'object' && !Array.isArray(declaration)
                     ? declaration as Record<string, unknown> : undefined
-                if (record?.external) continue
+                if (record?.external) {
+                    external.add(id)
+                    continue
+                }
                 const declared = volumes.get(id) ?? new Map<string, string>()
                 const labels = record?.labels
                 if (Array.isArray(labels)) {
@@ -71,6 +77,19 @@ export function renderComposeOwnership(input: Readonly<{
             if (declaration !== null && typeof declaration === 'object' && !Array.isArray(declaration)
                 && (declaration as Record<string, unknown>).build !== undefined) built.add(id)
         }
+    }
+    // Reset matches a declared name against the Compose volume key, so a name these files do not
+    // create would reset nothing while reading as a control.
+    for (const name of input.resettableVolumes) {
+        if (volumes.has(name)) continue
+        const declared = [...volumes.keys()].sort()
+        return Object.freeze({
+            kind: 'refusal' as const,
+            target: 'environment.resettable_volumes',
+            reason: external.has(name)
+                ? `resettable volume ${JSON.stringify(name)} is external: Compose does not create it, so cockpit cannot label it as this stack's own and reset could never remove it`
+                : `resettable volume ${JSON.stringify(name)} is not a top-level volume in environment.compose_files${declared.length === 0 ? '' : ` (declared: ${declared.join(', ')})`}`,
+        })
     }
     const labels = {
         'dev.b0dea.cockpit.config-sha256': input.configSha256,

@@ -828,6 +828,7 @@ describe('the published cockpit schema', () => {
                 { path: 'sibling[].var', rule: 'unique' },
                 { path: 'sibling[].environment_files[].instance', rule: 'unique' },
                 { path: 'environment.resettable_volumes[]', rule: 'unique' },
+                { path: 'environment.resettable_volumes[]', rule: 'declared_compose_volume_key' },
                 { path: 'environment.generated_host_paths[]', rule: 'unique' },
                 { path: 'environment.compose_files[]', rule: 'unique' },
                 { path: 'environment.entrypoint_derivatives[].name', rule: 'unique' },

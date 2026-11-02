@@ -69,6 +69,13 @@ const REQUIRED_LABELS = Object.freeze({
     config: 'dev.b0dea.cockpit.config-sha256',
     owner: 'dev.b0dea.cockpit.owner-id',
 })
+// Compose labels every volume it creates with its project and the volume's key in the Compose
+// file. `resettable_volumes` names that key, and Docker's volume name differs per checkout.
+const COMPOSE_LABELS = Object.freeze({
+    project: 'com.docker.compose.project',
+    volume: 'com.docker.compose.volume',
+})
+const COMPOSE_PROJECT = /^[a-z0-9][a-z0-9_-]*$/
 const MAX_RESOURCES = 4_096
 const OUTPUT_LIMIT = 1_048_576
 // Inspections are chunked so a stack with many resources still needs few Docker clients. The chunk
@@ -508,7 +515,7 @@ export function classifyReclaim(rawInput: ClassifyReclaimInput): ReclaimResult {
         // The stack and owner labels are the stack's stable identity; the configuration label only
         // records which cockpit.toml started the resource. Keeping a container or network an earlier
         // configuration started made `down` after an edited cockpit.toml report the stack removed
-        // while it stayed. Its data stays out of reach: reset admits only the current generation.
+        // while it stayed. Its data stays out of teardown's reach: only a declared `reset` removes it.
         const action: ReclaimAction = resource.referenced ? 'report-only' : evidence.ownership === 'current'
             ? reverse === 'data-bearing' ? 'reset-required'
                 : reverse === 'regenerable-cache' ? 'reclaim' : 'teardown'
@@ -687,15 +694,18 @@ function discoveryFormat(kind: Exclude<ReclaimResourceKind, 'build-cache'>): str
     const label = (key: string) => `{{json (.Label "${key}")}}`
     // Without `--size` a container prints a misleading "0B (virtual ...)", so its size is unmeasured.
     const bytes = kind === 'network' || kind === 'container' ? 'null' : '{{json .Size}}'
-    const labels = kind === 'image' ? '{}'
-        : `{"${REQUIRED_LABELS.stack}":${label(REQUIRED_LABELS.stack)},"${REQUIRED_LABELS.config}":${label(REQUIRED_LABELS.config)},"${REQUIRED_LABELS.owner}":${label(REQUIRED_LABELS.owner)}}`
+    const labels = kind === 'image' ? '{}' : `{${listedLabels(kind).map((key) => `"${key}":${label(key)}`).join(',')}}`
     return `{"id":${id},"name":${name},"labels":${labels},"referenced":false,"bytes":${bytes}}`
 }
 
-function dockerLabels(value: unknown): Readonly<Record<string, string>> | undefined {
+function listedLabels(kind?: ReclaimResourceKind): readonly string[] {
+    return [...Object.values(REQUIRED_LABELS), ...kind === 'volume' ? Object.values(COMPOSE_LABELS) : []]
+}
+
+function dockerLabels(value: unknown, kind?: ReclaimResourceKind): Readonly<Record<string, string>> | undefined {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
     const labels: Record<string, string> = {}
-    const allowed = new Set<string>(Object.values(REQUIRED_LABELS))
+    const allowed = new Set<string>(listedLabels(kind))
     if (Object.keys(value).some((key) => !allowed.has(key))) return undefined
     for (const [key, labelValue] of Object.entries(value)) {
         if (typeof labelValue !== 'string' || labelValue.length > 512 || labelValue.includes('\0')) return undefined
@@ -739,7 +749,7 @@ function dockerResource(value: unknown, kind: Exclude<ReclaimResourceKind, 'cach
     const name = row.name
     const labels = kind === 'image'
         ? row.labels !== null && typeof row.labels === 'object' && !Array.isArray(row.labels) && exactKeys(row.labels, []) ? Object.freeze({}) : undefined
-        : dockerLabels(row.labels)
+        : dockerLabels(row.labels, kind)
     const bytes = dockerBytes(row.bytes, kind === 'container')
     const referenced = kind === 'image' ? typeof row.referenced === 'boolean' ? row.referenced : undefined : row.referenced
     return typeof id === 'string' && typeof name === 'string' && labels !== undefined && bytes !== undefined && typeof referenced === 'boolean'
@@ -1291,7 +1301,9 @@ type ResetTargetAuthority =
 export interface PlanResetInput extends ClassifyReclaimInput {
     readonly expectedCoordinationRevision: number
     readonly requesterHolderId: string | null
+    /** Compose volume keys, matched within `composeProject`; Docker's volume name is not one. */
     readonly resettableVolumes: readonly string[]
+    readonly composeProject: string
     readonly generatedHostPaths: readonly HostPathDeclaration[]
     readonly runtimeExecutable: ResolvedExecutable
     readonly pathExecutable: ResolvedExecutable
@@ -1587,19 +1599,31 @@ async function resetAuthorities(input: PlanResetInput): Promise<ResetTargetAutho
     if (!Array.isArray(input.resettableVolumes) || !Array.isArray(input.generatedHostPaths)
         || input.resettableVolumes.length + input.generatedHostPaths.length > MAX_RESOURCES
         || input.resettableVolumes.some((name) => typeof name !== 'string' || !/^[a-z0-9][a-z0-9_.-]*$/.test(name))
-        || new Set(input.resettableVolumes).size !== input.resettableVolumes.length) return undefined
+        || new Set(input.resettableVolumes).size !== input.resettableVolumes.length
+        || typeof input.composeProject !== 'string' || !COMPOSE_PROJECT.test(input.composeProject)) return undefined
     const classified = classifyReclaim(reclaimInput(input))
     if (classified.kind !== 'complete') return undefined
     const targets: ResetTargetAuthority[] = []
-    for (const name of input.resettableVolumes) {
-        const matches = classified.resources.filter((resource) => resource.kind === 'volume' && resource.name === name)
+    for (const key of input.resettableVolumes) {
+        // A volume carrying Compose's default name for this key without its labels is one Compose
+        // would adopt for the stack, so it counts as a match and refuses below instead of hiding.
+        const matches = classified.resources.filter((resource) => resource.kind === 'volume'
+            && (resource.labels[COMPOSE_LABELS.project] === input.composeProject && resource.labels[COMPOSE_LABELS.volume] === key
+                || resource.name === `${input.composeProject}_${key}`))
+        // Configuration validation and the ownership render refuse a key no volume declares, so
+        // no match here is a volume not created yet or already removed.
         if (matches.length === 0) continue
         if (matches.length !== 1) return undefined
         const match = matches[0]!
-        if (match.ownership !== 'current' || match.reversibility !== 'data-bearing' || match.action !== 'reset-required'
-            || typeof match.generation !== 'string') return undefined
+        // The stack and owner labels identify the stack; the configuration label only records
+        // which cockpit.toml created the volume. Compose keeps a volume across configuration
+        // edits and `up` goes on using it, so admitting only the current configuration left every
+        // data volume un-resettable after the first edit. The preview still commits the exact
+        // volume id, labels and generation, so a volume replaced before the action is refused.
+        if (match.ownership !== 'current' && match.ownership !== 'stale-config' || match.referenced
+            || match.reversibility !== 'data-bearing' || typeof match.generation !== 'string') return undefined
         targets.push(Object.freeze({
-            kind: 'volume', identity: name, declaration: name, labels: Object.freeze({ ...match.labels }),
+            kind: 'volume', identity: match.name, declaration: key, labels: Object.freeze({ ...match.labels }),
             evidence: Object.freeze({ resourceId: match.id, bytes: match.bytes, generation: match.generation }),
         }))
     }
@@ -1610,7 +1634,8 @@ async function resetAuthorities(input: PlanResetInput): Promise<ResetTargetAutho
     // with "volume is in use".
     if (targets.length > 0) {
         for (const match of classified.resources) {
-            if (match.kind !== 'container' || match.ownership !== 'current' || match.action !== 'teardown') continue
+            if (match.kind !== 'container' || match.ownership !== 'current' && match.ownership !== 'stale-config'
+                || match.action !== 'teardown') continue
             const { ownership: _ownership, reversibility: _reversibility, action: _action, evidence: _evidence, reason: _reason, suggestion: _suggestion, ...resource } = match
             targets.push(Object.freeze({
                 kind: 'container', identity: match.id, declaration: match.name, labels: Object.freeze({ ...match.labels }),

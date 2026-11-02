@@ -18,6 +18,7 @@ import { ENVIRONMENT_CODES, type Diagnostic, type EnvironmentCommandOutcome, typ
 import { decodeCoordinationRecord, readActiveStackInventory } from './claims.js'
 import { declaresNothingToRun, runtimeNotDeclared } from './declaration.js'
 import { resolveDockerExecutable, resolvePathRemovalExecutable } from './executable.js'
+import { composeProjectName } from './identity.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import {
     deriveEntrypoints,
@@ -406,6 +407,7 @@ export function createDestructiveCommandAdapters(
                 ...common,
                 expectedCoordinationRevision: stored.value.revision,
                 resettableVolumes: Object.freeze([...configuration.config.environment.resettable_volumes]),
+                composeProject: composeProjectName({ cockpitName: configuration.config.cockpit.name, stackId: context.stackId }),
                 generatedHostPaths: Object.freeze(configuration.config.environment.generated_host_paths.map((declaration) => Object.freeze({
                     root: cwd,
                     path: resolve(cwd, declaration),

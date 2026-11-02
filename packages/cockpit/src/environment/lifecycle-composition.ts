@@ -952,6 +952,7 @@ export function createLifecycleCommandAdapters(
             const ownership = renderComposeOwnership({
                 sources: declared.map(({ reference, source }) => ({ reference, source })),
                 stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.runtimeSha256,
+                resettableVolumes: currentBinding.config.environment.resettable_volumes,
             })
             if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
                 `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
