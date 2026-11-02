@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml'
 import { initCommand } from '../fix-catalogue.js'
 import { readBoundedInput, schemaIssueSummary, STRUCTURED_INPUT_BYTE_LIMIT } from '../config/load.js'
 import type { Diagnostic } from '../diagnostics.js'
-import { snapshotJson } from '../environment/contract.js'
+import { errorCause, snapshotJson } from '../environment/contract.js'
 import { judgePostureDeclaration } from '../environment/posture-observation.js'
 import { isSensitiveField, redactSensitiveText } from '../environment/sensitive.js'
 import { CockpitConfig, GeneratedEnvironment, Guards, InstallPolicy, MachineFloor, Testing, configurationDefaults } from '../schema.js'
@@ -240,6 +240,7 @@ function sourceDigest(manifest: string, bytes: Buffer): string | undefined {
     const digest = (value: Buffer | string) => createHash('sha256').update(value).digest('hex')
     if (manifest !== 'package.json') return digest(bytes)
     let parsed: unknown
+    // A package.json that is not JSON has no product entries to separate, so its raw bytes bind it.
     try { parsed = JSON.parse(bytes.toString('utf8')) } catch { return digest(bytes) }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return digest(bytes)
     const product = productPackageManifest(parsed as Record<string, unknown>)
@@ -254,7 +255,7 @@ function composeDeclaresServices(text: string): boolean {
         return !!services && typeof services === 'object' && !Array.isArray(services)
             && Object.keys(services).length > 0
             && Object.values(services).every(service => !!service && typeof service === 'object' && !Array.isArray(service))
-    } catch { return false }
+    } catch { return false } // The caller's reason names invalid Compose YAML; the parser message would quote file content.
 }
 
 /** Reads fixed public runnable sources and reports whether one declares a product process. */
@@ -290,7 +291,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
         if (manifest === 'Dockerfile') {
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
-            catch {
+            catch { // Fatal decoding throws only for invalid UTF-8, which the reason names.
                 if (runnable !== 'confirmed') runnable = 'unknown'
                 reasons.push(`${named('Dockerfile')} is not valid UTF-8`)
                 continue
@@ -305,7 +306,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
         if ((COMPOSE_NAMES as readonly string[]).includes(manifest)) {
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
-            catch {
+            catch { // Fatal decoding throws only for invalid UTF-8, which the reason names.
                 if (runnable !== 'confirmed') runnable = 'unknown'
                 reasons.push(`${named(manifest)} is not valid UTF-8`)
                 continue
@@ -324,7 +325,7 @@ async function observeRepositorySources(repository: string, label: string): Prom
         }
         let parsed: unknown
         try { parsed = JSON.parse(bytes.toString('utf8')) }
-        catch {
+        catch { // The reason names invalid JSON; the parser message would quote file content.
             if (runnable !== 'confirmed') runnable = 'unknown'
             reasons.push(`${named('package.json')} is not valid JSON`)
             continue
@@ -480,7 +481,7 @@ function estateCandidate(value: unknown, root: string): readonly EstateRepositor
     return Object.freeze(rows)
 }
 
-async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], scope: ObservationScope): Promise<boolean> {
+async function currentEstateRows(root: string, rows: readonly EstateRepositoryObservation[], scope: ObservationScope): Promise<boolean | Readonly<{ cause: string }>> {
     try {
         const candidates = scope.rootIsRepository ? [{ name: '.' }] : await estateDirectories(root, scope.repositories)
         for (const directory of candidates) {
@@ -532,8 +533,8 @@ async function currentEstateRows(root: string, rows: readonly EstateRepositoryOb
             if (!(ownRoot ? sameIdentity : sameStat)(repositoryBefore, await lstat(repository))) return false
         }
         return true
-    } catch {
-        return false
+    } catch (error) {
+        return { cause: errorCause(error) }
     }
 }
 
@@ -554,9 +555,9 @@ export async function classifyEstateObservation(
             return estateRefusal('estate root is linked, missing or non-canonical', captured.root)
         }
         directories = captured.rootIsRepository ? [] : await estateDirectories(root, only)
-    } catch {
-        return estateRefusal(only === undefined ? 'estate root is linked, missing or non-canonical'
-            : `estate root is linked, missing or non-canonical, or does not hold ${only.join(', ')} as a plain directory`, captured.root)
+    } catch (error) {
+        return estateRefusal((only === undefined ? 'estate root is linked, missing or non-canonical'
+            : `estate root is linked, missing or non-canonical, or does not hold ${only.join(', ')} as a plain directory`) + `: ${errorCause(error)}`, captured.root)
     }
     let observed: unknown
     try { observed = await adapters.observe(Object.freeze({ root, ...(only === undefined ? {} : { repositories: only }),
@@ -567,8 +568,10 @@ export async function classifyEstateObservation(
             : estateRefusal('estate observation owner failed', root)
     }
     const rows = estateCandidate(observed, root)
-    if (!rows || !await currentEstateRows(root, rows, captured)) {
-        return estateRefusal('estate observation is malformed, ambiguous, stale or unbound to current source bytes', root)
+    if (!rows) return estateRefusal('estate observation is malformed, ambiguous, stale or unbound to current source bytes', root)
+    const current = await currentEstateRows(root, rows, captured)
+    if (current !== true) {
+        return estateRefusal(`estate observation is malformed, ambiguous, stale or unbound to current source bytes${typeof current === 'object' ? `: ${current.cause}` : ''}`, root)
     }
     try {
         const currentDirectories = captured.rootIsRepository ? [] : await estateDirectories(root, only)
@@ -578,7 +581,7 @@ export async function classifyEstateObservation(
         }
         const after = await lstat(root)
         if (!(captured.rootIsRepository ? sameIdentity : sameStat)(before, after)) return estateRefusal('estate root changed during observation', root)
-    } catch { return estateRefusal('estate root changed during observation', root) }
+    } catch (error) { return estateRefusal(`estate root changed during observation: ${errorCause(error)}`, root) }
 
     const confirmed = rows.filter(row => row.runnable === 'confirmed')
     const unknown = rows.filter(row => row.runnable === 'unknown')
@@ -866,7 +869,7 @@ function readConfigurationAnswer(
         ) }
         return { kind: 'answer', value, provenance: answer.provenance }
     }
-    catch { return { kind: 'refusal', outcome: refusal(
+    catch { return { kind: 'refusal', outcome: refusal( // The parser message would quote the operator's answer.
         'DOCUMENT_CONFIGURATION_ANSWER_INVALID', 'the operator answer is not valid JSON', question.field,
     ) } }
 }
@@ -1376,7 +1379,7 @@ async function documentCommandOwned(
     let source: string
     try {
         source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch {
+    } catch { // Fatal decoding throws only for invalid UTF-8, which the reason names.
         return refusal('REGISTRY_ENCODING_INVALID', 'the registry file is not valid UTF-8', registry)
     }
 

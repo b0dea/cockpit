@@ -82,13 +82,14 @@ function refusal(code: string, message: string, target?: string, fix?: string): 
     }
 }
 
-async function sourceRevision(injected?: string): Promise<string | undefined> {
+async function sourceRevision(injected?: string): Promise<string | Readonly<{ cause?: string }>> {
     if (injected !== undefined) return injected
     try {
         const manifest = JSON.parse(await readFile(packageManifest, 'utf8')) as { cockpitSourceRevision?: unknown }
-        return typeof manifest.cockpitSourceRevision === 'string' ? manifest.cockpitSourceRevision : undefined
-    } catch {
-        return undefined
+        return typeof manifest.cockpitSourceRevision === 'string' ? manifest.cockpitSourceRevision : {}
+    } catch (error) {
+        // The resolver's import set is pinned, so the errno code or error class is read here rather than from the shared helper.
+        return { cause: error instanceof Error ? (error as NodeJS.ErrnoException).code ?? error.name : 'unknown error' }
     }
 }
 
@@ -318,7 +319,7 @@ export async function registryResolveCommand(input: RegistryResolveCommandInput)
     let registrySource: string
     try {
         registrySource = decodeInput(registryRead)
-    } catch {
+    } catch { // Fatal decoding throws only for invalid UTF-8, which the refusal names; the registry may hold secrets.
         return encodingRefusal('registry')
     }
     if (registryRead.length === 0 || registrySource.trim() === '') {
@@ -330,17 +331,17 @@ export async function registryResolveCommand(input: RegistryResolveCommandInput)
     let adoptionSource: string
     try {
         adoptionSource = decodeInput(adoptionRead)
-    } catch {
+    } catch { // Fatal decoding throws only for invalid UTF-8, which the refusal names.
         return encodingRefusal('adoption')
     }
     const adoptionResult = parseAdoption(adoptionSource)
     if ('refusal' in adoptionResult) return adoptionResult.refusal
 
     const revision = await sourceRevision(input.cockpitSourceRevision)
-    if (revision === undefined) {
+    if (typeof revision !== 'string') {
         return refusal(
             'COCKPIT_REVISION_INVALID',
-            'the installed package manifest could not be read or records no cockpitSourceRevision',
+            `the installed package manifest could not be read or records no cockpitSourceRevision${revision.cause ? `: ${revision.cause}` : ''}`,
             packageManifest,
             'reinstall @b0dea/cockpit, then retry',
         )

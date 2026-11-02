@@ -6,6 +6,7 @@ import { readBoundedInput } from '../config/load.js'
 import { validReleaseIntegrity } from './command.js'
 import { CORE_SURFACE_ASSET_PATHS, coreSurfaceDeclarations } from '../surfaces/core-declarations.js'
 import { surfaceDeclarationSha256 } from '../surfaces/merge.js'
+import { errorCause } from '../environment/contract.js'
 import type { SurfaceFeature } from '../surfaces/contract.js'
 import type {
     AffectedOverrideOriginal,
@@ -202,14 +203,20 @@ function captureProjection(value: unknown): AuthenticatedCurrentOverrideProjecti
     return Object.freeze({ activeOverrides: Object.freeze(activeOverrides) })
 }
 
-async function readEvidence(path: string, expectedSha256: string): Promise<string | undefined> {
-    if (!boundedText(path) || !SHA256.test(expectedSha256)) return undefined
+type ReadFailure = Readonly<{ cause?: string }>
+
+function causeSuffix(failure: ReadFailure): string {
+    return failure.cause ? `: ${failure.cause}` : ''
+}
+
+async function readEvidence(path: string, expectedSha256: string): Promise<string | ReadFailure> {
+    if (!boundedText(path) || !SHA256.test(expectedSha256)) return {}
     try {
         const read = await readBoundedInput(path)
-        if (read.kind !== 'complete' || createHash('sha256').update(read.bytes).digest('hex') !== expectedSha256) return undefined
+        if (read.kind !== 'complete' || createHash('sha256').update(read.bytes).digest('hex') !== expectedSha256) return {}
         return new TextDecoder('utf-8', { fatal: true }).decode(read.bytes)
-    } catch {
-        return undefined
+    } catch (error) {
+        return { cause: errorCause(error) }
     }
 }
 
@@ -222,11 +229,11 @@ function publicationRefusal(reason: string): ReleaseEvidencePublication {
     return Object.freeze({ kind: 'refusal', reason })
 }
 
-async function readPackageText(path: string): Promise<string | undefined> {
+async function readPackageText(path: string): Promise<string | ReadFailure> {
     try {
         const read = await readBoundedInput(path)
-        return read.kind === 'complete' ? new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) : undefined
-    } catch { return undefined }
+        return read.kind === 'complete' ? new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) : {}
+    } catch (error) { return { cause: errorCause(error) } }
 }
 
 export async function createReleaseRecord(input: InstalledUpgradeIdentity): Promise<ReleaseEvidencePublication> {
@@ -234,15 +241,19 @@ export async function createReleaseRecord(input: InstalledUpgradeIdentity): Prom
     if (!supplied?.integrity) return publicationRefusal('published package identity is invalid')
     const manifestText = await readPackageText(join(PACKAGE_ROOT, 'package.json'))
     let manifest: unknown
-    try { manifest = manifestText === undefined ? undefined : JSON.parse(manifestText) } catch { manifest = undefined }
+    let manifestCause = typeof manifestText === 'string' ? '' : causeSuffix(manifestText)
+    try { manifest = typeof manifestText === 'string' ? JSON.parse(manifestText) : undefined } catch (error) {
+        manifest = undefined
+        manifestCause = `: ${errorCause(error)}`
+    }
     const packageManifest = ownRecord(manifest)
     if (!packageManifest || packageManifest.name !== supplied.package || packageManifest.version !== supplied.version) {
-        return publicationRefusal('published package identity does not match the source package manifest')
+        return publicationRefusal(`published package identity does not match the source package manifest${manifestCause}`)
     }
     const assets = new Map<string, Readonly<{ bytes: string }>>()
     for (const path of CORE_SURFACE_ASSET_PATHS) {
         const bytes = await readPackageText(join(PACKAGE_ROOT, 'surfaces', path))
-        if (bytes === undefined) return publicationRefusal(`core surface asset could not be authenticated: ${path}`)
+        if (typeof bytes !== 'string') return publicationRefusal(`core surface asset could not be authenticated: ${path}${causeSuffix(bytes)}`)
         assets.set(path, Object.freeze({ bytes }))
     }
     const declarations = coreSurfaceDeclarations(assets)
@@ -265,13 +276,13 @@ export async function assembleReleaseEvidence(input: Readonly<{
     candidateSha256: string
 }>): Promise<ReleaseEvidencePublication> {
     const currentText = await readEvidence(resolve(input.currentPath), input.currentSha256)
-    if (currentText === undefined) return publicationRefusal('current release record could not be authenticated')
+    if (typeof currentText !== 'string') return publicationRefusal(`current release record could not be authenticated${causeSuffix(currentText)}`)
     const candidateText = await readEvidence(resolve(input.candidatePath), input.candidateSha256)
-    if (candidateText === undefined) return publicationRefusal('candidate release record could not be authenticated')
+    if (typeof candidateText !== 'string') return publicationRefusal(`candidate release record could not be authenticated${causeSuffix(candidateText)}`)
     let currentValue: unknown
     let candidateValue: unknown
-    try { currentValue = JSON.parse(currentText) } catch { return publicationRefusal('current release record is not valid JSON') }
-    try { candidateValue = JSON.parse(candidateText) } catch { return publicationRefusal('candidate release record is not valid JSON') }
+    try { currentValue = JSON.parse(currentText) } catch (error) { return publicationRefusal(`current release record is not valid JSON: ${errorCause(error)}`) }
+    try { candidateValue = JSON.parse(candidateText) } catch (error) { return publicationRefusal(`candidate release record is not valid JSON: ${errorCause(error)}`) }
     const current = captureReleaseRecord(currentValue)
     const candidate = captureReleaseRecord(candidateValue)
     if (!current) return publicationRefusal('current release record does not match the exact release schema')
@@ -355,9 +366,9 @@ export function createReleaseEvidenceDiscovery(
             return refusal('UPGRADE_AUTH_FAILED', 'release evidence is not bound to the requested configuration')
         }
         const bytes = await readEvidence(evidencePath, expectedSha256)
-        if (bytes === undefined) return refusal('UPGRADE_AUTH_FAILED', 'release evidence could not be authenticated')
+        if (typeof bytes !== 'string') return refusal('UPGRADE_AUTH_FAILED', `release evidence could not be authenticated${causeSuffix(bytes)}`)
         let parsed: unknown
-        try { parsed = JSON.parse(bytes) } catch { return refusal('UPGRADE_REPAIR_UNVERIFIED', 'release evidence is not valid JSON') }
+        try { parsed = JSON.parse(bytes) } catch (error) { return refusal('UPGRADE_REPAIR_UNVERIFIED', `release evidence is not valid JSON: ${errorCause(error)}`) }
         const evidence = captureEvidence(parsed)
         if (!evidence) return refusal('UPGRADE_REPAIR_UNVERIFIED', 'release evidence does not match the exact release schema')
         if (evidence.current.package !== installed.package || evidence.current.version !== installed.version
