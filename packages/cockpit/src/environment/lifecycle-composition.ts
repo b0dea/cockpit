@@ -833,7 +833,13 @@ export function createLifecycleCommandAdapters(
         const created = Buffer.from(outcome.stdout).toString('utf8').trim().split('\n')
             .map((line) => /^"[^"\\]+"$/.test(line) ? Date.parse(line.slice(1, -1)) : Number.NaN)
         if (created.length !== ids.length || created.some((instant) => !Number.isFinite(instant))) return undefined
-        return created.some((instant) => instant > Date.parse(savedAt))
+        // Docker records CreatedAt in whole seconds, so a volume created in the second the outcome
+        // was saved is ambiguous. It is read as the volume the data went into: a start creates the
+        // volume and applies the data moments later, often within that second, and reading it as
+        // recreated would apply the data again on every later `up`; recreating it within a second of
+        // the save would need a reset and a new start in that second.
+        const savedSecond = Math.floor(Date.parse(savedAt) / 1000)
+        return created.some((instant) => Math.floor(instant / 1000) > savedSecond)
     }
 
     const completeGeneratedData: LifecycleCommandAdapterComposition['completeGeneratedData'] = async (
