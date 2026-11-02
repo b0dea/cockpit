@@ -257,6 +257,8 @@ function adjacentTests(root, path) {
     if (!source || TEST_PATH.test(path)) return []
     const directory = dirname(source[1])
     const stem = basename(source[1])
+    // A deleted file can take its whole directory with it; its importers still own it.
+    if (!existsSync(resolve(root, directory))) return []
     return readdirSync(resolve(root, directory))
         .filter(name => name === `${stem}.test.${source[2]}` || name === `${stem}.spec.${source[2]}`
             || (name.startsWith(`${stem}.`) && (name.endsWith(`.test.${source[2]}`) || name.endsWith(`.spec.${source[2]}`))))
