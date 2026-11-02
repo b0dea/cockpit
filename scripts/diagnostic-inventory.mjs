@@ -515,9 +515,13 @@ function isReference(node) {
     return !ts.isLabeledStatement(parent) && !ts.isBreakOrContinueStatement(parent)
 }
 
-// Reading only these from an outcome decides control flow or carries payload and prose; diagnostics
-// travel in the outcome itself or its `diagnostics`, so these reads do not pass codes on.
-const INSPECTED_OUTCOME_FIELDS = new Set(['kind', 'status', 'state', 'ok', 'result', 'value', 'reason', 'message'])
+// Reading only these from an outcome decides control flow or carries prose; diagnostics travel in
+// the outcome itself or its `diagnostics`, so these reads do not pass codes on. `result` is left out
+// because a lifecycle round returns the whole command outcome there. `value` stays in, because a
+// work-order outcome's value is its payload; an outcome wrapped in `value` and read only through that
+// field would be dropped, which is the price of not listing every work-order code under every work
+// command.
+const INSPECTED_OUTCOME_FIELDS = new Set(['kind', 'status', 'state', 'ok', 'value', 'reason', 'message'])
 
 const DIAGNOSTIC_CARRIERS = new Set(['diagnostics', 'diagnostic', 'code'])
 

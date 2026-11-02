@@ -410,15 +410,15 @@ describe('reference generation', () => {
         expect(section('up')).toContain('`LIFECYCLE_EVIDENCE_INVALID`')
         // The guard and the interactive reset and work-order operators are other commands' paths
         // through the same dispatch code.
-        expect(section('up')).not.toContain('`GUARD_REFUSED`')
-        expect(section('up')).not.toContain('`RESET_CONFIRMATION_MISMATCH`')
-        expect(section('up')).not.toContain('`WORK_OPERATOR_REQUIRED`')
+        // Asserted on the inventory: a code wrongly attributed to every command would leave each
+        // section and move to the shared list, so a section check alone could not go red.
+        const up = inventory.commandDiagnostics.get('up')!
+        for (const other of ['GUARD_REFUSED', 'RESET_CONFIRMATION_MISMATCH', 'WORK_OPERATOR_REQUIRED']) expect(up.has(other), other).toBe(false)
         expect(section('document')).toContain('`OUTPUT_EXISTS`')
         expect(section('sync')).not.toContain('`OUTPUT_EXISTS`')
         for (const unreachable of ['CLI_COMMAND_REQUIRED', 'CLI_UNKNOWN_COMMAND', 'GUARD_INPUT_UNAVAILABLE']) expect(cli).not.toContain(`\`${unreachable}\``)
-        expect(section('sibling')).not.toContain('`CLAIM_CO_TENANT`')
-        expect(section('sibling')).not.toContain('`DATA_MODE_UNAVAILABLE`')
-        expect(section('sibling')).not.toContain('`TEMPLATE_NOT_FOUND`')
+        const sibling = inventory.commandDiagnostics.get('sibling')!
+        for (const other of ['CLAIM_CO_TENANT', 'DATA_MODE_UNAVAILABLE', 'TEMPLATE_NOT_FOUND']) expect(sibling.has(other), other).toBe(false)
 
         // Every code a command actually emits on its CLI-level failure paths must be in its table.
         // No executable is on PATH and the config never exists or never parses, so no run reaches a
