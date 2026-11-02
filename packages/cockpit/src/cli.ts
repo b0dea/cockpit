@@ -69,6 +69,7 @@ import {
 } from './environment/setup-observation.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     INHERITED_TOOL_ENVIRONMENT,
     isCanonicalTimestamp,
     type EnvironmentCommandOutcome,
@@ -267,7 +268,7 @@ async function loadSetupContext(input: SetupCommandInput): Promise<EnvironmentCo
         const suppliedEnvironment = input.env
         searchEnvironment = suppliedEnvironment === undefined ? process.env : suppliedEnvironment
         suppliedExecutable = input.gitExecutable
-    } catch {
+    } catch { // A throwing accessor on caller-supplied input makes it unreadable, which is the refusal's whole cause.
         return setupRefusal(ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID, 'setup input is not readable', 'setup')
     }
     const ambient = setupEnvironment(searchEnvironment)
@@ -853,7 +854,7 @@ async function decodeUnattendedInit(values: {
                 `--answers file exceeds ${ANSWERS_FILE_BYTE_LIMIT} bytes; replace it with a plain TOML file within that limit and retry`, '--answers')
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) }
-            catch {
+            catch { // Fatal decoding throws only for invalid UTF-8, which the message names.
                 return usageOutcome('CLI_USAGE_INVALID',
                     `--answers ${path} is not valid UTF-8; replace it with a plain UTF-8 TOML file and retry`, '--answers')
             }
@@ -951,7 +952,7 @@ async function decodeRequest(
         const absoluteRoot = resolve(root)
         try {
             if (await realpath(absoluteRoot) !== absoluteRoot) return usageOutcome('CLI_USAGE_INVALID', 'init root must name its canonical directory')
-        } catch { return usageOutcome('CLI_USAGE_INVALID', 'init root must be an existing canonical directory') }
+        } catch (error) { return usageOutcome('CLI_USAGE_INVALID', `init root must be an existing canonical directory: ${errorCause(error)}`) }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return usageOutcome('CLI_USAGE_INVALID', 'init supports macOS and Linux state ownership')
         }
@@ -1060,7 +1061,7 @@ async function decodeRequest(
                         || Buffer.byteLength(descriptor.value) > 65_536)) return invalidEnvironment()
                 env[key] = descriptor.value
             }
-        } catch { return invalidEnvironment() }
+        } catch { return invalidEnvironment() } // A throwing accessor or proxy trap makes the environment invalid data.
         return { handler, input: { configPath: values.config, probeSpecificationsPath: values['probe-specifications'], env: Object.freeze(env) } }
     }
 
@@ -1485,9 +1486,10 @@ export async function runCli(
                 resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
                 execute: executeProbe,
             })
-        } catch {
-            response = { decision: { decision: 'unavailable', reason: 'Guard input, arguments or installed identity are unavailable or malformed.' },
-                diagnostics: [{ severity: 'error', code: 'GUARD_INPUT_UNAVAILABLE', message: 'Guard input, arguments or installed identity are unavailable or malformed.', target: 'guard' }] }
+        } catch (error) {
+            const reason = `Guard input, arguments or installed identity are unavailable or malformed: ${errorCause(error)}`
+            response = { decision: { decision: 'unavailable', reason },
+                diagnostics: [{ severity: 'error', code: 'GUARD_INPUT_UNAVAILABLE', message: reason, target: 'guard' }] }
         }
         // Project once at the publication boundary; adapters only spell the closed decision.
         const projected = JSON.parse(renderJsonResponse({ result: response.decision, diagnostics: response.diagnostics }, response.fixContext)) as { result: typeof response.decision }
@@ -1576,7 +1578,7 @@ export async function runCli(
                 try {
                     resolvedConfigPath = createInvocationRecord({ verb, durationMs: 0, exitCode: EXIT_CODES.success,
                         resolvedConfigPath: resolve(decoded.input.configPath) }).resolvedConfigPath
-                } catch {
+                } catch { // createInvocationRecord throws only for control characters, which the message names.
                     decoded = usageOutcome('CLI_USAGE_INVALID', 'config path must be recordable without control characters', '--config')
                 }
             }

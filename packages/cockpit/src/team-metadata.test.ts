@@ -208,6 +208,13 @@ purpose = "Synthetic local repository"
             message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
     })
 
+    it('names an unparseable package.json instead of reporting a missing pin', async () => {
+        const root = await fixture()
+        await writeFile(join(root, 'package.json'), '{ "devDependencies": ')
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE',
+            message: expect.stringContaining('package.json could not be parsed (SyntaxError)') })
+    })
+
     it.each(['dependencies', 'optionalDependencies', 'peerDependencies'] as const)(
         'refuses the cockpit package in the unowned %s slot without changing team metadata', async (section) => {
             const root = await fixture()

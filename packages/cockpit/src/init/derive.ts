@@ -10,6 +10,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative as pathRelative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { readBoundedInput } from '../config/load.js'
+import { errorCause } from '../environment/contract.js'
 import { bindHolder, composeBindPath, composeProjectDirectory, splitComposeShort } from '../environment/compose-topology.js'
 import { redactSensitiveText } from '../environment/sensitive.js'
 import { initCommand } from '../fix-catalogue.js'
@@ -107,7 +108,7 @@ async function readBounded(root: string, directory: string, name: string): Promi
             return { kind: 'skipped', reason: 'directory changed while the file was read' }
         }
         try { return { kind: 'text', text: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) } }
-        catch { return { kind: 'skipped', reason: 'is not valid UTF-8' } }
+        catch { return { kind: 'skipped', reason: 'is not valid UTF-8' } } // Fatal decoding throws only for invalid UTF-8, which the reason names.
     }
     catch (error) {
         const code = (error as NodeJS.ErrnoException).code
@@ -149,7 +150,7 @@ function instructionArgv(argument: string): string[] | undefined {
     try {
         const parsed: unknown = JSON.parse(argument)
         return Array.isArray(parsed) && parsed.length > 0 && parsed.every(part => typeof part === 'string') ? parsed as string[] : shellForm
-    } catch { return shellForm }
+    } catch { return shellForm } // Docker itself reads an instruction that is not a JSON array as shell form.
 }
 
 export interface DockerfileHealthcheck { readonly argv: string[]; readonly options: readonly string[] }
@@ -288,12 +289,15 @@ function stageCommand(directory: string, argv: readonly string[]): readonly stri
     return directory === '.' ? argv : ['sh', '-c', `cd ${shellWord(directory)} && exec ${argv.map(shellWord).join(' ')}`]
 }
 
-function jsonObject(text: string | undefined): Record<string, unknown> | undefined {
+function jsonObject(text: string | undefined, onInvalid: (cause: string) => void): Record<string, unknown> | undefined {
     if (text === undefined) return undefined
     try {
         const parsed: unknown = JSON.parse(text)
         return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
-    } catch { return undefined }
+    } catch (error) {
+        onInvalid(errorCause(error))
+        return undefined
+    }
 }
 
 const field = (value: unknown, key: string): unknown =>
@@ -366,6 +370,7 @@ function composeFacts(
 
 async function detectTestEntry(
     read: (name: string) => Promise<string | undefined>,
+    readJson: (name: string) => Promise<Record<string, unknown> | undefined>,
     present: (name: string) => Promise<boolean>,
     node: NodeLockfile | undefined,
 ): Promise<TestEntry | undefined> {
@@ -377,7 +382,7 @@ async function detectTestEntry(
     const exec = NODE_EXEC[manager]
     if (await present('nx.json')) return { file: 'nx.json', tool: 'Nx', affected: [...exec, 'nx', 'affected', '-t', 'test'], full: [...exec, 'nx', 'run-many', '-t', 'test'],
         reason: `nx.json makes this an Nx workspace; nx affected compares its defaultBase (main when unset) with the working tree; ${managerReason(node)}` }
-    const turbo = jsonObject(await read('turbo.json'))
+    const turbo = await readJson('turbo.json')
     if (turbo && (field(field(turbo, 'tasks'), 'test') !== undefined || field(field(turbo, 'pipeline'), 'test') !== undefined)) {
         return { file: 'turbo.json', tool: 'Turborepo', affected: [...exec, 'turbo', 'run', 'test', '--affected'], full: [...exec, 'turbo', 'run', 'test'],
             reason: `turbo.json declares a test task; --affected compares main...HEAD, so it sees committed changes only; ${managerReason(node)}` }
@@ -385,7 +390,7 @@ async function detectTestEntry(
     const makefile = await read('Makefile')
     if (makefile !== undefined && /^test\s*:(?!=)/m.test(makefile)) return { file: 'Makefile', tool: 'make', full: ['make', 'test'],
         reason: 'the Makefile has a test target and nothing on disk selects a subset, so the targeted gate runs the same command' }
-    const scripts = field(jsonObject(await read('package.json')), 'scripts')
+    const scripts = field(await readJson('package.json'), 'scripts')
     const test = field(scripts, 'test')
     if (typeof test === 'string' && test.trim() !== '' && !NPM_PLACEHOLDER_TEST.test(test)) {
         const others = Object.keys(scripts as Record<string, unknown>).filter(name => name.startsWith('test:')).sort()
@@ -516,6 +521,9 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             // Each file is read once per repository, so an unreadable one is reported once.
             const reads = new Map<string, Promise<string | undefined>>()
             const readHere = (name: string) => reads.get(name) ?? reads.set(name, read(directory.path, name)).get(name)!
+            const parsedJson = new Map<string, Promise<Record<string, unknown> | undefined>>()
+            const readJsonHere = (name: string) => parsedJson.get(name) ?? parsedJson.set(name, readHere(name).then(text => jsonObject(text,
+                cause => skipped.push({ source: relative(directory.path, name), reason: `is not valid JSON (${cause}), so nothing is inferred from it` })))).get(name)!
             const presence = new Map<string, Promise<boolean>>()
             const present = (name: string) => presence.get(name) ?? presence.set(name, fileExists(input.root, directory.path, name).then(state => {
                 if (state === 'skipped') skipped.push({ source: relative(directory.path, name), reason: 'is not a readable regular file' })
@@ -524,7 +532,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
             // An unreadable repository directory is already reported by the reads below.
             const readable = (await inspectDirectory(input.root, directory.path)).kind === 'complete'
             const node = readable ? await nodeLockfile(present) : undefined
-            const entry = readable ? await detectTestEntry(readHere, present, node) : undefined
+            const entry = readable ? await detectTestEntry(readHere, readJsonHere, present, node) : undefined
             const invalidId = entry === undefined ? undefined : TESTING_ROLES.map(role => testingId(role, slug)).find(id => !TestingName.safeParse(id).success)
             if (entry && invalidId) skipped.push({ source: relative(directory.path, entry.file),
                 reason: `${entry.file} has a test entry point, but the [testing] id ${invalidId} formed from the slug ${slug} is not lowercase letters, digits and hyphens of at most 64 characters starting with a letter, so no gate is proposed for ${slug}; declare its stages and gates under [testing] with ids of that form` })
@@ -559,7 +567,7 @@ export async function deriveInferredFacts(input: InferenceInput): Promise<Infere
                 }
             }
             // The image's own command wins: a package script is what runs when no Dockerfile says.
-            const scripts = parsed?.command ? undefined : field(jsonObject(await readHere('package.json')), 'scripts')
+            const scripts = parsed?.command ? undefined : field(await readJsonHere('package.json'), 'scripts')
             const runScripts = PACKAGE_RUN_SCRIPTS.filter(name => { const value = field(scripts, name); return typeof value === 'string' && value.trim() !== '' })
             if (runScripts.length > 0) {
                 const [script, ...others] = runScripts

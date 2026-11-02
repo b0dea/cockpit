@@ -201,6 +201,7 @@ function recordedAnswerConflict(
         if (now.kind === 'refusal') return now.outcome
         if (now.kind !== 'answer' || recorded[index] === undefined) continue
         let same = false
+        // A recorded or supplied answer that is not JSON cannot match, which the conflict refusal below reports.
         try { same = canonicalJson(JSON.parse(now.bytes)) === canonicalJson(JSON.parse(recorded[index]!.bytes)) } catch { same = false }
         if (same && provenanceFor(field, marks) !== recorded[index]!.provenance) same = false
         if (!same) return refusal('INIT_ANSWER_CONFLICT',
