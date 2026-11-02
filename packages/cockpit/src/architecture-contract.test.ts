@@ -3830,7 +3830,7 @@ describe('product architecture contract', () => {
         if (!commandTable || !cli || !command) throw new Error('generated environment command routing is missing')
 
         expect(importSpecifiers(commandTable).filter((specifier) => specifier.startsWith('.'))).toEqual([
-            './surfaces/contract.js', './environment/contract.js', './guards/evaluator.js', './guards/harness-adapter.js', './guards/invocation-parser.js',
+            './surfaces/contract.js', './work-orders/contract.js', './environment/contract.js', './guards/evaluator.js', './guards/harness-adapter.js', './guards/invocation-parser.js',
         ])
         expect(cli).toContain("from './generated-environment/command.js'")
         expect(commandTable).not.toMatch(/\b(?:renderGeneratedEnvironment|projectPersonaOutputs|writeFile|rename|mkdtemp)\b/)
