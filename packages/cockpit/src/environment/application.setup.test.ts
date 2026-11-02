@@ -927,30 +927,36 @@ describe('setup application choreography', () => {
     })
 
     it('names the remote, git\'s own error and the clones that already succeeded when a clone fails', async () => {
-        const { configPath, context, adapters } = await sequenceFixture()
-        adapters.observeGit = cloneObservations()
-        adapters.planGit = async ({ sibling }) => ({
-            kind: 'preview', status: 0, diagnostics: [],
-            result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
-            plan: { steps: [{ id: `setup:${sibling.slug}:clone` }] as never },
-        })
-        adapters.execute = async () => ({
-            kind: 'refusal', status: 2, result: null,
-            diagnostics: [{ severity: 'error', code: 'EXECUTION_STEP_FAILED', message: 'execution step setup:api:clone failed', target: 'setup:api:clone' }],
-            execution: {
-                completedStepIds: [], failedStep: { id: 'setup:api:clone', started: true, stderr: "fatal: repository 'synthetic' does not exist" },
-                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-            },
-        })
-        const api = context.siblings.find(sibling => sibling.slug === 'api')!
+        const { configPath, context, adapters } = await sequenceFixture({}, [], [{ slug: 'web', dir: 'web', var: 'WEB_DIR', environment_files: [] }])
+        const observed = new Map<string, number>()
+        adapters.observeGit = async ({ sibling }) => {
+            observed.set(sibling.slug, (observed.get(sibling.slug) ?? 0) + 1)
+            return available(sibling.slug === 'api' && observed.get('api')! > 1 ? 'repository' : 'absent')
+        }
+        adapters.planGit = async ({ sibling, observation }) => observation.state === 'available' && observation.value.kind === 'repository'
+            ? { kind: 'complete', status: 0, diagnostics: [],
+                result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'repository', action: 'report', changed: false } }
+            : { kind: 'preview', status: 0, diagnostics: [],
+                result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
+                plan: { steps: [{ id: `setup:${sibling.slug}:clone` }] as never } }
+        adapters.recordStarted = async () => ({ kind: 'complete', record: {} as never })
+        adapters.execute = async (plan) => plan.steps[0]!.id === 'setup:api:clone'
+            ? { kind: 'complete', status: 0, diagnostics: [], result: { steps: [{ id: 'setup:api:clone', exitCode: 0, signal: null, stdoutBytes: 0, stderrBytes: 0 }] } }
+            : { kind: 'refusal', status: 2, result: null,
+                diagnostics: [{ severity: 'error', code: 'EXECUTION_STEP_FAILED', message: 'execution step setup:web:clone failed', target: 'setup:web:clone' }],
+                execution: {
+                    completedStepIds: [], failedStep: { id: 'setup:web:clone', started: true, stderr: "fatal: repository 'synthetic' does not exist" },
+                    compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
+                } }
+        const web = context.siblings.find(sibling => sibling.slug === 'web')!
 
         const outcome = await runSetupSequence({ configPath }, adapters)
 
         expect(outcome).toMatchObject({ kind: 'refusal', result: null })
         const failure = outcome.diagnostics.find(diagnostic => diagnostic.code === 'SETUP_CLONE_FAILED')
-        expect(failure).toEqual(expect.objectContaining({ severity: 'error', target: resolve(context.siblingsRoot, api.dir) }))
-        expect(failure?.message).toContain(api.remote!)
-        expect(failure?.message).toContain("fatal: repository 'synthetic' does not exist")
+        expect(failure).toEqual(expect.objectContaining({ severity: 'error', target: resolve(context.siblingsRoot, web.dir) }))
+        expect(failure?.message).toContain(web.remote!)
+        expect(failure?.message).toContain("fatal: repository 'synthetic' does not exist; already cloned and left in place: api")
         expect(failure?.fix).toContain('npx --no cockpit setup --config <your cockpit.toml>')
         expect(outcome.diagnostics.map(diagnostic => diagnostic.code)).not.toContain('EXECUTION_STEP_FAILED')
     })

@@ -787,7 +787,7 @@ const FAILED_STEP_STDERR_BYTES = 2_048
 // are the only statement of the cause (an unreachable host, a missing repository).
 function failedStepStderr(stderr: Buffer): string | undefined {
     const tail = new TextDecoder('utf-8').decode(stderr.subarray(Math.max(0, stderr.byteLength - FAILED_STEP_STDERR_BYTES)))
-        .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').trim()
+        .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').trim().replace(/\s*\n\s*/g, ' ')
     return tail === '' ? undefined : redactSensitiveMessage(tail)
 }
 

@@ -1499,7 +1499,7 @@ function cloneFailureDiagnostics(
             severity: 'error',
             code: 'SETUP_CLONE_FAILED' satisfies typeof ENVIRONMENT_CODES.SETUP_CLONE_FAILED,
             message: `git could not clone ${sibling.remote} into ${target}: ${stderr ?? 'git reported no error text'}`
-                + (cloned.length === 0 ? '' : `; ${cloned.join(', ')} cloned before this failure and stay in place`),
+                + (cloned.length === 0 ? '' : `; already cloned and left in place: ${cloned.join(', ')}`),
             target,
             fix: 'check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again',
         },
