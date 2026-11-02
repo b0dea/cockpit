@@ -67,8 +67,7 @@ export async function inspectProjectReadiness(
         }
         if (outcome.kind === 'refusal') findings.push(Object.freeze({
             severity: 'warning' as const,
-            // A literal, so the diagnostic inventory captures the fix beside the code.
-            code: 'SETUP_PATH_TYPE_INVALID' satisfies typeof ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
+            code: ENVIRONMENT_CODES.SETUP_PATH_TYPE_INVALID,
             message: `${input.root} is not inside a Git working tree, so setup will refuse to run there and no teammate can clone this cockpit`,
             target: input.root,
             fix: `run git -C ${input.root} init, then commit the cockpit files once a person has reviewed them`,

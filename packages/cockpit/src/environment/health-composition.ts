@@ -178,8 +178,7 @@ async function sleepingStack(
 function runtimeUnavailable(reason: string, target: string): EnvironmentDiagnostic {
     return Object.freeze({
         severity: 'error' as const,
-        // A literal, so the diagnostic inventory captures the fix beside the code.
-        code: 'RUNTIME_UNAVAILABLE' satisfies typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+        code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
         message: `the container runtime that runs this stack is not usable on this machine: ${reason}`,
         target,
         fix: 'install or start Docker so that docker info succeeds, then rerun this command',

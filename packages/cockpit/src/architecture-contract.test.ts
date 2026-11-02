@@ -2546,6 +2546,8 @@ function initBoundaryViolations(sources: Sources): string[] {
                 'packages/cockpit/src/environment/contract.ts',
                 'packages/cockpit/src/environment/identity.ts',
                 'packages/cockpit/src/environment/state.ts',
+                // The readiness catalogue is a leaf of plain data over the environment codes.
+                'packages/cockpit/src/readiness.ts',
             ])
             if (specifier === COMPUTED_DYNAMIC_IMPORT
                 || owner === command && !allowedCommand
