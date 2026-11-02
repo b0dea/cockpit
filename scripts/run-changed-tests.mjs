@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runTestsCli } from './run-tests.mjs'
@@ -29,6 +29,7 @@ const SCHEMA_ARTIFACT = 'packages/cockpit/cockpit.schema.json'
 const EXAMPLE_TESTS = ['example-cockpit.test.ts', 'example-cockpit.slow.test.ts']
 const MODULE_PATH = /^packages\/[^/]+\/(?:src|test-support)\/.+\.[cm]?tsx?$/
 const PACKAGE_SCRIPT_MODULE_PATH = /^packages\/[^/]+\/scripts\/.+\.[cm]?js$/
+const SCRIPT_MODULE_PATH = /^scripts\/([^/]+)\.mjs$/
 const MODULE_EXTENSION = /\.[cm]?[jt]sx?$/
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g
 const TEST_DIRECTORY = 'packages/cockpit/src'
@@ -111,8 +112,30 @@ function walkFiles(root, directory, found = []) {
     return found
 }
 
+// One walk of packages/ and scripts/ and one read per file for the whole selection: every owner rule
+// below searches this index instead of walking and reading the tree again for each changed path.
+const indexes = new Map()
+function repositoryIndex(root) {
+    let index = indexes.get(root)
+    if (!index) {
+        const files = ['packages', 'scripts'].flatMap(directory => existsSync(resolve(root, directory)) ? walkFiles(root, directory) : [])
+        const texts = new Map()
+        index = { files, text: path => {
+            let text = texts.get(path)
+            if (text === undefined) texts.set(path, text = readFileSync(resolve(root, path), 'utf8'))
+            return text
+        } }
+        indexes.set(root, index)
+    }
+    return index
+}
+
+function packageFiles(root) {
+    return repositoryIndex(root).files.filter(path => path.startsWith('packages/'))
+}
+
 function packageTestFiles(root) {
-    return walkFiles(root, 'packages').filter(path => TEST_PATH.test(path))
+    return packageFiles(root).filter(path => TEST_PATH.test(path))
 }
 
 function testsInDirectory(root, names) {
@@ -125,22 +148,22 @@ function testsInDirectory(root, names) {
 
 // Tests that name the script file, found by reading the tests rather than keeping a second list.
 function testsReferencing(root, needle) {
-    return packageTestFiles(root).filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
+    const { text } = repositoryIndex(root)
+    return packageTestFiles(root).filter(path => text(path).includes(needle))
 }
 
 // A test reaches a script through the scripts that import it as well (docs-lint.mjs re-exports
 // diagnostic-inventory.mjs), so the tests naming any of those importers own it too.
-function testsReferencingScript(root, name) {
-    const scripts = readdirSync(resolve(root, 'scripts')).filter(entry => entry.endsWith('.mjs'))
-        .map(entry => entry.slice(0, -'.mjs'.length))
+function testsReferencingScript(root, name, imports) {
     const visited = new Set([name])
     const pending = [name]
     const tests = new Set()
     while (pending.length) {
         const current = pending.pop()
         for (const test of testsReferencing(root, `${current}.mjs`)) tests.add(test)
-        for (const importer of scripts) {
-            if (visited.has(importer) || !readFileSync(resolve(root, 'scripts', `${importer}.mjs`), 'utf8').includes(`./${current}.mjs`)) continue
+        for (const [path, targets] of imports.modules) {
+            const importer = SCRIPT_MODULE_PATH.exec(path)?.[1]
+            if (importer === undefined || visited.has(importer) || !targets.has(`scripts/${current}`)) continue
             visited.add(importer)
             pending.push(importer)
         }
@@ -150,9 +173,10 @@ function testsReferencingScript(root, name) {
 
 // Fixture readers can be shared through several helpers; use the same exact import graph as sources.
 function testsReadingFixtures(root, needle, imports) {
-    const readers = walkFiles(root, 'packages')
+    const { text } = repositoryIndex(root)
+    const readers = packageFiles(root)
         .filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
-        .filter(path => readFileSync(resolve(root, path), 'utf8').includes(needle))
+        .filter(path => text(path).includes(needle))
     return [...new Set(readers.flatMap(path => TEST_PATH.test(path) ? [path] : testsImporting(root, imports, path)))]
 }
 
@@ -162,17 +186,18 @@ function testsNamingLibexecProgram(root, program, imports) {
     const directory = dirname(program)
     const programs = readdirSync(resolve(root, directory)).map(name => posix.join(directory, name))
         .filter(path => existingFile(root, path))
-    const modules = walkFiles(root, 'packages').filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
+    const { text } = repositoryIndex(root)
+    const modules = packageFiles(root).filter(path => /\.ts$/.test(path) && /\/(?:src|test-support)\//.test(path))
     const tests = new Set()
     const visited = new Set([program])
     const pending = [program]
     while (pending.length) {
         const name = basename(pending.pop())
-        for (const path of modules.filter(candidate => readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
+        for (const path of modules.filter(candidate => text(candidate).includes(name))) {
             const owners = TEST_PATH.test(path) ? [path] : SOURCE_PATH.test(path) ? sourceOwners(root, path, () => imports, imports.wide) : testsImporting(root, imports, path)
             for (const test of owners) tests.add(test)
         }
-        for (const path of programs.filter(candidate => !visited.has(candidate) && readFileSync(resolve(root, candidate), 'utf8').includes(name))) {
+        for (const path of programs.filter(candidate => !visited.has(candidate) && text(candidate).includes(name))) {
             visited.add(path)
             pending.push(path)
         }
@@ -184,11 +209,12 @@ function testsNamingLibexecProgram(root, program, imports) {
 // through re-exports and test-support helpers. Static specifiers are
 // resolved against the importing file, so a same-named file in another directory never matches.
 function importedModules(root, wide) {
+    const { files, text } = repositoryIndex(root)
     const imports = new Map()
-    for (const path of walkFiles(root, 'packages').filter(candidate =>
-        (MODULE_PATH.test(candidate) || PACKAGE_SCRIPT_MODULE_PATH.test(candidate)) && !candidate.endsWith('.d.ts'))) {
+    for (const path of files.filter(candidate =>
+        (MODULE_PATH.test(candidate) || PACKAGE_SCRIPT_MODULE_PATH.test(candidate) || SCRIPT_MODULE_PATH.test(candidate)) && !candidate.endsWith('.d.ts'))) {
         const targets = new Set()
-        for (const match of readFileSync(resolve(root, path), 'utf8').matchAll(IMPORT_SPECIFIER)) {
+        for (const match of text(path).matchAll(IMPORT_SPECIFIER)) {
             targets.add(posix.join(dirname(path), match[1]).replace(MODULE_EXTENSION, ''))
         }
         imports.set(path, targets)
@@ -246,6 +272,7 @@ function sourceOwners(root, path, imports, wide) {
 }
 
 function ownerTests(root, paths, extras, wide) {
+    indexes.clear() // the index lives for one selection; the tree may differ on the next call
     const selected = new Set()
     const unmapped = []
     let sourceChanged = false
@@ -293,7 +320,10 @@ function ownerTests(root, paths, extras, wide) {
         if (SURFACES_PATH.test(path)) {
             mapped.push(...packageTestFiles(root).filter(candidate => candidate.startsWith(`${TEST_DIRECTORY}/surfaces/`)))
         }
-        if (script) mapped.push(...testsReferencingScript(root, script[1]))
+        if (script) {
+            imports ??= importedModules(root, wide)
+            mapped.push(...testsReferencingScript(root, script[1], imports))
+        }
         if (LIBEXEC_PATH.test(path)) {
             imports ??= importedModules(root, wide)
             mapped.push(...testsNamingLibexecProgram(root, path, imports))
