@@ -452,6 +452,9 @@ describe('shipped onboarding commands', () => {
         const procedure = await readFile(join(surfaceRoot, 'procedures/onboarding.md'), 'utf8')
         const invocations = [...procedure.matchAll(/`\.\/node_modules\/\.bin\/cockpit ([^`]+)`/g)].map(match => match[1]!.split(' '))
         expect(invocations.length).toBeGreaterThanOrEqual(9)
+        // The procedure is run by a person at a terminal; a CI runner's CI variable would make the
+        // interactive sync step refuse, correctly, before routing.
+        const { CI: _ci, ...humanEnvironment } = process.env
         for (const argv of invocations) {
             let invoked = false
             const handler = async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } }
@@ -466,7 +469,7 @@ describe('shipped onboarding commands', () => {
                 sync: async input => { invoked = true; return { status: 0, diagnostics: [], result: {
                     action: 'sync' as const, dryRun: input.dryRun === true, changes: [],
                 } } },
-            })
+            }, { env: humanEnvironment })
             expect(status, `${argv.join(' ')}: ${output}`).toBe(0)
             expect(invoked, argv.join(' ')).toBe(true)
         }
