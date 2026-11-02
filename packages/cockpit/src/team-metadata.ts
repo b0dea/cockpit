@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, errorCause, type EnvironmentDiagnostic } from './environment/contract.js'
@@ -108,7 +108,10 @@ async function readOptional(authority: RootAuthority, path: string): Promise<Rea
         const read = await readBoundedInput(path)
         if (read.kind !== 'complete') throw new MetadataFailure('file exceeds the input limit')
         await authenticateRoot(authority)
-        return { bytes: new TextDecoder('utf-8', { fatal: true }).decode(read.bytes), mode: stat.mode,
+        let text: string
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes) }
+        catch { throw new MetadataFailure(`${basename(path)} is not valid UTF-8`) } // The decoder throws only for invalid UTF-8.
+        return { bytes: text, mode: stat.mode,
             identity: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${createHash('sha256').update(read.bytes).digest('hex')}` }
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {

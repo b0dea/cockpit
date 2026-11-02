@@ -222,6 +222,13 @@ purpose = "Synthetic local repository"
         expect(JSON.stringify(refusal)).not.toContain('CANARY_SECRET_7f3a')
     })
 
+    it('names a package.json that is not UTF-8', async () => {
+        const root = await fixture()
+        await writeFile(join(root, 'package.json'), Buffer.from([0x7b, 0xff, 0x7d]))
+        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'TEAM_METADATA_UNAVAILABLE',
+            message: expect.stringContaining('(package.json is not valid UTF-8)') })
+    })
+
     it.each(['dependencies', 'optionalDependencies', 'peerDependencies'] as const)(
         'refuses the cockpit package in the unowned %s slot without changing team metadata', async (section) => {
             const root = await fixture()
