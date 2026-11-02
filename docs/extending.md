@@ -2,9 +2,10 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-Extend declarations at an existing seam and keep product behavior beside `cockpit.toml`. Cockpit is
-not a plugin host: an extension remains ordinary version-controlled product code, while cockpit
-manages only the generated files listed in its ownership manifest.
+This page is for integrators adding product-specific behaviour to a cockpit: which declaration to
+use for each need, and how to keep your own build logic beside cockpit. Cockpit is not a plugin
+host. An extension stays ordinary version-controlled product code; cockpit manages only the
+generated files listed in its ownership manifest.
 
 ## Choose the seam
 
@@ -23,19 +24,22 @@ manages only the generated files listed in its ownership manifest.
 
 ## Build beside cockpit
 
-Keep the product's `Makefile`, task runner or scripts your own. Expose a narrow target such as
-`make verify`, add a skill overlay that tells agents when to use it, then add an exact guard allow
-with a reason. Give the skill its own short procedure with `loading: pull` and `budget: uncapped`
-frontmatter; keep that procedure outside the entry point so agents load it only when needed. Cockpit can generate the skill and permission while the build logic stays directly
-runnable by people and CI. The [extended example](../examples/extended/README.md) shows this pattern.
+Keep the product's `Makefile`, task runner or scripts your own, so people and CI can run them
+without cockpit:
 
-Generated ownership is the upgrade boundary. A later `sync` may replace the files cockpit generated
-and reports a changed overridden core declaration, but it does not adopt or overwrite
-the files beside them. Review `cockpit upgrade` before changing installed versions and retain product logic
-outside generated paths.
+1. Expose a narrow target, such as `make verify`.
+2. Add a skill overlay that tells agents when to use it. Put the procedure in its own file with
+   `loading: pull` and `budget: uncapped` frontmatter, so agents load it only when needed.
+3. Add an exact guard allow for the target, with a reason.
 
-Give generated outputs portable relative names so the same committed checkout can be shared across
-filesystems. Avoid reserved device names, stream syntax, trailing dots or spaces, and directory names
-that differ only by case or Unicode normalization. Keep every path component within both 255 UTF-16
-code units and 255 UTF-8 bytes. Rename an invalid overlay output, then review `cockpit sync --dry-run`
-before publishing it.
+The [extended example](../examples/extended/README.md) shows this pattern.
+
+Generated ownership is the upgrade boundary. A later `sync` may replace files cockpit generated,
+and reports a changed overridden core declaration, but it never adopts or overwrites the files
+beside them. Review `cockpit upgrade` before changing the installed version.
+
+Give generated outputs portable relative names, so one committed checkout works on every
+filesystem. Avoid reserved device names, stream syntax, trailing dots or spaces, and directory names
+that differ only by case or Unicode normalization. Keep every path component within 255 UTF-16
+code units and 255 UTF-8 bytes. To fix an invalid overlay output, rename it and review
+`cockpit sync --dry-run` before publishing.

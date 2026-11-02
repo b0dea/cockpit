@@ -2,15 +2,16 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This guide is for users choosing between a direct fix and a durable [work order](concepts.md#work-order),
-then getting independent grading, browser checks and the right test tier for that choice.
+This page is for anyone deciding whether a change needs a direct fix or a durable
+[work order](concepts.md#work-order), and then getting it graded independently, checked in a
+browser, and proven with the right test tier.
 
-All `work-*` and `browser-*` commands are experimental. Their interfaces may change before a
-stable release; use the command-specific help as the current contract.
+The `work-*` and `browser-*` commands are experimental: their interfaces may change, and each
+command's `--help` is the current contract.
 
 ## Declare work and the files it may change
 
-The experimental `cockpit-work` skill walks an agent through the loop below: it first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill runs the browser commands in [Browser evidence](#browser-evidence) and reports what it saw, with proof, without editing code.
+The `cockpit-work` skill walks an agent through the loop below. It first asks whether anyone besides the agent must certify the result and, if not, sends the work to `cockpit-fix`. The `cockpit-browser` skill runs the commands in [Browser evidence](#browser-evidence) and reports what it saw, with proof, without editing code.
 
 <!-- cockpit:ref command=work-intake --> Start with `cockpit work-intake --config cockpit.toml --intent intents/task.json`. The intent is a JSON file, not a sentence or a work-order document. Cockpit reads the upstream file, checks which route applies and whether there is capacity, and only then reads a candidate. A fix creates no work-order files. A work-order route returns `candidateRequired: true`; follow the examples below to prepare a draft. Existing orders can be inspected with `--work-order WO-001`.
 
@@ -29,23 +30,29 @@ Save this as `intents/task.json`, relative to the directory containing `cockpit.
 }
 ```
 
-Every field shown is required; extra fields are refused. `version` is the descriptor format. `kind` is
-`task`, `issue`, `spec`, `decision` or `programme`; `reference` is an existing contained file,
-even for an external issue: first record the relevant request in that file. `certification` and
-`crossSession` are booleans: whether someone else must certify the result, and whether the work must
-survive a change of session. Either true selects a work order. `programme` is `null` for standalone work or the declared programme slug;
-a programme also selects a work order. With both booleans false and `programme: null`, intake
-returns the fix route without reading a candidate or creating work-order files.
+Every field shown is required, and extra fields are refused.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The descriptor format. |
+| `kind` | `task`, `issue`, `spec`, `decision` or `programme`. |
+| `reference` | An existing file inside the cockpit, even for an external issue: record the request in that file first. |
+| `certification` | Whether someone other than the agent must certify the result. |
+| `crossSession` | Whether the work must survive a change of session. |
+| `programme` | `null` for standalone work, or the declared programme slug. |
+
+`certification: true`, `crossSession: true` or a programme each select a work order. With both booleans false
+and `programme: null`, intake returns the fix route without reading a candidate or creating
+work-order files.
 
 Spec tools such as OpenSpec or spec-kit already produce that file: point a `spec` intent's
-`reference` at the change's proposal or spec (for example `openspec/changes/<name>/proposal.md`),
-and cockpit reads it like any other upstream request.
+`reference` at the change's proposal or spec, for example `openspec/changes/<name>/proposal.md`.
 
-Create the referenced upstream file before running the command. These examples adapt an existing
-product: each `read` source must already exist and have been inspected. Replace the synthetic cache
-facts and paths with inspected product facts, and each verification argument array with that
-product's actual runner and selectors. Run intake without `--candidate` first; proceed only when
-it reports the work-order route and capacity.
+Create the referenced upstream file before running intake. The examples below use a synthetic
+cache: replace its facts and paths with ones you have inspected in your product, and each
+verification argument array with the product's real runner and selectors. Each `read` source must
+already exist and have been inspected. Run intake without `--candidate` first, and continue only
+when it reports the work-order route and capacity.
 
 ### Upstream task
 
@@ -113,9 +120,9 @@ none: The current interface remains unchanged.
 
 Source provenance is `read` for inspected file bytes, `inferred` for a reasoned conclusion, or
 `operator-confirmed` for a fact a person confirmed. Cockpit re-reads `read` sources; the other
-labels do not show that a file was inspected. Label each source truthfully and record
-unresolved questions in the audit rather than inventing answers. Keep the draft's `Evidence` section empty
-until there is something to record; intake never certifies the implementation.
+labels do not show that a file was inspected. Record unresolved questions in the audit rather than
+inventing answers, and keep the `Evidence` section empty until there is something to record;
+intake never certifies the implementation.
 
 ### Adjacent source audit
 
@@ -142,11 +149,11 @@ execution. An empty `gaps` array means this audit found no material gaps.
 ```
 
 Before writing the draft, look through the thinking, research, specification and planning skills
-installed in the repository and for the user. Name the real auditor, use `read` or `operator-confirmed`
-provenance for that look, and record your choices under `skills.rows`. The empty selection above
-means the look found no applicable skill; it does not let you skip the look or the source audit.
-Whether a skill applies is a judgment that is instructed and reviewed by a person. A generated
-skill list or a file hash does not show that a skill was found or applies.
+installed in the repository and for the user. Name the real auditor, use `read` or
+`operator-confirmed` provenance for that look, and record your choices under `skills.rows`. The
+empty selection above means the look found no applicable skill; it does not let you skip the look.
+Whether a skill applies is a person's judgment: a generated skill list or a file hash does not show
+that a skill was found or applies.
 
 Both `skills.auditor` and each skill row's `reference` must start with an ASCII letter or digit,
 then contain only ASCII letters, digits, `.`, `_` or `-`, within the
@@ -217,7 +224,7 @@ Declared application routes select the starting destinations for driving. Automa
 
 Direct requests to the browser-control addresses and to the underlying server port are refused. Browser control is published only on the host's loopback interface. The proxy checks the exact Host header, rejects requests that come from a browser origin, and accepts only the configured WebSocket handshake. The browser server behind it listens on an unpublished secret path, and the proxy rewrites each accepted public path to that private endpoint. The configured network exposure controls what the browser can reach from the client and does not widen the control listener. The Host, Origin and protocol checks protect loopback access from web pages and DNS-rebinding attacks. They do not verify the identity of other local processes or of services already on the generated stack network.
 
-<!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> A screenshot record holds the path of the saved image, which must be inside the project, and its digest. An accessibility record holds the digest of the captured ARIA state; it does not publish a snapshot file and is not a full accessibility audit. Every distinct declared application route is covered; the debugger gives no UI acceptance result. Each row in the capability matrix keeps its tested version and date, and an `unavailable` row never allows anything.
+<!-- cockpit:ref path=packages/cockpit/src/browser/commands.ts --> A screenshot record holds the path of the saved image, which must be inside the project, and its digest. An accessibility record holds the digest of the captured ARIA state; it does not publish a snapshot file and is not a full accessibility audit. Every distinct declared application route is covered; the debugger gives no UI acceptance result.
 
 ## Choose the proving test tier
 

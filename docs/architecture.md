@@ -2,14 +2,14 @@
 
 <!-- cockpit:verified version=0.0.0 -->
 
-This page explains why cockpit is shaped the way it is and where to extend it, for integrators
-and contributors who want the reasoning behind the commands. The fields and commands themselves
-are in the generated [configuration reference](configuration-reference.md) and
+This page is for integrators and contributors who want the reasoning behind cockpit: the problem it
+solves, the design decisions that follow, and where in the source to extend it. The fields and
+commands themselves are in the generated [configuration reference](configuration-reference.md) and
 [CLI reference](cli-reference.md).
 
 ## The problem cockpit solves
 
-Agent work across several repositories of one product fails in five mechanical ways:
+Agent work across several repositories of one product fails in predictable, mechanical ways:
 
 1. **No shared environment.** Each agent sees one checkout. Nothing boots the product it is
    changing, so "it works" means "it compiles".
@@ -36,8 +36,8 @@ healthy while the stack mounts the wrong checkout, or none.
 
 ### Configuration that parses does something
 
-Every schema field is consumed by code. A field that is accepted and then ignored reads
-as a control the next person relies on, so it is treated as a defect. Where a harness offers no
+Every schema field is consumed by code. A field that is accepted and then ignored reads as a
+control the next person relies on, so it is a defect. Where a harness offers no
 mechanism for a restriction, cockpit emits nothing and records the feature as `unavailable`
 rather than writing a setting that binds nothing.
 
@@ -105,22 +105,18 @@ and a generated file does not show that its harness loaded it.
 ## Surface overlays
 
 Use a [Cockpit surface overlay](concepts.md#cockpit-surface-overlay) for product-specific rules,
-subagents, skills and hooks. A name collision must declare `replaces` with the original name and
-SHA-256. A later change to that original is reported as `OVERRIDDEN_CORE_CHANGED` before new
-output is accepted. Permissions and MCP servers stay in core declarations.
-
-Overlay merging belongs to `packages/cockpit/src/surfaces/merge.ts`; rendering continues through
-the existing surface code. Publication stays within
-[Cockpit generated ownership](concepts.md#cockpit-generated-ownership). See
-[Harness surfaces](harness-surfaces.md#ownership-and-extension) for the review procedure.
+subagents, skills and hooks. Overlay merging belongs to `packages/cockpit/src/surfaces/merge.ts`;
+rendering continues through the existing surface code, and publication stays within
+[Cockpit generated ownership](concepts.md#cockpit-generated-ownership).
+[Ownership and extension](harness-surfaces.md#ownership-and-extension) covers the `replaces` rule
+and the review procedure.
 
 ## Guards
 
 Extend policy in `packages/cockpit/src/guards/evaluator.ts`, then adapt its decision through the
 per-harness adapters. Do not interpret guard policy in shell or rebuild it in a CLI
 handler. A harness mechanism that has not been probed beside a deliberately broken control stays
-`instructed` or `unavailable`, as its
-[Cockpit harness capability state](concepts.md#cockpit-harness-capability-state) records.
+`instructed` or `unavailable`; see [Capability states](harness-surfaces.md#capability-states).
 
 ## Runtime behavior
 
@@ -135,11 +131,8 @@ needs one actionable remedy in [Troubleshooting](troubleshooting.md).
 
 ## Harnesses
 
-A custom harness declares exactly one row for every feature. Each emitted row names its spelling,
-control, mechanism and date measured; an `enforced` row also records the exact bytes it was
-confirmed against. Custom modules are checked and restricted in which files they may write, which limits ordinary writes but is not a
-sandbox for malicious code.
-
-Probe the exact harness version beside a deliberately broken control before changing a
-capability claim. Repository tests verify cockpit's side of the contract; native loading and
-enforcement need their own check through `cockpit selftest`.
+A custom harness declares one row for every feature, with the evidence described in
+[Custom harnesses](harness-surfaces.md#custom-harnesses). Probe the exact harness version beside
+a deliberately broken control before changing a capability claim. Repository tests verify
+cockpit's side of the contract; native loading and enforcement need their own check through
+`cockpit selftest`.
