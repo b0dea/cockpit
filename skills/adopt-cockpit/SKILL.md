@@ -152,6 +152,14 @@ changing it after the first sync means bringing the stack down and syncing again
 `cockpit.name` while the stack is up; to rename, follow the *Rename a cockpit* section of
 `./node_modules/@b0dea/cockpit/docs/getting-started.md` (`down`, edit the name, `sync`, `check`).
 
+For a runnable product, `init` asks `testing` and proposes stages and gates from the test entry
+points it finds, each naming the file it came from. Confirm with the human which commands prove a
+change: the targeted gate agents iterate with, and the full gate they run before handing back. For a
+new product with no tests, ask the human to choose its test runner and declare those gates before
+behavior is written; never add a test framework to a product repository without their explicit yes.
+Answer `testing = "none"` only when they decide there are no tests yet; `doctor` then reports
+`TESTING_GATE_UNDECLARED`.
+
 Being told to "use sensible defaults" or "proceed without asking" covers interview answers only.
 It never extends to writing inside a product repository: an **AGENTS.md** pointer, a Compose file,
 a `package.json`, a Dockerfile or a `.env.schema` in a sibling checkout each needs the human's
