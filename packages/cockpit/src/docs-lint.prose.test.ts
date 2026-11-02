@@ -1,56 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
-import {
-    cpSync,
-    chmodSync,
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    readdirSync,
-    realpathSync,
-    renameSync,
-    rmSync,
-    symlinkSync,
-    writeFileSync,
-} from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-    classifyMarkdownPath,
-    diagnosticInventory,
-    deriveDocumentationInventory,
-    lintMarkdown,
-    repositoryMarkdownPaths,
-    validateImpactLedger,
-    validateAcceptanceEvidence,
-    validateAcceptanceDocuments,
-    validateEdgeCoverage,
-    validateEdgeCoverageDocuments,
-    validateNavigationEvidence,
-    validateNavigationEvidenceFromManifest,
-    validateOperatorReviewEvidence,
-    validateReviewEvidence,
-    validateReviewReports,
-    validateRuntimeEvidence,
-    writeReviewManifest,
-    walkMarkdownProse,
-    inspectProseReferences,
-} from '../../../scripts/docs-lint.mjs'
-import {
-    checkRepositoryReferences,
-    diagnosticInventory as maintainerDiagnosticInventory,
-    exported,
-    productionTypeScriptPaths,
-    publishRepositoryReferences,
-    typeScriptSource,
-} from '../../../scripts/diagnostic-inventory.mjs'
-import { ROOT, LINTER, committedReferenceFixture, malformedGitBoundary, writeEvidence, commentIdForTest, signNavigation, createEvidenceFixture, createCommittedEvidenceFixture, writeJson } from '../test-support/docs-fixtures.js'
-import type { EvidenceRow, EvidenceDocument } from '../test-support/docs-fixtures.js'
-
-
+import { classifyMarkdownPath, lintMarkdown, repositoryMarkdownPaths } from '../../../scripts/docs-lint.mjs'
+import { ROOT, LINTER } from '../test-support/docs-fixtures.js'
 
 describe('documentation estate classification', () => {
     it('classifies every repository Markdown path before linting', () => {
@@ -648,6 +602,15 @@ describe('mechanical documentation style', () => {
             'fixtures/docs/unclassified.md.txt:1 [DOC001_UNCLASSIFIED] Markdown path belongs to no declared documentation estate',
         )
     })
+
+    it.each([['--impact-ledger', 'ledger.md'], ['--external-report'], ['README.md', '--external-report', 'report.json']])(
+        'refuses an option other than a lone --external-report <path>: %s',
+        (...arguments_) => {
+            const result = spawnSync(process.execPath, [LINTER, ...arguments_], { cwd: ROOT, encoding: 'utf8' })
+            expect(result.status).toBe(1)
+            expect(result.stderr).toBe('docs-lint: [DOC004_ARGUMENT_INVALID] the only option is --external-report <path>; other arguments are Markdown paths\n')
+        },
+    )
 
     it('keeps the written policy under the rules it defines', () => {
         const body = readFileSync(new URL('../../../docs/contributing/style.md', import.meta.url), 'utf8')

@@ -40,8 +40,8 @@ region. Capability rows come from the shipped restriction, instruction and skill
 renderer never upgrades their evidence strength.
 
 `npm run lint:docs` compares every generated product read-only after its Markdown checks; a missing
-or stale copy fails. Its explicit-path and evidence modes are scoped checks and do not establish
-that the references are current.
+or stale copy fails. Its explicit-path and `--external-report` modes are scoped checks and do not
+establish that the references are current.
 
 Publication uses the shared
 [transaction owner](../../packages/cockpit/src/generated-environment/transaction.ts), with a

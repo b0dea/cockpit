@@ -1,56 +1,19 @@
-import { execFileSync, spawnSync } from 'node:child_process'
-import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
-import {
-    cpSync,
-    chmodSync,
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    readdirSync,
-    realpathSync,
-    renameSync,
-    rmSync,
-    symlinkSync,
-    writeFileSync,
-} from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-    classifyMarkdownPath,
-    diagnosticInventory,
-    deriveDocumentationInventory,
-    lintMarkdown,
-    repositoryMarkdownPaths,
-    validateImpactLedger,
-    validateAcceptanceEvidence,
-    validateAcceptanceDocuments,
-    validateEdgeCoverage,
-    validateEdgeCoverageDocuments,
-    validateNavigationEvidence,
-    validateNavigationEvidenceFromManifest,
-    validateOperatorReviewEvidence,
-    validateReviewEvidence,
-    validateReviewReports,
-    validateRuntimeEvidence,
-    writeReviewManifest,
-    walkMarkdownProse,
-    inspectProseReferences,
-} from '../../../scripts/docs-lint.mjs'
+import { inspectProseReferences } from '../../../scripts/docs-lint.mjs'
 import {
     checkRepositoryReferences,
     diagnosticInventory as maintainerDiagnosticInventory,
+    diagnosticInventoryFromSources,
     exported,
     productionTypeScriptPaths,
     publishRepositoryReferences,
     typeScriptSource,
 } from '../../../scripts/diagnostic-inventory.mjs'
-import { ROOT, LINTER, committedReferenceFixture, malformedGitBoundary, writeEvidence, commentIdForTest, signNavigation, createEvidenceFixture, createCommittedEvidenceFixture, writeJson } from '../test-support/docs-fixtures.js'
-import type { EvidenceRow, EvidenceDocument } from '../test-support/docs-fixtures.js'
-
-
+import { ROOT, committedReferenceFixture, malformedGitBoundary } from '../test-support/docs-fixtures.js'
 
 describe('maintainer reference boundary', () => {
     it('keeps one diagnostic scanner below docs-lint and shares its AST helpers', () => {
@@ -68,7 +31,6 @@ describe('maintainer reference boundary', () => {
         expect(preparation.match(/diagnosticInventoryFromSources\(/g)).toHaveLength(1)
         expect(preparation).toContain('diagnostics: inventory')
         expect(docsLint.slice(docsLint.indexOf('async function run()'))).not.toContain('diagnosticInventory(')
-        expect(maintainerDiagnosticInventory).toBe(diagnosticInventory)
         expect(productionTypeScriptPaths(ROOT, 'HEAD')).toContain('packages/cockpit/src/environment/contract.ts')
         expect(typeScriptSource('synthetic.ts', 'export const value = 1').statements).toHaveLength(1)
         expect(exported(typeScriptSource('synthetic.ts', 'export const value = 1').statements[0]!)).toBe(true)
@@ -129,58 +91,78 @@ describe('maintainer reference boundary', () => {
         }
     }, 240_000)
 
-    it('derives the complete public command inventory from compact rows and bounded option spreads', () => {
-        const root = committedReferenceFixture()
-        try {
-            const fixedPoint = execFileSync('git', ['rev-parse', 'HEAD~1'], { cwd: root, encoding: 'utf8' }).trim()
-            const candidate = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
-            const inventory = deriveDocumentationInventory({ root, expectedFixedPoint: fixedPoint, candidate })
-            const expectedCommands = [
-                'baseline-record', 'browser accessibility', 'browser debugger', 'browser drive', 'browser screenshot',
-                'check', 'doctor', 'document', 'down', 'init', 'logs', 'preflight', 'registry-resolve', 'reset', 'runtime', 'selftest',
-                'session', 'setup', 'sibling', 'sleep', 'sync', 'test-run', 'up', 'upgrade', 'work accept', 'work answer', 'work execute', 'work grade',
-                'work intake', 'work metrics', 'work programme-mint', 'work record', 'work recover', 'work renew', 'work resume',
-                'work reverse', 'work review', 'work status', 'work sweep',
-            ].map(name => `command:${name}`).sort()
+    it('derives diagnostic unions from returned code parameters and ignores codes that are only mentioned', () => {
+        const path = 'packages/cockpit/src/generated/vendor.ts'
+        const inventory = diagnosticInventoryFromSources([path], new Map([[path, [
+            "export type VendorCode = 'VENDOR_NOT_MEASURED' | 'VENDOR_NOT_AVAILABLE'",
+            'function unmeasured(code: VendorCode) { return { state: "unavailable", code } }',
+            'export function observeVendor(code: VendorCode) { return unmeasured(code) }',
+            "const unrelated = 'SYNTHETIC_NOT_EMITTED' // SYNTHETIC_COMMENT_ONLY",
+            'void unrelated',
+            '',
+        ].join('\n')]]))
+        expect(inventory.items).toEqual(['diagnostic:VENDOR_NOT_AVAILABLE', 'diagnostic:VENDOR_NOT_MEASURED'])
+        expect([...inventory.owners.get('VENDOR_NOT_MEASURED') ?? []]).toEqual([path])
+    })
 
-            expect(inventory.errors).toEqual([])
-            expect(inventory.navigationItems.filter(item => item.startsWith('command:'))).toEqual(expectedCommands)
-            expect(inventory.items).toEqual(expect.arrayContaining([
-                'flag:work intake:--config',
-                'flag:work intake:--json',
-                'flag:work intake:--work-order',
-                'flag:work review:--work-order',
-                'flag:browser drive:--role',
-                'flag:test-run:--gate',
-                'flag:test-run:--mode',
-                'flag:test-run:--select',
-            ]))
-
-            const tablePath = join(root, 'packages/cockpit/src/command-table.ts')
-            const original = readFileSync(tablePath, 'utf8')
-            writeFileSync(tablePath, `${original}\nconst plantedSpec = { name: 'planted-spec', options: { spec: { type: 'string' } } }\nvoid plantedSpec\n`)
-            execFileSync('git', ['add', 'packages/cockpit/src/command-table.ts'], { cwd: root })
-            execFileSync('git', ['commit', '-m', 'plant unrelated command-shaped object'], { cwd: root, stdio: 'ignore' })
-            const planted = deriveDocumentationInventory({ root, expectedFixedPoint: fixedPoint, candidate: 'HEAD' })
-            expect(planted.errors).toEqual([])
-            expect(planted.items).not.toContain('command:planted-spec')
-            expect(planted.items).not.toContain('flag:planted-spec:--spec')
-
-            writeFileSync(tablePath, original.replace('...workOrderOption', '...unknownOptions'))
-            execFileSync('git', ['add', 'packages/cockpit/src/command-table.ts'], { cwd: root })
-            execFileSync('git', ['commit', '-m', 'plant unresolved option spread'], { cwd: root, stdio: 'ignore' })
-            expect(deriveDocumentationInventory({ root, expectedFixedPoint: fixedPoint, candidate: 'HEAD' }).errors.join('\n'))
-                .toContain('DOCEV015_INVENTORY_FAILED')
-
-            writeFileSync(tablePath, original.replace('...workOrderOption', '...makeOptions()'))
-            execFileSync('git', ['add', 'packages/cockpit/src/command-table.ts'], { cwd: root })
-            execFileSync('git', ['commit', '-m', 'plant dynamic option spread'], { cwd: root, stdio: 'ignore' })
-            expect(deriveDocumentationInventory({ root, expectedFixedPoint: fixedPoint, candidate: 'HEAD' }).errors.join('\n'))
-                .toContain('DOCEV015_INVENTORY_FAILED')
-        } finally {
-            rmSync(root, { recursive: true, force: true, maxRetries: 5 })
-        }
-    }, 240_000)
+    it('derives typed parser findings collected before the public result is returned', () => {
+        const path = 'packages/cockpit/src/work-orders/parser.ts'
+        const inventory = diagnosticInventoryFromSources([path], new Map([[path, [
+            "export const PARSER_FINDING_CODES = Object.freeze(['WO_SIZE_LIMIT', 'WO_FRONTMATTER_INVALID'] as const)",
+            'export type ParserFindingCode = typeof PARSER_FINDING_CODES[number]',
+            'interface ParserFinding { readonly code: ParserFindingCode; readonly target: string; readonly message: string }',
+            'function immutable<T>(value: T): T | undefined { return snapshotJson(value) as T | undefined }',
+            'export function parseWorkOrder(input: string) {',
+            '  const findings: ParserFinding[] = []',
+            '  const add = (code: ParserFindingCode, target: string, message: string) => {',
+            '    findings.push(Object.freeze({ code, target, message }))',
+            '  }',
+            "  if (input.length > 8) add('WO_SIZE_LIMIT', 'work-order', 'too large')",
+            "  if (!input.startsWith('---')) add('WO_FRONTMATTER_INVALID', 'frontmatter', 'invalid')",
+            '  return immutable({ ok: findings.length === 0, findings: Object.freeze(findings) })!',
+            '}',
+            'function usageOutcome(code: string, message: string) { return { status: 2, diagnostics: [{ code, message }] } }',
+            "export const rejected = () => usageOutcome('WORK_APPLICATION_REFUSED', 'work refused')",
+            "export const operator = () => usageOutcome('WORK_OPERATOR_REQUIRED', 'operator required')",
+            'function writeOutput(existing: boolean) {',
+            "  const diagnostic = existing ? { code: 'OUTPUT_EXISTS', message: 'exists' } : { code: 'OUTPUT_WRITE_FAILED', message: 'write failed' }",
+            '  return { diagnostics: [diagnostic] }',
+            '}',
+            'function renderJsonResponse(value: unknown) { return JSON.stringify(value) }',
+            'function guard() {',
+            '  let response: unknown',
+            "  response = { diagnostics: [{ code: 'GUARD_INPUT_UNAVAILABLE' }] }",
+            '  renderJsonResponse({ diagnostics: response.diagnostics })',
+            '}',
+            'function document() {',
+            '  const diagnostics: unknown[] = []',
+            "  diagnostics.unshift({ code: 'DOCUMENT_STDOUT_TARGET' })",
+            '  return { diagnostics }',
+            '}',
+            'function warnings() {',
+            '  const warnings: unknown[] = []',
+            "  warnings.push(Object.freeze({ code: 'SURFACE_GENERATOR_TRUST_WARNING' }))",
+            '  return Object.freeze(warnings)',
+            '}',
+            'function collectMcp() {',
+            '  const diagnostics: unknown[] = []',
+            "  diagnostics.push({ code: 'MCP_APPROVAL_UNKNOWN' })",
+            '  const outcome = snapshotJson({ diagnostics })',
+            '  return outcome',
+            '}',
+            "function unrelatedTransform() { const value = transform({ code: 'DECOY_TRANSFORM_ARGUMENT' }); return value }",
+            "function unrelatedMutation() { const warnings: unknown[] = []; warnings.push({ code: 'DECOY_UNRETURNED_ARRAY' }); return [] }",
+            "function unrelatedRender() { renderOther({ code: 'DECOY_RENDER_ARGUMENT' }) }",
+            "function unrelated() { const add = (value: string) => value; return add('DECOY_GENERIC_ADD') }",
+            "const unrelatedObject = Object.freeze({ code: 'DECOY_NOT_RETURNED' })",
+            '',
+        ].join('\n')]]))
+        expect(inventory.items).toEqual([
+            'DOCUMENT_STDOUT_TARGET', 'GUARD_INPUT_UNAVAILABLE', 'MCP_APPROVAL_UNKNOWN', 'OUTPUT_EXISTS', 'OUTPUT_WRITE_FAILED',
+            'SURFACE_GENERATOR_TRUST_WARNING', 'WORK_APPLICATION_REFUSED', 'WORK_OPERATOR_REQUIRED', 'WO_FRONTMATTER_INVALID', 'WO_SIZE_LIMIT',
+        ].map(code => `diagnostic:${code}`))
+        for (const code of ['WO_SIZE_LIMIT', 'GUARD_INPUT_UNAVAILABLE']) expect([...inventory.owners.get(code) ?? []]).toEqual([path])
+    })
 
     it('binds work and test policy references to their source owners rather than diagnostic codes', () => {
         const documentation = readFileSync(join(ROOT, 'docs/work-and-browser.md'), 'utf8')
