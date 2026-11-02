@@ -99,6 +99,7 @@ function ownData(input: unknown, keys: readonly string[]): Readonly<Record<strin
             || keys.some((key) => !('value' in (descriptors[key] ?? {})))) return undefined
         return Object.freeze(Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value])))
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -120,6 +121,7 @@ function arrayData(value: unknown, maximum: number): readonly unknown[] | undefi
         }
         return result
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -381,6 +383,7 @@ export function planAdmittedUp(input: {
             }
         }
     } catch {
+        // A throwing accessor or proxy trap makes the authority invalid; the refusal below says so.
         return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle planning authority is invalid', 'up')
     }
     const captured = ownData(input, ['authority', 'completedServices'])

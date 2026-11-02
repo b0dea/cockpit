@@ -296,6 +296,7 @@ function stableInput(value: unknown): StableInput | undefined {
             || !isCanonicalTimestamp(observedAt) || observedMillis > now || now - observedMillis > AUTHORITY_LIFETIME_MS) return undefined
         return Object.freeze({ namespace, stackId: stackId as StackId, observedAt })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -315,6 +316,7 @@ function stableTransitionInput(value: unknown): (StableInput & { readonly holder
             ? Object.freeze({ ...base, holderId: holderId as HolderId })
             : undefined
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -568,6 +570,7 @@ export function projectLifecycleStage(input: {
         issuedLifecycleStageProjections.set(projection, Object.freeze({ stackId: expected.stackId, stage }))
         return projection
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -582,6 +585,7 @@ export function consumeLifecycleStageProjection(
         issuedLifecycleStageProjections.delete(projection)
         return evidence
     } catch {
+        // A throwing accessor or proxy trap makes the projection unusable, which the caller refuses.
         return undefined
     }
 }

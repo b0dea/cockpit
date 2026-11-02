@@ -17,6 +17,7 @@ import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
     ENVIRONMENT_CODES,
+    errorCause,
     type EnvironmentDiagnostic,
     type EnvironmentObservation,
     type ExecutionStep,
@@ -125,6 +126,7 @@ function captureInput(value: HealthCommandCompositionInput): CapturedInput | und
         }
         return Object.freeze({ configPath: resolve(configPath), env: Object.freeze(env), timeoutMs })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -150,6 +152,7 @@ function commandConfigPath(value: unknown): string | undefined {
             ? descriptor.value
             : undefined
     } catch {
+        // A throwing accessor or proxy trap makes the command malformed, which the caller refuses.
         return undefined
     }
 }
@@ -746,8 +749,11 @@ export function createHealthCommandAdapters(
                 authorities: Object.freeze([authority]),
                 stages: Object.freeze([stage.authority]),
             })
-            } catch {
-                return undefined
+            } catch (error) {
+                return refuse?.([Object.freeze({
+                    severity: 'error' as const, code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+                    message: `preflight evidence could not be read: ${errorCause(error)}`, target: loaded.result.source.path,
+                })])
             }
         }
         const preflight = await refreshPreflight()
@@ -838,11 +844,11 @@ export function createHealthCommandAdapters(
                 activeOverrides: application.activeSurfaceOverrides,
                 changedOverrideOriginals: application.changedOverrideOriginals,
             })
-        } catch {
+        } catch (error) {
             return Object.freeze({
                 kind: 'unavailable',
                 code: 'SURFACE_OVERRIDE_INSPECTION_UNAVAILABLE',
-                reason: 'authenticated generated surface override inspection is unavailable',
+                reason: `authenticated generated surface override inspection is unavailable: ${errorCause(error)}`,
             })
         }
     }

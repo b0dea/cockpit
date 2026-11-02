@@ -325,6 +325,7 @@ function captureInput(value: LifecycleCommandCompositionInput): LifecycleCommand
             ...(holderProcess === undefined ? {} : { holderProcess: Object.freeze({ pid: holderProcess.pid,
                 ...(holderProcess.processStart === undefined ? {} : { processStart: holderProcess.processStart }) }) }) })
     } catch {
+        // A throwing accessor or proxy trap makes the input malformed, which the caller refuses.
         return undefined
     }
 }
@@ -360,6 +361,7 @@ async function composeArtifact(root: string, reference: string, expectedSha256?:
         if (expectedSha256 !== undefined && sha256 !== expectedSha256) return undefined
         return Object.freeze({ reference, canonicalPath, source, sha256 })
     } catch {
+        // Callers treat any unreadable or changed artifact as no file authority and refuse or report unavailable.
         return undefined
     } finally {
         try { await handle?.close() } catch { /* No file authority survives an unavailable artifact. */ }
