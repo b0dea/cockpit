@@ -961,6 +961,33 @@ describe('setup application choreography', () => {
         expect(outcome.diagnostics.map(diagnostic => diagnostic.code)).not.toContain('EXECUTION_STEP_FAILED')
     })
 
+    it.each([
+        ['an unconfirmed termination', 'EXECUTION_TERMINATION_UNCONFIRMED', true],
+        ['a timeout', 'EXECUTION_TIMEOUT', true],
+        ['a clone that never started', 'EXECUTION_STEP_FAILED', false],
+    ] as const)('keeps the executor code for %s instead of telling a person to clone by hand', async (_case, code, started) => {
+        const { configPath, context, adapters } = await sequenceFixture()
+        adapters.observeGit = cloneObservations()
+        adapters.planGit = async ({ sibling }) => ({
+            kind: 'preview', status: 0, diagnostics: [],
+            result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
+            plan: { steps: [{ id: 'setup:api:clone' }] as never },
+        })
+        adapters.execute = async () => ({
+            kind: 'refusal', status: 2, result: null,
+            diagnostics: [{ severity: 'error', code, message: 'execution step setup:api:clone failed', target: 'setup:api:clone' }],
+            execution: {
+                completedStepIds: [], failedStep: { id: 'setup:api:clone', started, stderr: "Cloning into 'api'..." },
+                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
+            },
+        })
+
+        const outcome = await runSetupSequence({ configPath }, adapters)
+
+        expect(outcome.diagnostics.map(diagnostic => diagnostic.code)).toContain(code)
+        expect(outcome.diagnostics.map(diagnostic => diagnostic.code)).not.toContain('SETUP_CLONE_FAILED')
+    })
+
     it('does not claim mutation when lifecycle is unchanged and a failed step never started', async () => {
         const { configPath, context, adapters } = await sequenceFixture()
         adapters.observeGit = cloneObservations()

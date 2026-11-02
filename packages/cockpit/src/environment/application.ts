@@ -1490,15 +1490,18 @@ function cloneFailureDiagnostics(
     siblingsRoot: string,
     completedStepIds: readonly string[],
 ): readonly EnvironmentDiagnostic[] {
-    const { id, stderr } = failed.execution.failedStep
-    if (id !== `setup:${sibling.slug}:clone`) return failed.diagnostics
+    const { id, started, stderr } = failed.execution.failedStep
+    // Only a git that ran and exited non-zero failed to clone; a timeout, an abort or an unconfirmed
+    // termination keeps the executor's own code, because cloning by hand could race a live git.
+    const own = failed.diagnostics.find(diagnostic => diagnostic.target === id)
+    if (id !== `setup:${sibling.slug}:clone` || !started || own?.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) return failed.diagnostics
     const cloned = completedStepIds.flatMap(step => /^setup:(.+):clone$/.exec(step)?.[1] ?? [])
     const target = resolve(siblingsRoot, sibling.dir)
     return [
         {
             severity: 'error',
             code: ENVIRONMENT_CODES.SETUP_CLONE_FAILED,
-            message: `git could not clone ${sibling.remote} into ${target}: ${stderr ?? 'git reported no error text'}`
+            message: `git could not clone ${sibling.remote?.replace(/(\w+:\/\/)[^/@\s]+@/, '$1[redacted]@')} into ${target}: ${stderr ?? 'git reported no error text'}`
                 + (cloned.length === 0 ? '' : `; already cloned and left in place: ${cloned.join(', ')}`),
             target,
             fix: 'check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run npx --no cockpit setup --config <your cockpit.toml> again',

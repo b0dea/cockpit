@@ -425,6 +425,12 @@ install_policies = [{ toolchain = "node", volume = "node-modules", lockfile = "p
         expect((await loadCockpitConfig(mistyped)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
             message: `nope.toml does not exist; this cockpit checkout was synced from ${configPath}`,
             target: mistyped, fix: 'check the --config path, then retry' }])
+        // An unreadable manifest chooses no remedy; it never turns the refusal into a crash.
+        chmodSync(join(directory, '.cockpit', 'generated-environment-ownership.json'), 0o000)
+        try {
+            expect((await loadCockpitConfig(configPath)).diagnostics).toEqual([{ severity: 'error', code: 'CONFIG_NOT_FOUND',
+                message: 'cockpit configuration was not found', target: configPath }])
+        } finally { chmodSync(join(directory, '.cockpit', 'generated-environment-ownership.json'), 0o600) }
     })
 
     it('renders a missing-config recovery command as exact literal Git argv', async () => {

@@ -781,13 +781,17 @@ export type ExecuteProbeOutcome =
     | { kind: 'complete'; execution: ProbeStepExecution; receipt: ExecutionReceipt; stdout: Buffer; stderr: Buffer }
     | { kind: 'refusal'; code: ExecutionFailureCode; execution: ProbeStepExecution; receipt?: ExecutionReceipt; stdout: Buffer; stderr: Buffer }
 
-const FAILED_STEP_STDERR_BYTES = 2_048
+const FAILED_STEP_STDERR_CHARACTERS = 2_048
 
 // Only a step that declares `failureOutput` gets this: for a tool such as git clone, its last words
 // are the only statement of the cause (an unreachable host, a missing repository).
 function failedStepStderr(stderr: Buffer): string | undefined {
-    const tail = new TextDecoder('utf-8').decode(stderr.subarray(Math.max(0, stderr.byteLength - FAILED_STEP_STDERR_BYTES)))
-        .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').trim().replace(/\s*\n\s*/g, ' ')
+    // Redact before cutting, so a cut inside a URL cannot leave its credentials behind the cut, and
+    // drop a partial first line.
+    const text = new TextDecoder('utf-8').decode(stderr)
+        .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@')
+    const cut = text.slice(-FAILED_STEP_STDERR_CHARACTERS)
+    const tail = (cut.length < text.length ? cut.slice(cut.indexOf('\n') + 1) : cut).trim().replace(/\s*\n\s*/g, ' ')
     return tail === '' ? undefined : redactSensitiveMessage(tail)
 }
 

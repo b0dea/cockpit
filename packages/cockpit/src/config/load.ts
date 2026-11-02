@@ -360,17 +360,14 @@ function refusal(code: RefusalCode, message: string, target: string, fix?: strin
 // The manifest only chooses which remedy to print: one that cannot be read gives the plain refusal,
 // and sync and check report the manifest itself.
 async function syncedConfigName(directory: string): Promise<string | undefined> {
-    let read: Awaited<ReturnType<typeof readBoundedInput>>
-    try { read = await readBoundedInput(join(directory, '.cockpit', 'generated-environment-ownership.json')) }
-    catch (error) {
-        if (['ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return undefined
-        throw error
-    }
-    if (read.kind !== 'complete') return undefined
     let manifest: unknown
-    try { manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(read.bytes)) }
-    catch (error) {
-        if (error instanceof SyntaxError || error instanceof TypeError) return undefined
+    try {
+        const read = await readBoundedInput(join(directory, '.cockpit', 'generated-environment-ownership.json'))
+        if (read.kind !== 'complete') return undefined
+        manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(read.bytes))
+    } catch (error) {
+        // Absent, unreadable, changing under a concurrent sync, or not JSON: no remedy can be chosen.
+        if (error instanceof Error) return undefined
         throw error
     }
     const record = manifest as { format?: unknown; source?: { path?: unknown } } | null
