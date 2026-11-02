@@ -44,6 +44,9 @@ export async function inspectProjectReadiness(
     input: ProjectReadinessInput,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
 ): Promise<readonly EnvironmentDiagnostic[]> {
+    // A cockpit.toml that does not load is the finding; its own refusal says what to fix first.
+    const loaded = input.configPath === undefined ? undefined : await loadCockpitConfig(input.configPath)
+    if (loaded && loaded.kind !== 'complete') return Object.freeze([])
     const findings: EnvironmentDiagnostic[] = input.configPath === undefined ? [] : [...await inspectTeamReadiness(input.configPath)]
     const git = await resolveGitExecutable(input.env)
     if (git.state !== 'available') return Object.freeze(findings)
@@ -74,9 +77,7 @@ export async function inspectProjectReadiness(
         }))
     }
     let repositories = input.repositories ?? []
-    if (input.configPath !== undefined) {
-        const loaded = await loadCockpitConfig(input.configPath)
-        if (loaded.kind !== 'complete') return Object.freeze(findings)
+    if (loaded?.kind === 'complete') {
         const siblingRoot = resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root)
         repositories = loaded.result.config.sibling.map((sibling) => ({ slug: sibling.slug, root: resolve(siblingRoot, sibling.dir) }))
     }
