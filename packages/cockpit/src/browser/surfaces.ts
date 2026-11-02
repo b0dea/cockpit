@@ -12,7 +12,7 @@ import { abortStateTransaction, authenticateStateNamespace, issueStateScopedLock
 import { GeneratedHostPath } from '../schema.js'
 import type { RenderedSurfaceFile } from '../surfaces/contract.js'
 import { GUARD_SURFACE_TARGETS, type GuardSurfaceTarget } from '../surfaces/harness-registry.js'
-import { collectMcpDeclarations, type McpDeclaration } from '../surfaces/mcp.js'
+import { collectMcpDeclarations, mcpApprovalDigest, type McpDeclaration } from '../surfaces/mcp.js'
 import { isPackageDescendant } from './package-paths.js'
 import { assertBrowserArtifactRegistration, assertBrowserStorageStateCurrent, browserRuntimeControlAuthorities, browserRuntimeControlPorts, browserRuntimeCoordination, browserRuntimeExecutionReady, type BrowserRuntimeProjection } from './runtime.js'
 
@@ -604,8 +604,10 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     assertBrowserStorageStateCurrent(runtime)
     if (!browserRuntimeExecutionReady(runtime)) throw new TypeError('remote browser surfaces require an authenticated retained port lease')
     const cli = pinnedCli(data.testPackage, runtime, data.cockpitDirectory)
+    // `approved` says the caller matched the declared server against [mcp.approved]; this one may carry a bound endpoint.
+    const approval = { playwright: mcpApprovalDigest(data.mcp as McpDeclaration, data.cockpitDirectory) }
     const collected = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: [data.mcp],
-        approved: data.approved ? ['playwright'] : [], targets: data.harnesses.map(row => row.target) })
+        approved: data.approved ? approval : {}, targets: data.harnesses.map(row => row.target) })
     if (collected.kind !== 'complete') throw new TypeError(`browser MCP declaration refused: ${collected.diagnostic.code}`)
     const server = collected.result.servers[0]!
     if (server.name !== 'playwright') throw new TypeError('browser MCP declaration must be the playwright server')
@@ -648,7 +650,7 @@ export function renderBrowserSurfaces(input: BrowserSurfaceInput) {
     }
     const targets = rows.filter(row => row.transport === 'mcp' && row.declaration === 'instructed').map(row => row.target)
     const mcp = collectMcpDeclarations({ cockpitDirectory: data.cockpitDirectory, declarations: targets.length ? [data.mcp] : [],
-        approved: targets.length ? ['playwright'] : [], targets: targets.length ? targets : data.harnesses.map(row => row.target) })
+        approved: targets.length ? approval : {}, targets: targets.length ? targets : data.harnesses.map(row => row.target) })
     if (mcp.kind !== 'complete') throw new TypeError(`browser MCP collection refused: ${mcp.diagnostic.code}`)
     const probes = rows.filter(row => row.declaration === 'instructed').map(row => nativeProbe(row, files, mcp.result.wrappers, runtime, data.testPackage?.manifest.sha256 ?? null, data.cockpitDirectory))
     const projectPackage = data.testPackage !== null && 'artifactRoot' in data.testPackage && 'module' in data.testPackage

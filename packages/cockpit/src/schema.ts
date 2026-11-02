@@ -826,11 +826,15 @@ export const Guards = z
     })
     .strict()
 
-// THE approval list. A server absent from it is generated disabled on every harness, so the
-// three cannot disagree about what may start.
+// THE approval list: each approved server name maps to the digest of the declaration a human
+// reviewed, which `sync` reports for every server it keeps disabled. Approving a name alone let an
+// agent rewrite the command of an approved server in a sibling's declaration file and the next
+// human sync start it. A server absent from it, or changed since, is generated disabled on every
+// harness, so the three cannot disagree about what may start.
 export const Mcp = z
     .object({
-        approved: z.array(z.string()).default([]),
+        approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync reports for the server'))
+            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}),
     })
     .strict()
 

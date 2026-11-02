@@ -20,6 +20,7 @@ import { deriveEntrypoints, projectPortLeaseResult } from './ports.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { selectStateRoot, transactState } from './state.js'
+import { mcpApprovalDigest } from '../surfaces/mcp.js'
 import { encodeOwnershipManifest } from '../surfaces/ownership.js'
 
 const roots: string[] = []
@@ -429,8 +430,8 @@ purpose = "Synthetic browser declaration"
 [sibling.derives]
 mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
 
-[mcp]
-approved = ["playwright"]
+[mcp.approved]
+playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i', mcpImage, '--endpoint', 'ws://localhost:3001/'], cwd: root, envNames: [] }, root)}"
 
 [browser]
 engine = "firefox"

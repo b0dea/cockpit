@@ -807,7 +807,7 @@ describe('document round trip inventory', () => {
                     allow: [],
                     deny: [],
                 })
-                expect(draft.mcp).toEqual({ approved: [] })
+                expect(draft.mcp).toEqual({ approved: {} })
                 expect(draft.workorders).toEqual({ attempt_cap: 2, wip_cap: 3 })
 
                 const defaults = outcome.diagnostics.filter((item) => item.code === 'DOCUMENT_DEFAULT')

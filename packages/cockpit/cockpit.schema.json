@@ -2664,10 +2664,11 @@
       "type": "object",
       "properties": {
         "approved": {
-          "default": [],
-          "type": "array",
-          "items": {
-            "type": "string"
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
           }
         }
       },

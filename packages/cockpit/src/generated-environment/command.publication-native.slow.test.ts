@@ -13,6 +13,7 @@ import type { HolderId } from '../environment/contract.js'
 import { checkoutId, cockpitId, publicationCockpitId, stackId } from '../environment/identity.js'
 import { deriveEntrypoints, projectPortLeaseResult } from '../environment/ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
+import { mcpApprovalDigest } from '../surfaces/mcp.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
 import { selectStateRoot, transactState } from '../environment/state.js'
 import { recordLifecycleStarted } from '../environment/lifecycle-stage.js'
@@ -38,7 +39,7 @@ describe('public surface publication transaction', () => {
             await writeFile(join(outside, '.env.example'), 'SYNTHETIC_TOKEN=\n')
             await writeFile(join(outside, '.env'), 'SYNTHETIC_TOKEN=value\n')
             const fixture = await surfaceConsumer('native-mcp', {
-                rules: true, mcp: true, siblingDirectory: outside, parentDirectory: estate,
+                rules: true, mcp: { command: '/usr/bin/printenv', envNames: ['SYNTHETIC_TOKEN'] }, siblingDirectory: outside, parentDirectory: estate,
             })
             expect(dirname(fixture.root)).toBe(estate)
             expect(dirname(outside)).toBe(estate)
@@ -260,8 +261,8 @@ purpose = "Synthetic browser declaration"
 [sibling.derives]
 mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-23", kind = "declared", reason = "Synthetic browser transport" } }]
 
-[mcp]
-approved = ["playwright"]
+[mcp.approved]
+playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i', mcpImage, '--endpoint', 'ws://localhost:3001/'], cwd: fixture.root, envNames: [] }, fixture.root)}"
 
 [browser]
 engine = "${variant.remote ? 'firefox' : 'chromium'}"

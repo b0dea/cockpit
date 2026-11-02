@@ -10,7 +10,7 @@ import { harnessFact } from './harness-registry.js'
 export const mechanism = {
     id: 'mcp-declaration-collection',
     module: 'packages/cockpit/src/surfaces/mcp.ts',
-    exports: ['parseMcpDeclarationFile', 'collectMcpDeclarations', 'hasTargetMcpServers'],
+    exports: ['parseMcpDeclarationFile', 'collectMcpDeclarations', 'hasTargetMcpServers', 'mcpApprovalDigest'],
 } as const
 
 const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
@@ -39,7 +39,7 @@ const Declaration = z.object({
 const Input = z.object({
     cockpitDirectory: WorkingDirectory,
     declarations: z.array(Declaration).max(256),
-    approved: z.array(ServerName).max(256).refine(names => new Set(names).size === names.length),
+    approved: z.record(ServerName, Sha256).refine(approved => Object.keys(approved).length <= 256),
     targets: z.array(z.enum(SURFACE_TARGETS)).min(1).max(SURFACE_TARGETS.length).refine(targets => new Set(targets).size === targets.length),
 }).strict()
 
@@ -51,6 +51,8 @@ export interface McpDiagnostic {
     readonly message: string
     readonly server?: string
     readonly sources?: readonly McpSource[]
+    /** The approval digest of the server's current declaration, on MCP_NOT_APPROVED. */
+    readonly sha256?: string
 }
 
 interface McpServer {
@@ -87,16 +89,17 @@ function quote(value: string): string {
     return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-// The wrapper finds the server's directory from its own location, so the committed bytes are the
-// same in every clone. Each harness starts it from the directory the agent was launched in, which
-// is the cockpit root (the guard hooks require the same).
+// Each harness starts the wrapper as `.cockpit/mcp/<id>.sh` from the directory the agent was
+// launched in, so it runs only from the cockpit root (the guard hooks require the same) and the
+// server's directory is relative to it: the committed bytes are the same in every clone. The `./`
+// keeps CDPATH from choosing another directory and printing it into the JSON-RPC stream, and `-P`
+// resolves `..` from the real root, against which the relative path was computed.
 function wrapper(server: McpServer, cockpitDirectory: string): string {
     const inherited = ['PATH', ...INHERITED_TOOL_ENVIRONMENT].filter(name => !server.envNames.includes(name))
     return [
         '#!/bin/sh',
         'set -eu',
-        'cd "$(dirname -- "$0")/../.."',
-        `cd ${quote(relative(cockpitDirectory, server.cwd) || '.')}`,
+        `cd -P -- ${quote(`./${relative(cockpitDirectory, server.cwd) || '.'}`)}`,
         `executable=$(command -v ${quote(server.command)}) || { printf '%s\\n' 'MCP_EXECUTABLE_UNAVAILABLE' >&2; exit 2; }`,
         '[ -f "$executable" ] && [ -x "$executable" ] || { printf \'%s\\n\' \'MCP_EXECUTABLE_UNAVAILABLE\' >&2; exit 2; }',
         // `npx`, `uvx` and most npm servers are `#!/usr/bin/env node` scripts: without PATH they
@@ -107,19 +110,28 @@ function wrapper(server: McpServer, cockpitDirectory: string): string {
     ].join('\n')
 }
 
-function identity(declaration: McpDeclaration): string {
-    return JSON.stringify({ command: declaration.command, args: declaration.args, cwd: declaration.cwd, envNames: [...declaration.envNames].sort() })
+type McpIdentity = Pick<McpDeclaration, 'command' | 'args' | 'cwd' | 'envNames'>
+
+// What a human reviews before approving a server: everything the wrapper runs. The working
+// directory is taken relative to the cockpit so the digest is the same in every clone.
+function identity(declaration: McpIdentity, cockpitDirectory: string): string {
+    return JSON.stringify({ command: declaration.command, args: declaration.args, cwd: relative(cockpitDirectory, declaration.cwd) || '.', envNames: [...declaration.envNames].sort() })
+}
+
+/** The digest `[mcp.approved]` records for a server, so a changed declaration is no longer approved. */
+export function mcpApprovalDigest(declaration: McpIdentity, cockpitDirectory: string): string {
+    return createHash('sha256').update(identity(declaration, cockpitDirectory)).digest('hex')
 }
 
 export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
     const captured = snapshotJson(input)
     const parsed = Input.safeParse(captured)
     if (!parsed.success) return refuse('MCP_INPUT_INVALID', 'MCP declarations, approvals and targets must be bounded canonical data')
-    const approved = new Set(parsed.data.approved)
+    const { approved, cockpitDirectory } = parsed.data
     const collected = new Map<string, { declaration: McpDeclaration; sources: McpSource[] }>()
     for (const declaration of parsed.data.declarations) {
         const prior = collected.get(declaration.name)
-        if (prior && identity(prior.declaration) !== identity(declaration)) {
+        if (prior && identity(prior.declaration, cockpitDirectory) !== identity(declaration, cockpitDirectory)) {
             const conflict = snapshotJson({ kind: 'refusal', diagnostic: {
                 code: 'MCP_COMMAND_CONFLICT', server: declaration.name,
                 message: 'MCP server identity has divergent command, arguments, working directory or environment names',
@@ -132,19 +144,21 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
             if (!prior.sources.some(source => JSON.stringify(source) === JSON.stringify(declaration.source))) prior.sources.push(declaration.source)
         } else collected.set(declaration.name, { declaration, sources: [declaration.source] })
     }
+    const digests = new Map([...collected].map(([name, { declaration }]) => [name, mcpApprovalDigest(declaration, cockpitDirectory)]))
     const servers = [...collected.values()].map(({ declaration, sources }): McpServer => ({
         name: declaration.name, command: declaration.command, args: declaration.args, cwd: declaration.cwd,
-        envNames: [...declaration.envNames].sort(), enabled: approved.has(declaration.name),
+        envNames: [...declaration.envNames].sort(), enabled: Object.hasOwn(approved, declaration.name) && approved[declaration.name] === digests.get(declaration.name),
         sources: sources.sort((left, right) => JSON.stringify(left) < JSON.stringify(right) ? -1 : JSON.stringify(left) > JSON.stringify(right) ? 1 : 0),
     })).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
     const diagnostics: McpDiagnostic[] = servers.filter(server => !server.enabled).map(server => ({
-        code: 'MCP_NOT_APPROVED', server: server.name, sources: server.sources, message: 'MCP server is absent from the shared approval list and remains disabled',
+        code: 'MCP_NOT_APPROVED', server: server.name, sources: server.sources, sha256: digests.get(server.name)!,
+        message: 'MCP server has no shared approval for its current declaration and remains disabled',
     }))
-    for (const name of [...approved].sort()) if (!collected.has(name)) diagnostics.push({
+    for (const name of Object.keys(approved).sort()) if (!collected.has(name)) diagnostics.push({
         code: 'MCP_APPROVAL_UNKNOWN', server: name, message: 'The shared approval list names an undeclared MCP server',
     })
     const wrappers = servers.map(server => {
-        const bytes = wrapper(server, parsed.data.cockpitDirectory)
+        const bytes = wrapper(server, cockpitDirectory)
         return { path: `.cockpit/mcp/${createHash('sha256').update(server.name).digest('hex')}.sh`, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
     })
     const result = {

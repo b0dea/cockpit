@@ -127,8 +127,9 @@ not mean the harness enforces anything.
 For `MCP_INPUT_INVALID` or `MCP_DECLARATION_INVALID`, correct the declaration, digest,
 same-name environment reference, or confined working directory named by the message.
 `MCP_COMMAND_CONFLICT` means two sources give one server name different commands; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
-server disabled; add it to `[mcp].approved` only after reviewing its command, arguments, working
-directory, environment names, and sources. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
+server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
+was approved; only after reviewing its command, arguments, working directory, environment names and
+sources, set its name to the sha256 in the message under `[mcp.approved]`. `MCP_APPROVAL_UNKNOWN` means the allowlist names no
 declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 

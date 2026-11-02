@@ -44,7 +44,7 @@ import {
     coreSurfaceDeclarations,
     shippedSkillNames,
 } from '../surfaces/core-declarations.js'
-import { collectMcpDeclarations, hasTargetMcpServers, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration, type McpDiagnostic } from '../surfaces/mcp.js'
+import { collectMcpDeclarations, hasTargetMcpServers, mcpApprovalDigest, parseMcpDeclarationFile, type McpCollectionOutcome, type McpDeclaration, type McpDiagnostic } from '../surfaces/mcp.js'
 import {
     renderSharedPostimage,
     bindSurfaceOwnershipIdentity,
@@ -251,7 +251,7 @@ interface PreparedEnvironment {
     readonly surfaceAssets: readonly SurfaceAssetIdentity[]
     readonly warnings: readonly SurfaceGenerationWarning[]
     // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
-    readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[] }>[]
+    readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[]; sha256: string }>[]
     readonly registry: DerivedRegistry
     readonly siblingRoots: AuthenticatedSiblingRoots
     readonly hostInputRoots: Readonly<Record<string, GeneratedHostInputRoot>>
@@ -767,8 +767,8 @@ function complete(
             })),
             ...prepared.unapprovedMcpServers.map(server => Object.freeze({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
-                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, is not in [mcp].approved, so every harness keeps it disabled`,
-                fix: 'to enable it, add its name to [mcp].approved in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed',
+                message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current command, arguments, working directory and environment names (sha256 ${server.sha256}), so every harness keeps it disabled`,
+                fix: 'to enable it, review its declaration, set its name to the sha256 in this message under [mcp.approved] in cockpit.toml and run npx --no cockpit sync --config <your cockpit.toml>; to keep it off, nothing is needed',
             })),
             // Real sync and check refuse a changed original; a preview reports it so it can be reviewed.
             ...prepared.changedOverrideOriginals.map(finding => overrideChanged(finding, 'warning')),
@@ -2546,7 +2546,7 @@ async function prepareSurfaces(
     let mcp = collectMcpDeclarations({ cockpitDirectory: prepared.root, declarations, approved: config.mcp.approved, targets: SURFACE_TARGETS })
     if (mcp.kind !== 'complete') return refuse(mcp.diagnostic.code, mcp.diagnostic.message, mcp.diagnostic.server)
     const unapprovedMcpServers = Object.freeze(mcp.diagnostics.filter(row => row.code === 'MCP_NOT_APPROVED' && row.server !== undefined)
-        .map(row => Object.freeze({ name: row.server!, sources: Object.freeze((row.sources ?? []).map(source =>
+        .map(row => Object.freeze({ name: row.server!, sha256: row.sha256!, sources: Object.freeze((row.sources ?? []).map(source =>
             source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path)) })))
     if (mcp.diagnostics.some(row => row.code === 'MCP_APPROVAL_UNKNOWN')) {
         const row = mcp.diagnostics.find(candidate => candidate.code === 'MCP_APPROVAL_UNKNOWN')!
@@ -2576,9 +2576,10 @@ async function prepareSurfaces(
                 `[browser] requires exactly one MCP server named playwright, and the declared MCP sources hold ${playwright.length}`, 'playwright',
                 'declare one playwright server in a JSON file with an mcpServers object, listed in a sibling\'s derives.mcp_sources, then run npx --no cockpit sync --config <your cockpit.toml>')
         }
-        if (!config.mcp.approved.includes('playwright')) {
-            return refuse('MCP_DECLARATION_INVALID', '[browser] requires the playwright MCP server to be approved', 'playwright',
-                'add "playwright" to [mcp] approved, then run npx --no cockpit sync --config <your cockpit.toml>')
+        const playwrightDigest = mcpApprovalDigest(playwright[0]!, prepared.root)
+        if (config.mcp.approved.playwright !== playwrightDigest) {
+            return refuse('MCP_DECLARATION_INVALID', `[browser] requires the playwright MCP server to be approved at its current declaration (sha256 ${playwrightDigest})`, 'playwright',
+                'review the playwright declaration, set playwright to the sha256 in this message under [mcp.approved], then run npx --no cockpit sync --config <your cockpit.toml>')
         }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)
@@ -2644,7 +2645,9 @@ async function prepareSurfaces(
                 cockpitDirectory: prepared.root,
                 declarations: declarations.flatMap(row => row.name !== 'playwright' ? [row]
                     : browserTargets.size ? [browserMcp] : []),
-                approved: config.mcp.approved.filter(name => name !== 'playwright' || browserTargets.size > 0),
+                // The leased endpoint rewrites an approved argument, so the bound server carries its own digest.
+                approved: { ...Object.fromEntries(Object.entries(config.mcp.approved).filter(([name]) => name !== 'playwright')),
+                    ...(browserTargets.size > 0 ? { playwright: mcpApprovalDigest(browserMcp, prepared.root) } : {}) },
                 targets: SURFACE_TARGETS,
             })
             if (boundMcp.kind !== 'complete') throw new Error(`bound browser MCP declaration was refused: ${boundMcp.diagnostic.code}`)

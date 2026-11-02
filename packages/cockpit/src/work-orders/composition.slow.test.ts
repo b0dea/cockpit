@@ -21,6 +21,7 @@ import { createConfiguredWorkApplicationComposition } from './composition.js'
 import { parseWorkOrder, type ParsedWorkOrder } from './contract.js'
 import { observeWorkOrderIdentity, type WorkOrderIdentityGit } from './identity-observation.js'
 import { intakeWorkOrder } from './intake.js'
+import { mcpApprovalDigest } from '../surfaces/mcp.js'
 import { workOrderFixture } from '../test-support/work-order.js'
 import { createWorkCompositionFixtureSupport, gitWithObjectId, reidentifyWorkOrder } from '../../test-support/work-composition-fixture.js'
 
@@ -285,8 +286,8 @@ purpose = "Synthetic browser declaration"
 [sibling.derives]
 mcp_sources = [{ path = "browser.mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-10-24", kind = "declared", reason = "Synthetic browser transport" } }]
 
-[mcp]
-approved = ["playwright"]
+[mcp.approved]
+playwright = "${mcpApprovalDigest({ command: 'docker', args: ['run', '--rm', '-i', mcpImage], cwd: fixture.root, envNames: [] }, fixture.root)}"
 
 [environment]
 addressing = "hostname"

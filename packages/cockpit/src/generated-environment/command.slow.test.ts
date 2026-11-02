@@ -566,12 +566,12 @@ native_hooks = { install = "inspect" }
 }, 120_000)
 
 it('rolls back the whole guard publication when a staged registration cannot be published', async () => {
-    const { root, configPath } = await surfaceConsumer('guard-rollback', { mcp: true })
+    const { root, configPath } = await surfaceConsumer('guard-rollback', { mcp: { command: '/usr/bin/true' } })
     await writeFile(join(root, 'app/.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
     const initial = await syncGeneratedEnvironment({ configPath })
     if (initial.kind !== 'complete') throw new Error(JSON.stringify(initial))
     const before = await bytes(root, [...initial.result.paths, '.cockpit/generated-environment-ownership.json'])
-    await writeFile(configPath, (await readFile(configPath, 'utf8')).replace('approved = ["approved-server"]', 'approved = []'))
+    await writeFile(configPath, (await readFile(configPath, 'utf8')).replace(/approved-server = "[a-f0-9]{64}"/, ''))
     let injected = false
     const result = await syncGeneratedEnvironment({ configPath }, { execute: async step => {
         const groups = publicationGroups(step, 'publish')

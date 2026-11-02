@@ -175,15 +175,20 @@ cell.
 
 ## MCP servers and restrictions
 
-`[mcp].approved` is the shared allowlist. A declared server absent from it is rendered disabled
-for every configured harness (for Claude Code through `disabledMcpjsonServers`, because it ignores
-`disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED`. A name on the allowlist without a
+`[mcp.approved]` is the shared allowlist. It maps each approved server name to the sha256 of the
+declaration a human reviewed: its command, arguments, working directory relative to the cockpit,
+and environment names. The declaration lives in a sibling's file, which an agent can edit, so a
+server whose declaration changed after approval is no longer approved. A declared server absent
+from the list, or whose digest differs, is rendered disabled for every configured harness (for
+Claude Code through `disabledMcpjsonServers`, because it ignores `disabled` in `.mcp.json`), and
+`sync` and `check` report `MCP_NOT_APPROVED` with the current digest to approve. A name on the allowlist without a
 declaration reports `MCP_APPROVAL_UNKNOWN`. Cockpit rejects conflicting commands for one server,
 credential-like arguments, environment values that are not same-name references, and working
 directories outside the declared sibling. Each harness starts the generated wrapper as
-`.cockpit/mcp/<id>.sh` relative to the directory the agent was launched in, and the wrapper finds
-its sibling from its own location, so the committed files are the same in every clone; start the
-agent in the cockpit root, as the guard hooks already require. Wrappers start with an empty
+`.cockpit/mcp/<id>.sh` relative to the directory the agent was launched in, so it runs only when
+the agent was started in the cockpit root, as the guard hooks already require. The wrapper changes
+to its sibling by a path relative to that root, resolved physically and never through `CDPATH`, so
+the committed files are the same in every clone. Wrappers start with an empty
 environment and pass `PATH`, the same non-secret variables product test stages receive (`HOME`,
 `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`) and the declared environment
 names.

@@ -20,6 +20,7 @@ import {
     type GeneratedStaleRemovalApprovalRequest,
 } from '../src/environment/generated-application.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
+import { mcpApprovalDigest } from '../src/surfaces/mcp.js'
 
 /** The groups one publication helper step carries; empty for any other step. */
 export function publicationRequestGroups(step: ExecutionStep, action: 'prepare' | 'publish' | 'commit'): readonly {
@@ -143,7 +144,8 @@ export function createGeneratedCommandFixture() {
 
     async function surfaceConsumer(name: string, options: {
         readonly rules?: boolean
-        readonly mcp?: boolean
+        /** The declaration of `approved-server` in the sibling's `.mcp.json`, which the configuration approves. */
+        readonly mcp?: { readonly command: string; readonly envNames?: readonly string[] }
         readonly bundles?: boolean
         readonly custom?: string
         readonly siblingDirectory?: string
@@ -172,8 +174,8 @@ export function createGeneratedCommandFixture() {
     [sibling.derives]
     mcp_sources = [{ path = ".mcp.json", provenance = { source = "synthetic declaration", observed_on = "2026-09-26", kind = "declared", reason = "Synthetic MCP source" } }]
 
-    [mcp]
-    approved = ["approved-server"]
+    [mcp.approved]
+    approved-server = "${mcpApprovalDigest({ command: options.mcp.command, args: [], cwd: siblingDirectory, envNames: [...options.mcp.envNames ?? []] }, result.root)}"
     `
         }
         if (options.rules) declaration += rulesSurface()
