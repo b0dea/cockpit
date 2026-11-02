@@ -7,7 +7,7 @@ import { runCli } from '../cli.js'
 import { ENVIRONMENT_CODES } from '../environment/contract.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { surfaceSelftestExpectation } from '../surfaces/selftest.js'
-import { runSelftestOperatorCommand, runSurfaceSelftestCommand } from './command.js'
+import { runSelftestOperatorCommand, runSurfaceSelftestApplication } from '../environment/selftest-application.js'
 
 const roots: string[] = []
 const {
@@ -65,14 +65,14 @@ describe('surface selftest command', () => {
         const [template] = specifications(application)
         const handAdded = { ...template!, harness: customCell.harness, capability: customCell.capability,
             invocation: ['{node}', '--probe', '{control}'], versionCommand: ['{node}', '--version'], helpCommand: ['{node}', '--help'] }
-        const refused = await runSurfaceSelftestCommand(
+        const refused = await runSurfaceSelftestApplication(
             { application, root, specifications: [...specifications(application), handAdded] as never, env: { PATH: bin } },
             syntheticExecutableAuthorities(bin),
         )
         expect(refused).toMatchObject({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID',
             reason: expect.stringContaining('custom harnesses cannot run and would be ignored, so they are refused: synthetic-harness instruction-loading') })
 
-        const outcome = await runSurfaceSelftestCommand(
+        const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application), env: { PATH: bin } },
             syntheticExecutableAuthorities(bin),
         )
@@ -92,7 +92,7 @@ describe('surface selftest command', () => {
         const { root, application } = fixture()
         const bin = await fakeHarnesses(root)
         let customExecutions = 0
-        const outcome = await runSurfaceSelftestCommand(
+        const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application), env: { PATH: bin } },
             {
                 ...syntheticExecutableAuthorities(bin),
@@ -116,7 +116,7 @@ describe('surface selftest command', () => {
     it('leaves declared custom enforcement for a real operator probe', async () => {
         const { root, application } = fixture(true)
         const bin = await fakeHarnesses(root)
-        const outcome = await runSurfaceSelftestCommand(
+        const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application), env: { PATH: bin } },
             syntheticExecutableAuthorities(bin),
         )

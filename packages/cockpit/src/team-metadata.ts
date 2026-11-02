@@ -13,7 +13,7 @@ import { guardLauncherEvidence } from './guards/protected-locations.js'
 
 export const mechanism = {
     id: 'team-metadata', module: 'packages/cockpit/src/team-metadata.ts',
-    exports: ['initializeTeamMetadata', 'prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata', 'productPackageManifest',
+    exports: ['prepareTeamMetadata', 'applyTeamMetadata', 'validateTeamMetadata', 'productPackageManifest',
         'inspectTeamReadiness'],
 } as const
 
@@ -335,13 +335,6 @@ interface TeamMetadataRecord {
     readonly files: readonly Readonly<{ path: string; before: Awaited<ReturnType<typeof readOptional>>; bytes: string }>[]
 }
 const issuedMetadata = new WeakMap<TeamMetadataAuthority, TeamMetadataRecord>()
-
-export async function initializeTeamMetadata(configPath: string, options: Readonly<{ dryRun?: boolean }> = {}): Promise<TeamMetadataResult> {
-    const prepared = await prepareTeamMetadata(configPath)
-    if (prepared.kind === 'refusal') return prepared
-    return options.dryRun ? { kind: 'complete', changed: prepared.authority.changes.length > 0, changes: prepared.authority.changes }
-        : applyTeamMetadata(prepared.authority)
-}
 
 export async function prepareTeamMetadata(configPath: string): Promise<Extract<TeamMetadataResult, { kind: 'refusal' }>
     | Readonly<{ kind: 'complete'; authority: TeamMetadataAuthority }>> {

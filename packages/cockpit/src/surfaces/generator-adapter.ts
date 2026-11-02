@@ -27,7 +27,7 @@ import { hasTargetMcpServers } from './mcp.js'
 export const mechanism = {
     id: 'surface-generator-adapter',
     module: 'packages/cockpit/src/surfaces/generator-adapter.ts',
-    exports: ['generateSurfaceBatch', 'generateSurfaceBundle', 'generateSurfaceEstate'],
+    exports: ['generateSurfaceBatch', 'generateSurfaceEstate'],
     package: 'rulesync',
     version: '43.1.2',
     role: 'spelling',
@@ -1024,16 +1024,5 @@ export async function generateSurfaceBatch(input: unknown): Promise<SurfaceGener
         ? outcome.batch
         : outcome.kind === 'complete'
             ? refuse(diagnostic('SURFACE_WORKER_OUTPUT', 'surface estate omitted the batch result', 'worker-output', 'surface-batch'))
-            : outcome
-}
-
-export async function generateSurfaceBundle(input: unknown): Promise<SurfaceBundleGenerationOutcome> {
-    const request = captureSurfaceBundleBatch(input)
-    if (!request) return refuse(diagnostic('SURFACE_INPUT_INVALID', 'surface bundle input is invalid', 'input', 'surface-bundle'))
-    const outcome = await generateSurfaceEstate({ bundle: request })
-    return outcome.kind === 'complete' && outcome.bundle
-        ? outcome.bundle
-        : outcome.kind === 'complete'
-            ? refuse(diagnostic('SURFACE_WORKER_OUTPUT', 'surface estate omitted the bundle result', 'worker-output', request.format))
             : outcome
 }

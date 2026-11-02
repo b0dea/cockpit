@@ -111,7 +111,7 @@ import {
     type SurfaceSelftestDraftInput,
     type SurfaceSelftestExecutableCandidate,
     type SurfaceSelftestProbeSpecificationsCandidate,
-} from './selftest/command.js'
+} from './environment/selftest-application.js'
 import {
     runBaselineOperatorApplication,
     runResetOperatorApplication,

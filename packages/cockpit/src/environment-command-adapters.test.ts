@@ -19,12 +19,6 @@ import type {
     SetupCommandAdapters,
     SetupCommandInput,
 } from './setup/command.js'
-import { upCommand } from './up/command.js'
-import type {
-    UpCommandAdapters,
-    UpCommandInput,
-    UpCommandResult,
-} from './up/command.js'
 import { loadCockpitConfig } from './config/load.js'
 import { CockpitConfig } from './schema.js'
 import { executeProbe } from './environment-exec/execute.js'
@@ -123,26 +117,6 @@ describe('setup command adapter boundary', () => {
 
         expect(application.runSetup).toHaveBeenCalledOnce()
         expect(application.runSetup).toHaveBeenCalledWith(input, adapters)
-        expect(returned).toBe(result)
-    })
-})
-
-describe('up command adapter', () => {
-    it('returns the exact application envelope after forwarding the input and adapters', async () => {
-        const input = Object.freeze({ configPath: '/synthetic/cockpit.toml' }) as UpCommandInput
-        const adapters = Object.freeze({}) as UpCommandAdapters
-        const result = Object.freeze({
-            kind: 'complete',
-            status: 0,
-            result: Object.freeze({ stackId: 'synthetic-stack' }),
-            diagnostics: Object.freeze([]),
-        }) as unknown as UpCommandResult
-        application.runUp.mockResolvedValueOnce(result)
-
-        const returned = await upCommand(input, adapters)
-
-        expect(application.runUp).toHaveBeenCalledOnce()
-        expect(application.runUp).toHaveBeenCalledWith(input, adapters)
         expect(returned).toBe(result)
     })
 })

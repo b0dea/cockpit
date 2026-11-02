@@ -12,7 +12,7 @@ import * as ts from '@typescript/typescript6'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { snapshotExecutionStep, type ExecutionStep } from '../environment/contract.js'
 import { SURFACE_FILE_MAX_BYTES } from './contract.js'
-import { generateSurfaceBatch, generateSurfaceBundle, generateSurfaceEstate } from './generator-adapter.js'
+import { generateSurfaceBatch, generateSurfaceEstate } from './generator-adapter.js'
 
 const authorityFault = vi.hoisted(() => ({
     kind: 'none' as 'none' | 'grown-bundle' | 'tampered-bundle' | 'node-close' | 'bundle-close' | 'stage-variance' | 'warning-stage-variance' | 'warning-receipt-bounds',
@@ -457,12 +457,16 @@ it('completes and removes its staging when the temporary root is a symbolic link
 })
 
 it('renders an authenticated Claude plugin component inventory from the same neutral sources', async () => {
-    const first = await generateSurfaceBundle(claudePluginBundle())
-    const second = await generateSurfaceBundle(claudePluginBundle())
+    const [firstEstate, secondEstate] = [
+        await generateSurfaceEstate({ bundle: claudePluginBundle() }),
+        await generateSurfaceEstate({ bundle: claudePluginBundle() }),
+    ]
+    const first = firstEstate.kind === 'complete' ? firstEstate.bundle : undefined
+    const second = secondEstate.kind === 'complete' ? secondEstate.bundle : undefined
 
-    expect(first.kind, JSON.stringify(first)).toBe('complete')
-    expect(second.kind, JSON.stringify(second)).toBe('complete')
-    if (first.kind !== 'complete' || second.kind !== 'complete') return
+    expect(first?.kind, JSON.stringify(firstEstate)).toBe('complete')
+    expect(second?.kind, JSON.stringify(secondEstate)).toBe('complete')
+    if (!first || !second) return
     expect(first.format).toBe('claudecode-plugin')
     expect(first.files).toEqual(second.files)
     expect(first.files.map(file => file.path)).toEqual(claudePluginBundle().expectedOutputs)

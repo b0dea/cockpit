@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { createSelftestFixture } from '../../test-support/selftest-fixture.js'
 import type { ExecutionStep } from '../environment/contract.js'
-import { runSurfaceSelftestCommand } from './command.js'
+import { runSurfaceSelftestApplication } from '../environment/selftest-application.js'
 
 const roots: string[] = []
 const {
@@ -47,7 +47,7 @@ describe('surface selftest command', () => {
         await writeFile(join(home, '.synthetic-sign-in'), 'signed in\n')
         const operator = await syntheticOperatorApprovals(bin)
         const steps: ExecutionStep[] = []
-        const outcome = await runSurfaceSelftestCommand(
+        const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application),
                 env: { PATH: bin, HOME: home, LANG: 'C', SYNTHETIC_TOKEN: 'synthetic-token-canary' } },
             { ...operator.adapters, execute: async step => {
@@ -73,7 +73,7 @@ describe('surface selftest command', () => {
             expect.objectContaining({ harness: 'Claude Code', status: 'human_needed' }),
             expect.objectContaining({ harness: 'Codex', status: 'human_needed' }),
         ]))
-        expect(await runSurfaceSelftestCommand({
+        expect(await runSurfaceSelftestApplication({
             application: { ...application }, root, specifications: specifications(application), env: { PATH: bin },
         })).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
     }, 180_000)
@@ -86,7 +86,7 @@ describe('surface selftest command', () => {
         const execute = vi.fn(async () => { throw new Error('unapproved executable must not run') })
         const requestExecutableApproval = vi.fn(async () => undefined)
 
-        const outcome = await runSurfaceSelftestCommand({
+        const outcome = await runSurfaceSelftestApplication({
             application, root, specifications: specifications(application), env,
         }, { execute, requestExecutableApproval })
 
@@ -108,7 +108,7 @@ describe('surface selftest command', () => {
         const env = Object.defineProperty({}, 'PATH', { enumerable: true, get: selected })
         const execute = vi.fn(async () => { throw new Error('invalid search input must not execute') })
 
-        const outcome = await runSurfaceSelftestCommand({
+        const outcome = await runSurfaceSelftestApplication({
             application, root, specifications: specifications(application), env,
         }, { execute })
 
@@ -121,7 +121,7 @@ describe('surface selftest command', () => {
         const { root, application } = fixture()
         const bin = await fakeHarnesses(root, true)
         const operator = await syntheticOperatorApprovals(bin)
-        const outcome = await runSurfaceSelftestCommand(
+        const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application), env: { PATH: bin } }, operator.adapters,
         )
         expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
@@ -140,7 +140,7 @@ describe('surface selftest command', () => {
         const { root, application } = fixture()
         const bin = await fakeHarnesses(root, shape)
         const operator = await syntheticOperatorApprovals(bin)
-        const outcome = await runSurfaceSelftestCommand(
+        const outcome = await runSurfaceSelftestApplication(
             { application, root, specifications: specifications(application), env: { PATH: bin } }, operator.adapters,
         )
         expect(outcome).toMatchObject({ kind: 'refusal', code: 'SELFTEST_EXECUTION_INVALID' })

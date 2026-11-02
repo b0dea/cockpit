@@ -8,7 +8,7 @@ import { applyGeneratedEnvironmentRepair, checkGeneratedEnvironment, prepareGene
 import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
-import { initializeTeamMetadata } from './team-metadata.js'
+import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 
 const roots: string[] = []
 const firstInstant = '2026-10-22T12:00:00.000Z'

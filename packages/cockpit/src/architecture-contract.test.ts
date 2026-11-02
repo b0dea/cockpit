@@ -1716,7 +1716,7 @@ const WORK_OWNER_CONTRACTS = [
     },
     {
         id: 'work-order-verification', module: 'packages/cockpit/src/grading/verifier.ts',
-        facets: ['checkGradeCurrency', 'checkPreparedWorkOrderCurrency', 'prepareWorkOrderVerification', 'verifyPreparedWorkOrder', 'verifyWorkOrder'],
+        facets: ['checkGradeCurrency', 'checkPreparedWorkOrderCurrency', 'prepareWorkOrderVerification', 'verifyPreparedWorkOrder'],
     },
     {
         id: 'work-order-completion', module: 'packages/cockpit/src/grading/completion.ts',
@@ -2489,7 +2489,6 @@ const APPLICATION_MODULE = 'packages/cockpit/src/environment/application.ts'
 const RUNTIME_MODULE = 'packages/cockpit/src/environment/runtime.ts'
 const PORTS_MODULE = 'packages/cockpit/src/environment/ports.ts'
 const CLAIMS_MODULE = 'packages/cockpit/src/environment/claims.ts'
-const UP_COMMAND_MODULE = 'packages/cockpit/src/up/command.ts'
 
 function exportedTypeDeclarations(source: string): Map<string, ts.InterfaceDeclaration | ts.TypeAliasDeclaration> {
     const sourceFile = parseModule(source)
@@ -2586,9 +2585,6 @@ function applicationBoundaryViolations(
         analysis,
     )) violations.add(violation)
 
-    const commandContracts = new Map([
-        [UP_COMMAND_MODULE, { functionName: 'upCommand', imported: 'runUp', types: lifecycleContracts.slice(0, 3) }],
-    ])
     if (environmentContracts.some((name) => !applicationTypes.has(name))) {
         violations.add('ARCH048_APPLICATION_OBSERVATION_HOME')
     }
@@ -2599,36 +2595,6 @@ function applicationBoundaryViolations(
         'ARCH048_APPLICATION_OBSERVATION_HOME',
         analysis,
     )) violations.add(violation)
-    for (const [path, contract] of commandContracts) {
-        const source = sources.get(path)
-        if (!source) {
-            violations.add('ARCH043_COMMAND_APPLICATION_BOUNDARY')
-            continue
-        }
-        const sourceFile = parseModule(source)
-        const imports = importSpecifiers(source)
-            .map((specifier) => canonicalModulePath(resolveImport(path, specifier, sources) ?? specifier))
-        const importedApplicationFacets = sourceFile.statements.flatMap((statement) =>
-            ts.isImportDeclaration(statement)
-                && ts.isStringLiteralLike(statement.moduleSpecifier)
-                && canonicalModulePath(resolveImport(path, statement.moduleSpecifier.text, sources) ?? '') === APPLICATION_MODULE
-                && statement.importClause?.namedBindings
-                && ts.isNamedImports(statement.importClause.namedBindings)
-                ? statement.importClause.namedBindings.elements.map((element) =>
-                    (element.propertyName ?? element.name).text)
-                : [])
-        const reexportedTypes = sourceFile.statements.flatMap((statement) =>
-            ts.isExportDeclaration(statement) && !statement.moduleSpecifier
-                && statement.exportClause && ts.isNamedExports(statement.exportClause)
-                ? statement.exportClause.elements.map((element) => element.name.text)
-                : [])
-        if (
-            imports.length === 0 || imports.some((target) => target !== APPLICATION_MODULE)
-            || importedApplicationFacets.sort().join('\0') !== [contract.imported, ...contract.types].sort().join('\0')
-            || reexportedTypes.sort().join('\0') !== [...contract.types].sort().join('\0')
-            || !analysis.implementationsByPath.get(path)?.has(contract.functionName)
-        ) violations.add('ARCH043_COMMAND_APPLICATION_BOUNDARY')
-    }
 
     for (const violation of facetOwnerViolation(
         sources,
@@ -4463,16 +4429,6 @@ describe('product architecture contract', () => {
         },
     )
 
-    it('keeps the remaining up command confined to the application adapter', () => {
-        const up = readFileSync(resolve(ROOT, UP_COMMAND_MODULE), 'utf8')
-        const sources = new Map([
-            [UP_COMMAND_MODULE, `${up}\nimport { executePlan } from '../environment-exec/execute.js'`],
-            [APPLICATION_MODULE, 'export interface UpCommandInput {}; export interface UpCommandAdapters {}; export interface UpCommandResult {}; export interface SleepCommandInput {}; export interface SleepCommandAdapters {}; export interface SleepCommandResult {}'],
-        ])
-
-        expect(applicationBoundaryViolations(sources)).toContain('ARCH043_COMMAND_APPLICATION_BOUNDARY')
-    })
-
     it.each([
         'LifecyclePlan',
         'LifecycleProgress',
@@ -5020,7 +4976,6 @@ describe('product architecture contract', () => {
         for (const path of [
             'packages/cockpit/src/environment/claims.ts',
             'packages/cockpit/src/environment/ports.ts',
-            'packages/cockpit/src/up/command.ts',
             'packages/cockpit/src/arbitrary.ts',
         ]) {
             expect(executionBoundaryViolations(new Map([[path, timer]]))).toContain('ARCH023_TIMEOUT_OUTPUT_SIGNAL_HOME')
@@ -5841,7 +5796,7 @@ describe('product architecture contract', () => {
         ['work-order state store', 'readWorkOrderState'],
         ['work-order orchestration', 'runWorkApplication'],
         ['work-order composition', 'createConfiguredWorkApplicationComposition'],
-        ['work-order verifier', 'verifyWorkOrder'],
+        ['work-order verifier', 'verifyPreparedWorkOrder'],
         ['work-order completion writer', 'completeWorkOrder'],
         ['browser runtime', 'resolveBrowserRuntime'],
         ['testing gate classifier', 'createGateRegistry'],

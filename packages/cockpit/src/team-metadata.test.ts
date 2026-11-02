@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installedPackageMetadata } from './package-metadata.js'
-import { initializeTeamMetadata, prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata, inspectTeamReadiness } from './team-metadata.js'
+import { initializeTeamMetadata } from '../test-support/team-metadata.js'
+import { prepareTeamMetadata, applyTeamMetadata, validateTeamMetadata, inspectTeamReadiness } from './team-metadata.js'
 import { encodeGuardLocalIdentity, writeCockpitLocalFiles } from './guards/local-identity.js'
 
 const roots: string[] = []
@@ -177,11 +178,10 @@ purpose = "Synthetic local repository"
         await writeFile(join(root, 'package.json'), '{"private":true}\n')
         await writeFile(join(root, '.gitignore'), 'operator-owned\n')
 
-        expect(await initializeTeamMetadata(join(root, 'cockpit.toml'), { dryRun: true })).toEqual({
-            kind: 'complete', changed: true, changes: [
-                { operation: 'write', path: 'package.json' }, { operation: 'write', path: '.gitignore' },
-            ],
-        })
+        const prepared = await prepareTeamMetadata(join(root, 'cockpit.toml'))
+        expect(prepared).toMatchObject({ kind: 'complete', authority: { changes: [
+            { operation: 'write', path: 'package.json' }, { operation: 'write', path: '.gitignore' },
+        ] } })
         expect(await readFile(join(root, 'package.json'), 'utf8')).toBe('{"private":true}\n')
         expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('operator-owned\n')
     })

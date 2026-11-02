@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { executeProbe } from '../environment-exec/execute.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
-import { runSurfaceSelftestCommand } from '../selftest/command.js'
+import { runSurfaceSelftestApplication } from '../environment/selftest-application.js'
 import { surfaceSelftestExpectation, type SelftestProbeSpecification } from './selftest.js'
 
 const fixture = resolve('fixtures/registries/generated-environment.toml')
@@ -105,7 +105,7 @@ describe('native instruction loading controls', () => {
         expect(selectedCodexInstructions(application)).toContain(inertForeignImport)
 
         const bin = await controlledHarnesses(root)
-        const controlled = await runSurfaceSelftestCommand({
+        const controlled = await runSurfaceSelftestApplication({
             application,
             root,
             specifications,
@@ -136,7 +136,7 @@ describe('native instruction loading controls', () => {
 
         const emptyPath = join(root, 'empty-bin')
         await mkdir(emptyPath)
-        const unavailable = await runSurfaceSelftestCommand({ application, root, specifications, env: { PATH: emptyPath } })
+        const unavailable = await runSurfaceSelftestApplication({ application, root, specifications, env: { PATH: emptyPath } })
         expect(unavailable).toEqual(expect.objectContaining({ kind: 'complete', status: 0 }))
         if (unavailable.kind !== 'complete') return
         expect(unavailable.bundle.records).toHaveLength(specifications.length)

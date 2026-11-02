@@ -8,10 +8,10 @@ import { runCli } from '../cli.js'
 import { syncGeneratedEnvironment } from '../generated-environment/command.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
-    runConfiguredSurfaceSelftestCommand,
-    runSurfaceSelftestCommand,
+    runConfiguredSurfaceSelftestApplication,
+    runSurfaceSelftestApplication,
     type SurfaceSelftestProbeSpecificationsCandidate,
-} from './command.js'
+} from '../environment/selftest-application.js'
 
 const roots: string[] = []
 const {
@@ -54,7 +54,7 @@ describe('surface selftest command', () => {
     it('does not promote PATH-shadowed builtins without independent executable authority', async () => {
         const { root, application, bin } = fixture()
         let executions = 0
-        const outcome = await runSurfaceSelftestCommand({
+        const outcome = await runSurfaceSelftestApplication({
             application, root, specifications: specifications(application), env: { PATH: bin },
         }, {
             execute: async () => {
@@ -90,7 +90,7 @@ describe('surface selftest command', () => {
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
         })
 
-        const unfilled = await runConfiguredSurfaceSelftestCommand({
+        const unfilled = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, { execute: async () => { throw new Error('an unfilled file must not run a probe') } })
         expect(unfilled).toMatchObject({
@@ -113,7 +113,7 @@ describe('surface selftest command', () => {
         await writeFile(artifactPath, artifactBytes)
 
         let approvalCandidate: SurfaceSelftestProbeSpecificationsCandidate | undefined
-        const outcome = await runConfiguredSurfaceSelftestCommand({
+        const outcome = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, {
             ...syntheticExecutableAuthorities(bin),
@@ -146,7 +146,7 @@ describe('surface selftest command', () => {
         // cell is unchanged; a row the person left partly null starts over.
         await writeFile(configPath, `${await readFile(configPath, 'utf8')}\n# a reviewed change\n`)
         expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        expect(await runConfiguredSurfaceSelftestCommand({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin } },
+        expect(await runConfiguredSurfaceSelftestApplication({ configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin } },
             { execute: async () => { throw new Error('a stale file must not run a probe') } })).toMatchObject({
             kind: 'refusal', reason: expect.stringContaining('written for a different cockpit.toml'),
             fix: expect.stringContaining('--write-probe-specifications <new file> --probe-specifications <this file>'),
@@ -177,7 +177,7 @@ describe('surface selftest command', () => {
         }))
         let executions = 0
 
-        const outcome = await runConfiguredSurfaceSelftestCommand({
+        const outcome = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, {
             ...syntheticExecutableAuthorities(bin),
@@ -209,7 +209,7 @@ describe('surface selftest command', () => {
         const execute = vi.fn(async () => { throw new Error('unapproved executable must not run') })
         const requestProbeSpecificationsApproval = vi.fn(async (candidate: SurfaceSelftestProbeSpecificationsCandidate) => candidate.sha256)
 
-        const outcome = await runConfiguredSurfaceSelftestCommand({
+        const outcome = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env,
         }, { execute, requestProbeSpecificationsApproval })
 
@@ -237,7 +237,7 @@ describe('surface selftest command', () => {
             executions += 1
             throw new Error('probe execution must not start')
         }
-        const missing = await runConfiguredSurfaceSelftestCommand({
+        const missing = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: join(root, 'missing.json'), env: { PATH: bin },
         }, { execute })
         const producer = 'npx --no cockpit selftest --config <your cockpit.toml> --write-probe-specifications <new file>'
@@ -247,7 +247,7 @@ describe('surface selftest command', () => {
 
         const artifactPath = join(root, 'probe-specifications.json')
         await writeFile(artifactPath, '{')
-        const malformed = await runConfiguredSurfaceSelftestCommand({
+        const malformed = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, { execute })
         expect(malformed).toEqual(expect.objectContaining({ kind: 'refusal', code: 'SELFTEST_SOURCE_INVALID' }))
@@ -259,7 +259,7 @@ describe('surface selftest command', () => {
             generatedManifestSha256: application.surfaceSelftest.manifestSha256,
             specifications: probeSpecifications,
         }))
-        const mismatched = await runConfiguredSurfaceSelftestCommand({
+        const mismatched = await runConfiguredSurfaceSelftestApplication({
             configPath, probeSpecificationsPath: artifactPath, env: { PATH: bin },
         }, { execute })
         expect(mismatched).toEqual(expect.objectContaining({
