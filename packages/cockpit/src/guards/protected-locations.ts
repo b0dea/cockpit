@@ -101,8 +101,10 @@ export function guardLauncherEvidence(executable: string, words: readonly string
         if (error instanceof SyntaxError) return undefined
         if (!missing(error)) throw error
     }
-    // npm reads a bin from `bin`, or from every file in `directories.bin`.
-    if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest) || 'bin' in manifest || 'directories' in manifest) return undefined
+    // npm reads a bin from `bin`, or from every file in `directories.bin`. Its other `directories`
+    // entries name documentation, and `npm init` writes `directories.doc` beside the docs/ sync creates.
+    const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+    if (!record(manifest) || 'bin' in manifest || 'directories' in manifest && (!record(manifest.directories) || 'bin' in manifest.directories)) return undefined
     return resolving(join(root, 'node_modules/.bin/cockpit'))
 }
 

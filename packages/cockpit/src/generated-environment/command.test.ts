@@ -666,6 +666,11 @@ native_hooks = { install = "inspect" }
     await rm(join(root, '.npmrc'))
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'cockpit', private: true, bin: 'planted.mjs' }))
     expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'cockpit', private: true, directories: { bin: 'planted' } }))
+    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
+    // npm init writes directories.doc when the root holds docs/, which sync creates; only directories.bin declares commands.
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'cockpit', private: true, directories: { doc: 'docs', test: 'tests' } }))
+    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('allow')
     await rm(join(root, 'package.json'))
     expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('allow')
     // A file planted where the link was is not the installed cockpit under either spelling.
